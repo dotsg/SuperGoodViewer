@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../controllers/reader_controller.dart';
+import 'font_settings_dialog.dart';
 import 'pdf_canvas_view.dart';
 import 'sidebar_view.dart';
 
@@ -191,6 +192,9 @@ class _WorkspaceViewState extends State<WorkspaceView> {
             _handleCopySelection,
         const SingleActivator(LogicalKeyboardKey.keyA, meta: true): () async {
           await _pdfCanvasKey.currentState?.selectAllText();
+        },
+        const SingleActivator(LogicalKeyboardKey.keyF, meta: true, shift: true): () {
+          showFontSettingsDialog(context, controller);
         },
       },
       child: Focus(
@@ -471,6 +475,14 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                     ? '切换为亮色模式 (Cmd+T)'
                     : '切换为暗黑模式 (Cmd+T)',
                 onPressed: controller.toggleTheme,
+              ),
+              _PillDivider(isDark: isDark),
+
+              // Typography & Font Settings (Maple Mono / CJK Alignment)
+              _PillIconButton(
+                icon: Icons.font_download_outlined,
+                tooltip: '字体排版与 CJK 1:2 等宽对齐设置 (Cmd+Shift+F)',
+                onPressed: () => showFontSettingsDialog(context, controller),
               ),
               _PillDivider(isDark: isDark),
 

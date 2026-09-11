@@ -45,6 +45,16 @@ void main() {
       expect(json, contains('"viewport_width":700.0'));
       expect(json, contains('"font_size":11.5'));
     });
+
+    test('toJsonString includes bodyFont and codeFont when specified', () {
+      const options = RenderOptions(
+        bodyFont: 'PingFang SC',
+        codeFont: 'Maple Mono CN',
+      );
+      final json = options.toJsonString();
+      expect(json, contains('"body_font":"PingFang SC"'));
+      expect(json, contains('"code_font":"Maple Mono CN"'));
+    });
   });
 
   group('ReaderController State Tests', () {
@@ -215,6 +225,31 @@ void main() {
       await tester.pump();
 
       expect(controller.renderOptions.fontSize, initialFontSize + 0.5);
+    });
+
+    testWidgets('font settings button opens font dialog with CJK status', (tester) async {
+      final controller = ReaderController();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WorkspaceView(controller: controller),
+        ),
+      );
+
+      final fontBtn = find.byTooltip('字体排版与 CJK 1:2 等宽对齐设置 (Cmd+Shift+F)');
+      expect(fontBtn, findsOneWidget);
+      await tester.tap(fontBtn);
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('字体排版与中英文等宽对齐'), findsOneWidget);
+      expect(find.text('正文排版字体 (Body Typography)'), findsOneWidget);
+      expect(find.text('恢复默认字体'), findsOneWidget);
+
+      // Close dialog
+      final closeBtn = find.text('完成');
+      await tester.tap(closeBtn);
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('字体排版与中英文等宽对齐'), findsNothing);
     });
   });
 }

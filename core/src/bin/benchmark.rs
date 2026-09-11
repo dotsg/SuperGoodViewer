@@ -162,6 +162,7 @@ fn benchmark_compilation(label: &str, markdown: &str, samples: usize) {
         theme: "light".to_string(),
         viewport_width: 720.0,
         font_size: 10.5,
+        ..Default::default()
     };
     let start_paged = Instant::now();
     let mut paged_bytes_len = 0;

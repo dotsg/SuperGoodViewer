@@ -25,6 +25,7 @@ class ReaderController extends ChangeNotifier {
   StreamSubscription<FileSystemEvent>? _watcherSubscription;
 
   final List<String> _recentFiles = [];
+  Map<String, dynamic> _fontReport = {};
 
   // Getters
   String? get currentFilePath => _currentFilePath;
@@ -37,8 +38,10 @@ class ReaderController extends ChangeNotifier {
   double get lastScrollRatio => _lastScrollRatio;
   bool get autoReload => _autoReload;
   List<String> get recentFiles => List.unmodifiable(_recentFiles);
+  Map<String, dynamic> get fontReport => _fontReport;
 
   ReaderController({String? initialFilePath}) {
+    refreshFontReport();
     if (initialFilePath != null && initialFilePath.isNotEmpty) {
       openFile(initialFilePath);
     } else {
@@ -188,6 +191,23 @@ class ReaderController extends ChangeNotifier {
 
   void setFontSize(double size) {
     _renderOptions = _renderOptions.copyWith(fontSize: size.clamp(8.0, 24.0));
+    compileDocument();
+  }
+
+  void refreshFontReport() {
+    try {
+      _fontReport = NativeEngine.instance.detectFonts();
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  void setBodyFont(String? font) {
+    _renderOptions = _renderOptions.copyWith(bodyFont: font);
+    compileDocument();
+  }
+
+  void setCodeFont(String? font) {
+    _renderOptions = _renderOptions.copyWith(codeFont: font);
     compileDocument();
   }
 

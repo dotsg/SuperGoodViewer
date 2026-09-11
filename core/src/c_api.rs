@@ -126,6 +126,19 @@ pub extern "C" fn sogood_compile_markdown(
     }
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn sogood_detect_fonts() -> *mut SogoodBuffer {
+    let report = crate::compiler::world::detect_font_capabilities();
+    let json_bytes = serde_json::to_vec(&report).unwrap_or_else(|_| b"{}".to_vec());
+    let mut boxed_slice = json_bytes.into_boxed_slice();
+    let data = boxed_slice.as_mut_ptr();
+    let len = boxed_slice.len();
+    let capacity = len;
+    std::mem::forget(boxed_slice);
+
+    Box::into_raw(Box::new(SogoodBuffer { data, len, capacity }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,4 +173,20 @@ mod tests {
             sogood_free_buffer(buffer_ptr);
         }
     }
+
+    #[test]
+    fn test_c_api_detect_fonts() {
+        let buffer_ptr = sogood_detect_fonts();
+        assert!(!buffer_ptr.is_null());
+        unsafe {
+            let buf = &*buffer_ptr;
+            assert!(buf.len > 10);
+            let slice = std::slice::from_raw_parts(buf.data, buf.len);
+            let json_str = std::str::from_utf8(slice).unwrap();
+            assert!(json_str.contains("recommended_font_name"));
+            assert!(json_str.contains("maple_mono_installed"));
+            sogood_free_buffer(buffer_ptr);
+        }
+    }
 }
+

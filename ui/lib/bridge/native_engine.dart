@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
@@ -43,6 +44,9 @@ typedef SogoodCompileMarkdownDart = Pointer<CSogoodBuffer> Function(
   Pointer<Utf8> optionsJson,
 );
 
+typedef SogoodDetectFontsC = Pointer<CSogoodBuffer> Function();
+typedef SogoodDetectFontsDart = Pointer<CSogoodBuffer> Function();
+
 /// Singleton bridge communicating with the Rust `sogood_core` library.
 class NativeEngine {
   static final NativeEngine instance = NativeEngine._();
@@ -53,6 +57,7 @@ class NativeEngine {
   late final SogoodFreeStringDart _freeString;
   late final SogoodFreeBufferDart _freeBuffer;
   late final SogoodCompileMarkdownDart _compileMarkdown;
+  late final SogoodDetectFontsDart _detectFonts;
 
   bool _initialized = false;
 
@@ -100,6 +105,10 @@ class NativeEngine {
       SogoodCompileMarkdownC,
       SogoodCompileMarkdownDart
     >('sogood_compile_markdown');
+    _detectFonts = lib.lookupFunction<
+      SogoodDetectFontsC,
+      SogoodDetectFontsDart
+    >('sogood_detect_fonts');
 
     _initialized = true;
   }
@@ -213,4 +222,28 @@ class NativeEngine {
       );
     });
   }
+
+  /// Queries the system and embedded font store for available fonts,
+  /// specifically checking for CJK monospace fonts like Maple Mono.
+  Map<String, dynamic> detectFonts() {
+    final bufferPtr = _detectFonts();
+    if (bufferPtr.address == 0) {
+      return {};
+    }
+    try {
+      final buffer = bufferPtr.ref;
+      if (buffer.len == 0 || buffer.data.address == 0) {
+        return {};
+      }
+      final bytes = Uint8List(buffer.len);
+      bytes.setAll(0, buffer.data.asTypedList(buffer.len));
+      final jsonString = utf8.decode(bytes);
+      return jsonDecode(jsonString) as Map<String, dynamic>;
+    } catch (_) {
+      return {};
+    } finally {
+      _freeBuffer(bufferPtr);
+    }
+  }
 }
+

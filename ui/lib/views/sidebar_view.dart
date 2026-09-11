@@ -2,6 +2,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import '../controllers/reader_controller.dart';
+import 'font_settings_dialog.dart';
 
 class SidebarView extends StatelessWidget {
   final ReaderController controller;
@@ -326,19 +327,36 @@ class SidebarView extends StatelessWidget {
           ),
 
 
-          // Bottom Quick Demo Button
+          // Bottom Actions: Typography & Sample Document
           Padding(
-            padding: const EdgeInsets.all(12),
-            child: OutlinedButton.icon(
-              icon: const Icon(Icons.auto_awesome, size: 16),
-              label: const Text('载入精选样例', style: TextStyle(fontSize: 12)),
-              onPressed: controller.loadSampleDocument,
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.font_download_outlined, size: 15),
+                  label: const Text('字体与 CJK 对齐', style: TextStyle(fontSize: 12)),
+                  onPressed: () => showFontSettingsDialog(context, controller),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(height: 6),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.auto_awesome, size: 15),
+                  label: const Text('载入精选样例', style: TextStyle(fontSize: 12)),
+                  onPressed: controller.loadSampleDocument,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],

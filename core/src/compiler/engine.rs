@@ -31,6 +31,10 @@ pub struct RenderOptions {
     pub viewport_width: f32,
     #[serde(default = "default_font_size")]
     pub font_size: f32,
+    #[serde(default)]
+    pub body_font: Option<String>,
+    #[serde(default)]
+    pub code_font: Option<String>,
 }
 
 impl Default for RenderOptions {
@@ -40,6 +44,8 @@ impl Default for RenderOptions {
             theme: default_theme(),
             viewport_width: default_viewport_width(),
             font_size: default_font_size(),
+            body_font: None,
+            code_font: None,
         }
     }
 }

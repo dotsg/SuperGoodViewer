@@ -83,12 +83,49 @@ pub fn convert_markdown_to_typst(
             safe_title = escape_typst_text(title)
         ));
     }
+    let body_fonts_default = [
+        "Inter",
+        "SF Pro Text",
+        "PingFang SC",
+        "Microsoft YaHei",
+        "Noto Sans CJK SC",
+        "STIX Two Text",
+    ];
+    let custom_body = options.body_font.as_deref().unwrap_or("").trim();
+    let body_font_str = if !custom_body.is_empty() {
+        format!("(\"{}\", {})", custom_body, body_fonts_default.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
+    } else {
+        format!("({})", body_fonts_default.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
+    };
+
+    let code_fonts_default = [
+        "Maple Mono NF CN",
+        "Maple Mono CN",
+        "Maple Mono SC NF",
+        "Maple Mono NF",
+        "Maple Mono",
+        "Sarasa Mono SC",
+        "Sarasa Gothic SC",
+        "Cascadia Mono",
+        "JetBrains Mono",
+        "Fira Code",
+        "Menlo",
+        "Consolas",
+        "PingFang SC",
+        "DejaVu Sans Mono",
+    ];
+    let custom_code = options.code_font.as_deref().unwrap_or("").trim();
+    let code_font_str = if !custom_code.is_empty() {
+        format!("(\"{}\", {})", custom_code, code_fonts_default.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
+    } else {
+        format!("({})", code_fonts_default.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
+    };
 
     out.push_str(&format!(
         r##")
 
 #set text(
-  font: ("Inter", "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "STIX Two Text"),
+  font: {body_font_str},
   size: {font_size}pt,
   fill: {text_color},
   lang: "zh"
@@ -100,7 +137,7 @@ pub fn convert_markdown_to_typst(
   spacing: 1.15em
 )
 
-#show raw: set text(font: ("JetBrains Mono", "Fira Code", "Menlo", "Consolas", "DejaVu Sans Mono"), size: 0.9em)
+#show raw: set text(font: {code_font_str}, size: 0.9em)
 
 #show raw.where(block: false): it => box(
   fill: {code_bg},
@@ -194,7 +231,9 @@ pub fn convert_markdown_to_typst(
         code_bg = code_bg,
         heading_color = heading_color,
         table_stroke = table_stroke,
-        table_header_bg = table_header_bg
+        table_header_bg = table_header_bg,
+        body_font_str = body_font_str,
+        code_font_str = code_font_str
     ));
 
     let callout_bg_op = if options.theme == "dark" { "darken(70%)" } else { "lighten(90%)" };

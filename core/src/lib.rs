@@ -69,6 +69,7 @@ graph LR
             theme: "light".to_string(),
             viewport_width: 800.0,
             font_size: 10.5,
+            ..Default::default()
         };
 
         let result = compile_markdown_to_pdf(md, "E2E Test", ".", &options);
@@ -103,6 +104,7 @@ fn main() {
             theme: "dark".to_string(),
             viewport_width: 800.0,
             font_size: 11.0,
+            ..Default::default()
         };
 
         let result = compile_markdown_to_pdf(md, "Dark Paper", ".", &options);
@@ -122,6 +124,7 @@ fn main() {
                 theme: "light".to_string(),
                 viewport_width: 850.0,
                 font_size: 10.5,
+                ..Default::default()
             };
             let start = std::time::Instant::now();
             let res = compile_markdown_to_pdf(&content, "AI Relay PRD", "..", &options);
@@ -208,6 +211,7 @@ graph LR
                     theme: theme.to_string(),
                     viewport_width: 800.0,
                     font_size: 10.5,
+                    ..Default::default()
                 };
                 let parsed = convert_markdown_to_typst(sample_md, "Sample Document", &options);
                 if mode == &"fluid" && theme == &"light" {
@@ -220,6 +224,29 @@ graph LR
                 println!("Sample doc mode={}, theme={} compiled: {} bytes", mode, theme, pdf.len());
             }
         }
+    }
+
+    #[test]
+    fn test_compile_ascii_table_with_maple_mono() {
+        let md = r#"
+# ASCII Table Test
+
+```
+┌─────────────────────────────────────┬─────────────────────────────────────┐
+│ 1. Token 資產治理與商業分銷         │ 2. 可插拔合規安全護欄               │
+│  · 基於 Envoy AI Gateway 雲原生底座 │  · 基於 Go ext_proc 高性能自研中間件│
+└─────────────────────────────────────┴─────────────────────────────────────┘
+```
+"#;
+        let options = RenderOptions {
+            mode: "fluid".to_string(),
+            theme: "light".to_string(),
+            ..Default::default()
+        };
+        let res = compile_markdown_to_pdf(md, "ASCII Align", ".", &options);
+        assert!(res.is_ok(), "ASCII table failed to compile: {:?}", res.err());
+        let pdf = res.unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
     }
 }
 

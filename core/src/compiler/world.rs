@@ -15,6 +15,44 @@ use typst::{Library, LibraryExt, World};
 pub struct GlobalFontStore {
     pub book: LazyHash<FontBook>,
     pub fonts: Vec<Font>,
+    pub monospace_families: Vec<String>,
+    pub body_families: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FontCapabilityReport {
+    pub has_cjk_monospace: bool,
+    pub maple_mono_installed: bool,
+    pub detected_monospace_fonts: Vec<String>,
+    pub detected_body_fonts: Vec<String>,
+    pub recommended_font_name: String,
+    pub recommended_font_url: String,
+    pub download_guide: String,
+}
+
+pub fn detect_font_capabilities() -> FontCapabilityReport {
+    let store = GlobalFontStore::get();
+    let has_cjk_mono = store.monospace_families.iter().any(|f| {
+        let l = f.to_lowercase();
+        l.contains("maple") || l.contains("sarasa")
+    });
+    let maple_installed = store.monospace_families.iter().any(|f| {
+        f.to_lowercase().contains("maple")
+    });
+
+    FontCapabilityReport {
+        has_cjk_monospace: has_cjk_mono,
+        maple_mono_installed: maple_installed,
+        detected_monospace_fonts: store.monospace_families.clone(),
+        detected_body_fonts: store.body_families.clone(),
+        recommended_font_name: "Maple Mono (NF / SC)".to_string(),
+        recommended_font_url: "https://github.com/subframe7536/maple-font".to_string(),
+        download_guide: if maple_installed {
+            "当前系统已就绪 Maple Mono 字体，支持代码与 ASCII 表格中英文严格 1:2 等宽对齐。".to_string()
+        } else {
+            "未检测到 Maple Mono 字体。若文档中含有 ASCII 字符画或中英文混合表格，推荐前往 GitHub 下载并安装 Maple Mono 以获得完美对齐效果。".to_string()
+        },
+    }
 }
 
 static FONT_STORE: OnceLock<GlobalFontStore> = OnceLock::new();
@@ -34,80 +72,150 @@ impl GlobalFontStore {
             }
             eprintln!("Loaded {} fonts from typst_assets", asset_count);
 
-
             // 2. Discover system fonts via fontdb
             let mut db = fontdb::Database::new();
             db.load_system_fonts();
 
+            // Load user font directories across platforms
+            if let Ok(home) = std::env::var("HOME") {
+                let home = PathBuf::from(home);
+                let mac_user_fonts = home.join("Library/Fonts");
+                if mac_user_fonts.exists() {
+                    db.load_fonts_dir(&mac_user_fonts);
+                }
+                let linux_user_fonts = home.join(".local/share/fonts");
+                if linux_user_fonts.exists() {
+                    db.load_fonts_dir(&linux_user_fonts);
+                }
+                let linux_fonts = home.join(".fonts");
+                if linux_fonts.exists() {
+                    db.load_fonts_dir(&linux_fonts);
+                }
+            }
+            if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
+                let win_user_fonts = PathBuf::from(local_appdata).join("Microsoft\\Windows\\Fonts");
+                if win_user_fonts.exists() {
+                    db.load_fonts_dir(&win_user_fonts);
+                }
+            }
+
             // Target key Chinese / Japanese / Korean & clean UI fonts
-            let target_families = [
-                "PingFang SC",
-                "Songti SC",
-                "Hiragino Sans GB",
-                "Microsoft YaHei",
-                "SimSun",
-                "SimHei",
-                "Noto Sans CJK SC",
-                "Noto Serif CJK SC",
-                "Noto Sans",
-                "Inter",
-                "SF Pro",
-                "SF Pro Text",
-                "SF Pro Display",
-                "Segoe UI",
-                "San Francisco",
-                "Helvetica Neue",
-                "Arial",
-                "JetBrains Mono",
-                "Fira Code",
-                "Cascadia Code",
-                "Consolas",
-                "Menlo",
-                "Courier New",
-                "STIX Two Text",
-                "STIX Two Math",
-                "Source Han Sans SC",
-                "Source Han Serif SC",
+            let target_prefixes = [
+                // CJK Proportional UI Fonts
+                "pingfang",
+                "songti",
+                "kaiti",
+                "hiragino",
+                "microsoft yahei",
+                "simsun",
+                "simhei",
+                "noto sans cjk",
+                "noto serif cjk",
+                "source han sans",
+                "source han serif",
+                // Western Clean Proportional Fonts
+                "inter",
+                "sf pro",
+                "segoe ui",
+                "helvetica neue",
+                "arial",
+                // CJK Strict Monospace / Alignment Fonts
+                "maple mono",
+                "sarasa mono",
+                "sarasa gothic",
+                "sarasa term",
+                // Western Monospace Fonts
+                "jetbrains mono",
+                "fira code",
+                "cascadia code",
+                "cascadia mono",
+                "source code pro",
+                "hack",
+                "iosevka",
+                "inconsolata",
+                "consolas",
+                "menlo",
+                "monaco",
+                "courier new",
+                // Math Fonts
+                "stix two",
             ];
 
             let mut font_file_cache: HashMap<PathBuf, Bytes> = HashMap::new();
+            let mut detected_mono = std::collections::BTreeSet::new();
+            let mut detected_body = std::collections::BTreeSet::new();
+
             for face in db.faces() {
                 let is_target = face.families.iter().any(|(f_name, _)| {
-                    target_families.iter().any(|tf| tf.eq_ignore_ascii_case(f_name))
+                    let l = f_name.to_lowercase();
+                    target_prefixes.iter().any(|p| l.contains(p))
                 });
-                if is_target {
-                    match &face.source {
-                        fontdb::Source::File(path) => {
-                            let bytes = if let Some(b) = font_file_cache.get(path) {
-                                b.clone()
-                            } else {
-                                match fs::read(path) {
-                                    Ok(data) => {
-                                        let b = Bytes::new(data);
-                                        font_file_cache.insert(path.clone(), b.clone());
-                                        b
-                                    }
-                                    Err(_) => continue,
+                if !is_target {
+                    continue;
+                }
+
+                // For multi-weight CJK / Monospace families (like Maple Mono with 32 TTFs),
+                // only keep standard Regular (380-450) and Bold (650-750) to optimize memory.
+                let is_cjk_multi_weight = face.families.iter().any(|(f_name, _)| {
+                    let l = f_name.to_lowercase();
+                    l.contains("maple") || l.contains("sarasa") || l.contains("noto")
+                });
+                if is_cjk_multi_weight {
+                    let w = face.weight.0;
+                    if (w < 380 || w > 450) && (w < 650 || w > 750) {
+                        continue;
+                    }
+                }
+
+                // Track detected font families
+                for (f, _) in &face.families {
+                    let l = f.to_lowercase();
+                    if l.contains("mono") || l.contains("code") || l.contains("menlo") || l.contains("consolas") || l.contains("courier") || face.monospaced {
+                        detected_mono.insert(f.clone());
+                    } else {
+                        detected_body.insert(f.clone());
+                    }
+                }
+
+                match &face.source {
+                    fontdb::Source::File(path) => {
+                        let bytes = if let Some(b) = font_file_cache.get(path) {
+                            b.clone()
+                        } else {
+                            match fs::read(path) {
+                                Ok(data) => {
+                                    let b = Bytes::new(data);
+                                    font_file_cache.insert(path.clone(), b.clone());
+                                    b
                                 }
-                            };
-                            if let Some(font) = Font::new(bytes, face.index) {
+                                Err(_) => continue,
+                            }
+                        };
+                        if let Some(font) = Font::new(bytes, face.index) {
+                            fonts.push(font);
+                        }
+                    }
+                    _ => {
+                        db.with_face_data(face.id, |data, index| {
+                            let bytes = Bytes::new(data.to_vec());
+                            if let Some(font) = Font::new(bytes, index) {
                                 fonts.push(font);
                             }
-                        }
-                        _ => {
-                            db.with_face_data(face.id, |data, index| {
-                                let bytes = Bytes::new(data.to_vec());
-                                if let Some(font) = Font::new(bytes, index) {
-                                    fonts.push(font);
-                                }
-                            });
-                        }
+                        });
                     }
                 }
             }
 
+            let monospace_families: Vec<String> = detected_mono.into_iter().collect();
+            let body_families: Vec<String> = detected_body.into_iter().collect();
+
             let book = LazyHash::new(FontBook::from_fonts(&fonts));
-            GlobalFontStore { book, fonts }
+            GlobalFontStore {
+                book,
+                fonts,
+                monospace_families,
+                body_families,
+            }
         })
     }
 }
