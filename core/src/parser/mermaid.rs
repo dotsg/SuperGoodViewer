@@ -1,17 +1,52 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::OnceLock;
 use parking_lot::RwLock;
 use sha2::{Digest, Sha256};
+use typst::foundations::Bytes;
 
-static MERMAID_CACHE: OnceLock<RwLock<HashMap<String, Vec<u8>>>> = OnceLock::new();
+struct BoundedCache {
+    map: HashMap<String, Bytes>,
+    order: VecDeque<String>,
+    capacity: usize,
+}
 
-fn get_cache() -> &'static RwLock<HashMap<String, Vec<u8>>> {
-    MERMAID_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+impl BoundedCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            map: HashMap::with_capacity(capacity),
+            order: VecDeque::with_capacity(capacity),
+            capacity,
+        }
+    }
+
+    fn get(&self, key: &str) -> Option<Bytes> {
+        self.map.get(key).cloned()
+    }
+
+    fn insert(&mut self, key: String, val: Bytes) {
+        if self.map.contains_key(&key) {
+            self.map.insert(key, val);
+            return;
+        }
+        if self.map.len() >= self.capacity {
+            if let Some(oldest) = self.order.pop_front() {
+                self.map.remove(&oldest);
+            }
+        }
+        self.order.push_back(key.clone());
+        self.map.insert(key, val);
+    }
+}
+
+static MERMAID_CACHE: OnceLock<RwLock<BoundedCache>> = OnceLock::new();
+
+fn get_cache() -> &'static RwLock<BoundedCache> {
+    MERMAID_CACHE.get_or_init(|| RwLock::new(BoundedCache::new(128)))
 }
 
 pub struct RenderedMermaid {
     pub virtual_filename: String,
-    pub svg_bytes: Vec<u8>,
+    pub svg_bytes: Bytes,
     pub is_fallback: bool,
 }
 
@@ -37,178 +72,204 @@ fn unwrap_sub_sup_braces(s: &str) -> String {
     res
 }
 
-/// Translates common LaTeX math expressions inside Mermaid diagrams into clean Unicode symbols.
+fn macro_replacement(name: &str) -> Option<(&'static str, bool)> {
+    match name {
+        // Greek Upper (eats trailing space as LaTeX command delimiter)
+        "Delta" => Some(("Δ", true)),
+        "Gamma" => Some(("Γ", true)),
+        "Theta" => Some(("Θ", true)),
+        "Lambda" => Some(("Λ", true)),
+        "Xi" => Some(("Ξ", true)),
+        "Pi" => Some(("Π", true)),
+        "Sigma" => Some(("Σ", true)),
+        "Phi" => Some(("Φ", true)),
+        "Psi" => Some(("Ψ", true)),
+        "Omega" => Some(("Ω", true)),
+        // Greek Lower
+        "alpha" => Some(("α", true)),
+        "beta" => Some(("β", true)),
+        "gamma" => Some(("γ", true)),
+        "delta" => Some(("δ", true)),
+        "epsilon" => Some(("ε", true)),
+        "varepsilon" => Some(("ε", true)),
+        "zeta" => Some(("ζ", true)),
+        "eta" => Some(("η", true)),
+        "theta" => Some(("θ", true)),
+        "vartheta" => Some(("θ", true)),
+        "iota" => Some(("ι", true)),
+        "kappa" => Some(("κ", true)),
+        "lambda" => Some(("λ", true)),
+        "mu" => Some(("μ", true)),
+        "nu" => Some(("ν", true)),
+        "xi" => Some(("ξ", true)),
+        "pi" => Some(("π", true)),
+        "rho" => Some(("ρ", true)),
+        "sigma" => Some(("σ", true)),
+        "tau" => Some(("τ", true)),
+        "upsilon" => Some(("υ", true)),
+        "phi" => Some(("ϕ", true)),
+        "varphi" => Some(("φ", true)),
+        "chi" => Some(("χ", true)),
+        "psi" => Some(("ψ", true)),
+        "omega" => Some(("ω", true)),
+        // Quantum & Brackets
+        "rangle" => Some(("⟩", false)),
+        "langle" => Some(("⟨", false)),
+        "vert" => Some(("|", false)),
+        // Operators & Relations
+        "in" => Some(("∈", false)),
+        "notin" => Some(("∉", false)),
+        "subset" => Some(("⊂", false)),
+        "subseteq" => Some(("⊆", false)),
+        "times" => Some(("×", false)),
+        "cdot" => Some(("·", false)),
+        "pm" => Some(("±", false)),
+        "mp" => Some(("∓", false)),
+        "div" => Some(("÷", false)),
+        "le" => Some(("≤", false)),
+        "leq" => Some(("≤", false)),
+        "ge" => Some(("≥", false)),
+        "geq" => Some(("≥", false)),
+        "ne" => Some(("≠", false)),
+        "neq" => Some(("≠", false)),
+        "approx" => Some(("≈", false)),
+        "equiv" => Some(("≡", false)),
+        "sim" => Some(("∼", false)),
+        "to" => Some(("→", false)),
+        "rightarrow" => Some(("→", false)),
+        "leftarrow" => Some(("←", false)),
+        "Rightarrow" => Some(("⇒", false)),
+        "Leftarrow" => Some(("⇐", false)),
+        "infty" => Some(("∞", false)),
+        "hbar" => Some(("ℏ", false)),
+        "partial" => Some(("∂", false)),
+        "nabla" => Some(("∇", false)),
+        "sum" => Some(("∑", false)),
+        "prod" => Some(("∏", false)),
+        "int" => Some(("∫", false)),
+        "quad" => Some((" ", false)),
+        "qquad" => Some(("  ", false)),
+        _ => None,
+    }
+}
+
+fn to_superscript(c: char) -> Option<char> {
+    match c {
+        '0' => Some('⁰'),
+        '1' => Some('¹'),
+        '2' => Some('²'),
+        '3' => Some('³'),
+        '4' => Some('⁴'),
+        '5' => Some('⁵'),
+        '6' => Some('⁶'),
+        '7' => Some('⁷'),
+        '8' => Some('⁸'),
+        '9' => Some('⁹'),
+        '+' => Some('⁺'),
+        '-' => Some('⁻'),
+        _ => None,
+    }
+}
+
+fn to_subscript(c: char) -> Option<char> {
+    match c {
+        '0' => Some('₀'),
+        '1' => Some('₁'),
+        '2' => Some('₂'),
+        '3' => Some('₃'),
+        '4' => Some('₄'),
+        '5' => Some('₅'),
+        '6' => Some('₆'),
+        '7' => Some('₇'),
+        '8' => Some('₈'),
+        '9' => Some('₉'),
+        '+' => Some('₊'),
+        '-' => Some('₋'),
+        _ => None,
+    }
+}
+
+/// Translates common LaTeX math expressions inside Mermaid diagrams into clean Unicode symbols
+/// in a high-efficiency single pass without intermediate string allocations.
 pub fn latex_to_unicode(math: &str) -> String {
     let unwrapped = unwrap_sub_sup_braces(math.trim());
-    let mut s = unwrapped;
+    let chars: Vec<char> = unwrapped.chars().collect();
+    let len = chars.len();
+    let mut out = String::with_capacity(len);
+    let mut i = 0;
 
-    // Specific replacements for LaTeX macros
-    let macros = [
-        // Greek upper (with and without space)
-        (r"\Delta ", "Δ"),
-        (r"\Delta", "Δ"),
-        (r"\Gamma ", "Γ"),
-        (r"\Gamma", "Γ"),
-        (r"\Theta ", "Θ"),
-        (r"\Theta", "Θ"),
-        (r"\Lambda ", "Λ"),
-        (r"\Lambda", "Λ"),
-        (r"\Xi ", "Ξ"),
-        (r"\Xi", "Ξ"),
-        (r"\Pi ", "Π"),
-        (r"\Pi", "Π"),
-        (r"\Sigma ", "Σ"),
-        (r"\Sigma", "Σ"),
-        (r"\Phi ", "Φ"),
-        (r"\Phi", "Φ"),
-        (r"\Psi ", "Ψ"),
-        (r"\Psi", "Ψ"),
-        (r"\Omega ", "Ω"),
-        (r"\Omega", "Ω"),
-        // Greek lower (with and without space)
-        (r"\alpha ", "α"),
-        (r"\alpha", "α"),
-        (r"\beta ", "β"),
-        (r"\beta", "β"),
-        (r"\gamma ", "γ"),
-        (r"\gamma", "γ"),
-        (r"\delta ", "δ"),
-        (r"\delta", "δ"),
-        (r"\epsilon ", "ε"),
-        (r"\epsilon", "ε"),
-        (r"\varepsilon ", "ε"),
-        (r"\varepsilon", "ε"),
-        (r"\zeta ", "ζ"),
-        (r"\zeta", "ζ"),
-        (r"\eta ", "η"),
-        (r"\eta", "η"),
-        (r"\theta ", "θ"),
-        (r"\theta", "θ"),
-        (r"\vartheta ", "θ"),
-        (r"\vartheta", "θ"),
-        (r"\iota ", "ι"),
-        (r"\iota", "ι"),
-        (r"\kappa ", "κ"),
-        (r"\kappa", "κ"),
-        (r"\lambda ", "λ"),
-        (r"\lambda", "λ"),
-        (r"\mu ", "μ"),
-        (r"\mu", "μ"),
-        (r"\nu ", "ν"),
-        (r"\nu", "ν"),
-        (r"\xi ", "ξ"),
-        (r"\xi", "ξ"),
-        (r"\pi ", "π"),
-        (r"\pi", "π"),
-        (r"\rho ", "ρ"),
-        (r"\rho", "ρ"),
-        (r"\sigma ", "σ"),
-        (r"\sigma", "σ"),
-        (r"\tau ", "τ"),
-        (r"\tau", "τ"),
-        (r"\upsilon ", "υ"),
-        (r"\upsilon", "υ"),
-        (r"\phi ", "ϕ"),
-        (r"\phi", "ϕ"),
-        (r"\varphi ", "φ"),
-        (r"\varphi", "φ"),
-        (r"\chi ", "χ"),
-        (r"\chi", "χ"),
-        (r"\psi ", "ψ"),
-        (r"\psi", "ψ"),
-        (r"\omega ", "ω"),
-        (r"\omega", "ω"),
-        // Quantum & Brackets
-        (r"\rangle", "⟩"),
-        (r"\langle", "⟨"),
-        (r"\vert", "|"),
-        (r"\{", "{"),
-        (r"\}", "}"),
-        // Operators & Relations
-        (r"\in", "∈"),
-        (r"\notin", "∉"),
-        (r"\subset", "⊂"),
-        (r"\subseteq", "⊆"),
-        (r"\times", "×"),
-        (r"\cdot", "·"),
-        (r"\pm", "±"),
-        (r"\mp", "∓"),
-        (r"\div", "÷"),
-        (r"\le", "≤"),
-        (r"\leq", "≤"),
-        (r"\ge", "≥"),
-        (r"\geq", "≥"),
-        (r"\ne", "≠"),
-        (r"\neq", "≠"),
-        (r"\approx", "≈"),
-        (r"\equiv", "≡"),
-        (r"\sim", "∼"),
-        (r"\to", "→"),
-        (r"\rightarrow", "→"),
-        (r"\leftarrow", "←"),
-        (r"\Rightarrow", "⇒"),
-        (r"\Leftarrow", "⇐"),
-        (r"\infty", "∞"),
-        (r"\hbar", "ℏ"),
-        (r"\partial", "∂"),
-        (r"\nabla", "∇"),
-        (r"\sum", "∑"),
-        (r"\prod", "∏"),
-        (r"\int", "∫"),
-        (r"\%", "%"),
-        (r"\ ", " "),
-        (r"\quad", " "),
-        (r"\qquad", "  "),
-    ];
-
-    for (pattern, replacement) in macros {
-        s = s.replace(pattern, replacement);
-    }
-
-    // Common superscripts
-    s = s.replace("^+", "⁺")
-        .replace("^-", "⁻")
-        .replace("^{0}", "⁰").replace("^0", "⁰")
-        .replace("^{1}", "¹").replace("^1", "¹")
-        .replace("^{2}", "²").replace("^2", "²")
-        .replace("^{3}", "³").replace("^3", "³")
-        .replace("^{4}", "⁴").replace("^4", "⁴")
-        .replace("^{5}", "⁵").replace("^5", "⁵")
-        .replace("^{6}", "⁶").replace("^6", "⁶")
-        .replace("^{7}", "⁷").replace("^7", "⁷")
-        .replace("^{8}", "⁸").replace("^8", "⁸")
-        .replace("^{9}", "⁹").replace("^9", "⁹");
-
-    // Common subscripts
-    s = s.replace("_{0}", "₀").replace("_0", "₀")
-        .replace("_{1}", "₁").replace("_1", "₁")
-        .replace("_{2}", "₂").replace("_2", "₂")
-        .replace("_{3}", "₃").replace("_3", "₃")
-        .replace("_{4}", "₄").replace("_4", "₄")
-        .replace("_{5}", "₅").replace("_5", "₅")
-        .replace("_{6}", "₆").replace("_6", "₆")
-        .replace("_{7}", "₇").replace("_7", "₇")
-        .replace("_{8}", "₈").replace("_8", "₈")
-        .replace("_{9}", "₉").replace("_9", "₉")
-        .replace("_{+}", "₊").replace("_+", "₊")
-        .replace("_{-}", "₋").replace("_-", "₋");
-
-    // Clean up multiple spaces
-    let mut cleaned = String::with_capacity(s.len());
-    let mut prev_space = false;
-    for c in s.chars() {
-        if c == ' ' {
-            if !prev_space {
-                cleaned.push(c);
-                prev_space = true;
+    while i < len {
+        let c = chars[i];
+        if c == '\\' {
+            i += 1;
+            if i >= len {
+                out.push('\\');
+                break;
             }
+            let next_c = chars[i];
+            match next_c {
+                '{' => { out.push('{'); i += 1; }
+                '}' => { out.push('}'); i += 1; }
+                '%' => { out.push('%'); i += 1; }
+                ' ' => { out.push(' '); i += 1; }
+                _ if next_c.is_alphabetic() => {
+                    let start = i;
+                    while i < len && chars[i].is_alphabetic() {
+                        i += 1;
+                    }
+                    let name: String = chars[start..i].iter().collect();
+                    if let Some((rep, eat_space)) = macro_replacement(&name) {
+                        out.push_str(rep);
+                        if eat_space && i < len && chars[i] == ' ' {
+                            i += 1;
+                        }
+                    } else {
+                        out.push('\\');
+                        out.push_str(&name);
+                    }
+                }
+                _ => {
+                    out.push('\\');
+                    out.push(next_c);
+                    i += 1;
+                }
+            }
+        } else if c == '^' {
+            i += 1;
+            if i < len {
+                if let Some(sup) = to_superscript(chars[i]) {
+                    out.push(sup);
+                    i += 1;
+                } else {
+                    out.push('^');
+                }
+            } else {
+                out.push('^');
+            }
+        } else if c == '_' {
+            i += 1;
+            if i < len {
+                if let Some(sub) = to_subscript(chars[i]) {
+                    out.push(sub);
+                    i += 1;
+                } else {
+                    out.push('_');
+                }
+            } else {
+                out.push('_');
+            }
+        } else if c == ' ' {
+            if !out.ends_with(' ') && !out.is_empty() {
+                out.push(' ');
+            }
+            i += 1;
         } else {
-            cleaned.push(c);
-            prev_space = false;
+            out.push(c);
+            i += 1;
         }
     }
 
-    cleaned.trim().to_string()
+    out.trim().to_string()
 }
 
 /// Preprocesses Mermaid diagram source code, converting embedded LaTeX math `$ ... $` or `$$ ... $$`
@@ -280,7 +341,7 @@ pub fn render_mermaid(code: &str) -> RenderedMermaid {
         if let Some(bytes) = cache.get(&hash) {
             return RenderedMermaid {
                 virtual_filename,
-                svg_bytes: bytes.clone(),
+                svg_bytes: bytes,
                 is_fallback: false,
             };
         }
@@ -289,7 +350,7 @@ pub fn render_mermaid(code: &str) -> RenderedMermaid {
     // Render using mermaid-rs-renderer
     match mermaid_rs_renderer::render(&processed_code) {
         Ok(svg_string) => {
-            let bytes = svg_string.into_bytes();
+            let bytes = Bytes::new(svg_string.into_bytes());
             {
                 let mut cache = get_cache().write();
                 cache.insert(hash, bytes.clone());
@@ -318,7 +379,7 @@ pub fn render_mermaid(code: &str) -> RenderedMermaid {
 
             RenderedMermaid {
                 virtual_filename,
-                svg_bytes: fallback_svg.into_bytes(),
+                svg_bytes: Bytes::new(fallback_svg.into_bytes()),
                 is_fallback: true,
             }
         }
@@ -425,5 +486,21 @@ mod tests {
         assert!(!svg_str.contains(r"\Delta"));
         assert!(!svg_str.contains(r"\Psi"));
         assert!(!svg_str.contains(r"\Phi"));
+    }
+
+    #[test]
+    fn test_bounded_cache_capacity() {
+        let mut cache = BoundedCache::new(3);
+        cache.insert("k1".to_string(), Bytes::new(b"v1"));
+        cache.insert("k2".to_string(), Bytes::new(b"v2"));
+        cache.insert("k3".to_string(), Bytes::new(b"v3"));
+        assert_eq!(cache.get("k1"), Some(Bytes::new(b"v1")));
+
+        cache.insert("k4".to_string(), Bytes::new(b"v4"));
+        // k1 should be evicted since capacity is 3
+        assert_eq!(cache.get("k1"), None);
+        assert_eq!(cache.get("k2"), Some(Bytes::new(b"v2")));
+        assert_eq!(cache.get("k3"), Some(Bytes::new(b"v3")));
+        assert_eq!(cache.get("k4"), Some(Bytes::new(b"v4")));
     }
 }

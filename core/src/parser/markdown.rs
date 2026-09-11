@@ -491,7 +491,7 @@ pub fn convert_markdown_to_typst(
                         // Render Mermaid diagram to SVG
                         let rendered = render_mermaid(&code_block_content);
                         let file_path = PathBuf::from(&rendered.virtual_filename);
-                        virtual_files.insert(file_path, Bytes::new(rendered.svg_bytes));
+                        virtual_files.insert(file_path, rendered.svg_bytes);
                         out.push_str(&format!(
                             "\n#align(center)[#image(\"{}\", width: 90%)]\n\n",
                             rendered.virtual_filename

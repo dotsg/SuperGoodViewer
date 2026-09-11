@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'package:flutter/foundation.dart';
 
 import 'package:path/path.dart' as p;
@@ -37,6 +38,8 @@ class ReaderController extends ChangeNotifier {
     fontSize: 10.5,
   );
   bool _isCompiling = false;
+  int _compileGeneration = 0;
+  bool _hasPendingCompile = false;
   String? _errorMessage;
   double _lastScrollRatio = 0.0;
   int _lastPageNumber = 1;
@@ -66,10 +69,10 @@ class ReaderController extends ChangeNotifier {
   double get lastZoom => _lastZoom;
   bool get isReloading => _isReloading;
   bool get autoReload => _autoReload;
-  List<String> get recentFiles => List.unmodifiable(_recentFiles);
+  List<String> get recentFiles => _recentFiles;
   Map<String, dynamic> get fontReport => _fontReport;
   bool get isTwoPage => _isTwoPage;
-  List<OutlineItem> get outlineItems => List.unmodifiable(_outlineItems);
+  List<OutlineItem> get outlineItems => _outlineItems;
   OutlineItem? get requestedJumpItem => _requestedJumpItem;
 
   void jumpToOutline(OutlineItem item) {
@@ -83,31 +86,31 @@ class ReaderController extends ChangeNotifier {
 
   void toggleTwoPage() {
     _isTwoPage = !_isTwoPage;
-    _persistPreferences();
+    _persistDebounced();
     notifyListeners();
   }
 
   void setTwoPage(bool value) {
     if (_isTwoPage != value) {
       _isTwoPage = value;
-      _persistPreferences();
+      _persistDebounced();
       notifyListeners();
     }
   }
 
   ReaderController({String? initialFilePath, bool autoRestorePreferences = true}) {
-    refreshFontReport();
+    unawaited(refreshFontReport());
+    _setSampleDocumentContent();
     if (initialFilePath != null && initialFilePath.isNotEmpty) {
       openFile(initialFilePath);
+    } else if (autoRestorePreferences) {
+      _initSession();
     } else {
-      loadSampleDocument();
-      if (autoRestorePreferences) {
-        _restoreLastSession();
-      }
+      compileDocument();
     }
   }
 
-  Future<void> _restoreLastSession() async {
+  Future<void> _initSession() async {
     try {
       final prefs = await PreferencesService.load();
       final lastFile = prefs['lastOpenedFile'] as String?;
@@ -142,10 +145,11 @@ class ReaderController extends ChangeNotifier {
           return;
         }
       }
-      notifyListeners();
     } catch (e) {
       debugPrint('Error restoring last session: $e');
     }
+    // Only compile sample document if no valid previous file exists
+    await compileDocument();
   }
 
   void _persistPreferences() {
@@ -288,9 +292,16 @@ class ReaderController extends ChangeNotifier {
   Future<void> compileDocument() async {
     if (_currentMarkdown.isEmpty) return;
 
+    if (_isCompiling) {
+      _hasPendingCompile = true;
+      return;
+    }
+
     _isCompiling = true;
+    _hasPendingCompile = false;
+    final int generation = ++_compileGeneration;
     _errorMessage = null;
-    debugPrint('[ReaderController] compileDocument: starting for "$_documentTitle" (${_currentMarkdown.length} chars)');
+    debugPrint('[ReaderController] compileDocument: starting gen $generation for "$_documentTitle" (${_currentMarkdown.length} chars)');
     notifyListeners();
 
     if (!NativeEngine.instance.isAvailable) {
@@ -313,20 +324,30 @@ class ReaderController extends ChangeNotifier {
         options: _renderOptions,
       );
 
-      if (pdfBytes != null && pdfBytes.isNotEmpty) {
-        _currentPdfBytes = pdfBytes;
-        _errorMessage = null;
-        debugPrint('[ReaderController] compileDocument: SUCCESS (${pdfBytes.length} bytes)');
-      } else {
-        _errorMessage = NativeEngine.instance.getLastError() ?? 'Compilation failed';
-        debugPrint('[ReaderController] compileDocument: FAILED ($_errorMessage)');
+      if (generation == _compileGeneration) {
+        if (pdfBytes != null && pdfBytes.isNotEmpty) {
+          _currentPdfBytes = pdfBytes;
+          _errorMessage = null;
+          debugPrint('[ReaderController] compileDocument: SUCCESS gen $generation (${pdfBytes.length} bytes)');
+        } else {
+          _errorMessage = NativeEngine.instance.getLastError() ?? 'Compilation failed';
+          debugPrint('[ReaderController] compileDocument: FAILED gen $generation ($_errorMessage)');
+        }
       }
     } catch (e, st) {
-      _errorMessage = 'Compilation error: $e';
-      debugPrint('[ReaderController] compileDocument: EXCEPTION ($e)\n$st');
+      if (generation == _compileGeneration) {
+        _errorMessage = 'Compilation error: $e';
+        debugPrint('[ReaderController] compileDocument: EXCEPTION gen $generation ($e)\n$st');
+      }
     } finally {
-      _isCompiling = false;
-      notifyListeners();
+      if (generation == _compileGeneration) {
+        _isCompiling = false;
+        notifyListeners();
+      }
+      if (_hasPendingCompile) {
+        _hasPendingCompile = false;
+        compileDocument();
+      }
     }
   }
 
@@ -334,7 +355,7 @@ class ReaderController extends ChangeNotifier {
     _isReloading = true;
     final nextMode = _renderOptions.mode == 'fluid' ? 'paged' : 'fluid';
     _renderOptions = _renderOptions.copyWith(mode: nextMode);
-    _persistPreferences();
+    _persistDebounced();
     compileDocument();
   }
 
@@ -342,7 +363,7 @@ class ReaderController extends ChangeNotifier {
     _isReloading = true;
     final nextTheme = _renderOptions.theme == 'light' ? 'dark' : 'light';
     _renderOptions = _renderOptions.copyWith(theme: nextTheme);
-    _persistPreferences();
+    _persistDebounced();
     compileDocument();
   }
 
@@ -363,13 +384,14 @@ class ReaderController extends ChangeNotifier {
   void setFontSize(double size) {
     _isReloading = true;
     _renderOptions = _renderOptions.copyWith(fontSize: size.clamp(8.0, 24.0));
-    _persistPreferences();
+    _persistDebounced();
     compileDocument();
   }
 
-  void refreshFontReport() {
+  Future<void> refreshFontReport() async {
     try {
-      _fontReport = NativeEngine.instance.detectFonts();
+      final report = await Isolate.run(() => NativeEngine.instance.detectFonts());
+      _fontReport = report;
       notifyListeners();
     } catch (_) {}
   }
@@ -377,14 +399,14 @@ class ReaderController extends ChangeNotifier {
   void setBodyFont(String? font) {
     _isReloading = true;
     _renderOptions = _renderOptions.copyWith(bodyFont: font);
-    _persistPreferences();
+    _persistDebounced();
     compileDocument();
   }
 
   void setCodeFont(String? font) {
     _isReloading = true;
     _renderOptions = _renderOptions.copyWith(codeFont: font);
-    _persistPreferences();
+    _persistDebounced();
     compileDocument();
   }
 
@@ -411,7 +433,7 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
-  void loadSampleDocument() {
+  void _setSampleDocumentContent() {
     _currentFilePath = null;
     _documentTitle = 'SoGoodViewer Demo';
     _currentMarkdown = r'''
@@ -498,6 +520,10 @@ graph LR
 ''';
 
     _extractOutline(_currentMarkdown);
+  }
+
+  void loadSampleDocument() {
+    _setSampleDocumentContent();
     compileDocument();
   }
 
@@ -537,13 +563,24 @@ graph LR
     _outlineItems = List.unmodifiable(items);
   }
 
+  static final _unicodeAlphaNumRegex = RegExp(r'[\p{L}\p{N}]', unicode: true);
+
+  static bool _isAlphaNum(int rune, String ch) {
+    if ((rune >= 0x30 && rune <= 0x39) ||
+        (rune >= 0x41 && rune <= 0x5A) ||
+        (rune >= 0x61 && rune <= 0x7A) ||
+        (rune >= 0x4E00 && rune <= 0x9FFF)) {
+      return true;
+    }
+    return _unicodeAlphaNumRegex.hasMatch(ch);
+  }
+
   static String _slugify(String text) {
     final buffer = StringBuffer();
     bool prevIsDash = false;
     for (final rune in text.runes) {
       final ch = String.fromCharCode(rune);
-      final isAlphaNum = RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(ch);
-      if (isAlphaNum) {
+      if (_isAlphaNum(rune, ch)) {
         buffer.write(ch.toLowerCase());
         prevIsDash = false;
       } else if (ch == '-') {
@@ -568,6 +605,7 @@ graph LR
   @override
   void dispose() {
     _persistDebounceTimer?.cancel();
+    _persistPreferences();
     _viewportDebounceTimer?.cancel();
     _debounceTimer?.cancel();
     _watcherSubscription?.cancel();

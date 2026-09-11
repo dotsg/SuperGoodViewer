@@ -139,6 +139,15 @@ pub fn compile_document(md: &str) -> Vec<u8> {{{{
     }
     benchmark_compilation("Book Chapter (~100 KB, 20 Chapters)", &large_md, 15);
 
+    // Sample 5: Real-World Test Document (test.md ~22 KB, Complex Sequence Mermaid, LaTeX Math, ASCII Table)
+    let test_paths = [Path::new("../test.md"), Path::new("test.md")];
+    for path in &test_paths {
+        if let Ok(test_md) = fs::read_to_string(path) {
+            benchmark_compilation("Real-World test.md (~22 KB, Mermaid+LaTeX)", &test_md, 30);
+            break;
+        }
+    }
+
     println!();
     println!("============================================================");
     println!("                 Benchmark Complete                         ");

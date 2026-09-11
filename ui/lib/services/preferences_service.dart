@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -8,14 +9,22 @@ import 'package:path_provider/path_provider.dart';
 /// Persists user settings, last opened document, and layout state.
 class PreferencesService {
   static const String _prefFileName = 'preferences.json';
+  static File? _cachedConfigFile;
+  static Future<void>? _pendingSave;
 
   static Future<File> _getConfigFile() async {
+    if (_cachedConfigFile != null) return _cachedConfigFile!;
+    if (Platform.environment.containsKey('FLUTTER_TEST')) {
+      final tempDir = Directory.systemTemp.createTempSync('sogoodviewer_test_');
+      _cachedConfigFile = File(p.join(tempDir.path, _prefFileName));
+      return _cachedConfigFile!;
+    }
     try {
       final appSupportDir = await getApplicationSupportDirectory();
       if (!await appSupportDir.exists()) {
         await appSupportDir.create(recursive: true);
       }
-      return File(p.join(appSupportDir.path, _prefFileName));
+      _cachedConfigFile = File(p.join(appSupportDir.path, _prefFileName));
     } catch (_) {
       final home = Platform.environment['HOME'] ??
           Platform.environment['USERPROFILE'] ??
@@ -24,8 +33,9 @@ class PreferencesService {
       if (!dir.existsSync()) {
         dir.createSync(recursive: true);
       }
-      return File(p.join(dir.path, _prefFileName));
+      _cachedConfigFile = File(p.join(dir.path, _prefFileName));
     }
+    return _cachedConfigFile!;
   }
 
   static Future<Map<String, dynamic>> load() async {
@@ -46,11 +56,27 @@ class PreferencesService {
   }
 
   static Future<void> save(Map<String, dynamic> prefs) async {
+    final prev = _pendingSave;
+    final completer = Completer<void>();
+    _pendingSave = completer.future;
+
     try {
+      if (prev != null) {
+        await prev.catchError((_) {});
+      }
       final file = await _getConfigFile();
-      await file.writeAsString(json.encode(prefs));
+      final tmpFile = File('${file.path}.tmp');
+      final jsonStr = json.encode(prefs);
+      await tmpFile.writeAsString(jsonStr, flush: true);
+      if (await tmpFile.exists()) {
+        await tmpFile.rename(file.path);
+      } else {
+        await file.writeAsString(jsonStr, flush: true);
+      }
     } catch (e) {
       debugPrint('PreferencesService.save error: $e');
+    } finally {
+      completer.complete();
     }
   }
 

@@ -419,6 +419,8 @@ void main() {
       await tester.pump();
 
       expect(find.text('跳转到页面'), findsNothing);
+      await tester.pump(const Duration(milliseconds: 700));
+      controller.dispose();
     });
   });
 }

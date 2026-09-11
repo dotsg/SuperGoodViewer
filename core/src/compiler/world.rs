@@ -220,8 +220,13 @@ impl GlobalFontStore {
     }
 }
 
+static GLOBAL_LIBRARY: OnceLock<LazyHash<Library>> = OnceLock::new();
+
+fn global_library() -> &'static LazyHash<Library> {
+    GLOBAL_LIBRARY.get_or_init(|| LazyHash::new(Library::default()))
+}
+
 pub struct MemoryWorld {
-    library: LazyHash<Library>,
     main_id: FileId,
     main_source: Source,
     doc_dir: PathBuf,
@@ -239,12 +244,9 @@ impl MemoryWorld {
         let rooted = RootedPath::new(VirtualRoot::Project, vpath);
         let main_id = FileId::new(rooted);
         let main_source = Source::new(main_id, source_text.to_string());
-
-        let library = LazyHash::new(Library::default());
         let doc_dir = doc_dir.as_ref().to_path_buf();
 
         Self {
-            library,
             main_id,
             main_source,
             doc_dir,
@@ -256,7 +258,7 @@ impl MemoryWorld {
 
 impl World for MemoryWorld {
     fn library(&self) -> &LazyHash<Library> {
-        &self.library
+        global_library()
     }
 
     fn book(&self) -> &LazyHash<FontBook> {

@@ -1,7 +1,6 @@
 # Rust build artifacts
 target/
 core/target/
-Cargo.lock
 *.dylib
 *.so
 *.dll

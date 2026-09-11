@@ -21,6 +21,11 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
 
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
       - name: Setup Flutter SDK
         uses: subosito/flutter-action@v2
         with:

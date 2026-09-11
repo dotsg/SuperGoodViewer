@@ -30,6 +30,37 @@ class _SoGoodViewerAppState extends State<SoGoodViewerApp> {
     super.dispose();
   }
 
+  static final ThemeData _lightTheme = ThemeData(
+    useMaterial3: true,
+    brightness: Brightness.light,
+    colorScheme: ColorScheme.fromSeed(
+      seedColor: const Color(0xFF2563EB), // Premium Royal Blue
+      brightness: Brightness.light,
+    ),
+    scaffoldBackgroundColor: const Color(0xFFF9F9F9),
+    fontFamily: '-apple-system',
+    dividerTheme: const DividerThemeData(
+      color: Color(0xFFE5E5E5),
+      thickness: 1,
+    ),
+  );
+
+  static final ThemeData _darkTheme = ThemeData(
+    useMaterial3: true,
+    brightness: Brightness.dark,
+    colorScheme: ColorScheme.fromSeed(
+      seedColor: const Color(0xFF3B82F6),
+      brightness: Brightness.dark,
+      surface: const Color(0xFF1E1E1E),
+    ),
+    scaffoldBackgroundColor: const Color(0xFF141414),
+    fontFamily: '-apple-system',
+    dividerTheme: const DividerThemeData(
+      color: Color(0xFF2E2E2E),
+      thickness: 1,
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -41,35 +72,8 @@ class _SoGoodViewerAppState extends State<SoGoodViewerApp> {
           title: 'SoGoodViewer',
           debugShowCheckedModeBanner: false,
           themeMode: isDark ? ThemeMode.dark : ThemeMode.light,
-          theme: ThemeData(
-            useMaterial3: true,
-            brightness: Brightness.light,
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: const Color(0xFF2563EB), // Premium Royal Blue
-              brightness: Brightness.light,
-            ),
-            scaffoldBackgroundColor: const Color(0xFFF9F9F9),
-            fontFamily: '-apple-system',
-            dividerTheme: const DividerThemeData(
-              color: Color(0xFFE5E5E5),
-              thickness: 1,
-            ),
-          ),
-          darkTheme: ThemeData(
-            useMaterial3: true,
-            brightness: Brightness.dark,
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: const Color(0xFF3B82F6),
-              brightness: Brightness.dark,
-              surface: const Color(0xFF1E1E1E),
-            ),
-            scaffoldBackgroundColor: const Color(0xFF141414),
-            fontFamily: '-apple-system',
-            dividerTheme: const DividerThemeData(
-              color: Color(0xFF2E2E2E),
-              thickness: 1,
-            ),
-          ),
+          theme: _lightTheme,
+          darkTheme: _darkTheme,
           home: WorkspaceView(controller: _controller),
         );
       },
