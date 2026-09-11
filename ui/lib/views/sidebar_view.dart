@@ -5,8 +5,9 @@ import '../controllers/reader_controller.dart';
 
 class SidebarView extends StatelessWidget {
   final ReaderController controller;
+  final VoidCallback? onClose;
 
-  const SidebarView({super.key, required this.controller});
+  const SidebarView({super.key, required this.controller, this.onClose});
 
   Future<void> _pickAndOpenFile(BuildContext context) async {
     final result = await FilePicker.platform.pickFiles(
@@ -24,18 +25,19 @@ class SidebarView extends StatelessWidget {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    return Container(
-      width: 260,
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F7F7),
-        border: Border(
-          right: BorderSide(
-            color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFE0E0E0),
-            width: 1,
+    return Material(
+      color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F7F7),
+      child: Container(
+        width: 260,
+        decoration: BoxDecoration(
+          border: Border(
+            right: BorderSide(
+              color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFE0E0E0),
+              width: 1,
+            ),
           ),
         ),
-      ),
-      child: Column(
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Sidebar Top Header
@@ -81,14 +83,26 @@ class SidebarView extends StatelessWidget {
                   ),
                 ),
                 IconButton(
-                  tooltip: '打开本地 Markdown 文件',
-                  icon: const Icon(Icons.folder_open_rounded, size: 20),
+                  tooltip: '打开本地 Markdown 文件 (Cmd+O)',
+                  icon: const Icon(Icons.folder_open_rounded, size: 19),
                   onPressed: () => _pickAndOpenFile(context),
                   style: IconButton.styleFrom(
-                    padding: const EdgeInsets.all(6),
-                    minimumSize: const Size(32, 32),
+                    padding: const EdgeInsets.all(5),
+                    minimumSize: const Size(28, 28),
                   ),
                 ),
+                if (onClose != null) ...[
+                  const SizedBox(width: 4),
+                  IconButton(
+                    tooltip: '收起侧边栏 (Cmd+B 或 Esc)',
+                    icon: const Icon(Icons.close_rounded, size: 19),
+                    onPressed: onClose,
+                    style: IconButton.styleFrom(
+                      padding: const EdgeInsets.all(5),
+                      minimumSize: const Size(28, 28),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -329,6 +343,7 @@ class SidebarView extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 }

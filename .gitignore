@@ -2,6 +2,9 @@
 target/
 core/target/
 Cargo.lock
+*.dylib
+*.so
+*.dll
 
 # Flutter / Dart artifacts
 .dart_tool/

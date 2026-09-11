@@ -2,13 +2,14 @@ import 'package:flutter/material.dart';
 import 'controllers/reader_controller.dart';
 import 'views/workspace_view.dart';
 
-void main() {
+void main(List<String> args) {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const SoGoodViewerApp());
+  runApp(SoGoodViewerApp(initialFile: args.isNotEmpty ? args.first : null));
 }
 
 class SoGoodViewerApp extends StatefulWidget {
-  const SoGoodViewerApp({super.key});
+  final String? initialFile;
+  const SoGoodViewerApp({super.key, this.initialFile});
 
   @override
   State<SoGoodViewerApp> createState() => _SoGoodViewerAppState();
@@ -20,7 +21,7 @@ class _SoGoodViewerAppState extends State<SoGoodViewerApp> {
   @override
   void initState() {
     super.initState();
-    _controller = ReaderController();
+    _controller = ReaderController(initialFilePath: widget.initialFile);
   }
 
   @override

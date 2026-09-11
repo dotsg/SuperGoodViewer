@@ -1,5 +1,6 @@
 import 'dart:ffi';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:path/path.dart' as p;
@@ -194,5 +195,22 @@ class NativeEngine {
       calloc.free(docDirPtr);
       calloc.free(optionsPtr);
     }
+  }
+
+  /// Compiles markdown in a background Dart isolate so the UI thread never drops frames.
+  Future<Uint8List?> compileMarkdownAsync(
+    String markdown, {
+    String title = 'Document',
+    String docDir = '.',
+    RenderOptions options = const RenderOptions(),
+  }) async {
+    return await Isolate.run(() {
+      return NativeEngine.instance.compileMarkdown(
+        markdown,
+        title: title,
+        docDir: docDir,
+        options: options,
+      );
+    });
   }
 }

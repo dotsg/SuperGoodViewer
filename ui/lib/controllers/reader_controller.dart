@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 
@@ -14,7 +15,7 @@ class ReaderController extends ChangeNotifier {
   RenderOptions _renderOptions = const RenderOptions(
     mode: 'fluid',
     theme: 'light',
-    viewportWidth: 540.0,
+    viewportWidth: 720.0,
     fontSize: 10.5,
   );
   bool _isCompiling = false;
@@ -37,8 +38,12 @@ class ReaderController extends ChangeNotifier {
   bool get autoReload => _autoReload;
   List<String> get recentFiles => List.unmodifiable(_recentFiles);
 
-  ReaderController() {
-    loadSampleDocument();
+  ReaderController({String? initialFilePath}) {
+    if (initialFilePath != null && initialFilePath.isNotEmpty) {
+      openFile(initialFilePath);
+    } else {
+      loadSampleDocument();
+    }
   }
 
   void updateScrollRatio(double ratio) {
@@ -56,7 +61,13 @@ class ReaderController extends ChangeNotifier {
     }
 
     try {
-      final content = await file.readAsString();
+      final bytes = await file.readAsBytes();
+      String content;
+      try {
+        content = utf8.decode(bytes);
+      } catch (_) {
+        content = utf8.decode(bytes, allowMalformed: true);
+      }
       _currentFilePath = filePath;
       _currentMarkdown = content;
       _documentTitle = p.basenameWithoutExtension(filePath);
@@ -105,8 +116,13 @@ class ReaderController extends ChangeNotifier {
       if (_currentFilePath != null) {
         final file = File(_currentFilePath!);
         if (await file.exists()) {
-          _currentMarkdown = await file.readAsString();
-          await compileDocument();
+          try {
+            final bytes = await file.readAsBytes();
+            _currentMarkdown = utf8.decode(bytes, allowMalformed: true);
+            await compileDocument();
+          } catch (e) {
+            debugPrint('Failed to reload modified file: $e');
+          }
         }
       }
     });
@@ -124,7 +140,7 @@ class ReaderController extends ChangeNotifier {
           ? p.dirname(_currentFilePath!)
           : Directory.current.path;
 
-      final pdfBytes = NativeEngine.instance.compileMarkdown(
+      final pdfBytes = await NativeEngine.instance.compileMarkdownAsync(
         _currentMarkdown,
         title: _documentTitle,
         docDir: docDir,

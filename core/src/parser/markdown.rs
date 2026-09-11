@@ -201,6 +201,12 @@ pub fn convert_markdown_to_typst(
     let quote_bg = if options.theme == "dark" { "rgb(\"#252525\")" } else { "rgb(\"#f6f8fa\")" };
     let quote_border = if options.theme == "dark" { "rgb(\"#555555\")" } else { "rgb(\"#d0d7de\")" };
 
+    let (badge_bg, badge_stroke, badge_fg) = if options.theme == "dark" {
+        ("rgb(\"#2d3748\")", "rgb(\"#4a5568\")", "rgb(\"#e2e8f0\")")
+    } else {
+        ("rgb(\"#f1f5f9\")", "rgb(\"#cbd5e1\")", "rgb(\"#334155\")")
+    };
+
     // 2. Parse Markdown AST with pulldown-cmark
     let mut parser_opts = Options::empty();
     parser_opts.insert(Options::ENABLE_TABLES);
@@ -218,6 +224,8 @@ pub fn convert_markdown_to_typst(
     let mut code_block_content = String::new();
     let mut in_table_head = false;
     let mut list_depth: usize = 0;
+    let mut link_stack: Vec<bool> = Vec::new();
+    let mut current_image: Option<(String, String)> = None;
 
     for event in parser {
         match event {
@@ -279,10 +287,17 @@ pub fn convert_markdown_to_typst(
                 Tag::Strong => out.push('*'),
                 Tag::Strikethrough => out.push_str("#strike["),
                 Tag::Link { dest_url, .. } => {
-                    out.push_str(&format!("#link(\"{}\")[", dest_url));
+                    let dest = dest_url.trim();
+                    if dest.is_empty() {
+                        link_stack.push(false);
+                        out.push('[');
+                    } else {
+                        link_stack.push(true);
+                        out.push_str(&format!("#link(\"{dest}\")["));
+                    }
                 }
                 Tag::Image { dest_url, .. } => {
-                    out.push_str(&format!("#image(\"{}\")", dest_url));
+                    current_image = Some((dest_url.to_string(), String::new()));
                 }
                 Tag::Table(aligns) => {
                     let cols_count = aligns.len();
@@ -353,8 +368,40 @@ pub fn convert_markdown_to_typst(
                 TagEnd::Emphasis => out.push('_'),
                 TagEnd::Strong => out.push('*'),
                 TagEnd::Strikethrough => out.push(']'),
-                TagEnd::Link => out.push(']'),
-                TagEnd::Image => {}
+                TagEnd::Link => {
+                    link_stack.pop();
+                    out.push(']');
+                }
+                TagEnd::Image => {
+                    if let Some((url, alt_raw)) = current_image.take() {
+                        let alt = if alt_raw.trim().is_empty() {
+                            "图片".to_string()
+                        } else {
+                            alt_raw.trim().to_string()
+                        };
+                        let escaped_alt = escape_typst_text(&alt);
+                        let in_link = link_stack.iter().any(|&active| active);
+
+                        let is_url = url.starts_with("http://") || url.starts_with("https://");
+                        if is_url {
+                            if in_link {
+                                // Inside an outer #link(...)[...], render clean inline badge without nesting #link
+                                out.push_str(&format!(
+                                    "#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 4pt, y: 2pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[{}]]",
+                                    escaped_alt
+                                ));
+                            } else {
+                                out.push_str(&format!(
+                                    "#link(\"{url}\")[#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 4pt, y: 2pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🔗 {}]]]",
+                                    escaped_alt
+                                ));
+                            }
+                        } else {
+                            // Local file path (resolved by MemoryWorld against doc_dir)
+                            out.push_str(&format!("\n#align(center)[#image(\"{url}\")]\n\n"));
+                        }
+                    }
+                }
                 TagEnd::Table => {
                     out.push_str(")]\n\n");
                 }
@@ -374,16 +421,24 @@ pub fn convert_markdown_to_typst(
                 _ => {}
             },
             Event::Text(text) => {
-                if in_code_block {
+                if let Some((_, ref mut alt_text)) = current_image {
+                    alt_text.push_str(&text);
+                } else if in_code_block {
                     code_block_content.push_str(&text);
                 } else {
                     out.push_str(&escape_typst_text(&text));
                 }
             }
             Event::Code(code) => {
-                out.push('`');
-                out.push_str(&code);
-                out.push('`');
+                if let Some((_, ref mut alt_text)) = current_image {
+                    alt_text.push('`');
+                    alt_text.push_str(&code);
+                    alt_text.push('`');
+                } else {
+                    out.push('`');
+                    out.push_str(&code);
+                    out.push('`');
+                }
             }
             Event::InlineMath(latex) => {
                 out.push_str(&transpile_latex_math(&latex, false));

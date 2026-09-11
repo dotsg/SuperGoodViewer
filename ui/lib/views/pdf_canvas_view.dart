@@ -8,19 +8,29 @@ class PdfCanvasView extends StatefulWidget {
   final Uint8List? pdfBytes;
   final String documentTitle;
   final ReaderController controller;
+  final VoidCallback? onUserScrolled;
+  final VoidCallback? onCanvasTapped;
+  final VoidCallback? onOpenFile;
+  final VoidCallback? onToggleSidebar;
+  final VoidCallback? onExportPdf;
 
   const PdfCanvasView({
     super.key,
     required this.pdfBytes,
     required this.documentTitle,
     required this.controller,
+    this.onUserScrolled,
+    this.onCanvasTapped,
+    this.onOpenFile,
+    this.onToggleSidebar,
+    this.onExportPdf,
   });
 
   @override
-  State<PdfCanvasView> createState() => _PdfCanvasViewState();
+  State<PdfCanvasView> createState() => PdfCanvasViewState();
 }
 
-class _PdfCanvasViewState extends State<PdfCanvasView> {
+class PdfCanvasViewState extends State<PdfCanvasView> {
   late final PdfViewerController _pdfController;
   bool _isRestoringScroll = false;
 
@@ -60,6 +70,80 @@ class _PdfCanvasViewState extends State<PdfCanvasView> {
     }
   }
 
+  Future<bool> copyTextSelection() async {
+    if (_pdfController.isReady) {
+      return await _pdfController.textSelectionDelegate.copyTextSelection();
+    }
+    return false;
+  }
+
+  Future<void> selectAllText() async {
+    if (_pdfController.isReady) {
+      await _pdfController.textSelectionDelegate.selectAllText();
+    }
+  }
+
+  void _enrichContextMenu(
+    PdfViewerContextMenuBuilderParams params,
+    List<ContextMenuButtonItem> items,
+  ) {
+    if (widget.onOpenFile != null) {
+      items.add(
+        ContextMenuButtonItem(
+          label: '打开文件... (Cmd+O)',
+          onPressed: () {
+            params.dismissContextMenu();
+            widget.onOpenFile!();
+          },
+        ),
+      );
+    }
+    items.add(
+      ContextMenuButtonItem(
+        label: widget.controller.renderOptions.isFluid
+            ? '切换为 A4 出版模式 (Cmd+P)'
+            : '切换为自适应流式 (Cmd+P)',
+        onPressed: () {
+          params.dismissContextMenu();
+          widget.controller.toggleMode();
+        },
+      ),
+    );
+    items.add(
+      ContextMenuButtonItem(
+        label: widget.controller.renderOptions.isDark
+            ? '切换为明亮主题 (Cmd+T)'
+            : '切换为暗黑主题 (Cmd+T)',
+        onPressed: () {
+          params.dismissContextMenu();
+          widget.controller.toggleTheme();
+        },
+      ),
+    );
+    if (widget.onToggleSidebar != null) {
+      items.add(
+        ContextMenuButtonItem(
+          label: '展开/收起侧边栏 (Cmd+B)',
+          onPressed: () {
+            params.dismissContextMenu();
+            widget.onToggleSidebar!();
+          },
+        ),
+      );
+    }
+    if (widget.onExportPdf != null) {
+      items.add(
+        ContextMenuButtonItem(
+          label: '导出出版级 PDF... (Cmd+E)',
+          onPressed: () {
+            params.dismissContextMenu();
+            widget.onExportPdf!();
+          },
+        ),
+      );
+    }
+  }
+
   @override
   void dispose() {
     _pdfController.removeListener(_onPdfViewerChanged);
@@ -73,13 +157,18 @@ class _PdfCanvasViewState extends State<PdfCanvasView> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const CircularProgressIndicator(strokeWidth: 2.5),
+            const SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(strokeWidth: 2.2),
+            ),
             const SizedBox(height: 16),
             Text(
               '正在排版文档...',
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
-                fontSize: 14,
+                fontSize: 13.5,
+                letterSpacing: -0.2,
               ),
             ),
           ],
@@ -92,29 +181,56 @@ class _PdfCanvasViewState extends State<PdfCanvasView> {
 
     return Scaffold(
       backgroundColor: canvasBg,
-      body: PdfViewer.data(
-        widget.pdfBytes!,
-        key: ValueKey('${widget.documentTitle}_${widget.pdfBytes!.length}'),
-        sourceName: widget.documentTitle,
-        controller: _pdfController,
-        params: PdfViewerParams(
-          backgroundColor: canvasBg,
-          pageAnchor: PdfPageAnchor.top,
-          underflowAnchor: PdfPageAnchor.top,
-          onViewerReady: (document, controller) {
-            _restoreScroll();
-          },
-
-          linkHandlerParams: PdfLinkHandlerParams(
-            onLinkTap: (link) async {
-              if (link.url != null && await canLaunchUrl(link.url!)) {
-                await launchUrl(link.url!);
-              }
+      body: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerSignal: (event) {
+          widget.onUserScrolled?.call();
+        },
+        onPointerPanZoomUpdate: (_) {
+          widget.onUserScrolled?.call();
+        },
+        child: PdfViewer.data(
+          widget.pdfBytes!,
+          key: ValueKey('${widget.documentTitle}_${widget.pdfBytes!.hashCode}'),
+          sourceName: '${widget.documentTitle}_${widget.pdfBytes!.hashCode}',
+          controller: _pdfController,
+          params: PdfViewerParams(
+            backgroundColor: canvasBg,
+            margin: 16.0,
+            boundaryMargin: const EdgeInsets.only(
+              top: 48,
+              bottom: 48,
+              left: 20,
+              right: 20,
+            ),
+            pageAnchor: PdfPageAnchor.top,
+            underflowAnchor: PdfPageAnchor.top,
+            textSelectionParams: const PdfTextSelectionParams(
+              enabled: true,
+              showContextMenuAutomatically: true,
+            ),
+            onViewerReady: (document, controller) {
+              _restoreScroll();
             },
+            onGeneralTap: (context, controller, details) {
+              if (details.type == PdfViewerGeneralTapType.tap) {
+                widget.onCanvasTapped?.call();
+              }
+              return false;
+            },
+            customizeContextMenuItems: (params, items) {
+              _enrichContextMenu(params, items);
+            },
+            linkHandlerParams: PdfLinkHandlerParams(
+              onLinkTap: (link) async {
+                if (link.url != null && await canLaunchUrl(link.url!)) {
+                  await launchUrl(link.url!);
+                }
+              },
+            ),
           ),
         ),
       ),
     );
   }
-
 }
