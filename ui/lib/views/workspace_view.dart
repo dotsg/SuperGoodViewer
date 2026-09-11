@@ -25,6 +25,13 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   Timer? _toolbarTimer;
   final GlobalKey<PdfCanvasViewState> _pdfCanvasKey = GlobalKey<PdfCanvasViewState>();
 
+  double _currentZoom = 1.0;
+  bool _isZoomHudVisible = false;
+  String _zoomHudText = '100%';
+  Timer? _zoomHudTimer;
+
+  static const _windowChannel = MethodChannel('com.sogoodviewer.window');
+
   @override
   void initState() {
     super.initState();
@@ -35,6 +42,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   @override
   void dispose() {
     _toolbarTimer?.cancel();
+    _zoomHudTimer?.cancel();
     super.dispose();
   }
 
@@ -146,6 +154,67 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     }
   }
 
+  Future<void> _toggleFullScreen() async {
+    try {
+      await _windowChannel.invokeMethod('toggleFullScreen');
+    } catch (_) {}
+  }
+
+  void _showZoomHud(String text) {
+    _zoomHudTimer?.cancel();
+    setState(() {
+      _zoomHudText = text;
+      _isZoomHudVisible = true;
+    });
+    _zoomHudTimer = Timer(const Duration(milliseconds: 1400), () {
+      if (mounted) {
+        setState(() {
+          _isZoomHudVisible = false;
+        });
+      }
+    });
+  }
+
+  void _handleZoomIn() async {
+    await _pdfCanvasKey.currentState?.zoomIn();
+    final zoom = _pdfCanvasKey.currentState?.currentZoom ?? _currentZoom;
+    setState(() => _currentZoom = zoom);
+    _showZoomHud('${(zoom * 100).round()}%');
+  }
+
+  void _handleZoomOut() async {
+    await _pdfCanvasKey.currentState?.zoomOut();
+    final zoom = _pdfCanvasKey.currentState?.currentZoom ?? _currentZoom;
+    setState(() => _currentZoom = zoom);
+    _showZoomHud('${(zoom * 100).round()}%');
+  }
+
+  void _handleResetZoom() async {
+    await _pdfCanvasKey.currentState?.resetZoom();
+    setState(() => _currentZoom = 1.0);
+    _showZoomHud('实际大小 100%');
+  }
+
+  void _handleFitWidth() async {
+    await _pdfCanvasKey.currentState?.fitWidth();
+    final zoom = _pdfCanvasKey.currentState?.currentZoom ?? _currentZoom;
+    setState(() => _currentZoom = zoom);
+    _showZoomHud('满窗口 (${(zoom * 100).round()}%)');
+  }
+
+  void _handleFitPage() async {
+    await _pdfCanvasKey.currentState?.fitPage();
+    final zoom = _pdfCanvasKey.currentState?.currentZoom ?? _currentZoom;
+    setState(() => _currentZoom = zoom);
+    _showZoomHud('满屏 (${(zoom * 100).round()}%)');
+  }
+
+  void _handleZoomTo(double targetZoom) async {
+    await _pdfCanvasKey.currentState?.zoomTo(targetZoom);
+    setState(() => _currentZoom = targetZoom);
+    _showZoomHud('${(targetZoom * 100).round()}%');
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -158,29 +227,53 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         return CallbackShortcuts(
           bindings: {
         const SingleActivator(LogicalKeyboardKey.keyO, meta: true): _pickAndOpenFile,
+        const SingleActivator(LogicalKeyboardKey.keyO, control: true): _pickAndOpenFile,
         const SingleActivator(LogicalKeyboardKey.keyB, meta: true): () {
           setState(() => _isSidebarOpen = !_isSidebarOpen);
         },
+        const SingleActivator(LogicalKeyboardKey.keyB, control: true): () {
+          setState(() => _isSidebarOpen = !_isSidebarOpen);
+        },
         const SingleActivator(LogicalKeyboardKey.keyE, meta: true): _handleExportPdf,
+        const SingleActivator(LogicalKeyboardKey.keyE, control: true): _handleExportPdf,
         const SingleActivator(LogicalKeyboardKey.keyR, meta: true):
+            controller.compileDocument,
+        const SingleActivator(LogicalKeyboardKey.keyR, control: true):
             controller.compileDocument,
         const SingleActivator(LogicalKeyboardKey.keyT, meta: true):
             controller.toggleTheme,
+        const SingleActivator(LogicalKeyboardKey.keyT, control: true):
+            controller.toggleTheme,
         const SingleActivator(LogicalKeyboardKey.keyP, meta: true):
             controller.toggleMode,
-        const SingleActivator(LogicalKeyboardKey.equal, meta: true): () {
-          controller.setFontSize(controller.renderOptions.fontSize + 0.5);
-        },
-        const SingleActivator(LogicalKeyboardKey.add, meta: true): () {
-          controller.setFontSize(controller.renderOptions.fontSize + 0.5);
-        },
-        const SingleActivator(LogicalKeyboardKey.minus, meta: true): () {
-          controller.setFontSize(controller.renderOptions.fontSize - 0.5);
-        },
-        const SingleActivator(LogicalKeyboardKey.digit0, meta: true): () {
-          controller.setFontSize(10.5);
-        },
+        const SingleActivator(LogicalKeyboardKey.keyP, control: true):
+            controller.toggleMode,
+
+        // Page Zoom Shortcuts (Replacing font size shortcuts)
+        const SingleActivator(LogicalKeyboardKey.equal, meta: true): _handleZoomIn,
+        const SingleActivator(LogicalKeyboardKey.add, meta: true): _handleZoomIn,
+        const SingleActivator(LogicalKeyboardKey.equal, control: true): _handleZoomIn,
+        const SingleActivator(LogicalKeyboardKey.add, control: true): _handleZoomIn,
+
+        const SingleActivator(LogicalKeyboardKey.minus, meta: true): _handleZoomOut,
+        const SingleActivator(LogicalKeyboardKey.minus, control: true): _handleZoomOut,
+
+        const SingleActivator(LogicalKeyboardKey.digit0, meta: true): _handleResetZoom,
+        const SingleActivator(LogicalKeyboardKey.digit0, control: true): _handleResetZoom,
+
+        const SingleActivator(LogicalKeyboardKey.digit9, meta: true): _handleFitWidth,
+        const SingleActivator(LogicalKeyboardKey.digit9, control: true): _handleFitWidth,
+
+        const SingleActivator(LogicalKeyboardKey.digit1, meta: true): _handleFitPage,
+        const SingleActivator(LogicalKeyboardKey.digit1, control: true): _handleFitPage,
+
+        // Full Screen Toggle
+        const SingleActivator(LogicalKeyboardKey.keyF, meta: true, control: true):
+            _toggleFullScreen,
+        const SingleActivator(LogicalKeyboardKey.f11): _toggleFullScreen,
+
         const SingleActivator(LogicalKeyboardKey.backslash, meta: true): _toggleToolbar,
+        const SingleActivator(LogicalKeyboardKey.backslash, control: true): _toggleToolbar,
         const SingleActivator(LogicalKeyboardKey.escape): () {
           if (_isToolbarVisible) {
             setState(() => _isToolbarVisible = false);
@@ -190,7 +283,12 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         },
         const SingleActivator(LogicalKeyboardKey.keyC, meta: true):
             _handleCopySelection,
+        const SingleActivator(LogicalKeyboardKey.keyC, control: true):
+            _handleCopySelection,
         const SingleActivator(LogicalKeyboardKey.keyA, meta: true): () async {
+          await _pdfCanvasKey.currentState?.selectAllText();
+        },
+        const SingleActivator(LogicalKeyboardKey.keyA, control: true): () async {
           await _pdfCanvasKey.currentState?.selectAllText();
         },
         const SingleActivator(LogicalKeyboardKey.keyF, meta: true, shift: true): () {
@@ -225,6 +323,11 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                       onToggleSidebar: () =>
                           setState(() => _isSidebarOpen = !_isSidebarOpen),
                       onExportPdf: _handleExportPdf,
+                      onZoomChanged: (zoom) {
+                        if (mounted && (zoom - _currentZoom).abs() > 0.005) {
+                          setState(() => _currentZoom = zoom);
+                        }
+                      },
                     ),
 
                     // Top Hover Zone: moving mouse to the top edge gracefully brings up the floating controls
@@ -277,6 +380,63 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                         ),
                       ),
                     ),
+
+                    // Transient Zoom HUD Capsule
+                    if (_isZoomHudVisible)
+                      Positioned(
+                        bottom: 36,
+                        left: 0,
+                        right: 0,
+                        child: Center(
+                          child: IgnorePointer(
+                            child: AnimatedOpacity(
+                              duration: const Duration(milliseconds: 180),
+                              opacity: _isZoomHudVisible ? 1.0 : 0.0,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: isDark ? const Color(0xE6242424) : const Color(0xF2FFFFFF),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: isDark ? const Color(0x38FFFFFF) : const Color(0x1C000000),
+                                    width: 1,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.12),
+                                      blurRadius: 16,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.zoom_in_rounded,
+                                      size: 16,
+                                      color: theme.colorScheme.primary,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      _zoomHudText,
+                                      style: TextStyle(
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w600,
+                                        color: isDark ? Colors.white : Colors.black87,
+                                        letterSpacing: -0.2,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
 
                     // Floating Error Toast / Banner (if any error occurs)
                     if (controller.errorMessage != null)
@@ -437,32 +597,48 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               ),
               _PillDivider(isDark: isDark),
 
-              // Font Size Adjustment (- / +)
+              // Page Zoom Stepper & Preset Dropdown (- / % / +)
               _PillIconButton(
                 icon: Icons.remove_rounded,
-                tooltip: '缩小排版字号 (Cmd+-)',
+                tooltip: '缩小页面 (Cmd+-)',
                 iconSize: 15,
-                onPressed: () => controller.setFontSize(
-                  controller.renderOptions.fontSize - 0.5,
-                ),
+                onPressed: _handleZoomOut,
               ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2),
-                child: Text(
-                  controller.renderOptions.fontSize.toStringAsFixed(1),
-                  style: const TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+              _ZoomDropdownBadge(
+                currentZoom: _currentZoom,
+                isDark: isDark,
+                onZoomSelected: (zoom) {
+                  if (zoom == -1.0) {
+                    _handleFitWidth();
+                  } else if (zoom == -2.0) {
+                    _handleFitPage();
+                  } else if (zoom == -3.0) {
+                    _toggleFullScreen();
+                  } else {
+                    _handleZoomTo(zoom);
+                  }
+                },
               ),
               _PillIconButton(
                 icon: Icons.add_rounded,
-                tooltip: '放大排版字号 (Cmd+=)',
+                tooltip: '放大页面 (Cmd+=)',
                 iconSize: 15,
-                onPressed: () => controller.setFontSize(
-                  controller.renderOptions.fontSize + 0.5,
-                ),
+                onPressed: _handleZoomIn,
+              ),
+              _PillDivider(isDark: isDark),
+
+              // Quick Fit-to-Window & Fit-to-Page Buttons
+              _PillIconButton(
+                icon: Icons.fit_screen_outlined,
+                tooltip: '满窗口 / 适应宽度 (Cmd+9)',
+                iconSize: 15,
+                onPressed: _handleFitWidth,
+              ),
+              _PillIconButton(
+                icon: Icons.crop_free_rounded,
+                tooltip: '满屏 / 适应整页 (Cmd+1)',
+                iconSize: 15,
+                onPressed: _handleFitPage,
               ),
               _PillDivider(isDark: isDark),
 
@@ -610,6 +786,127 @@ class _PillDivider extends StatelessWidget {
       height: 18,
       margin: const EdgeInsets.symmetric(horizontal: 4),
       color: isDark ? const Color(0x22FFFFFF) : const Color(0x18000000),
+    );
+  }
+}
+
+class _ZoomDropdownBadge extends StatelessWidget {
+  final double currentZoom;
+  final bool isDark;
+  final ValueChanged<double> onZoomSelected;
+
+  const _ZoomDropdownBadge({
+    required this.currentZoom,
+    required this.isDark,
+    required this.onZoomSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final percentText = '${(currentZoom * 100).round()}%';
+    final textColor = isDark ? Colors.white : Colors.black87;
+
+    return PopupMenuButton<double>(
+      tooltip: '页面缩放比例与预设',
+      offset: const Offset(0, 36),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      color: isDark ? const Color(0xFF262626) : Colors.white,
+      onSelected: onZoomSelected,
+      itemBuilder: (context) => [
+        const PopupMenuItem<double>(
+          value: -1.0,
+          child: Row(
+            children: [
+              Icon(Icons.fit_screen_outlined, size: 16),
+              SizedBox(width: 8),
+              Text('满窗口 (适应宽度)', style: TextStyle(fontSize: 12.5)),
+              Spacer(),
+              Text('Cmd+9', style: TextStyle(fontSize: 11, color: Colors.grey)),
+            ],
+          ),
+        ),
+        const PopupMenuItem<double>(
+          value: -2.0,
+          child: Row(
+            children: [
+              Icon(Icons.crop_free_rounded, size: 16),
+              SizedBox(width: 8),
+              Text('满屏 (适应整页)', style: TextStyle(fontSize: 12.5)),
+              Spacer(),
+              Text('Cmd+1', style: TextStyle(fontSize: 11, color: Colors.grey)),
+            ],
+          ),
+        ),
+        const PopupMenuItem<double>(
+          value: -3.0,
+          child: Row(
+            children: [
+              Icon(Icons.fullscreen_rounded, size: 16),
+              SizedBox(width: 8),
+              Text('全屏沉浸浏览', style: TextStyle(fontSize: 12.5)),
+              Spacer(),
+              Text('Cmd+Ctrl+F', style: TextStyle(fontSize: 11, color: Colors.grey)),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(),
+        _buildZoomItem(0.50, '50%'),
+        _buildZoomItem(0.75, '75%'),
+        _buildZoomItem(1.00, '100% (原始大小)', shortcut: 'Cmd+0'),
+        _buildZoomItem(1.25, '125%'),
+        _buildZoomItem(1.50, '150%'),
+        _buildZoomItem(2.00, '200%'),
+        _buildZoomItem(3.00, '300%'),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0x28FFFFFF) : const Color(0x14000000),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              percentText,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: textColor,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+            const SizedBox(width: 1),
+            Icon(
+              Icons.arrow_drop_down_rounded,
+              size: 14,
+              color: textColor.withValues(alpha: 0.6),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  PopupMenuItem<double> _buildZoomItem(double val, String label, {String? shortcut}) {
+    final isCurrent = (currentZoom - val).abs() < 0.02;
+    return PopupMenuItem<double>(
+      value: val,
+      child: Row(
+        children: [
+          Icon(
+            isCurrent ? Icons.check_rounded : Icons.radio_button_unchecked,
+            size: 14,
+            color: isCurrent ? const Color(0xFF22C55E) : Colors.transparent,
+          ),
+          const SizedBox(width: 6),
+          Text(label, style: const TextStyle(fontSize: 12.5)),
+          if (shortcut != null) ...[
+            const Spacer(),
+            Text(shortcut, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+          ],
+        ],
+      ),
     );
   }
 }

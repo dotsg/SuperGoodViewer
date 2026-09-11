@@ -336,6 +336,91 @@ class _FontSettingsDialogState extends State<_FontSettingsDialog> {
                     ),
                     const SizedBox(height: 12),
 
+                    // Base Typesetting Font Size
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            '排版基础字号 (Base Typesetting Font Size)',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            widget.controller.setFontSize(10.5);
+                            setState(() {});
+                          },
+                          style: TextButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                          child: const Text('恢复默认 (10.5 pt)', style: TextStyle(fontSize: 11.5)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F5),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: isDark ? const Color(0xFF333333) : const Color(0xFFE0E0E0),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.remove_rounded, size: 18),
+                            tooltip: '缩小字号',
+                            visualDensity: VisualDensity.compact,
+                            onPressed: () {
+                              final newSize = (widget.controller.renderOptions.fontSize - 0.5).clamp(8.0, 24.0);
+                              widget.controller.setFontSize(newSize);
+                              setState(() {});
+                            },
+                          ),
+                          Expanded(
+                            child: Slider(
+                              value: widget.controller.renderOptions.fontSize.clamp(8.0, 24.0),
+                              min: 8.0,
+                              max: 24.0,
+                              divisions: 32,
+                              label: '${widget.controller.renderOptions.fontSize.toStringAsFixed(1)} pt',
+                              onChanged: (val) {
+                                widget.controller.setFontSize(val);
+                                setState(() {});
+                              },
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.add_rounded, size: 18),
+                            tooltip: '放大字号',
+                            visualDensity: VisualDensity.compact,
+                            onPressed: () {
+                              final newSize = (widget.controller.renderOptions.fontSize + 0.5).clamp(8.0, 24.0);
+                              widget.controller.setFontSize(newSize);
+                              setState(() {});
+                            },
+                          ),
+                          Container(
+                            width: 58,
+                            alignment: Alignment.centerRight,
+                            padding: const EdgeInsets.only(right: 6),
+                            child: Text(
+                              '${widget.controller.renderOptions.fontSize.toStringAsFixed(1)} pt',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12.5,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
                     // Live Alignment Preview Card
                     const Text(
                       'ASCII 表格全角/半角对齐预览 (Live Alignment Preview)',

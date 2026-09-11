@@ -199,7 +199,12 @@ void main() {
       expect(find.byType(SidebarView), findsNothing);
     });
 
-    testWidgets('mode and font size buttons trigger controller changes', (tester) async {
+    testWidgets('mode and page zoom controls render and trigger actions', (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
       final controller = ReaderController();
       await tester.pumpWidget(
         MaterialApp(
@@ -218,16 +223,53 @@ void main() {
       expect(controller.renderOptions.isFluid, false);
       expect(find.text('A4'), findsOneWidget);
 
-      // Adjust font size
-      final initialFontSize = controller.renderOptions.fontSize;
-      final addBtn = find.byTooltip('放大排版字号 (Cmd+=)');
-      await tester.tap(addBtn);
-      await tester.pump();
+      // Page zoom buttons & badge exist
+      final zoomOutBtn = find.byTooltip('缩小页面 (Cmd+-)');
+      final zoomInBtn = find.byTooltip('放大页面 (Cmd+=)');
+      final fitWidthBtn = find.byTooltip('满窗口 / 适应宽度 (Cmd+9)');
+      final fitPageBtn = find.byTooltip('满屏 / 适应整页 (Cmd+1)');
+      final zoomBadge = find.byTooltip('页面缩放比例与预设');
 
-      expect(controller.renderOptions.fontSize, initialFontSize + 0.5);
+      expect(zoomOutBtn, findsOneWidget);
+      expect(zoomInBtn, findsOneWidget);
+      expect(fitWidthBtn, findsOneWidget);
+      expect(fitPageBtn, findsOneWidget);
+      expect(zoomBadge, findsOneWidget);
+      expect(find.text('100%'), findsOneWidget);
+
+      // Tap zoom in button
+      await tester.tap(zoomInBtn);
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Tap fit width button
+      await tester.tap(fitWidthBtn);
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Tap fit page button
+      await tester.tap(fitPageBtn);
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Open zoom preset dropdown
+      await tester.tap(zoomBadge);
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('满窗口 (适应宽度)'), findsOneWidget);
+      expect(find.text('满屏 (适应整页)'), findsOneWidget);
+      expect(find.text('全屏沉浸浏览'), findsOneWidget);
+      expect(find.text('100% (原始大小)'), findsOneWidget);
+      expect(find.text('150%'), findsOneWidget);
+
+      // Tap '满窗口 (适应宽度)' preset from popup menu
+      await tester.tap(find.text('满窗口 (适应宽度)'), warnIfMissed: false);
+      await tester.pump(const Duration(milliseconds: 300));
     });
 
-    testWidgets('font settings button opens font dialog with CJK status', (tester) async {
+    testWidgets('font settings button opens font dialog with CJK status and font size adjustments', (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
       final controller = ReaderController();
       await tester.pumpWidget(
         MaterialApp(
@@ -242,12 +284,25 @@ void main() {
 
       expect(find.text('字体排版与中英文等宽对齐'), findsOneWidget);
       expect(find.text('正文排版字体 (Body Typography)'), findsOneWidget);
+      expect(find.text('排版基础字号 (Base Typesetting Font Size)'), findsOneWidget);
+      expect(find.text('恢复默认 (10.5 pt)'), findsOneWidget);
       expect(find.text('恢复默认字体'), findsOneWidget);
 
-      // Close dialog
-      final closeBtn = find.text('完成');
-      await tester.tap(closeBtn);
+      // Adjust font size in dialog
+      final initialFontSize = controller.renderOptions.fontSize;
+      final addFontSizeBtn = find.byTooltip('放大字号');
+      expect(addFontSizeBtn, findsOneWidget);
+      await tester.tap(addFontSizeBtn);
       await tester.pump(const Duration(milliseconds: 300));
+
+      expect(controller.renderOptions.fontSize, initialFontSize + 0.5);
+
+      // Close dialog via top close button
+      final closeBtn = find.byTooltip('关闭');
+      expect(closeBtn, findsOneWidget);
+      await tester.tap(closeBtn);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.text('字体排版与中英文等宽对齐'), findsNothing);
     });

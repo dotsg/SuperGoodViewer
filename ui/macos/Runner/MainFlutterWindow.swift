@@ -16,6 +16,21 @@ class MainFlutterWindow: NSWindow {
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 
+    let windowChannel = FlutterMethodChannel(
+      name: "com.sogoodviewer.window",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+    windowChannel.setMethodCallHandler { [weak self] (call, result) in
+      if call.method == "toggleFullScreen" {
+        self?.toggleFullScreen(nil)
+        result(self?.styleMask.contains(.fullScreen) ?? false)
+      } else if call.method == "isFullScreen" {
+        result(self?.styleMask.contains(.fullScreen) ?? false)
+      } else {
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
     super.awakeFromNib()
   }
 }
