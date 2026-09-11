@@ -172,6 +172,8 @@ pub fn convert_markdown_to_typst(
 #let textsf(it) = text(it)
 #let texttt(it) = text(it)
 #let diff = math.partial
+#let pmod(n) = $(mod #n)$
+#let odot = sym.dot.o
 
 #let mitexsqrt(..args) = {{
   if args.pos().len() == 1 {{

@@ -83,9 +83,9 @@ class _FontSettingsDialogState extends State<_FontSettingsDialog> {
       backgroundColor: isDark ? const Color(0xFF242424) : Colors.white,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
-        width: 620,
-        constraints: const BoxConstraints(maxHeight: 760),
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+        width: 660,
+        constraints: const BoxConstraints(maxHeight: 680),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -144,7 +144,7 @@ class _FontSettingsDialogState extends State<_FontSettingsDialog> {
                   children: [
                     // Maple Mono / CJK Monospace Status Banner
                     Container(
-                      padding: const EdgeInsets.all(14),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
                       decoration: BoxDecoration(
                         color: hasCjkMono
                             ? (isDark ? const Color(0x1F22C55E) : const Color(0x1416A34A))
@@ -169,9 +169,9 @@ class _FontSettingsDialogState extends State<_FontSettingsDialog> {
                                 color: hasCjkMono
                                     ? const Color(0xFF22C55E)
                                     : const Color(0xFFF59E0B),
-                                size: 20,
+                                size: 18,
                               ),
-                              const SizedBox(width: 10),
+                              const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
                                   hasCjkMono
@@ -181,7 +181,7 @@ class _FontSettingsDialogState extends State<_FontSettingsDialog> {
                                       : '建议安装 Maple Mono 字体以获得最佳对齐',
                                   style: TextStyle(
                                     fontWeight: FontWeight.bold,
-                                    fontSize: 13.5,
+                                    fontSize: 13,
                                     color: hasCjkMono
                                         ? (isDark ? const Color(0xFF4ADE80) : const Color(0xFF15803D))
                                         : (isDark ? const Color(0xFFFBBF24) : const Color(0xFFB45309)),
@@ -190,21 +190,21 @@ class _FontSettingsDialogState extends State<_FontSettingsDialog> {
                               ),
                             ],
                           ),
-                          const SizedBox(height: 8),
+                          const SizedBox(height: 6),
                           Text(
                             hasCjkMono
                               ? '当前系统已加载 CJK 等宽字体，文档中包含的 ASCII 字符表格、流程图与代码行可实现 1 个全角汉字严格等于 2 个半角英文字符，边框绝不发生锯齿撕裂。'
                               : '检测到当前环境缺少 CJK 严格等宽字体。源码中的 ASCII 字符画表格或包含中英文混合的代码行可能会出现轻微对齐偏移。推荐下载安装开源 Maple Mono 字体。',
                             style: TextStyle(
-                              fontSize: 12,
-                              height: 1.45,
+                              fontSize: 11.5,
+                              height: 1.4,
                               color: theme.colorScheme.onSurface.withValues(alpha: 0.75),
                             ),
                           ),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 8),
                           Wrap(
                             spacing: 8,
-                            runSpacing: 6,
+                            runSpacing: 4,
                             crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               OutlinedButton.icon(
@@ -277,7 +277,7 @@ class _FontSettingsDialogState extends State<_FontSettingsDialog> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 18),
+                    const SizedBox(height: 12),
 
                     // Code / ASCII Font Selection
                     Row(
@@ -334,7 +334,7 @@ class _FontSettingsDialogState extends State<_FontSettingsDialog> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 18),
+                    const SizedBox(height: 12),
 
                     // Live Alignment Preview Card
                     const Text(
@@ -351,18 +351,29 @@ class _FontSettingsDialogState extends State<_FontSettingsDialog> {
                           color: isDark ? const Color(0xFF333333) : const Color(0xFFCBD5E1),
                         ),
                       ),
-                      child: const SingleChildScrollView(
+                      child: SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
                         child: Text(
                           '┌─────────────────────────────────────┬─────────────────────────────────────┐\n'
-                          '│ 1. Token 資產治理與商業分銷         │ 2. 可插拔合規安全護欄               │\n'
-                          '│  · 基於 Envoy AI Gateway 雲原生底座 │  · 基於 Go ext_proc 高性能自研中間件│\n'
-                          '│  · 官方渠道加價轉售 + 租戶 BYOK 雙軌│  · 香港 PDPO 專屬合規套件 (L0~L3)   │\n'
+                          '│ 1. 量子纠缠分发与纯化引擎 (QED)     │ 2. 相对论时空测地线同步网关 (STG)   │\n'
+                          '├─────────────────────────────────────┼─────────────────────────────────────┤\n'
+                          '│ · 贝尔态多粒子纯化与量子中继存储    │ · 史瓦西引力场时间膨胀动态频率修正  │\n'
+                          '│ · 纠缠交换路由与拓扑自动愈合        │ · 纳秒级深空原子钟激光同步信标      │\n'
+                          '│ · 拓扑容错量子表面码校验 (Surface)  │ · 任意子非阿贝尔统计相位标定        │\n'
+                          '│ · 兆赫兹纠缠对生成与自旋偏振锁定    │ · 零知识量子密钥分发与抗监听验证    │\n'
                           '└─────────────────────────────────────┴─────────────────────────────────────┘',
                           style: TextStyle(
-                            fontFamily: 'monospace',
+                            fontFamily: _selectedCodeFont ?? 'Maple Mono CN',
+                            fontFamilyFallback: const [
+                              'Maple Mono CN',
+                              'Maple Mono NF CN',
+                              'Maple Mono',
+                              'Sarasa Mono SC',
+                              'Menlo',
+                              'monospace',
+                            ],
                             fontSize: 11,
-                            height: 1.3,
+                            height: 1.35,
                             letterSpacing: 0.0,
                           ),
                         ),

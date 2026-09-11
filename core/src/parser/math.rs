@@ -15,7 +15,12 @@ pub fn transpile_latex_math(latex: &str, is_block: bool) -> String {
                 .trim()
                 .replace("mitexsqrt", "sqrt")
                 .replace("mitexdisplay", "display")
-                .replace("mitextag", "tag");
+                .replace("mitextag", "tag")
+                .replace("planck.reduce", "planck")
+                .replace("angle.l", "chevron.l")
+                .replace("angle.r", "chevron.r")
+                .replace("dot.circle", "dot.o")
+                .replace("times.circle", "times.o");
             if is_block {
                 format!("$ {} $\n", clean)
             } else {

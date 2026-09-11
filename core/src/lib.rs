@@ -127,12 +127,17 @@ fn main() {
                 ..Default::default()
             };
             let start = std::time::Instant::now();
-            let res = compile_markdown_to_pdf(&content, "AI Relay PRD", "..", &options);
+            let parsed = convert_markdown_to_typst(&content, "IQRP Quantum Spec", &options);
+            let res = compile_markdown_to_pdf(&content, "IQRP Quantum Spec", "..", &options);
             let elapsed = start.elapsed();
-            assert!(res.is_ok(), "Failed to compile real-world test.md: {:?}", res.err());
+            if let Err(ref e) = res {
+                eprintln!("Failed typst error: {:?}", e);
+                eprintln!("Generated typst source:\n{}", parsed.typst_source);
+            }
+            assert!(res.is_ok(), "Failed to compile test.md: {:?}", res.err());
             let pdf = res.unwrap();
             assert!(pdf.starts_with(b"%PDF-"));
-            println!("Compiled 683-line real-world PRD in {:?}, generated PDF bytes: {}", elapsed, pdf.len());
+            println!("Compiled rich test.md spec in {:?}, generated PDF bytes: {}", elapsed, pdf.len());
         }
     }
 
@@ -176,6 +181,23 @@ graph LR
   M --> T[Typst Memory Engine]
   T --> PDF[Vector PDF Stream]
   PDF --> V[Google PDFium Viewport]
+```
+
+---
+
+## 🔤 CJK 1:2 等宽代码与 ASCII 字符表
+
+搭配 **Maple Mono** 字体，实现中英文全角半角严格 1:2 绝对对齐：
+
+```
+┌─────────────────────────────────────┬─────────────────────────────────────┐
+│ 1. 量子纠缠分发与纯化引擎 (QED)     │ 2. 相对论时空测地线同步网关 (STG)   │
+├─────────────────────────────────────┼─────────────────────────────────────┤
+│ · 贝尔态多粒子纯化与量子中继存储    │ · 史瓦西引力场时间膨胀动态频率修正  │
+│ · 纠缠交换路由与拓扑自动愈合        │ · 纳秒级深空原子钟激光同步信标      │
+│ · 拓扑容错量子表面码校验 (Surface)  │ · 任意子非阿贝尔统计相位标定        │
+│ · 兆赫兹纠缠对生成与自旋偏振锁定    │ · 零知识量子密钥分发与抗监听验证    │
+└─────────────────────────────────────┴─────────────────────────────────────┘
 ```
 
 ---
@@ -233,8 +255,12 @@ graph LR
 
 ```
 ┌─────────────────────────────────────┬─────────────────────────────────────┐
-│ 1. Token 資產治理與商業分銷         │ 2. 可插拔合規安全護欄               │
-│  · 基於 Envoy AI Gateway 雲原生底座 │  · 基於 Go ext_proc 高性能自研中間件│
+│ 1. 量子纠缠分发与纯化引擎 (QED)     │ 2. 相对论时空测地线同步网关 (STG)   │
+├─────────────────────────────────────┼─────────────────────────────────────┤
+│ · 贝尔态多粒子纯化与量子中继存储    │ · 史瓦西引力场时间膨胀动态频率修正  │
+│ · 纠缠交换路由与拓扑自动愈合        │ · 纳秒级深空原子钟激光同步信标      │
+│ · 拓扑容错量子表面码校验 (Surface)  │ · 任意子非阿贝尔统计相位标定        │
+│ · 兆赫兹纠缠对生成与自旋偏振锁定    │ · 零知识量子密钥分发与抗监听验证    │
 └─────────────────────────────────────┴─────────────────────────────────────┘
 ```
 "#;
@@ -247,6 +273,34 @@ graph LR
         assert!(res.is_ok(), "ASCII table failed to compile: {:?}", res.err());
         let pdf = res.unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn test_all_equations() {
+        let equations = [
+            r"ds^2 = -\left(1 - \frac{2GM}{r c^2}\right) c^2 dt^2 + \left(1 - \frac{2GM}{r c^2}\right)^{-1} dr^2 + r^2 (d\theta^2 + \sin^2\theta \, d\phi^2)",
+            r"\frac{d\tau}{dt} = \sqrt{1 - \frac{2GM}{r c^2} - \frac{v^2}{c^2}} \approx 1 - \frac{GM}{r c^2} - \frac{v^2}{2c^2} + \mathcal{O}(c^{-4})",
+            r"G_{\mu\nu} + \Lambda g_{\mu\nu} = \frac{8\pi G}{c^4} T_{\mu\nu}",
+            r"\Delta t_{\text{Shapiro}} = \frac{2GM_\odot}{c^3} \ln \left( \frac{4 r_1 r_2}{d^2} \right)",
+            r"\mathrm{Var}(\hat{\theta}) \ge \frac{1}{\mathcal{F}_Q[\rho(\theta)]}, \quad \mathcal{F}_Q = 4 \sum_{k} \frac{(\partial_\theta \lambda_k)^2}{\lambda_k} + 2 \sum_{k \neq m} \frac{(\lambda_k - \lambda_m)^2}{\lambda_k + \lambda_m} |\langle \psi_k | \partial_\theta \psi_m \rangle|^2",
+            r"|\Phi^\pm\rangle = \frac{1}{\sqrt{2}} (|00\rangle \pm |11\rangle), \quad |\Psi^\pm\rangle = \frac{1}{\sqrt{2}} (|01\rangle \pm |10\rangle)",
+            r"|\Phi^+_{12}\rangle \otimes |\Phi^+_{34}\rangle = \frac{1}{2} \left[ |\Phi^+_{23}\rangle |\Phi^+_{14}\rangle + |\Phi^-_{23}\rangle |\Phi^-_{14}\rangle + |\Psi^+_{23}\rangle |\Psi^+_{14}\rangle + |\Psi^-_{23}\rangle |\Psi^-_{14}\rangle \right]",
+            r"\frac{d\rho(t)}{dt} = -\frac{i}{\hbar} [H_{\text{eff}}, \rho(t)] + \sum_{k=1}^M \left( L_k \rho(t) L_k^\dagger - \frac{1}{2} \{L_k^\dagger L_k, \rho(t)\} \right)",
+            r"[\bar{X}, \bar{Z}] = 0 \pmod 2, \quad \mathcal{S} = \langle A_s, B_p \rangle",
+            r"A_s = \prod_{j \in \text{star}(s)} X_j",
+            r"B_p = \prod_{j \in \partial p} Z_j",
+            r"b_1 b_2 \in \{00,01,10,11\}",
+            r"\sigma_x^{b_2} \sigma_z^{b_1}",
+            r"F = 99.42\%",
+            r"[\hat{q}, \hat{p}] = i \hbar, \quad \Delta \hat{q} \cdot \Delta \hat{p} \ge \frac{\hbar}{2}",
+            r"V_A = V_A^{\text{mod}} + 1, \quad T_{\text{channel}} = 10^{-\alpha L / 10}",
+        ];
+        let options = RenderOptions::default();
+        for (i, eq) in equations.iter().enumerate() {
+            let md = format!("$$\n{}\n$$", eq);
+            let res = compile_markdown_to_pdf(&md, "Math Test", ".", &options);
+            assert!(res.is_ok(), "Equation {} failed: {:?}\nLaTeX: {}", i + 1, res.err(), eq);
+        }
     }
 }
 
