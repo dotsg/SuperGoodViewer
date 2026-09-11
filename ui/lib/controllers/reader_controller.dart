@@ -293,6 +293,14 @@ class ReaderController extends ChangeNotifier {
     debugPrint('[ReaderController] compileDocument: starting for "$_documentTitle" (${_currentMarkdown.length} chars)');
     notifyListeners();
 
+    if (!NativeEngine.instance.isAvailable) {
+      _errorMessage = NativeEngine.instance.initError ?? 'Native library not loaded';
+      debugPrint('[ReaderController] compileDocument: $_errorMessage');
+      _isCompiling = false;
+      notifyListeners();
+      return;
+    }
+
     try {
       final docDir = _currentFilePath != null
           ? p.dirname(_currentFilePath!)

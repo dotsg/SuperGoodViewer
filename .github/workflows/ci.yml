@@ -32,6 +32,14 @@ jobs:
           cd core
           cargo test --verbose -- --nocapture
 
+      - name: Build Rust Core Dynamic Library
+        run: |
+          cd core
+          cargo build --release
+          mkdir -p ../ui/macos ../ui/test
+          cp target/release/libsogood_core.dylib ../ui/macos/
+          cp target/release/libsogood_core.dylib ../ui/test/
+
       - name: Flutter Analysis & Tests
         run: |
           cd ui

@@ -2,8 +2,8 @@ import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
-import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import '../models/render_options.dart';
 
@@ -60,6 +60,10 @@ class NativeEngine {
   late final SogoodDetectFontsDart _detectFonts;
 
   bool _initialized = false;
+  String? _initError;
+
+  bool get isAvailable => _initialized && _dylib != null;
+  String? get initError => _initError;
 
   NativeEngine._() {
     _init();
@@ -82,35 +86,40 @@ class NativeEngine {
           _dylib = DynamicLibrary.open('libsogood_core.so');
         }
       } catch (e2) {
-        throw StateError(
-          'Failed to load native engine library at $libraryPath: $e ($e2)',
-        );
+        _initError = 'Failed to load native engine library at $libraryPath: $e ($e2)';
+        debugPrint('[NativeEngine] $_initError');
+        return;
       }
     }
 
-    final lib = _dylib!;
-    _getVersion = lib.lookupFunction<SogoodGetVersionC, SogoodGetVersionDart>(
-      'sogood_get_version',
-    );
-    _getLastError = lib.lookupFunction<SogoodGetLastErrorC, SogoodGetLastErrorDart>(
-      'sogood_get_last_error',
-    );
-    _freeString = lib.lookupFunction<SogoodFreeStringC, SogoodFreeStringDart>(
-      'sogood_free_string',
-    );
-    _freeBuffer = lib.lookupFunction<SogoodFreeBufferC, SogoodFreeBufferDart>(
-      'sogood_free_buffer',
-    );
-    _compileMarkdown = lib.lookupFunction<
-      SogoodCompileMarkdownC,
-      SogoodCompileMarkdownDart
-    >('sogood_compile_markdown');
-    _detectFonts = lib.lookupFunction<
-      SogoodDetectFontsC,
-      SogoodDetectFontsDart
-    >('sogood_detect_fonts');
+    try {
+      final lib = _dylib!;
+      _getVersion = lib.lookupFunction<SogoodGetVersionC, SogoodGetVersionDart>(
+        'sogood_get_version',
+      );
+      _getLastError = lib.lookupFunction<SogoodGetLastErrorC, SogoodGetLastErrorDart>(
+        'sogood_get_last_error',
+      );
+      _freeString = lib.lookupFunction<SogoodFreeStringC, SogoodFreeStringDart>(
+        'sogood_free_string',
+      );
+      _freeBuffer = lib.lookupFunction<SogoodFreeBufferC, SogoodFreeBufferDart>(
+        'sogood_free_buffer',
+      );
+      _compileMarkdown = lib.lookupFunction<
+        SogoodCompileMarkdownC,
+        SogoodCompileMarkdownDart
+      >('sogood_compile_markdown');
+      _detectFonts = lib.lookupFunction<
+        SogoodDetectFontsC,
+        SogoodDetectFontsDart
+      >('sogood_detect_fonts');
 
-    _initialized = true;
+      _initialized = true;
+    } catch (e) {
+      _initError = 'Failed to bind native engine functions: $e';
+      debugPrint('[NativeEngine] $_initError');
+    }
   }
 
   static String _resolveLibraryPath() {
@@ -126,6 +135,11 @@ class NativeEngine {
     // Check multiple candidate locations
     final currentDir = Directory.current.path;
     final candidates = [
+      // Direct local folders in tests
+      p.join(currentDir, 'test', libName),
+      p.join(currentDir, 'macos', libName),
+      p.join(currentDir, 'ui', 'test', libName),
+      p.join(currentDir, 'ui', 'macos', libName),
       // When running from repo root or ui dir
       p.join(currentDir, '..', 'core', 'target', 'release', libName),
       p.join(currentDir, 'core', 'target', 'release', libName),
@@ -136,7 +150,6 @@ class NativeEngine {
       p.join(p.dirname(Platform.resolvedExecutable), '..', 'Frameworks', libName),
       p.join(p.dirname(Platform.resolvedExecutable), 'Frameworks', libName),
       p.join(p.dirname(Platform.resolvedExecutable), 'lib', libName),
-
     ];
 
     for (final candidate in candidates) {
@@ -150,11 +163,13 @@ class NativeEngine {
   }
 
   String getVersion() {
+    if (!isAvailable) return '0.0.0 (uninitialized)';
     final ptr = _getVersion();
     return ptr.toDartString();
   }
 
   String? getLastError() {
+    if (!isAvailable) return _initError;
     final ptr = _getLastError();
     if (ptr.address == 0) return null;
     final msg = ptr.toDartString();
@@ -168,6 +183,8 @@ class NativeEngine {
     String docDir = '.',
     RenderOptions options = const RenderOptions(),
   }) {
+    if (!isAvailable) return null;
+
     final mdPtr = markdown.toNativeUtf8();
     final titlePtr = title.toNativeUtf8();
     final docDirPtr = docDir.toNativeUtf8();
@@ -213,6 +230,8 @@ class NativeEngine {
     String docDir = '.',
     RenderOptions options = const RenderOptions(),
   }) async {
+    if (!isAvailable) return null;
+
     return await Isolate.run(() {
       return NativeEngine.instance.compileMarkdown(
         markdown,
@@ -226,6 +245,8 @@ class NativeEngine {
   /// Queries the system and embedded font store for available fonts,
   /// specifically checking for CJK monospace fonts like Maple Mono.
   Map<String, dynamic> detectFonts() {
+    if (!isAvailable) return {};
+
     final bufferPtr = _detectFonts();
     if (bufferPtr.address == 0) {
       return {};

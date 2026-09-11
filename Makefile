@@ -18,7 +18,7 @@ build-app:
 	@cd ui && flutter build macos
 
 # Run all test suites across Rust core and Flutter UI
-test: test-core test-app
+test: test-core build-core test-app
 	@echo "==> All test suites passed with 0 errors!"
 
 test-core:
