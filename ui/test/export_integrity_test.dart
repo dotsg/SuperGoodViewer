@@ -139,8 +139,8 @@ void main() {
     });
   });
 
-  group('Pixel-Level 100% Consistency Tests (In-Memory Viewer vs Exported PDF)', () {
-    test('PDFium renders in-memory data and exported file with 100% identical pixel buffer', () async {
+  group('PDF Export Round-Trip Determinism (In-Memory Buffer vs Exported File)', () {
+    test('PDFium renders in-memory bytes and re-read exported file with identical RGBA buffer', () async {
       final controller = ReaderController(autoRestorePreferences: false);
       await waitCompile(controller);
 
