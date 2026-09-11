@@ -8,6 +8,23 @@ import '../bridge/native_engine.dart';
 import '../models/render_options.dart';
 import '../services/preferences_service.dart';
 
+class OutlineItem {
+  final String title;
+  final int level;
+  final String anchor;
+  final int lineNumber;
+
+  const OutlineItem({
+    required this.title,
+    required this.level,
+    required this.anchor,
+    required this.lineNumber,
+  });
+
+  @override
+  String toString() => 'OutlineItem(H$level: $title, line: $lineNumber)';
+}
+
 class ReaderController extends ChangeNotifier {
   String? _currentFilePath;
   String _currentMarkdown = '';
@@ -33,6 +50,8 @@ class ReaderController extends ChangeNotifier {
   Map<String, dynamic> _fontReport = {};
 
   bool _isTwoPage = false;
+  List<OutlineItem> _outlineItems = [];
+  OutlineItem? _requestedJumpItem;
 
   // Getters
   String? get currentFilePath => _currentFilePath;
@@ -50,6 +69,17 @@ class ReaderController extends ChangeNotifier {
   List<String> get recentFiles => List.unmodifiable(_recentFiles);
   Map<String, dynamic> get fontReport => _fontReport;
   bool get isTwoPage => _isTwoPage;
+  List<OutlineItem> get outlineItems => List.unmodifiable(_outlineItems);
+  OutlineItem? get requestedJumpItem => _requestedJumpItem;
+
+  void jumpToOutline(OutlineItem item) {
+    _requestedJumpItem = item;
+    notifyListeners();
+  }
+
+  void clearJumpRequest() {
+    _requestedJumpItem = null;
+  }
 
   void toggleTwoPage() {
     _isTwoPage = !_isTwoPage;
@@ -185,6 +215,7 @@ class ReaderController extends ChangeNotifier {
       }
       _currentFilePath = filePath;
       _currentMarkdown = content;
+      _extractOutline(_currentMarkdown);
       _documentTitle = p.basenameWithoutExtension(filePath);
 
       if (!preservePosition) {
@@ -243,6 +274,7 @@ class ReaderController extends ChangeNotifier {
           try {
             final bytes = await file.readAsBytes();
             _currentMarkdown = utf8.decode(bytes, allowMalformed: true);
+            _extractOutline(_currentMarkdown);
             _isReloading = true;
             await compileDocument();
           } catch (e) {
@@ -258,6 +290,7 @@ class ReaderController extends ChangeNotifier {
 
     _isCompiling = true;
     _errorMessage = null;
+    debugPrint('[ReaderController] compileDocument: starting for "$_documentTitle" (${_currentMarkdown.length} chars)');
     notifyListeners();
 
     try {
@@ -275,11 +308,14 @@ class ReaderController extends ChangeNotifier {
       if (pdfBytes != null && pdfBytes.isNotEmpty) {
         _currentPdfBytes = pdfBytes;
         _errorMessage = null;
+        debugPrint('[ReaderController] compileDocument: SUCCESS (${pdfBytes.length} bytes)');
       } else {
         _errorMessage = NativeEngine.instance.getLastError() ?? 'Compilation failed';
+        debugPrint('[ReaderController] compileDocument: FAILED ($_errorMessage)');
       }
-    } catch (e) {
+    } catch (e, st) {
       _errorMessage = 'Compilation error: $e';
+      debugPrint('[ReaderController] compileDocument: EXCEPTION ($e)\n$st');
     } finally {
       _isCompiling = false;
       notifyListeners();
@@ -449,11 +485,76 @@ graph LR
 - [x] 外部修改秒级自动热重载，并智能保持阅读视口位置
 - [x] 0 毫秒即时导出 PDF
 
-> [!TIP]
-> 点击顶部工具栏的 **视图切换** 按钮，可在自适应屏幕长卷轴与标准 A4 打印预览间丝滑切换。
+    > [!TIP]
+    > 点击顶部工具栏的 **视图切换** 按钮，可在自适应屏幕长卷轴与标准 A4 打印预览间丝滑切换。
 ''';
 
+    _extractOutline(_currentMarkdown);
     compileDocument();
+  }
+
+  void _extractOutline(String markdown) {
+    final items = <OutlineItem>[];
+    final lines = markdown.split('\n');
+    bool inCodeBlock = false;
+
+    for (int i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      final trimmed = line.trim();
+
+      if (trimmed.startsWith('```')) {
+        inCodeBlock = !inCodeBlock;
+        continue;
+      }
+      if (inCodeBlock) continue;
+
+      if (trimmed.startsWith('#')) {
+        final match = RegExp(r'^(#{1,6})\s+(.+)$').firstMatch(trimmed);
+        if (match != null) {
+          final level = match.group(1)!.length;
+          final title = match.group(2)!.trim();
+          if (title == '目录' || title.toLowerCase() == 'table of contents') {
+            continue;
+          }
+          final slug = _slugify(title);
+          items.add(OutlineItem(
+            title: title,
+            level: level,
+            anchor: slug,
+            lineNumber: i + 1,
+          ));
+        }
+      }
+    }
+    _outlineItems = List.unmodifiable(items);
+  }
+
+  static String _slugify(String text) {
+    final buffer = StringBuffer();
+    bool prevIsDash = false;
+    for (final rune in text.runes) {
+      final ch = String.fromCharCode(rune);
+      final isAlphaNum = RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(ch);
+      if (isAlphaNum) {
+        buffer.write(ch.toLowerCase());
+        prevIsDash = false;
+      } else if (ch == '-') {
+        if (!prevIsDash && buffer.isNotEmpty) {
+          buffer.write('-');
+          prevIsDash = true;
+        }
+      } else if (ch.trim().isEmpty || ch == '_') {
+        if (!prevIsDash && buffer.isNotEmpty) {
+          buffer.write('-');
+          prevIsDash = true;
+        }
+      }
+    }
+    var slug = buffer.toString();
+    if (slug.endsWith('-')) {
+      slug = slug.substring(0, slug.length - 1);
+    }
+    return slug;
   }
 
   @override

@@ -160,6 +160,19 @@ void main() {
       expect(controller.isTwoPage, false);
     });
 
+    test('outline items are extracted correctly from markdown', () {
+      final controller = ReaderController(autoRestorePreferences: false);
+      expect(controller.outlineItems.isNotEmpty, true);
+      // Demo document headings
+      expect(controller.outlineItems.any((item) => item.title.contains('高精度数学排版')), true);
+      expect(controller.outlineItems.any((item) => item.title.contains('Mermaid')), true);
+      final first = controller.outlineItems.first;
+      controller.jumpToOutline(first);
+      expect(controller.requestedJumpItem, first);
+      controller.clearJumpRequest();
+      expect(controller.requestedJumpItem, null);
+    });
+
     test('reloading flag and scroll position are preserved on theme and mode toggle', () {
       final controller = ReaderController(autoRestorePreferences: false);
       controller.updateScrollRatio(0.68);
@@ -228,6 +241,11 @@ void main() {
 
       // Sidebar is now mounted and visible
       expect(find.byType(SidebarView), findsOneWidget);
+      expect(find.text('大纲目录'), findsOneWidget);
+
+      // Switch to Recents & Settings tab
+      await tester.tap(find.text('最近文件'));
+      await tester.pump();
       expect(find.text('排版偏好'), findsOneWidget);
 
       // Close sidebar via header close button

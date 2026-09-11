@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -402,12 +403,21 @@ class PdfCanvasView extends StatefulWidget {
 }
 
 class PdfCanvasViewState extends State<PdfCanvasView> {
-  late final PdfViewerController _pdfController;
+  int _activeSlot = 0;
+  int? _pendingSlot;
+  Timer? _cleanupTimer;
+  final List<PdfViewerController> _controllers = [
+    PdfViewerController(),
+    PdfViewerController(),
+  ];
+  final List<Uint8List?> _slotBytes = [null, null];
+  final List<int> _slotDocHash = [0, 0];
   bool _isRestoringScroll = false;
   double _currentZoom = 1.0;
   int _lastReportedPage = 1;
   int _lastReportedCount = 1;
 
+  PdfViewerController get _pdfController => _controllers[_activeSlot];
   double get currentZoom => _pdfController.isReady ? _pdfController.currentZoom : _currentZoom;
   bool get isReady => _pdfController.isReady;
   int get pageNumber => _pdfController.isReady ? (_pdfController.pageNumber ?? 1) : 1;
@@ -416,22 +426,79 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   @override
   void initState() {
     super.initState();
-    _pdfController = PdfViewerController();
-    _pdfController.addListener(_onPdfViewerChanged);
+    _slotBytes[0] = widget.pdfBytes;
+    _slotDocHash[0] = widget.pdfBytes?.hashCode ?? 0;
+    _activeSlot = 0;
+    _pendingSlot = null;
+    _controllers[0].addListener(_onViewerChanged0);
+    _controllers[1].addListener(_onViewerChanged1);
   }
 
-  void _onPdfViewerChanged() {
+  void _onViewerChanged0() => _onPdfViewerChanged(0);
+  void _onViewerChanged1() => _onPdfViewerChanged(1);
+
+  @override
+  void dispose() {
+    _cleanupTimer?.cancel();
+    _controllers[0].removeListener(_onViewerChanged0);
+    _controllers[1].removeListener(_onViewerChanged1);
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(PdfCanvasView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final newBytes = widget.pdfBytes;
+    if (newBytes == null || newBytes.isEmpty) return;
+
+    if (_slotBytes[_activeSlot] == null) {
+      _slotBytes[_activeSlot] = newBytes;
+      _slotDocHash[_activeSlot] = newBytes.hashCode;
+      setState(() {});
+      return;
+    }
+
+    final bytesChanged = newBytes != oldWidget.pdfBytes;
+    final hashChanged = newBytes.hashCode != _slotDocHash[_activeSlot];
+
+    if (bytesChanged && hashChanged) {
+      if (widget.documentTitle != oldWidget.documentTitle) {
+        // Different document opened: direct reload
+        _cleanupTimer?.cancel();
+        _activeSlot = 0;
+        _pendingSlot = null;
+        _slotBytes[0] = newBytes;
+        _slotDocHash[0] = newBytes.hashCode;
+        _slotBytes[1] = null;
+        _slotDocHash[1] = 0;
+        setState(() {});
+      } else {
+        // Same document updated (hot reload / edit / theme / mode):
+        // Mount into background slot for seamless double buffering
+        _cleanupTimer?.cancel();
+        final nextSlot = 1 - _activeSlot;
+        _pendingSlot = nextSlot;
+        _slotBytes[nextSlot] = newBytes;
+        _slotDocHash[nextSlot] = newBytes.hashCode;
+        setState(() {});
+      }
+    }
+  }
+
+  void _onPdfViewerChanged(int slot) {
+    if (slot != _activeSlot) return;
     if (_isRestoringScroll || widget.controller.isReloading) return;
-    if (_pdfController.isReady) {
-      final zoom = _pdfController.currentZoom;
+    final ctrl = _controllers[slot];
+    if (ctrl.isReady) {
+      final zoom = ctrl.currentZoom;
       if ((zoom - _currentZoom).abs() > 0.005) {
         _currentZoom = zoom;
         widget.controller.updateZoom(zoom);
         widget.onZoomChanged?.call(_currentZoom);
       }
 
-      final pageNum = _pdfController.pageNumber ?? 1;
-      final pCount = _pdfController.pageCount;
+      final pageNum = ctrl.pageNumber ?? 1;
+      final pCount = ctrl.pageCount;
       if (pageNum != _lastReportedPage || pCount != _lastReportedCount) {
         _lastReportedPage = pageNum;
         _lastReportedCount = pCount;
@@ -439,17 +506,17 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         widget.onPageChanged?.call(pageNum, pCount);
       }
 
-      final docSize = _pdfController.documentSize;
+      final docSize = ctrl.documentSize;
       if (docSize.height > 0) {
-        final ratio = (_pdfController.visibleRect.top / docSize.height).clamp(0.0, 1.0);
+        final ratio = (ctrl.visibleRect.top / docSize.height).clamp(0.0, 1.0);
         widget.controller.updateScrollRatio(ratio);
       }
     }
   }
 
-  void _restoreScroll() {
-    if (!_pdfController.isReady) return;
-    final docSize = _pdfController.documentSize;
+  void _restoreScrollFor(PdfViewerController ctrl) {
+    if (!ctrl.isReady) return;
+    final docSize = ctrl.documentSize;
     final isFluid = widget.controller.renderOptions.isFluid;
 
     if (isFluid) {
@@ -457,7 +524,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (targetRatio > 0.0 && docSize.height > 0) {
         _isRestoringScroll = true;
         final targetY = targetRatio * docSize.height;
-        _pdfController.goToPosition(documentOffset: Offset(0, targetY));
+        ctrl.goToPosition(documentOffset: Offset(0, targetY));
 
         Future.delayed(const Duration(milliseconds: 250), () {
           if (mounted) {
@@ -469,9 +536,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       }
     } else {
       final targetPage = widget.controller.lastPageNumber;
-      if (targetPage > 1 && targetPage <= _pdfController.pageCount) {
+      if (targetPage > 1 && targetPage <= ctrl.pageCount) {
         _isRestoringScroll = true;
-        _pdfController.goToPage(pageNumber: targetPage, duration: Duration.zero);
+        ctrl.goToPage(pageNumber: targetPage, duration: Duration.zero);
 
         Future.delayed(const Duration(milliseconds: 250), () {
           if (mounted) {
@@ -483,6 +550,53 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       }
     }
     widget.controller.finishReloading();
+  }
+
+  void _restoreScroll() => _restoreScrollFor(_pdfController);
+
+  Future<void> jumpToOutline(OutlineItem item) async {
+    if (!_pdfController.isReady) return;
+    try {
+      final outlines = await _pdfController.document.loadOutline();
+      final targetNode = _findOutlineNode(outlines, item.title);
+      if (targetNode?.dest != null) {
+        await _pdfController.goToDest(targetNode!.dest);
+        return;
+      }
+    } catch (_) {}
+
+    final totalLines = math.max(1, widget.controller.currentMarkdown.split('\n').length);
+    final ratio = ((item.lineNumber - 1) / totalLines).clamp(0.0, 1.0);
+
+    if (widget.controller.renderOptions.isFluid) {
+      final docHeight = _pdfController.documentSize.height;
+      if (docHeight > 0) {
+        await _pdfController.goToPosition(
+          documentOffset: Offset(0, docHeight * ratio),
+          duration: const Duration(milliseconds: 200),
+        );
+      }
+    } else {
+      final pageCount = _pdfController.pageCount;
+      final targetPage = (1 + (ratio * (pageCount - 1)).round()).clamp(1, pageCount);
+      await _pdfController.goToPage(
+        pageNumber: targetPage,
+        duration: const Duration(milliseconds: 200),
+      );
+    }
+  }
+
+  PdfOutlineNode? _findOutlineNode(List<PdfOutlineNode> nodes, String title) {
+    for (final node in nodes) {
+      final t = node.title.trim();
+      final q = title.trim();
+      if (t == q || t.contains(q) || q.contains(t)) {
+        return node;
+      }
+      final child = _findOutlineNode(node.children, title);
+      if (child != null) return child;
+    }
+    return null;
   }
 
   Offset _calcStableZoomCenter(Offset? focalPoint) {
@@ -880,15 +994,123 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     }
   }
 
-  @override
-  void dispose() {
-    _pdfController.removeListener(_onPdfViewerChanged);
-    super.dispose();
+  Widget _buildPdfViewer(
+    int slotIndex,
+    Uint8List bytes,
+    bool isDark,
+    bool isFluid,
+    Color canvasBg,
+  ) {
+    final ctrl = _controllers[slotIndex];
+    return PdfViewer.data(
+      bytes,
+      key: ValueKey(
+        'slot_${slotIndex}_${_slotDocHash[slotIndex]}_${widget.controller.renderOptions.mode}_${widget.controller.isTwoPage}',
+      ),
+      sourceName: '${widget.documentTitle}_slot_${slotIndex}_${_slotDocHash[slotIndex]}',
+      controller: ctrl,
+      params: PdfViewerParams(
+        backgroundColor: canvasBg,
+        margin: isFluid ? 8.0 : 10.0,
+        boundaryMargin: isFluid
+            ? const EdgeInsets.only(top: 8, bottom: 24, left: 0, right: 0)
+            : const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        pageAnchor: PdfPageAnchor.top,
+        underflowAnchor: PdfPageAnchor.top,
+        pageDropShadow: BoxShadow(
+          color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.12),
+          blurRadius: 10,
+          spreadRadius: 1,
+          offset: const Offset(0, 3),
+        ),
+        behaviorControlParams: const PdfViewerBehaviorControlParams(
+          enableLowResolutionPagePreview: false,
+          trailingPageLoadingDelay: Duration.zero,
+          pageImageCachingDelay: Duration.zero,
+          partialImageLoadingDelay: Duration.zero,
+        ),
+        layoutPages: isFluid
+            ? null
+            : (pages, params) => _layoutA4Pages(
+                  pages,
+                  params,
+                  isTwoPage: widget.controller.isTwoPage,
+                ),
+        sizeDelegateProvider: SoGoodSizeDelegateProvider(
+          readerController: widget.controller,
+          isFluid: isFluid,
+          isTwoPage: widget.controller.isTwoPage,
+          minScale: isFluid ? 0.35 : 0.2,
+          maxScale: 5.0,
+        ),
+        zoomStepsDelegateProvider: SoGoodZoomStepsDelegateProvider(
+          isFluid: widget.controller.renderOptions.isFluid,
+        ),
+        textSelectionParams: const PdfTextSelectionParams(
+          enabled: true,
+          showContextMenuAutomatically: true,
+        ),
+        onViewerReady: (document, controller) {
+          if (slotIndex == _pendingSlot) {
+            _restoreScrollFor(controller);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && _pendingSlot == slotIndex) {
+                setState(() {
+                  _activeSlot = slotIndex;
+                  _pendingSlot = null;
+                });
+                _cleanupTimer?.cancel();
+                _cleanupTimer = Timer(const Duration(milliseconds: 500), () {
+                  if (mounted && _pendingSlot == null) {
+                    setState(() {
+                      _slotBytes[1 - _activeSlot] = null;
+                      _slotDocHash[1 - _activeSlot] = 0;
+                    });
+                  }
+                });
+              }
+            });
+          } else if (slotIndex == _activeSlot) {
+            _restoreScroll();
+          }
+          final pNum = _pdfController.pageNumber ?? 1;
+          final pCnt = _pdfController.pageCount;
+          widget.onPageChanged?.call(pNum, pCnt);
+        },
+        onGeneralTap: (context, controller, details) {
+          if (details.type == PdfViewerGeneralTapType.tap) {
+            widget.onCanvasTapped?.call();
+          }
+          return false;
+        },
+        customizeContextMenuItems: (params, items) {
+          _enrichContextMenu(params, items);
+        },
+        linkHandlerParams: PdfLinkHandlerParams(
+          linkColor: Colors.transparent,
+          onLinkTap: (link) async {
+            if (link.dest != null) {
+              await ctrl.goToDest(link.dest);
+            } else if (link.url != null) {
+              final uri = link.url!;
+              if (await canLaunchUrl(uri)) {
+                await launchUrl(uri);
+              }
+            }
+          },
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    if (widget.pdfBytes == null || widget.pdfBytes!.isEmpty) {
+    final hasActiveBytes = _slotBytes[_activeSlot] != null && _slotBytes[_activeSlot]!.isNotEmpty;
+    final hasPendingBytes = _pendingSlot != null &&
+        _slotBytes[_pendingSlot!] != null &&
+        _slotBytes[_pendingSlot!]!.isNotEmpty;
+
+    if (!hasActiveBytes && !hasPendingBytes) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -916,6 +1138,47 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final isFluid = widget.controller.renderOptions.isFluid;
     final canvasBg = isDark ? const Color(0xFF141414) : const Color(0xFFEBEBEB);
 
+    final children = <Widget>[];
+    final inactiveSlot = 1 - _activeSlot;
+
+    // Inactive slot is mounted underneath in background
+    if (_slotBytes[inactiveSlot] != null && _slotBytes[inactiveSlot]!.isNotEmpty) {
+      children.add(
+        Positioned.fill(
+          key: ValueKey('slot_container_$inactiveSlot'),
+          child: IgnorePointer(
+            ignoring: true,
+            child: _buildPdfViewer(
+              inactiveSlot,
+              _slotBytes[inactiveSlot]!,
+              isDark,
+              isFluid,
+              canvasBg,
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Active slot is mounted on top
+    if (_slotBytes[_activeSlot] != null && _slotBytes[_activeSlot]!.isNotEmpty) {
+      children.add(
+        Positioned.fill(
+          key: ValueKey('slot_container_$_activeSlot'),
+          child: IgnorePointer(
+            ignoring: false,
+            child: _buildPdfViewer(
+              _activeSlot,
+              _slotBytes[_activeSlot]!,
+              isDark,
+              isFluid,
+              canvasBg,
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: canvasBg,
       body: Listener(
@@ -926,76 +1189,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         onPointerPanZoomUpdate: (_) {
           widget.onUserScrolled?.call();
         },
-        child: PdfViewer.data(
-          widget.pdfBytes!,
-          key: ValueKey(
-            '${widget.documentTitle}_${widget.controller.renderOptions.mode}_${widget.controller.isTwoPage}',
-          ),
-          sourceName: '${widget.documentTitle}_${widget.pdfBytes!.hashCode}',
-          controller: _pdfController,
-          params: PdfViewerParams(
-            backgroundColor: canvasBg,
-            margin: isFluid ? 8.0 : 10.0,
-            boundaryMargin: isFluid
-                ? const EdgeInsets.only(top: 8, bottom: 24, left: 0, right: 0)
-                : const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-            pageAnchor: PdfPageAnchor.top,
-            underflowAnchor: PdfPageAnchor.top,
-            pageDropShadow: BoxShadow(
-              color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.12),
-              blurRadius: 10,
-              spreadRadius: 1,
-              offset: const Offset(0, 3),
-            ),
-            behaviorControlParams: const PdfViewerBehaviorControlParams(
-              enableLowResolutionPagePreview: false,
-              trailingPageLoadingDelay: Duration.zero,
-              pageImageCachingDelay: Duration.zero,
-              partialImageLoadingDelay: Duration.zero,
-            ),
-            layoutPages: isFluid
-                ? null
-                : (pages, params) => _layoutA4Pages(
-                      pages,
-                      params,
-                      isTwoPage: widget.controller.isTwoPage,
-                    ),
-            sizeDelegateProvider: SoGoodSizeDelegateProvider(
-              readerController: widget.controller,
-              isFluid: isFluid,
-              isTwoPage: widget.controller.isTwoPage,
-              minScale: isFluid ? 0.35 : 0.2,
-              maxScale: 5.0,
-            ),
-            zoomStepsDelegateProvider: SoGoodZoomStepsDelegateProvider(
-              isFluid: widget.controller.renderOptions.isFluid,
-            ),
-            textSelectionParams: const PdfTextSelectionParams(
-              enabled: true,
-              showContextMenuAutomatically: true,
-            ),
-            onViewerReady: (document, controller) {
-              _restoreScroll();
-              final pNum = _pdfController.pageNumber ?? 1;
-              final pCnt = _pdfController.pageCount;
-              widget.onPageChanged?.call(pNum, pCnt);
-            },
-            onGeneralTap: (context, controller, details) {
-              if (details.type == PdfViewerGeneralTapType.tap) {
-                widget.onCanvasTapped?.call();
-              }
-              return false;
-            },
-            customizeContextMenuItems: (params, items) {
-              _enrichContextMenu(params, items);
-            },
-            linkHandlerParams: PdfLinkHandlerParams(
-              onLinkTap: (link) async {
-                if (link.url != null && await canLaunchUrl(link.url!)) {
-                  await launchUrl(link.url!);
-                }
-              },
-            ),
+        child: SizedBox.expand(
+          child: Stack(
+            fit: StackFit.expand,
+            children: children,
           ),
         ),
       ),

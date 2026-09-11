@@ -41,10 +41,20 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     super.initState();
     // Briefly display the toolbar on launch so the user discovers the controls
     _showToolbarTemporarily();
+    widget.controller.addListener(_onControllerChanged);
+  }
+
+  void _onControllerChanged() {
+    if (widget.controller.requestedJumpItem != null) {
+      final req = widget.controller.requestedJumpItem!;
+      widget.controller.clearJumpRequest();
+      _pdfCanvasKey.currentState?.jumpToOutline(req);
+    }
   }
 
   @override
   void dispose() {
+    widget.controller.removeListener(_onControllerChanged);
     _toolbarTimer?.cancel();
     _zoomHudTimer?.cancel();
     super.dispose();
@@ -364,6 +374,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 SidebarView(
                   controller: controller,
                   onClose: () => setState(() => _isSidebarOpen = false),
+                  onJumpToOutline: (item) => _pdfCanvasKey.currentState?.jumpToOutline(item),
                 ),
 
               // Main Canvas + Zen Floating Toolbar Stack

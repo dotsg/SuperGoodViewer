@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use pulldown_cmark::{Alignment, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use typst::foundations::Bytes;
@@ -26,6 +26,79 @@ fn escape_typst_text(text: &str) -> String {
     out
 }
 
+fn decode_percent(s: &str) -> String {
+    let mut bytes = Vec::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            if let (Some(h1), Some(h2)) = (chars.next(), chars.next()) {
+                if let Ok(b) = u8::from_str_radix(&format!("{}{}", h1, h2), 16) {
+                    bytes.push(b);
+                    continue;
+                }
+            }
+        }
+        let mut buf = [0; 4];
+        bytes.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+    }
+    String::from_utf8(bytes).unwrap_or_else(|_| s.to_string())
+}
+
+fn slugify_heading(text: &str) -> (String, Vec<String>) {
+    // 1. Primary GFM slug: lowercase ASCII, dots/punctuation stripped, spaces/underscores to dashes
+    let mut gfm = String::new();
+    let mut prev_is_dash = false;
+    for ch in text.chars() {
+        if ch.is_alphanumeric() {
+            gfm.extend(ch.to_lowercase());
+            prev_is_dash = false;
+        } else if ch == '-' {
+            if !prev_is_dash && !gfm.is_empty() {
+                gfm.push('-');
+                prev_is_dash = true;
+            }
+        } else if ch.is_whitespace() || ch == '_' {
+            if !prev_is_dash && !gfm.is_empty() {
+                gfm.push('-');
+                prev_is_dash = true;
+            }
+        }
+    }
+    if gfm.ends_with('-') {
+        gfm.pop();
+    }
+
+    // 2. Alternative slugs: replacing dots with dashes
+    let mut alt_dot_dash = String::new();
+    let mut prev_dash = false;
+    for ch in text.chars() {
+        if ch.is_alphanumeric() {
+            alt_dot_dash.extend(ch.to_lowercase());
+            prev_dash = false;
+        } else if ch.is_whitespace() || ch == '.' || ch == '-' || ch == '_' {
+            if !prev_dash && !alt_dot_dash.is_empty() {
+                alt_dot_dash.push('-');
+                prev_dash = true;
+            }
+        }
+    }
+    if alt_dot_dash.ends_with('-') {
+        alt_dot_dash.pop();
+    }
+
+    let literal = text.trim().to_string();
+
+    let mut secondary = Vec::new();
+    if !alt_dot_dash.is_empty() && alt_dot_dash != gfm {
+        secondary.push(alt_dot_dash);
+    }
+    if !literal.is_empty() && literal != gfm && !secondary.contains(&literal) {
+        secondary.push(literal);
+    }
+
+    (gfm, secondary)
+}
+
 pub fn convert_markdown_to_typst(
     markdown: &str,
     title: &str,
@@ -42,6 +115,8 @@ pub fn convert_markdown_to_typst(
     let code_bg = if options.theme == "dark" { "rgb(\"#282828\")" } else { "rgb(\"#f6f8fa\")" };
     let table_stroke = if options.theme == "dark" { "rgb(\"#3e3e3e\")" } else { "rgb(\"#d0d7de\")" };
     let table_header_bg = if options.theme == "dark" { "rgb(\"#2a2a2a\")" } else { "rgb(\"#f6f8fa\")" };
+    let link_color = if options.theme == "dark" { "rgb(\"#58a6ff\")" } else { "rgb(\"#0969da\")" };
+    let link_underline = if options.theme == "dark" { "rgb(\"#58a6ff\").transparentize(60%)" } else { "rgb(\"#0969da\").transparentize(65%)" };
 
     let is_fluid = options.mode == "fluid";
     let page_width = if is_fluid {
@@ -161,6 +236,8 @@ pub fn convert_markdown_to_typst(
 #show heading.where(level: 3): set block(above: 1.1em, below: 0.6em)
 #show heading.where(level: 4): set block(above: 1.0em, below: 0.5em)
 
+#show link: it => text(fill: {link_color}, weight: "medium", underline(stroke: 0.5pt + {link_underline}, offset: 2.2pt, it))
+
 // Math helper definitions for LaTeX / MiTeX compatibility
 #let textmath(it) = text(it)
 #let textmd(it) = text(weight: "regular", it)
@@ -267,6 +344,9 @@ pub fn convert_markdown_to_typst(
     let mut list_depth: usize = 0;
     let mut link_stack: Vec<bool> = Vec::new();
     let mut current_image: Option<(String, String)> = None;
+    let mut current_heading: Option<(HeadingLevel, String)> = None;
+    let mut registered_slugs: HashSet<String> = HashSet::new();
+    let mut referenced_anchors: HashSet<String> = HashSet::new();
 
     for event in parser {
         match event {
@@ -282,6 +362,7 @@ pub fn convert_markdown_to_typst(
                         HeadingLevel::H6 => "====== ",
                     };
                     out.push_str(prefix);
+                    current_heading = Some((level, String::new()));
                 }
                 Tag::BlockQuote(kind) => {
                     let callout_info = match kind {
@@ -332,6 +413,15 @@ pub fn convert_markdown_to_typst(
                     if dest.is_empty() {
                         link_stack.push(false);
                         out.push('[');
+                    } else if dest.starts_with('#') {
+                        link_stack.push(true);
+                        let anchor = dest[1..].trim();
+                        let decoded = decode_percent(anchor);
+                        referenced_anchors.insert(anchor.to_string());
+                        if decoded != anchor {
+                            referenced_anchors.insert(decoded);
+                        }
+                        out.push_str(&format!("#link(label(\"{anchor}\"))["));
                     } else {
                         link_stack.push(true);
                         out.push_str(&format!("#link(\"{dest}\")["));
@@ -378,6 +468,17 @@ pub fn convert_markdown_to_typst(
                     out.push_str("\n\n");
                 }
                 TagEnd::Heading(_) => {
+                    if let Some((_, h_text)) = current_heading.take() {
+                        let (primary, secondary) = slugify_heading(&h_text);
+                        if !primary.is_empty() {
+                            out.push_str(&format!(" #label(\"{primary}\")"));
+                            registered_slugs.insert(primary);
+                            for sec in secondary {
+                                out.push_str(&format!(" [#metadata(none) #label(\"{sec}\")]"));
+                                registered_slugs.insert(sec);
+                            }
+                        }
+                    }
                     out.push_str("\n\n");
                 }
                 TagEnd::BlockQuote(_) => {
@@ -462,6 +563,9 @@ pub fn convert_markdown_to_typst(
                 _ => {}
             },
             Event::Text(text) => {
+                if let Some((_, ref mut h_text)) = current_heading {
+                    h_text.push_str(&text);
+                }
                 if let Some((_, ref mut alt_text)) = current_image {
                     alt_text.push_str(&text);
                 } else if in_code_block {
@@ -471,6 +575,9 @@ pub fn convert_markdown_to_typst(
                 }
             }
             Event::Code(code) => {
+                if let Some((_, ref mut h_text)) = current_heading {
+                    h_text.push_str(&code);
+                }
                 if let Some((_, ref mut alt_text)) = current_image {
                     alt_text.push('`');
                     alt_text.push_str(&code);
@@ -501,6 +608,14 @@ pub fn convert_markdown_to_typst(
             Event::SoftBreak => out.push('\n'),
             Event::HardBreak => out.push_str("\\ \n"),
             _ => {}
+        }
+    }
+
+    // Safely emit metadata anchors for any referenced links that don't match a defined heading
+    // This prevents Typst compilation errors if an external markdown contains broken or missing local anchors
+    for anchor in &referenced_anchors {
+        if !registered_slugs.contains(anchor) {
+            out.push_str(&format!("\n[#metadata(none) #label(\"{anchor}\")]\n"));
         }
     }
 
@@ -555,5 +670,41 @@ graph TD;
             println!("Virtual file: {:?}, bytes: {}", name, bytes.len());
             assert!(bytes.len() > 100);
         }
+    }
+
+    #[test]
+    fn test_heading_slugs_and_anchor_links() {
+        let md = r#"
+## 目录
+- [1. 协议概述与物理层体系架构](#1-协议概述与物理层体系架构)
+- [1.1 物理背景与星际中继需求](#11-物理背景与星际中继需求)
+- [未定义链接](#nonexistent-anchor)
+
+## 1. 协议概述与物理层体系架构
+
+### 1.1 物理背景与星际中继需求
+"#;
+        let options = RenderOptions::default();
+        let parsed = convert_markdown_to_typst(md, "Test Doc", &options);
+
+        // Verify label attachment
+        assert!(parsed.typst_source.contains("#label(\"1-协议概述与物理层体系架构\")"));
+        assert!(parsed.typst_source.contains("#label(\"11-物理背景与星际中继需求\")"));
+
+        // Verify link generation to label
+        assert!(parsed.typst_source.contains("#link(label(\"1-协议概述与物理层体系架构\"))"));
+        assert!(parsed.typst_source.contains("#link(label(\"11-物理背景与星际中继需求\"))"));
+
+        // Verify nonexistent anchor is safely defined as metadata
+        assert!(parsed.typst_source.contains("#label(\"nonexistent-anchor\")"));
+
+        // Verify beautiful link styling is present in preamble
+        assert!(parsed.typst_source.contains("#show link: it => text"));
+
+        // Verify full compilation to PDF succeeds
+        let res = crate::compiler::engine::compile_typst_to_pdf(&parsed.typst_source, ".", parsed.virtual_files);
+        assert!(res.is_ok(), "Typst compilation failed: {:?}", res.err());
+        let pdf = res.unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
     }
 }
