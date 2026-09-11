@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -24,6 +25,9 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   bool _isHoveringToolbar = false;
   Timer? _toolbarTimer;
   final GlobalKey<PdfCanvasViewState> _pdfCanvasKey = GlobalKey<PdfCanvasViewState>();
+
+  int _currentPage = 1;
+  int _pageCount = 1;
 
   double _currentZoom = 1.0;
   bool _isZoomHudVisible = false;
@@ -154,6 +158,43 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     }
   }
 
+  void _handleNextPage() {
+    if (widget.controller.renderOptions.isFluid) {
+      _pdfCanvasKey.currentState?.scrollByDelta(420);
+    } else {
+      _pdfCanvasKey.currentState?.nextPage();
+    }
+  }
+
+  void _handlePrevPage() {
+    if (widget.controller.renderOptions.isFluid) {
+      _pdfCanvasKey.currentState?.scrollByDelta(-420);
+    } else {
+      _pdfCanvasKey.currentState?.prevPage();
+    }
+  }
+
+  void _handleFirstPage() {
+    _pdfCanvasKey.currentState?.goToPageNumber(1);
+  }
+
+  void _handleLastPage() {
+    _pdfCanvasKey.currentState?.goToPageNumber(_pageCount);
+  }
+
+  void _handleToggleTwoPage() {
+    if (widget.controller.renderOptions.isFluid) {
+      widget.controller.toggleMode();
+      if (!widget.controller.isTwoPage) {
+        widget.controller.toggleTwoPage();
+      }
+      _showZoomHud('A4 双页对开浏览');
+    } else {
+      widget.controller.toggleTwoPage();
+      _showZoomHud(widget.controller.isTwoPage ? '双页对开浏览' : '单页纵向浏览');
+    }
+  }
+
   Future<void> _toggleFullScreen() async {
     try {
       await _windowChannel.invokeMethod('toggleFullScreen');
@@ -249,6 +290,24 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         const SingleActivator(LogicalKeyboardKey.keyP, control: true):
             controller.toggleMode,
 
+        // Page Navigation & Book Mode (Arrow keys, Bracket keys, PageUp/PageDown, Space, Cmd+D)
+        const SingleActivator(LogicalKeyboardKey.arrowLeft): _handlePrevPage,
+        const SingleActivator(LogicalKeyboardKey.arrowRight): _handleNextPage,
+        const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
+            _pdfCanvasKey.currentState?.scrollByDelta(-120),
+        const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
+            _pdfCanvasKey.currentState?.scrollByDelta(120),
+        const SingleActivator(LogicalKeyboardKey.bracketLeft): _handlePrevPage,
+        const SingleActivator(LogicalKeyboardKey.bracketRight): _handleNextPage,
+        const SingleActivator(LogicalKeyboardKey.pageUp): _handlePrevPage,
+        const SingleActivator(LogicalKeyboardKey.pageDown): _handleNextPage,
+        const SingleActivator(LogicalKeyboardKey.space): _handleNextPage,
+        const SingleActivator(LogicalKeyboardKey.space, shift: true): _handlePrevPage,
+        const SingleActivator(LogicalKeyboardKey.home): _handleFirstPage,
+        const SingleActivator(LogicalKeyboardKey.end): _handleLastPage,
+        const SingleActivator(LogicalKeyboardKey.keyD, meta: true): _handleToggleTwoPage,
+        const SingleActivator(LogicalKeyboardKey.keyD, control: true): _handleToggleTwoPage,
+
         // Page Zoom Shortcuts (Replacing font size shortcuts)
         const SingleActivator(LogicalKeyboardKey.equal, meta: true): _handleZoomIn,
         const SingleActivator(LogicalKeyboardKey.add, meta: true): _handleZoomIn,
@@ -326,6 +385,14 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                       onZoomChanged: (zoom) {
                         if (mounted && (zoom - _currentZoom).abs() > 0.005) {
                           setState(() => _currentZoom = zoom);
+                        }
+                      },
+                      onPageChanged: (pageNumber, pageCount) {
+                        if (mounted && (_currentPage != pageNumber || _pageCount != pageCount)) {
+                          setState(() {
+                            _currentPage = pageNumber;
+                            _pageCount = pageCount;
+                          });
                         }
                       },
                     ),
@@ -596,6 +663,32 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 isDark: isDark,
               ),
               _PillDivider(isDark: isDark),
+
+              // When in A4 Paged mode, show Two-Page Spread toggle and Page Navigation
+              if (!controller.renderOptions.isFluid) ...[
+                _PillIconButton(
+                  icon: controller.isTwoPage
+                      ? Icons.auto_stories_rounded
+                      : Icons.menu_book_outlined,
+                  tooltip: controller.isTwoPage
+                      ? '当前为双页对开，点击切换单页 (Cmd+D)'
+                      : '当前为单页纵向，点击切换双页对开 (Cmd+D)',
+                  isSelected: controller.isTwoPage,
+                  iconSize: 17,
+                  onPressed: _handleToggleTwoPage,
+                ),
+                _PillDivider(isDark: isDark),
+                _PageNavPill(
+                  currentPage: _currentPage,
+                  pageCount: _pageCount,
+                  isTwoPage: controller.isTwoPage,
+                  isDark: isDark,
+                  onPrev: _handlePrevPage,
+                  onNext: _handleNextPage,
+                  onJumpToPage: (p) => _pdfCanvasKey.currentState?.goToPageNumber(p),
+                ),
+                _PillDivider(isDark: isDark),
+              ],
 
               // Page Zoom Stepper & Preset Dropdown (- / % / +)
               _PillIconButton(
@@ -910,4 +1003,165 @@ class _ZoomDropdownBadge extends StatelessWidget {
     );
   }
 }
+
+class _PageNavPill extends StatelessWidget {
+  final int currentPage;
+  final int pageCount;
+  final bool isTwoPage;
+  final bool isDark;
+  final VoidCallback onPrev;
+  final VoidCallback onNext;
+  final ValueChanged<int> onJumpToPage;
+
+  const _PageNavPill({
+    required this.currentPage,
+    required this.pageCount,
+    required this.isTwoPage,
+    required this.isDark,
+    required this.onPrev,
+    required this.onNext,
+    required this.onJumpToPage,
+  });
+
+  String _formatPageLabel() {
+    if (isTwoPage && pageCount > 1) {
+      final spreadStart = ((currentPage - 1) ~/ 2) * 2 + 1;
+      final spreadEnd = math.min(spreadStart + 1, pageCount);
+      if (spreadStart == spreadEnd) {
+        return '$spreadStart / $pageCount';
+      }
+      return '$spreadStart-$spreadEnd / $pageCount';
+    }
+    return '$currentPage / $pageCount';
+  }
+
+  void _showJumpDialog(BuildContext context) {
+    final textController = TextEditingController(text: '$currentPage');
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('跳转到页面', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('请输入页码 (1 - $pageCount):', style: const TextStyle(fontSize: 13)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: textController,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: InputDecoration(
+                hintText: '1 - $pageCount',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+              onSubmitted: (value) {
+                final page = int.tryParse(value);
+                if (page != null && page >= 1 && page <= pageCount) {
+                  Navigator.of(ctx).pop();
+                  onJumpToPage(page);
+                }
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final page = int.tryParse(textController.text);
+              if (page != null && page >= 1 && page <= pageCount) {
+                Navigator.of(ctx).pop();
+                onJumpToPage(page);
+              }
+            },
+            child: const Text('跳转'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final canPrev = currentPage > 1;
+    final canNext = isTwoPage
+        ? (((currentPage - 1) ~/ 2 + 1) * 2 + 1 <= pageCount)
+        : currentPage < pageCount;
+
+    final navColor = isDark ? Colors.white : Colors.black;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Tooltip(
+          message: '上一页 (← 或 [)',
+          waitDuration: const Duration(milliseconds: 500),
+          child: InkWell(
+            onTap: canPrev ? onPrev : null,
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Icon(
+                Icons.chevron_left_rounded,
+                size: 18,
+                color: canPrev
+                    ? navColor.withValues(alpha: 0.85)
+                    : navColor.withValues(alpha: 0.25),
+              ),
+            ),
+          ),
+        ),
+        Tooltip(
+          message: '点击跳转页面',
+          waitDuration: const Duration(milliseconds: 500),
+          child: InkWell(
+            onTap: () => _showJumpDialog(context),
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0x20FFFFFF) : const Color(0x10000000),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                _formatPageLabel(),
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                  color: isDark ? Colors.white.withValues(alpha: 0.9) : Colors.black87,
+                ),
+              ),
+            ),
+          ),
+        ),
+        Tooltip(
+          message: '下一页 (→ 或 ])',
+          waitDuration: const Duration(milliseconds: 500),
+          child: InkWell(
+            onTap: canNext ? onNext : null,
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Icon(
+                Icons.chevron_right_rounded,
+                size: 18,
+                color: canNext
+                    ? navColor.withValues(alpha: 0.85)
+                    : navColor.withValues(alpha: 0.25),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 

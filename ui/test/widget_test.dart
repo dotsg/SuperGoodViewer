@@ -145,6 +145,19 @@ void main() {
         expect(success, false);
       }
     });
+
+    test('two-page mode toggle updates state', () {
+      final controller = ReaderController();
+      expect(controller.isTwoPage, false);
+      controller.toggleTwoPage();
+      expect(controller.isTwoPage, true);
+      controller.toggleTwoPage();
+      expect(controller.isTwoPage, false);
+      controller.setTwoPage(true);
+      expect(controller.isTwoPage, true);
+      controller.setTwoPage(false);
+      expect(controller.isTwoPage, false);
+    });
   });
 
   group('WorkspaceView Widget Tests', () {
@@ -305,6 +318,61 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.text('字体排版与中英文等宽对齐'), findsNothing);
+    });
+
+    testWidgets('A4 mode displays two-page spread toggle and page navigation controls', (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = ReaderController();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WorkspaceView(controller: controller),
+        ),
+      );
+
+      // In fluid mode by default: two-page toggle and page nav pill should NOT be shown
+      expect(find.byTooltip('当前为单页纵向，点击切换双页对开 (Cmd+D)'), findsNothing);
+      expect(find.byTooltip('点击跳转页面'), findsNothing);
+
+      // Switch to A4 mode
+      final modePill = find.text('流式');
+      expect(modePill, findsOneWidget);
+      await tester.tap(modePill);
+      await tester.pump();
+
+      expect(controller.renderOptions.isFluid, false);
+
+      // Now two-page toggle and page navigation are visible
+      final twoPageBtn = find.byTooltip('当前为单页纵向，点击切换双页对开 (Cmd+D)');
+      expect(twoPageBtn, findsOneWidget);
+      expect(find.byTooltip('上一页 (← 或 [)'), findsOneWidget);
+      expect(find.byTooltip('下一页 (→ 或 ])'), findsOneWidget);
+      expect(find.byTooltip('点击跳转页面'), findsOneWidget);
+
+      // Tap two-page toggle button
+      await tester.tap(twoPageBtn);
+      await tester.pump();
+
+      expect(controller.isTwoPage, true);
+      expect(find.byTooltip('当前为双页对开，点击切换单页 (Cmd+D)'), findsOneWidget);
+
+      // Tap jump page badge to open jump dialog
+      final jumpBadge = find.byTooltip('点击跳转页面');
+      await tester.tap(jumpBadge);
+      await tester.pump();
+
+      expect(find.text('跳转到页面'), findsOneWidget);
+      expect(find.text('取消'), findsOneWidget);
+      expect(find.text('跳转'), findsOneWidget);
+
+      // Tap cancel
+      await tester.tap(find.text('取消'));
+      await tester.pump();
+
+      expect(find.text('跳转到页面'), findsNothing);
     });
   });
 }

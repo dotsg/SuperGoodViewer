@@ -27,6 +27,8 @@ class ReaderController extends ChangeNotifier {
   final List<String> _recentFiles = [];
   Map<String, dynamic> _fontReport = {};
 
+  bool _isTwoPage = false;
+
   // Getters
   String? get currentFilePath => _currentFilePath;
   String get currentMarkdown => _currentMarkdown;
@@ -39,6 +41,19 @@ class ReaderController extends ChangeNotifier {
   bool get autoReload => _autoReload;
   List<String> get recentFiles => List.unmodifiable(_recentFiles);
   Map<String, dynamic> get fontReport => _fontReport;
+  bool get isTwoPage => _isTwoPage;
+
+  void toggleTwoPage() {
+    _isTwoPage = !_isTwoPage;
+    notifyListeners();
+  }
+
+  void setTwoPage(bool value) {
+    if (_isTwoPage != value) {
+      _isTwoPage = value;
+      notifyListeners();
+    }
+  }
 
   ReaderController({String? initialFilePath}) {
     refreshFontReport();
