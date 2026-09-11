@@ -55,6 +55,30 @@ pub fn detect_font_capabilities() -> FontCapabilityReport {
     }
 }
 
+/// Loads a font file for the lifetime of the process.
+///
+/// System CJK fonts are very large (macOS `Kaiti.ttc` is 101 MB, `PingFang.ttc` 74.6 MB) and the
+/// store holds every matched file until the process exits. Reading them with `fs::read` puts that
+/// whole payload on the heap as anonymous memory, which the OS can only reclaim by compressing or
+/// swapping it — measured at 545 MB resident for a typical macOS font set.
+///
+/// Memory-mapping instead leaves the bytes as clean, file-backed pages: only the pages actually
+/// touched during shaping become resident, and the kernel can evict them under pressure and re-read
+/// them from disk. Falls back to `fs::read` when mapping is unavailable.
+///
+/// # Safety
+/// `Mmap::map` is unsafe because the mapping reflects the file's current contents: if the file is
+/// truncated or rewritten in place while mapped, reads through the mapping are undefined. These are
+/// system and user font files, which are replaced atomically by OS and installer updates rather than
+/// rewritten in place, so the mapping stays valid for the process lifetime.
+fn load_font_file(path: &Path) -> Option<Bytes> {
+    fs::File::open(path)
+        .ok()
+        .and_then(|file| unsafe { memmap2::Mmap::map(&file).ok() })
+        .map(Bytes::new)
+        .or_else(|| fs::read(path).ok().map(Bytes::new))
+}
+
 static FONT_STORE: OnceLock<GlobalFontStore> = OnceLock::new();
 
 impl GlobalFontStore {
@@ -182,13 +206,12 @@ impl GlobalFontStore {
                         let bytes = if let Some(b) = font_file_cache.get(path) {
                             b.clone()
                         } else {
-                            match fs::read(path) {
-                                Ok(data) => {
-                                    let b = Bytes::new(data);
+                            match load_font_file(path) {
+                                Some(b) => {
                                     font_file_cache.insert(path.clone(), b.clone());
                                     b
                                 }
-                                Err(_) => continue,
+                                None => continue,
                             }
                         };
                         if let Some(font) = Font::new(bytes, face.index) {

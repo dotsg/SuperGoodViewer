@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../controllers/reader_controller.dart';
-import '../main.dart' show startupStopwatch;
+import '../services/startup_metrics.dart';
 
 const List<double> kZoomLadder = [
   0.25, 0.33, 0.50, 0.67, 0.75, 0.80, 0.90, 1.00,
@@ -413,7 +413,6 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   ];
   final List<Uint8List?> _slotBytes = [null, null];
   final List<int> _slotDocHash = [0, 0];
-  static bool _hasLoggedFirstDocument = false;
   bool _isRestoringScroll = false;
   double _currentZoom = 1.0;
   int _lastReportedPage = 1;
@@ -1053,11 +1052,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           showContextMenuAutomatically: true,
         ),
         onViewerReady: (document, controller) {
-          if (!_hasLoggedFirstDocument) {
-            _hasLoggedFirstDocument = true;
-            final elapsed = startupStopwatch.elapsedMilliseconds;
-            debugPrint('[StartupMetrics] Time to document fully rasterized and displayed on screen: $elapsed ms');
-          }
+          StartupMetrics.markFirstDocument();
           if (slotIndex == _pendingSlot) {
             _restoreScrollFor(controller);
             WidgetsBinding.instance.addPostFrameCallback((_) {

@@ -2421,6 +2421,7 @@ name = "sogood_core"
 version = "0.1.0"
 dependencies = [
  "fontdb",
+ "memmap2",
  "mermaid-rs-renderer",
  "mitex",
  "parking_lot",

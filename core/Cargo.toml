@@ -21,6 +21,7 @@ typst-assets = { version = "0.15.1", features = ["fonts"] }
 fontdb = "0.23"
 
 parking_lot = "0.12"
+memmap2 = "0.9"
 thiserror = "2.0"
 
 [dev-dependencies]

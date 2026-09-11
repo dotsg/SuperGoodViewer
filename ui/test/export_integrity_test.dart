@@ -200,7 +200,7 @@ void main() {
           final hashFile = computeChecksum(pixelsFile);
           expect(hashMemory, equals(hashFile));
 
-          debugPrint('[PixelConsistencyTest] Verified $renderWidth x $renderHeight pixels (${pixelsMemory.length} bytes): Checksum = $hashMemory (100% BIT-FOR-BIT IDENTICAL)');
+          debugPrint('[ExportIntegrity] Round-trip render identical: $renderWidth x $renderHeight (${pixelsMemory.length} bytes), checksum $hashMemory');
         } finally {
           imgMemory?.dispose();
           imgFile?.dispose();

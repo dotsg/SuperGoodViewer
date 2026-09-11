@@ -132,25 +132,35 @@ class NativeEngine {
       libName = 'libsogood_core.so';
     }
 
-    // Check multiple candidate locations
-    final currentDir = Directory.current.path;
-    final candidates = [
-      // Direct local folders in tests
-      p.join(currentDir, 'test', libName),
-      p.join(currentDir, 'macos', libName),
-      p.join(currentDir, 'ui', 'test', libName),
-      p.join(currentDir, 'ui', 'macos', libName),
-      // When running from repo root or ui dir
-      p.join(currentDir, '..', 'core', 'target', 'release', libName),
-      p.join(currentDir, 'core', 'target', 'release', libName),
-      p.join(currentDir, '..', 'core', 'target', 'debug', libName),
-      p.join(currentDir, 'core', 'target', 'debug', libName),
-      // App bundle directory (release packaged)
-      p.join(p.dirname(Platform.resolvedExecutable), libName),
-      p.join(p.dirname(Platform.resolvedExecutable), '..', 'Frameworks', libName),
-      p.join(p.dirname(Platform.resolvedExecutable), 'Frameworks', libName),
-      p.join(p.dirname(Platform.resolvedExecutable), 'lib', libName),
+    // Paths next to the executable come FIRST, and are the only ones consulted in
+    // release builds. The working-directory candidates below are a development
+    // convenience, but resolving them ahead of the bundle means a packaged app
+    // launched from a directory that happens to contain `ui/test/<lib>` or
+    // `core/target/release/<lib>` loads that copy instead of its own engine —
+    // silently running a stale or foreign library.
+    final exeDir = p.dirname(Platform.resolvedExecutable);
+    final candidates = <String>[
+      p.join(exeDir, libName),
+      p.join(exeDir, '..', 'Frameworks', libName),
+      p.join(exeDir, 'Frameworks', libName),
+      p.join(exeDir, 'lib', libName),
     ];
+
+    if (!kReleaseMode) {
+      final currentDir = Directory.current.path;
+      candidates.addAll([
+        // Local folders used by `flutter test` and `flutter run`
+        p.join(currentDir, 'test', libName),
+        p.join(currentDir, 'macos', libName),
+        p.join(currentDir, 'ui', 'test', libName),
+        p.join(currentDir, 'ui', 'macos', libName),
+        // When running from repo root or ui dir
+        p.join(currentDir, '..', 'core', 'target', 'release', libName),
+        p.join(currentDir, 'core', 'target', 'release', libName),
+        p.join(currentDir, '..', 'core', 'target', 'debug', libName),
+        p.join(currentDir, 'core', 'target', 'debug', libName),
+      ]);
+    }
 
     for (final candidate in candidates) {
       final normalized = p.normalize(candidate);

@@ -58,7 +58,8 @@ pub struct SogoodBuffer {
 ### 2.2 Global Font Store & Memory Optimization
 Scanning and parsing system fonts on every keypress or reload can take 300ms–800ms. SoGoodViewer uses a thread-safe `OnceLock<GlobalFontStore>`:
 - Embedded Typst fonts (New Computer Modern, DejaVu, Latin Modern Math, etc.) and primary system fonts (PingFang SC, Microsoft YaHei, Inter, Segoe UI) are indexed **once** at initial launch.
-- **TTC (TrueType Collection) In-Memory Deduplication**: TTC font files containing multiple faces (such as macOS `PingFang.ttc` 74.6MB with 6 faces) are read only once and deduplicated via an in-memory `PathBuf -> Arc<Bytes>` cache, reducing runtime memory footprint by over **815 MB** (a 69% reduction).
+- **TTC (TrueType Collection) In-Memory Deduplication**: TTC font files containing multiple faces (such as macOS `PingFang.ttc` 74.6MB with 6 faces) are read only once and deduplicated via an in-memory `PathBuf -> Arc<Bytes>` cache, so 141 matched faces read only 48 distinct files instead of re-allocating per face.
+- **Memory-mapped font files**: those 48 files are mapped with `memmap2` rather than read onto the heap, so font bytes are clean file-backed pages — only pages actually touched during shaping become resident, and the kernel can evict them under pressure. Measured in isolation, loading 158 fonts costs **11 MB** of `phys_footprint` versus **548 MB** with `fs::read`. Whole-app resident footprint dropped from ~695 MB to **~158 MB**. See [BENCHMARKS.md](BENCHMARKS.md) for the measured attribution.
 - Subsequent compilations reference the cached `LazyHash<FontBook>`, bringing re-compilation latency down to **0.5ms ~ 5ms**.
 
 See [BENCHMARKS.md](BENCHMARKS.md) for detailed performance metrics and comparison with Obsidian, Typora, MarkText, and VS Code.

@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'controllers/reader_controller.dart';
 import 'views/workspace_view.dart';
-
-final Stopwatch startupStopwatch = Stopwatch()..start();
+import 'services/startup_metrics.dart';
 
 void main(List<String> args) {
+  StartupMetrics.begin();
   WidgetsFlutterBinding.ensureInitialized();
   runApp(SoGoodViewerApp(initialFile: args.isNotEmpty ? args.first : null));
 }
@@ -25,8 +25,7 @@ class _SoGoodViewerAppState extends State<SoGoodViewerApp> {
     super.initState();
     _controller = ReaderController(initialFilePath: widget.initialFile);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final elapsed = startupStopwatch.elapsedMilliseconds;
-      debugPrint('[StartupMetrics] Time to first UI frame (shell rendered): $elapsed ms');
+      StartupMetrics.markFirstFrame();
     });
   }
 

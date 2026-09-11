@@ -20,8 +20,8 @@
 | **底层架构**                    |   **Rust + Flutter (Impeller Metal)**   |  Electron (Chromium+Node)   |   Cocoa + WKWebView    | Electron (Chromium+Node) | Electron (Chromium+Node) |
 | **应用安装体积**                |        **94 MB** (内嵌17款字体)         |           482 MB            | 46 MB (依赖系统WebKit) |          367 MB          |          932 MB          |
 | **常驻进程数**                  |            **1 个原生进程**             |        4 个独立进程         |      2 个独立进程      |       5 个独立进程       |      8+ 个独立进程       |
-| **冷启动到首帧耗时**            | **~50-60 ms (UI首帧) / ~180-230 ms (冷文档就绪)** |     1,500 ms - 2,500 ms     |    450 ms - 600 ms     |   1,800 ms - 3,000 ms    |   1,800 ms - 3,500 ms    |
-| **常驻内存占用 (RSS)**          |      **~365 MB** (含字体与PDF引擎)      |    ~627 MB (全进程汇总)     | ~266 MB (含WebKit进程) |   ~715 MB (全进程汇总)   |   ~950 MB (全进程汇总)   |
+| **冷启动到首帧耗时**            | **~80 ms (UI首帧) / ~210 ms (文档就绪)** · 冷启动 417 / 487 ms |     1,500 ms - 2,500 ms     |    450 ms - 600 ms     |   1,800 ms - 3,000 ms    |   1,800 ms - 3,500 ms    |
+| **常驻内存占用 (RSS)**          |      **~158 MB** (字体内存映射)      |    ~627 MB (全进程汇总)     | ~266 MB (含WebKit进程) |   ~715 MB (全进程汇总)   |   ~950 MB (全进程汇总)   |
 | **真实综合文档 (test.md 22KB)** |   **8.77 ~ 10.67 ms** (单核~13-23ms)    |       350 ms - 450 ms       |    300 ms - 400 ms     |     450 ms - 600 ms      |     500 ms - 700 ms      |
 | **100KB 书籍排版耗时**          |    **2.55 ~ 4.54 ms** (30+页纯矢量)     |      750 ms - 1,000 ms      |    600 ms - 800 ms     |   1,000 ms - 1,500 ms    |   1,200 ms - 2,000 ms    |
 | **公式吞吐量**                  |       **150,000 ~ 320,000 式/秒**       | ~500 式/秒 (MathJax/KaTeX)  |       ~800 式/秒       |        ~400 式/秒        |        ~600 式/秒        |
@@ -104,16 +104,67 @@ Typora              █ 46 MB (外挂依赖系统 WebKit 运行库)
 
 ### 4.1 启动速度与内存占用 (Process & Memory)
 
+#### 启动耗时实测 (Startup Timing, Measured)
+
+测量方法：`flutter run -d macos --profile --trace-startup`（取 Flutter engine 自带的
+`build/start_up_info.json`），以及直接启动 Profile 构建产物读取应用内 `StartupMetrics` 探针。
+**Profile 构建，Apple Silicon。** 两套口径互相校验：应用内探针读数与 trace 的
+`timeAfterFrameworkInit` 逐次吻合（358.6/37.2/30.5/29.6 ms vs 358/37/30/29 ms）。
+
+| 阶段 | 热启动 (重复启动，n=4) | 冷启动 (构建后首次) |
+| :--- | :---: | :---: |
+| Flutter framework 初始化 (`timeToFrameworkInit`) | 58 ~ 72 ms | 58 ms |
+| 应用自身至 UI 首帧 (`main()` 起算) | **15 ~ 21 ms** | 359 ms |
+| **engine 启动 → UI 首帧** | **~75 ~ 93 ms** | **417 ms** |
+| **engine 启动 → 文档渲染上屏** | **~200 ~ 223 ms** | **487 ms**(首帧上屏) |
+
+> **冷热差异说明**：冷启动那 359 ms 主要是文件系统冷缓存的代价——41 MB 的
+> `libsogood_core.dylib` 需要分页载入，系统字体文件尚未进入 page cache。重复启动时
+> 应用自身的启动开销仅 **15 ~ 21 ms**，其中字体发现已通过后台 Isolate 移出主线程。
+>
+> **口径提醒**：`timeToFrameworkInit`（58 ~ 72 ms）常被误当作"冷启动到首帧"，但该阶段
+> 应用尚未绘制任何像素，不应作为首帧指标对外引用。
+
+
 | 软件名称         | 系统进程架构                                              | 常驻内存 (RSS) | 内存说明                                                                  |
 | ---------------- | --------------------------------------------------------- | :------------: | ------------------------------------------------------------------------- |
-| **SoGoodViewer** | **1 个原生进程** (`sogoodviewer`)                         |  **~365 MB**   | 单进程自包含：Typst 编译器、17 款字形表、PDFium 缓存、Impeller Metal 管道 |
+| **SoGoodViewer** | **1 个原生进程** (`sogoodviewer`)                         |  **~158 MB**   | 单进程自包含；系统字体经内存映射，不计入常驻；峰值约 600 MB               |
 | **Typora**       | **2 个独立进程** (`Typora` + `com.apple.WebKit`)          |  **~266 MB**   | 双进程分离，内存随浏览长文档逐渐增加                                      |
 | **Obsidian**     | **4 个独立进程** (Main, Renderer, GPU, Utility)           |  **~627 MB**   | Chromium 多进程沙盒架构，V8 虚拟机内存常驻较高                            |
 | **MarkText**     | **5 个独立进程** (Main, Renderer, GPU, Crashpad, Utility) |  **~715 MB**   | 多进程常驻，空载内存开销明显                                              |
 | **VS Code**      | **8+ 个独立进程** (Main, Extension, Renderer, Search...)  |  **~950 MB**   | 扩展系统与编辑器功能齐全，内存占用大                                      |
 
-> **关键技术优化 (TrueType 字体去重)**：  
-> 在开发早期，由于 macOS `PingFang.ttc` (74.6MB) 与 `Songti.ttc` (63.8MB) 为多字族合集，原始解析会为每个字族重复分配内存，导致内存飙升至 1.18GB。经引入 `GlobalFontStore` 的 `font_file_cache` 字节去重与 `Arc<Bytes>` 共享之后，**内存直降 815 MB**，降幅达 **69%**！
+#### 内存归因实测 (Memory Attribution, Measured)
+
+Release 构建，启动后加载内置示例文档，静置采样（`ps` / `footprint` / `vmmap`）：
+
+| 指标 | 优化前 | 优化后 |
+| :--- | :---: | :---: |
+| `phys_footprint` 常驻 | 693 ~ 696 MB | **158 ~ 159 MB** |
+| `phys_footprint_peak` 峰值 | 1101 ~ 1128 MB | **597 ~ 599 MB** |
+| `ps` RSS | 741 ~ 753 MB | 334 ~ 335 MB |
+
+**降幅 77%。** 两项改动共同促成：
+
+**1. 字体改用内存映射（`memmap2`）。** `GlobalFontStore` 按 `target_prefixes` 匹配到 141 个 face、
+落在 48 个不同文件，其中 `Kaiti.ttc` 101 MB、`PingFang.ttc` 74.6 MB、`Songti.ttc` 63.8 MB。
+原先以 `fs::read` 整文件读入堆，成为不可回收的匿名内存。改为 `Bytes::new(Mmap)` 后，
+字体是干净的文件backed页，只有实际参与排版的页才驻留，且内存压力下可被回收。
+
+Rust 侧隔离测量（同一探针，仅加载策略不同）：
+
+| | `fs::read` | `mmap` |
+| :--- | :---: | :---: |
+| 加载 158 个字体后 | 548 MB | **11 MB** |
+| 再编译一份 CJK 文档后 | 552 MB | **15 MB** |
+
+**2. 修正动态库解析顺序。** `native_engine.dart` 原先把工作目录相对路径排在可执行文件相对路径之前，
+导致打包后的 app 会优先加载 `ui/test/` 或 `core/target/release/` 下的副本。`vmmap` 证实运行中的
+app 实际映射的是仓库里的旧 dylib 而非自身 bundle 内的引擎。修正后 release 构建只查找自身 bundle。
+
+> **仍未实施的可选优化**：`target_prefixes` 中 `kaiti`、`songti`、`hiragino`、`arial`、`simsun`、
+> `simhei`、`source han`、`monaco`、`courier new` 等并未出现在任何正文/代码字体栈中，仅作生僻字形兜底。
+> 移除可进一步减少映射数量与 `FontBook` 构建开销，代价是失去这部分回退能力。
 
 ### 4.2 交互响应度 (Interaction & Frame Rate)
 
@@ -159,7 +210,7 @@ Typora              █ 46 MB (外挂依赖系统 WebKit 运行库)
 │                       │ (C-ABI 零拷贝直传)                 │
 │ ▼                                                          │
 │ Google PDFium + Apple Metal Impeller 硬件加速矢量光栅化    │
-│ [耗时: 0.5ms ~ 5ms | 内存: 365MB (全内嵌) | 进程: 仅 1 个] │
+│ [耗时: 0.5ms ~ 5ms | 内存: 158MB (字体mmap) | 进程: 仅 1 个] │
 └────────────────────────────────────────────────────────────┘
 ```
 
