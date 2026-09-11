@@ -1,0 +1,40 @@
+name: SoGoodViewer CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Build & Test (Rust & Flutter)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Setup Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Rust Core Tests
+        run: |
+          cd core
+          cargo test --verbose -- --nocapture
+
+      - name: Flutter Analysis & Tests
+        run: |
+          cd ui
+          flutter pub get
+          flutter analyze
+          flutter test
