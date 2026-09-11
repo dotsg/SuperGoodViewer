@@ -60,7 +60,9 @@ class _WorkspaceViewState extends State<WorkspaceView> {
             controller.compileDocument,
         const SingleActivator(LogicalKeyboardKey.keyT, meta: true):
             controller.toggleTheme,
-        const SingleActivator(LogicalKeyboardKey.keyM, meta: true):
+        const SingleActivator(LogicalKeyboardKey.keyP, meta: true):
+            controller.toggleMode,
+        const SingleActivator(LogicalKeyboardKey.keyM, meta: true, shift: true):
             controller.toggleMode,
       },
       child: Focus(
@@ -249,8 +251,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                         builder: (context, constraints) {
                           // Dynamically adapt fluid viewport width to window size
                           WidgetsBinding.instance.addPostFrameCallback((_) {
-                            final targetWidth = (constraints.maxWidth - 64)
-                                .clamp(600.0, 1400.0);
+                            final targetWidth = (constraints.maxWidth - 32)
+                                .clamp(480.0, 960.0);
                             controller.setViewportWidth(targetWidth);
                           });
 

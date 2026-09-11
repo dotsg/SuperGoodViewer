@@ -82,6 +82,7 @@ mod tests {
         = Hello World
         This is a test from SoGoodViewer!
         $ E = m c^2 $
+        $ partial $
         "#;
         let res = compile_typst_to_pdf(source, ".", HashMap::new());
         assert!(res.is_ok(), "Typst compilation failed: {:?}", res.err());

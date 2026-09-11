@@ -33,27 +33,30 @@ class _PdfCanvasViewState extends State<PdfCanvasView> {
 
   void _onPdfViewerChanged() {
     if (_isRestoringScroll) return;
-    final pageNum = _pdfController.pageNumber;
-    final count = _pdfController.pageCount;
-    if (_pdfController.isReady && pageNum != null && count > 0) {
-      final ratio = pageNum / count;
-      widget.controller.updateScrollRatio(ratio);
+    if (_pdfController.isReady) {
+      final docSize = _pdfController.documentSize;
+      if (docSize.height > 0) {
+        final ratio = (_pdfController.visibleRect.top / docSize.height).clamp(0.0, 1.0);
+        widget.controller.updateScrollRatio(ratio);
+      }
     }
   }
 
   void _restoreScroll() {
     final targetRatio = widget.controller.lastScrollRatio;
-    final count = _pdfController.pageCount;
-    if (targetRatio > 0.0 && _pdfController.isReady && count > 0) {
-      _isRestoringScroll = true;
-      final targetPage = (targetRatio * count).round().clamp(1, count);
-      _pdfController.goToPage(pageNumber: targetPage);
+    if (_pdfController.isReady) {
+      final docSize = _pdfController.documentSize;
+      if (targetRatio > 0.0 && docSize.height > 0) {
+        _isRestoringScroll = true;
+        final targetY = targetRatio * docSize.height;
+        _pdfController.goToPosition(documentOffset: Offset(0, targetY));
 
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) {
-          _isRestoringScroll = false;
-        }
-      });
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted) {
+            _isRestoringScroll = false;
+          }
+        });
+      }
     }
   }
 
@@ -96,6 +99,8 @@ class _PdfCanvasViewState extends State<PdfCanvasView> {
         controller: _pdfController,
         params: PdfViewerParams(
           backgroundColor: canvasBg,
+          pageAnchor: PdfPageAnchor.top,
+          underflowAnchor: PdfPageAnchor.top,
           onViewerReady: (document, controller) {
             _restoreScroll();
           },

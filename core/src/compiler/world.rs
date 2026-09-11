@@ -51,6 +51,9 @@ impl GlobalFontStore {
                 "Noto Serif CJK SC",
                 "Noto Sans",
                 "Inter",
+                "SF Pro",
+                "SF Pro Text",
+                "SF Pro Display",
                 "Segoe UI",
                 "San Francisco",
                 "Helvetica Neue",
@@ -60,15 +63,19 @@ impl GlobalFontStore {
                 "Cascadia Code",
                 "Consolas",
                 "Menlo",
+                "Courier New",
+                "STIX Two Text",
+                "STIX Two Math",
+                "Source Han Sans SC",
+                "Source Han Serif SC",
             ];
 
-            for family_name in &target_families {
-                let query = fontdb::Query {
-                    families: &[fontdb::Family::Name(family_name)],
-                    ..Default::default()
-                };
-                if let Some(id) = db.query(&query) {
-                    db.with_face_data(id, |data, index| {
+            for face in db.faces() {
+                let is_target = face.families.iter().any(|(f_name, _)| {
+                    target_families.iter().any(|tf| tf.eq_ignore_ascii_case(f_name))
+                });
+                if is_target {
+                    db.with_face_data(face.id, |data, index| {
                         let bytes = Bytes::new(data.to_vec());
                         if let Some(font) = Font::new(bytes, index) {
                             fonts.push(font);

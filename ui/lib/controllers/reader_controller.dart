@@ -14,7 +14,7 @@ class ReaderController extends ChangeNotifier {
   RenderOptions _renderOptions = const RenderOptions(
     mode: 'fluid',
     theme: 'light',
-    viewportWidth: 850.0,
+    viewportWidth: 540.0,
     fontSize: 10.5,
   );
   bool _isCompiling = false;
@@ -157,12 +157,16 @@ class ReaderController extends ChangeNotifier {
     compileDocument();
   }
 
+  Timer? _viewportDebounceTimer;
   void setViewportWidth(double width) {
-    if ((width - _renderOptions.viewportWidth).abs() > 20) {
-      _renderOptions = _renderOptions.copyWith(viewportWidth: width);
-      if (_renderOptions.isFluid) {
-        compileDocument();
-      }
+    if ((width - _renderOptions.viewportWidth).abs() > 40) {
+      _viewportDebounceTimer?.cancel();
+      _viewportDebounceTimer = Timer(const Duration(milliseconds: 300), () {
+        _renderOptions = _renderOptions.copyWith(viewportWidth: width);
+        if (_renderOptions.isFluid) {
+          compileDocument();
+        }
+      });
     }
   }
 
@@ -268,6 +272,7 @@ graph LR
 
   @override
   void dispose() {
+    _viewportDebounceTimer?.cancel();
     _debounceTimer?.cancel();
     _watcherSubscription?.cancel();
     super.dispose();

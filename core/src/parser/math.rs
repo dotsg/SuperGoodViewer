@@ -51,6 +51,13 @@ mod tests {
 
 
     #[test]
+    fn test_transpile_maxwell() {
+        let latex = r"\nabla \times \mathbf{E} = -\frac{\partial \mathbf{B}}{\partial t}";
+        let res = transpile_latex_math(latex, true);
+        println!("Maxwell full equation output:\n{}", res);
+    }
+
+    #[test]
     fn test_transpile_fraction_and_integral() {
         let res = transpile_latex_math(r"\int_0^1 x dx + \frac{a}{b}", true);
         assert!(res.contains('$'));

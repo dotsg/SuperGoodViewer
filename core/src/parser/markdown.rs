@@ -38,9 +38,10 @@ pub fn convert_markdown_to_typst(
     let bg_color = if options.theme == "dark" { "rgb(\"#1e1e1e\")" } else { "rgb(\"#ffffff\")" };
     let text_color = if options.theme == "dark" { "rgb(\"#d4d4d4\")" } else { "rgb(\"#1a1a1a\")" };
     let header_color = if options.theme == "dark" { "rgb(\"#808080\")" } else { "rgb(\"#666666\")" };
-    let heading_color = if options.theme == "dark" { "rgb(\"#ffffff\")" } else { "rgb(\"#000000\")" };
-    let code_bg = if options.theme == "dark" { "rgb(\"#2d2d2d\")" } else { "rgb(\"#f5f5f5\")" };
-    let table_stroke = if options.theme == "dark" { "rgb(\"#404040\")" } else { "rgb(\"#e0e0e0\")" };
+    let heading_color = if options.theme == "dark" { "rgb(\"#ffffff\")" } else { "rgb(\"#111111\")" };
+    let code_bg = if options.theme == "dark" { "rgb(\"#282828\")" } else { "rgb(\"#f6f8fa\")" };
+    let table_stroke = if options.theme == "dark" { "rgb(\"#3e3e3e\")" } else { "rgb(\"#d0d7de\")" };
+    let table_header_bg = if options.theme == "dark" { "rgb(\"#2a2a2a\")" } else { "rgb(\"#f6f8fa\")" };
 
     let is_fluid = options.mode == "fluid";
     let page_width = if is_fluid {
@@ -87,47 +88,104 @@ pub fn convert_markdown_to_typst(
         r##")
 
 #set text(
-  font: ("Inter", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "STIX Two Text"),
+  font: ("Inter", "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "STIX Two Text"),
   size: {font_size}pt,
   fill: {text_color},
-  spacing: 120%,
   lang: "zh"
 )
 
+#set par(
+  justify: false,
+  leading: 0.78em,
+  spacing: 1.15em
+)
+
+#show raw: set text(font: ("JetBrains Mono", "Fira Code", "Menlo", "Consolas", "DejaVu Sans Mono"), size: 0.9em)
+
 #show raw.where(block: false): it => box(
   fill: {code_bg},
-  inset: (x: 3pt, y: 0pt),
+  inset: (x: 4pt, y: 0pt),
   outset: (y: 3pt),
   radius: 3pt,
-  text(size: 0.9em, it)
+  it
 )
 
 #show raw.where(block: true): it => block(
   fill: {code_bg},
-  inset: 10pt,
+  inset: (x: 12pt, y: 10pt),
   radius: 6pt,
   width: 100%,
-  text(size: 0.9em, it)
+  it
 )
 
-#show heading: it => block(
-  below: 0.8em,
-  above: 1.4em,
-  text(fill: {heading_color}, weight: "bold", it.body)
-)
+#show heading: set text(fill: {heading_color}, weight: "bold")
+#show heading.where(level: 1): set block(above: 1.6em, below: 0.9em)
+#show heading.where(level: 2): set block(above: 1.3em, below: 0.7em)
+#show heading.where(level: 3): set block(above: 1.1em, below: 0.6em)
+#show heading.where(level: 4): set block(above: 1.0em, below: 0.5em)
 
-// Math helper definitions for LaTeX compatibility
-#let textmath(body) = text(body)
-#let mitexsqrt(body) = math.sqrt(body)
-#let mitexdisplay(body) = math.display(body)
-#let mitextag(body) = none
-#let zws = []
+// Math helper definitions for LaTeX / MiTeX compatibility
+#let textmath(it) = text(it)
+#let textmd(it) = text(weight: "regular", it)
+#let textnormal(it) = text(style: "normal", weight: "regular", it)
+#let textbf(it) = text(weight: "bold", it)
+#let textit(it) = text(style: "italic", it)
+#let textrm(it) = text(it)
+#let textup(it) = text(style: "normal", it)
+#let textsf(it) = text(it)
+#let texttt(it) = text(it)
+#let diff = math.partial
+
+#let mitexsqrt(..args) = {{
+  if args.pos().len() == 1 {{
+    math.sqrt(args.pos().at(0))
+  }} else if args.pos().len() == 2 {{
+    math.root(args.pos().at(0), args.pos().at(1))
+  }} else {{
+    math.sqrt(..args)
+  }}
+}}
+#let mitexdisplay(it) = math.display(it)
+#let mitexinline(it) = math.inline(it)
+#let mitexmathbf(it) = math.bold(math.upright(it))
+#let mitexmathit(it) = math.italic(it)
+#let mitexmathrm(it) = math.upright(it)
+#let mitexbold(it) = math.bold(math.upright(it))
+#let mitexupright(it) = math.upright(it)
+#let mitexitalic(it) = math.italic(it)
+#let mitexsans(it) = math.sans(it)
+#let mitexfrak(it) = math.frak(it)
+#let mitexmono(it) = math.mono(it)
+#let mitexcal(it) = math.cal(it)
+#let mitexbb(it) = math.bb(it)
+#let mitexnot(it) = math.cancel(angle: 20deg, it)
+#let mitexset(it) = ${{it}}$
+#let mitexlabel(..args) = none
+#let mitextag(..args) = none
+#let mitexcite(..args) = none
+#let mitexref(..args) = none
+#let mitexcaption(..args) = none
+#let mitexcomment(..args) = none
+#let mitexbibliography(..args) = none
+#let operatornamewithlimits(it) = math.op(limits: true, math.upright(it))
+#let zws = math.zws
+#let mitexarray(arg0: ("l",), ..args) = {{
+  let matrix = args.pos().map(row => if type(row) == array {{ row }} else {{ (row,) }} )
+  let m = calc.max(..matrix.map(row => row.len()), 1)
+  matrix = matrix.map(row => row + (m - row.len()) * (none,))
+  pad(y: 0.2em, grid(
+    columns: m,
+    column-gutter: 0.5em,
+    row-gutter: 0.5em,
+    ..matrix.flatten().map(it => $it$)
+  ))
+}}
 
 
 #set table(
-
   stroke: (x, y) => if y == 0 {{ (bottom: 1.5pt + {heading_color}) }} else {{ (bottom: 0.5pt + {table_stroke}) }},
-  fill: (x, y) => if y == 0 {{ none }} else {{ none }},
+  fill: (x, y) => if y == 0 {{ {table_header_bg} }} else {{ none }},
+  inset: (x: 9pt, y: 7pt),
 )
 
 "##,
@@ -135,8 +193,13 @@ pub fn convert_markdown_to_typst(
         text_color = text_color,
         code_bg = code_bg,
         heading_color = heading_color,
-        table_stroke = table_stroke
+        table_stroke = table_stroke,
+        table_header_bg = table_header_bg
     ));
+
+    let callout_bg_op = if options.theme == "dark" { "darken(70%)" } else { "lighten(90%)" };
+    let quote_bg = if options.theme == "dark" { "rgb(\"#252525\")" } else { "rgb(\"#f6f8fa\")" };
+    let quote_border = if options.theme == "dark" { "rgb(\"#555555\")" } else { "rgb(\"#d0d7de\")" };
 
     // 2. Parse Markdown AST with pulldown-cmark
     let mut parser_opts = Options::empty();
@@ -146,6 +209,7 @@ pub fn convert_markdown_to_typst(
     parser_opts.insert(Options::ENABLE_TASKLISTS);
     parser_opts.insert(Options::ENABLE_MATH);
     parser_opts.insert(Options::ENABLE_HEADING_ATTRIBUTES);
+    parser_opts.insert(Options::ENABLE_GFM);
 
     let parser = Parser::new_ext(markdown, parser_opts);
 
@@ -154,9 +218,6 @@ pub fn convert_markdown_to_typst(
     let mut code_block_content = String::new();
     let mut in_table_head = false;
     let mut list_depth: usize = 0;
-
-
-
 
     for event in parser {
         match event {
@@ -185,11 +246,13 @@ pub fn convert_markdown_to_typst(
 
                     if let Some((label, color)) = callout_info {
                         out.push_str(&format!(
-                            "\n#block(width: 100%, stroke: (left: 3pt + {color}), inset: (left: 10pt, y: 6pt), fill: {color}.lighten(90%))[\n*{}*\n\n",
+                            "\n#block(width: 100%, stroke: (left: 3.5pt + {color}), inset: (x: 10pt, y: 7pt), radius: (right: 4pt), fill: {color}.{callout_bg_op})[\n*{}*\n\n",
                             label
                         ));
                     } else {
-                        out.push_str("\n#block(width: 100%, stroke: (left: 2.5pt + gray), inset: (left: 10pt, y: 4pt))[\n");
+                        out.push_str(&format!(
+                            "\n#block(width: 100%, stroke: (left: 3.5pt + {quote_border}), inset: (x: 10pt, y: 7pt), radius: (right: 4pt), fill: {quote_bg})[\n"
+                        ));
                     }
                 }
                 Tag::CodeBlock(kind) => {
