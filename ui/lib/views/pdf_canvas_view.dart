@@ -27,7 +27,7 @@ PdfPageLayout _layoutA4Pages(List<PdfPage> pages, PdfViewerParams params, {requi
     }
     return PdfPageLayout(pageLayouts: pageLayout, documentSize: Size(width, y));
   } else {
-    const pageGap = 16.0;
+    const pageGap = 12.0;
     double maxSpreadWidth = 0.0;
     for (var i = 0; i < pages.length; i += 2) {
       final p1 = pages[i];
@@ -76,19 +76,19 @@ PdfPageLayout _layoutA4Pages(List<PdfPage> pages, PdfViewerParams params, {requi
 /// Sizing strategy tailor-made for SoGoodViewer.
 ///
 /// 1. In Fluid Mode: The document is a single continuous tall page.
-///    It NEVER computes vertical shrink `viewHeight / docHeight` (which would shrink
-///    a 12000pt document into a tiny 50px sliver). It strictly anchors to horizontal
-///    fit and maintains a safe floor scale (0.35).
+///    It strictly anchors to horizontal fit and maintains a safe floor scale (0.35).
 /// 2. In A4 Two-Page Mode: Computes spread width and height across paired facing pages
-///    to cleanly fit both pages on screen in full-page mode.
-/// 3. Prevents jitter and reading position jumps during window resizing or zoom transitions.
+///    to cleanly fill both pages on screen in full-page / full-window mode.
+/// 3. In Reload / Edit / Theme Toggle: Intelligently restores saved reading position.
 class SoGoodSizeDelegateProvider extends PdfViewerSizeDelegateProvider {
+  final ReaderController readerController;
   final bool isFluid;
   final bool isTwoPage;
   final double minScale;
   final double maxScale;
 
   const SoGoodSizeDelegateProvider({
+    required this.readerController,
     required this.isFluid,
     required this.isTwoPage,
     this.minScale = 0.35,
@@ -97,6 +97,7 @@ class SoGoodSizeDelegateProvider extends PdfViewerSizeDelegateProvider {
 
   @override
   PdfViewerSizeDelegate create() => SoGoodSizeDelegate(
+        readerController: readerController,
         isFluid: isFluid,
         isTwoPage: isTwoPage,
         minScale: minScale,
@@ -107,16 +108,18 @@ class SoGoodSizeDelegateProvider extends PdfViewerSizeDelegateProvider {
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is SoGoodSizeDelegateProvider &&
+          other.readerController == readerController &&
           other.isFluid == isFluid &&
           other.isTwoPage == isTwoPage &&
           other.minScale == minScale &&
           other.maxScale == maxScale;
 
   @override
-  int get hashCode => Object.hash(isFluid, isTwoPage, minScale, maxScale);
+  int get hashCode => Object.hash(readerController, isFluid, isTwoPage, minScale, maxScale);
 }
 
 class SoGoodSizeDelegate implements PdfViewerSizeDelegate {
+  final ReaderController readerController;
   final bool isFluid;
   final bool isTwoPage;
   final double minScale;
@@ -125,6 +128,7 @@ class SoGoodSizeDelegate implements PdfViewerSizeDelegate {
   PdfViewerController? _controller;
 
   SoGoodSizeDelegate({
+    required this.readerController,
     required this.isFluid,
     required this.isTwoPage,
     required this.minScale,
@@ -166,7 +170,6 @@ class SoGoodSizeDelegate implements PdfViewerSizeDelegate {
 
     if (isFluid) {
       // Fluid mode: continuous long page.
-      // ALWAYS fit width, NEVER fit full 10,000pt height into viewport!
       final docWidth = layout.documentSize.width;
       final fitWidth = (viewSize.width - bmh - pageMargin * 2) / (docWidth > 0 ? docWidth : 800.0);
       final clampedFitWidth = fitWidth.clamp(minScale, maxScale);
@@ -181,10 +184,14 @@ class SoGoodSizeDelegate implements PdfViewerSizeDelegate {
       // Paged A4 mode
       if (isTwoPage && layout.pageLayouts.length > 1) {
         // Two-page spread
-        final spreadWidth = layout.documentSize.width;
-        final spreadHeight = layout.pageLayouts.first.height;
+        final p1 = layout.pageLayouts[0];
+        final p2 = layout.pageLayouts[1];
+        const pageGap = 12.0;
+        final spreadWidth = p1.width + p2.width + pageGap;
+        final spreadHeight = math.max(p1.height, p2.height);
+
         final sX = (viewSize.width - bmh - pageMargin * 2) / spreadWidth;
-        final sY = (viewSize.height - bmv - pageMargin * 2 - 32.0) / spreadHeight;
+        final sY = (viewSize.height - bmv - pageMargin * 2) / spreadHeight;
         final fitSpread = math.min(sX, sY).clamp(0.2, maxScale);
         final fitWidth = sX.clamp(0.2, maxScale);
 
@@ -200,7 +207,7 @@ class SoGoodSizeDelegate implements PdfViewerSizeDelegate {
             ? layout.pageLayouts[pageNumber - 1]
             : layout.pageLayouts.first;
         final sX = (viewSize.width - bmh - pageMargin * 2) / page.width;
-        final sY = (viewSize.height - bmv - pageMargin * 2 - 32.0) / page.height;
+        final sY = (viewSize.height - bmv - pageMargin * 2) / page.height;
         final fitPage = math.min(sX, sY).clamp(0.2, maxScale);
         final fitWidth = sX.clamp(0.2, maxScale);
 
@@ -226,16 +233,40 @@ class SoGoodSizeDelegate implements PdfViewerSizeDelegate {
     final controller = _controller;
     if (controller == null) return;
 
-    if (isFluid) {
-      final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
-      final rawFitWidth = state.viewSize.width / docWidth;
-      final initialZoom = (rawFitWidth > 1.35 ? 1.25 : rawFitWidth).clamp(minScale, maxScale);
-      final center = Offset(docWidth / 2, 0);
-      controller.setZoom(center, initialZoom, duration: Duration.zero);
+    if (readerController.isReloading) {
+      // Restoring reading position after reload/theme/edit
+      if (isFluid) {
+        final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
+        final rawFitWidth = state.viewSize.width / docWidth;
+        final zoom = (rawFitWidth > 1.35 ? 1.25 : rawFitWidth).clamp(minScale, maxScale);
+        final targetY = readerController.lastScrollRatio * layout.documentSize.height;
+        controller.setZoom(Offset(docWidth / 2, targetY), zoom, duration: Duration.zero);
+        controller.goToPosition(documentOffset: Offset(0, targetY));
+      } else {
+        final targetPage = readerController.lastPageNumber.clamp(1, layout.pageLayouts.length);
+        final page = layout.pageLayouts[targetPage - 1];
+        final zoom = (alternativeFitScale ?? 1.0).clamp(0.2, maxScale);
+        controller.setZoom(page.center, zoom, duration: Duration.zero);
+        controller.goToPage(pageNumber: targetPage, duration: Duration.zero);
+      }
     } else {
-      final zoom = (alternativeFitScale ?? 1.0).clamp(0.2, maxScale);
-      final page = layout.pageLayouts.first;
-      controller.setZoom(page.center, zoom, duration: Duration.zero);
+      // Fresh document load
+      if (isFluid) {
+        final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
+        final rawFitWidth = state.viewSize.width / docWidth;
+        final initialZoom = (rawFitWidth > 1.35 ? 1.25 : rawFitWidth).clamp(minScale, maxScale);
+        final center = Offset(docWidth / 2, 0);
+        controller.setZoom(center, initialZoom, duration: Duration.zero);
+      } else {
+        final zoom = (alternativeFitScale ?? 1.0).clamp(0.2, maxScale);
+        if (isTwoPage && layout.pageLayouts.length > 1) {
+          final spreadCenter = Offset(layout.documentSize.width / 2, layout.pageLayouts.first.center.dy);
+          controller.setZoom(spreadCenter, zoom, duration: Duration.zero);
+        } else {
+          final page = layout.pageLayouts.first;
+          controller.setZoom(page.center, zoom, duration: Duration.zero);
+        }
+      }
     }
   }
 
@@ -390,11 +421,12 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   }
 
   void _onPdfViewerChanged() {
-    if (_isRestoringScroll) return;
+    if (_isRestoringScroll || widget.controller.isReloading) return;
     if (_pdfController.isReady) {
       final zoom = _pdfController.currentZoom;
       if ((zoom - _currentZoom).abs() > 0.005) {
         _currentZoom = zoom;
+        widget.controller.updateZoom(zoom);
         widget.onZoomChanged?.call(_currentZoom);
       }
 
@@ -403,6 +435,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (pageNum != _lastReportedPage || pCount != _lastReportedCount) {
         _lastReportedPage = pageNum;
         _lastReportedCount = pCount;
+        widget.controller.updatePageNumber(pageNum);
         widget.onPageChanged?.call(pageNum, pCount);
       }
 
@@ -415,21 +448,41 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   }
 
   void _restoreScroll() {
-    final targetRatio = widget.controller.lastScrollRatio;
-    if (_pdfController.isReady) {
-      final docSize = _pdfController.documentSize;
+    if (!_pdfController.isReady) return;
+    final docSize = _pdfController.documentSize;
+    final isFluid = widget.controller.renderOptions.isFluid;
+
+    if (isFluid) {
+      final targetRatio = widget.controller.lastScrollRatio;
       if (targetRatio > 0.0 && docSize.height > 0) {
         _isRestoringScroll = true;
         final targetY = targetRatio * docSize.height;
         _pdfController.goToPosition(documentOffset: Offset(0, targetY));
 
-        Future.delayed(const Duration(milliseconds: 300), () {
+        Future.delayed(const Duration(milliseconds: 250), () {
           if (mounted) {
             _isRestoringScroll = false;
+            widget.controller.finishReloading();
           }
         });
+        return;
+      }
+    } else {
+      final targetPage = widget.controller.lastPageNumber;
+      if (targetPage > 1 && targetPage <= _pdfController.pageCount) {
+        _isRestoringScroll = true;
+        _pdfController.goToPage(pageNumber: targetPage, duration: Duration.zero);
+
+        Future.delayed(const Duration(milliseconds: 250), () {
+          if (mounted) {
+            _isRestoringScroll = false;
+            widget.controller.finishReloading();
+          }
+        });
+        return;
       }
     }
+    widget.controller.finishReloading();
   }
 
   Offset _calcStableZoomCenter(Offset? focalPoint) {
@@ -529,16 +582,30 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final viewWidth = _pdfController.viewSize.width;
     final margin = _pdfController.params.margin;
 
-    final docWidth = layout.documentSize.width;
-    if (docWidth <= 0) return;
-
-    final targetZoom = ((viewWidth - margin * 2) / docWidth).clamp(0.2, 5.0);
-    final center = _calcStableZoomCenter(null);
-    await _pdfController.setZoom(
-      center,
-      targetZoom,
-      duration: const Duration(milliseconds: 220),
-    );
+    if (widget.controller.renderOptions.isFluid) {
+      final docWidth = layout.documentSize.width;
+      if (docWidth <= 0) return;
+      final targetZoom = ((viewWidth - margin * 2) / docWidth).clamp(0.2, 5.0);
+      final center = _calcStableZoomCenter(null);
+      await _pdfController.setZoom(
+        center,
+        targetZoom,
+        duration: const Duration(milliseconds: 200),
+      );
+    } else {
+      final isTwoPage = widget.controller.isTwoPage && layout.pageLayouts.length > 1;
+      final spreadWidth = isTwoPage
+          ? (layout.pageLayouts[0].width + layout.pageLayouts[1].width + 12.0)
+          : (layout.pageLayouts.isNotEmpty ? layout.pageLayouts.first.width : layout.documentSize.width);
+      if (spreadWidth <= 0) return;
+      final targetZoom = ((viewWidth - margin * 2) / spreadWidth).clamp(0.2, 5.0);
+      final center = _calcStableZoomCenter(null);
+      await _pdfController.setZoom(
+        center,
+        targetZoom,
+        duration: const Duration(milliseconds: 200),
+      );
+    }
   }
 
   Future<void> fitPage() async {
@@ -558,32 +625,34 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       await _pdfController.setZoom(
         center,
         targetZoom,
-        duration: const Duration(milliseconds: 220),
+        duration: const Duration(milliseconds: 200),
       );
     } else {
-      final isTwoPage = widget.controller.isTwoPage;
-      if (isTwoPage && pageLayouts.length > 1) {
-        final spreadWidth = layout.documentSize.width;
-        final spreadHeight = pageLayouts.first.height;
+      final isTwoPage = widget.controller.isTwoPage && pageLayouts.length > 1;
+      if (isTwoPage) {
+        final p1 = pageLayouts[0];
+        final p2 = pageLayouts[1];
+        final spreadWidth = p1.width + p2.width + 12.0;
+        final spreadHeight = math.max(p1.height, p2.height);
         final zoomX = (viewSize.width - margin * 2) / spreadWidth;
-        final zoomY = (viewSize.height - margin * 2 - 32.0) / spreadHeight;
+        final zoomY = (viewSize.height - margin * 2) / spreadHeight;
         final targetZoom = math.min(zoomX, zoomY).clamp(0.2, 5.0);
         final center = _calcStableZoomCenter(null);
         await _pdfController.setZoom(
           center,
           targetZoom,
-          duration: const Duration(milliseconds: 220),
+          duration: const Duration(milliseconds: 200),
         );
       } else {
         final pageIndex = ((_pdfController.pageNumber ?? 1) - 1).clamp(0, pageLayouts.length - 1);
         final page = pageLayouts[pageIndex];
         final zoomX = (viewSize.width - margin * 2) / page.width;
-        final zoomY = (viewSize.height - margin * 2 - 32.0) / page.height;
+        final zoomY = (viewSize.height - margin * 2) / page.height;
         final targetZoom = math.min(zoomX, zoomY).clamp(0.2, 5.0);
         await _pdfController.setZoom(
           page.center,
           targetZoom,
-          duration: const Duration(milliseconds: 220),
+          duration: const Duration(milliseconds: 200),
         );
       }
     }
@@ -844,6 +913,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     }
 
     final isDark = widget.controller.renderOptions.isDark;
+    final isFluid = widget.controller.renderOptions.isFluid;
     final canvasBg = isDark ? const Color(0xFF141414) : const Color(0xFFEBEBEB);
 
     return Scaffold(
@@ -859,28 +929,31 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         child: PdfViewer.data(
           widget.pdfBytes!,
           key: ValueKey(
-            '${widget.documentTitle}_${widget.pdfBytes!.hashCode}_${widget.controller.renderOptions.mode}_${widget.controller.isTwoPage}',
+            '${widget.documentTitle}_${widget.controller.renderOptions.mode}_${widget.controller.isTwoPage}',
           ),
           sourceName: '${widget.documentTitle}_${widget.pdfBytes!.hashCode}',
           controller: _pdfController,
           params: PdfViewerParams(
             backgroundColor: canvasBg,
-            margin: 16.0,
-            boundaryMargin: const EdgeInsets.only(
-              top: 48,
-              bottom: 48,
-              left: 24,
-              right: 24,
-            ),
+            margin: isFluid ? 8.0 : 10.0,
+            boundaryMargin: isFluid
+                ? const EdgeInsets.only(top: 8, bottom: 24, left: 0, right: 0)
+                : const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
             pageAnchor: PdfPageAnchor.top,
             underflowAnchor: PdfPageAnchor.top,
             pageDropShadow: BoxShadow(
               color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.12),
-              blurRadius: 14,
+              blurRadius: 10,
               spreadRadius: 1,
-              offset: const Offset(0, 4),
+              offset: const Offset(0, 3),
             ),
-            layoutPages: widget.controller.renderOptions.isFluid
+            behaviorControlParams: const PdfViewerBehaviorControlParams(
+              enableLowResolutionPagePreview: false,
+              trailingPageLoadingDelay: Duration.zero,
+              pageImageCachingDelay: Duration.zero,
+              partialImageLoadingDelay: Duration.zero,
+            ),
+            layoutPages: isFluid
                 ? null
                 : (pages, params) => _layoutA4Pages(
                       pages,
@@ -888,9 +961,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
                       isTwoPage: widget.controller.isTwoPage,
                     ),
             sizeDelegateProvider: SoGoodSizeDelegateProvider(
-              isFluid: widget.controller.renderOptions.isFluid,
+              readerController: widget.controller,
+              isFluid: isFluid,
               isTwoPage: widget.controller.isTwoPage,
-              minScale: widget.controller.renderOptions.isFluid ? 0.35 : 0.2,
+              minScale: isFluid ? 0.35 : 0.2,
               maxScale: 5.0,
             ),
             zoomStepsDelegateProvider: SoGoodZoomStepsDelegateProvider(

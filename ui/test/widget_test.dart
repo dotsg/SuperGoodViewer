@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sogoodviewer/controllers/reader_controller.dart';
 import 'package:sogoodviewer/models/render_options.dart';
+import 'package:sogoodviewer/services/preferences_service.dart';
 import 'package:sogoodviewer/views/sidebar_view.dart';
 import 'package:sogoodviewer/views/workspace_view.dart';
 
@@ -157,6 +158,33 @@ void main() {
       expect(controller.isTwoPage, true);
       controller.setTwoPage(false);
       expect(controller.isTwoPage, false);
+    });
+
+    test('reloading flag and scroll position are preserved on theme and mode toggle', () {
+      final controller = ReaderController(autoRestorePreferences: false);
+      controller.updateScrollRatio(0.68);
+      controller.updatePageNumber(4);
+      expect(controller.lastScrollRatio, 0.68);
+      expect(controller.lastPageNumber, 4);
+
+      // Toggle theme
+      controller.toggleTheme();
+      expect(controller.isReloading, true);
+      // While reloading, transient 0.0 updates are ignored
+      controller.updateScrollRatio(0.0);
+      controller.updatePageNumber(1);
+      expect(controller.lastScrollRatio, 0.68);
+      expect(controller.lastPageNumber, 4);
+
+      // Finish reloading
+      controller.finishReloading();
+      expect(controller.isReloading, false);
+    });
+
+    test('PreferencesService saves and loads key-values', () async {
+      await PreferencesService.saveKey('test_key', 'test_value');
+      final prefs = await PreferencesService.load();
+      expect(prefs['test_key'], 'test_value');
     });
   });
 

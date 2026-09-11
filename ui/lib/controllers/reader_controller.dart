@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import '../bridge/native_engine.dart';
 import '../models/render_options.dart';
+import '../services/preferences_service.dart';
 
 class ReaderController extends ChangeNotifier {
   String? _currentFilePath;
@@ -21,8 +22,12 @@ class ReaderController extends ChangeNotifier {
   bool _isCompiling = false;
   String? _errorMessage;
   double _lastScrollRatio = 0.0;
+  int _lastPageNumber = 1;
+  double _lastZoom = 1.0;
+  bool _isReloading = false;
   bool _autoReload = true;
   StreamSubscription<FileSystemEvent>? _watcherSubscription;
+  Timer? _persistDebounceTimer;
 
   final List<String> _recentFiles = [];
   Map<String, dynamic> _fontReport = {};
@@ -38,6 +43,9 @@ class ReaderController extends ChangeNotifier {
   bool get isCompiling => _isCompiling;
   String? get errorMessage => _errorMessage;
   double get lastScrollRatio => _lastScrollRatio;
+  int get lastPageNumber => _lastPageNumber;
+  double get lastZoom => _lastZoom;
+  bool get isReloading => _isReloading;
   bool get autoReload => _autoReload;
   List<String> get recentFiles => List.unmodifiable(_recentFiles);
   Map<String, dynamic> get fontReport => _fontReport;
@@ -45,32 +53,121 @@ class ReaderController extends ChangeNotifier {
 
   void toggleTwoPage() {
     _isTwoPage = !_isTwoPage;
+    _persistPreferences();
     notifyListeners();
   }
 
   void setTwoPage(bool value) {
     if (_isTwoPage != value) {
       _isTwoPage = value;
+      _persistPreferences();
       notifyListeners();
     }
   }
 
-  ReaderController({String? initialFilePath}) {
+  ReaderController({String? initialFilePath, bool autoRestorePreferences = true}) {
     refreshFontReport();
     if (initialFilePath != null && initialFilePath.isNotEmpty) {
       openFile(initialFilePath);
     } else {
       loadSampleDocument();
+      if (autoRestorePreferences) {
+        _restoreLastSession();
+      }
     }
+  }
+
+  Future<void> _restoreLastSession() async {
+    try {
+      final prefs = await PreferencesService.load();
+      final lastFile = prefs['lastOpenedFile'] as String?;
+      final savedTheme = prefs['theme'] as String?;
+      final savedMode = prefs['mode'] as String?;
+      final savedTwoPage = prefs['isTwoPage'] as bool?;
+      final recent = (prefs['recentFiles'] as List<dynamic>?)?.cast<String>();
+
+      if (recent != null && recent.isNotEmpty) {
+        _recentFiles.clear();
+        _recentFiles.addAll(recent);
+      }
+
+      if (savedTheme != null || savedMode != null) {
+        _renderOptions = _renderOptions.copyWith(
+          theme: savedTheme ?? _renderOptions.theme,
+          mode: savedMode ?? _renderOptions.mode,
+        );
+      }
+      if (savedTwoPage != null) {
+        _isTwoPage = savedTwoPage;
+      }
+
+      if (lastFile != null && lastFile.isNotEmpty) {
+        final file = File(lastFile);
+        if (await file.exists()) {
+          final savedScroll = (prefs['lastScrollRatio'] as num?)?.toDouble() ?? 0.0;
+          final savedPage = (prefs['lastPageNumber'] as num?)?.toInt() ?? 1;
+          _lastScrollRatio = savedScroll;
+          _lastPageNumber = savedPage;
+          await openFile(lastFile, preservePosition: true);
+          return;
+        }
+      }
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error restoring last session: $e');
+    }
+  }
+
+  void _persistPreferences() {
+    PreferencesService.save({
+      'lastOpenedFile': _currentFilePath,
+      'recentFiles': _recentFiles,
+      'theme': _renderOptions.theme,
+      'mode': _renderOptions.mode,
+      'isTwoPage': _isTwoPage,
+      'fontSize': _renderOptions.fontSize,
+      'bodyFont': _renderOptions.bodyFont,
+      'codeFont': _renderOptions.codeFont,
+      'lastScrollRatio': _lastScrollRatio,
+      'lastPageNumber': _lastPageNumber,
+    });
+  }
+
+  void _persistDebounced() {
+    _persistDebounceTimer?.cancel();
+    _persistDebounceTimer = Timer(const Duration(milliseconds: 600), () {
+      _persistPreferences();
+    });
+  }
+
+  void finishReloading() {
+    _isReloading = false;
   }
 
   void updateScrollRatio(double ratio) {
+    if (_isReloading) return;
     if (ratio >= 0.0 && ratio <= 1.0) {
       _lastScrollRatio = ratio;
+      _persistDebounced();
     }
   }
 
-  Future<void> openFile(String filePath) async {
+  void updatePageNumber(int pageNumber) {
+    if (_isReloading) return;
+    if (pageNumber >= 1) {
+      _lastPageNumber = pageNumber;
+      _persistDebounced();
+    }
+  }
+
+  void updateZoom(double zoom) {
+    if (_isReloading) return;
+    if (zoom > 0.1) {
+      _lastZoom = zoom;
+    }
+  }
+
+  Future<void> openFile(String filePath, {bool preservePosition = false}) async {
     final file = File(filePath);
     if (!await file.exists()) {
       _errorMessage = 'File not found: $filePath';
@@ -90,6 +187,14 @@ class ReaderController extends ChangeNotifier {
       _currentMarkdown = content;
       _documentTitle = p.basenameWithoutExtension(filePath);
 
+      if (!preservePosition) {
+        _lastScrollRatio = 0.0;
+        _lastPageNumber = 1;
+        _isReloading = false;
+      } else {
+        _isReloading = true;
+      }
+
       // Add to recent files
       _recentFiles.remove(filePath);
       _recentFiles.insert(0, filePath);
@@ -97,6 +202,7 @@ class ReaderController extends ChangeNotifier {
         _recentFiles.removeLast();
       }
 
+      _persistPreferences();
       _setupFileWatcher(filePath);
       await compileDocument();
     } catch (e) {
@@ -137,6 +243,7 @@ class ReaderController extends ChangeNotifier {
           try {
             final bytes = await file.readAsBytes();
             _currentMarkdown = utf8.decode(bytes, allowMalformed: true);
+            _isReloading = true;
             await compileDocument();
           } catch (e) {
             debugPrint('Failed to reload modified file: $e');
@@ -180,14 +287,18 @@ class ReaderController extends ChangeNotifier {
   }
 
   void toggleMode() {
+    _isReloading = true;
     final nextMode = _renderOptions.mode == 'fluid' ? 'paged' : 'fluid';
     _renderOptions = _renderOptions.copyWith(mode: nextMode);
+    _persistPreferences();
     compileDocument();
   }
 
   void toggleTheme() {
+    _isReloading = true;
     final nextTheme = _renderOptions.theme == 'light' ? 'dark' : 'light';
     _renderOptions = _renderOptions.copyWith(theme: nextTheme);
+    _persistPreferences();
     compileDocument();
   }
 
@@ -198,6 +309,7 @@ class ReaderController extends ChangeNotifier {
       _viewportDebounceTimer = Timer(const Duration(milliseconds: 300), () {
         _renderOptions = _renderOptions.copyWith(viewportWidth: width);
         if (_renderOptions.isFluid) {
+          _isReloading = true;
           compileDocument();
         }
       });
@@ -205,7 +317,9 @@ class ReaderController extends ChangeNotifier {
   }
 
   void setFontSize(double size) {
+    _isReloading = true;
     _renderOptions = _renderOptions.copyWith(fontSize: size.clamp(8.0, 24.0));
+    _persistPreferences();
     compileDocument();
   }
 
@@ -217,12 +331,16 @@ class ReaderController extends ChangeNotifier {
   }
 
   void setBodyFont(String? font) {
+    _isReloading = true;
     _renderOptions = _renderOptions.copyWith(bodyFont: font);
+    _persistPreferences();
     compileDocument();
   }
 
   void setCodeFont(String? font) {
+    _isReloading = true;
     _renderOptions = _renderOptions.copyWith(codeFont: font);
+    _persistPreferences();
     compileDocument();
   }
 
@@ -340,6 +458,7 @@ graph LR
 
   @override
   void dispose() {
+    _persistDebounceTimer?.cancel();
     _viewportDebounceTimer?.cancel();
     _debounceTimer?.cancel();
     _watcherSubscription?.cancel();
