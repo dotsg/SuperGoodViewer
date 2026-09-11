@@ -69,7 +69,7 @@ class ReaderController extends ChangeNotifier {
   double get lastZoom => _lastZoom;
   bool get isReloading => _isReloading;
   bool get autoReload => _autoReload;
-  List<String> get recentFiles => _recentFiles;
+  List<String> get recentFiles => List.unmodifiable(_recentFiles);
   Map<String, dynamic> get fontReport => _fontReport;
   bool get isTwoPage => _isTwoPage;
   List<OutlineItem> get outlineItems => _outlineItems;
@@ -86,14 +86,14 @@ class ReaderController extends ChangeNotifier {
 
   void toggleTwoPage() {
     _isTwoPage = !_isTwoPage;
-    _persistDebounced();
+    _persistPreferences();
     notifyListeners();
   }
 
   void setTwoPage(bool value) {
     if (_isTwoPage != value) {
       _isTwoPage = value;
-      _persistDebounced();
+      _persistPreferences();
       notifyListeners();
     }
   }
@@ -155,7 +155,7 @@ class ReaderController extends ChangeNotifier {
   void _persistPreferences() {
     PreferencesService.save({
       'lastOpenedFile': _currentFilePath,
-      'recentFiles': _recentFiles,
+      'recentFiles': List<String>.from(_recentFiles),
       'theme': _renderOptions.theme,
       'mode': _renderOptions.mode,
       'isTwoPage': _isTwoPage,
@@ -204,7 +204,11 @@ class ReaderController extends ChangeNotifier {
   Future<void> openFile(String filePath, {bool preservePosition = false}) async {
     final file = File(filePath);
     if (!await file.exists()) {
-      _errorMessage = 'File not found: $filePath';
+      final msg = 'File not found: $filePath';
+      if (_currentPdfBytes == null) {
+        await compileDocument();
+      }
+      _errorMessage = msg;
       notifyListeners();
       return;
     }
@@ -241,7 +245,11 @@ class ReaderController extends ChangeNotifier {
       _setupFileWatcher(filePath);
       await compileDocument();
     } catch (e) {
-      _errorMessage = 'Failed to read file: $e';
+      final msg = 'Failed to read file: $e';
+      if (_currentPdfBytes == null) {
+        await compileDocument();
+      }
+      _errorMessage = msg;
       notifyListeners();
     }
   }
@@ -292,6 +300,7 @@ class ReaderController extends ChangeNotifier {
   Future<void> compileDocument() async {
     if (_currentMarkdown.isEmpty) return;
 
+    final int generation = ++_compileGeneration;
     if (_isCompiling) {
       _hasPendingCompile = true;
       return;
@@ -299,20 +308,17 @@ class ReaderController extends ChangeNotifier {
 
     _isCompiling = true;
     _hasPendingCompile = false;
-    final int generation = ++_compileGeneration;
     _errorMessage = null;
     debugPrint('[ReaderController] compileDocument: starting gen $generation for "$_documentTitle" (${_currentMarkdown.length} chars)');
     notifyListeners();
 
-    if (!NativeEngine.instance.isAvailable) {
-      _errorMessage = NativeEngine.instance.initError ?? 'Native library not loaded';
-      debugPrint('[ReaderController] compileDocument: $_errorMessage');
-      _isCompiling = false;
-      notifyListeners();
-      return;
-    }
-
     try {
+      if (!NativeEngine.instance.isAvailable) {
+        _errorMessage = NativeEngine.instance.initError ?? 'Native library not loaded';
+        debugPrint('[ReaderController] compileDocument: $_errorMessage');
+        return;
+      }
+
       final docDir = _currentFilePath != null
           ? p.dirname(_currentFilePath!)
           : Directory.current.path;
@@ -340,13 +346,12 @@ class ReaderController extends ChangeNotifier {
         debugPrint('[ReaderController] compileDocument: EXCEPTION gen $generation ($e)\n$st');
       }
     } finally {
-      if (generation == _compileGeneration) {
-        _isCompiling = false;
-        notifyListeners();
-      }
+      _isCompiling = false;
       if (_hasPendingCompile) {
         _hasPendingCompile = false;
         compileDocument();
+      } else {
+        notifyListeners();
       }
     }
   }
@@ -355,7 +360,7 @@ class ReaderController extends ChangeNotifier {
     _isReloading = true;
     final nextMode = _renderOptions.mode == 'fluid' ? 'paged' : 'fluid';
     _renderOptions = _renderOptions.copyWith(mode: nextMode);
-    _persistDebounced();
+    _persistPreferences();
     compileDocument();
   }
 
@@ -363,7 +368,7 @@ class ReaderController extends ChangeNotifier {
     _isReloading = true;
     final nextTheme = _renderOptions.theme == 'light' ? 'dark' : 'light';
     _renderOptions = _renderOptions.copyWith(theme: nextTheme);
-    _persistDebounced();
+    _persistPreferences();
     compileDocument();
   }
 
@@ -384,29 +389,31 @@ class ReaderController extends ChangeNotifier {
   void setFontSize(double size) {
     _isReloading = true;
     _renderOptions = _renderOptions.copyWith(fontSize: size.clamp(8.0, 24.0));
-    _persistDebounced();
+    _persistPreferences();
     compileDocument();
   }
 
   Future<void> refreshFontReport() async {
     try {
       final report = await Isolate.run(() => NativeEngine.instance.detectFonts());
-      _fontReport = report;
-      notifyListeners();
+      if (report.isNotEmpty) {
+        _fontReport = report;
+        notifyListeners();
+      }
     } catch (_) {}
   }
 
   void setBodyFont(String? font) {
     _isReloading = true;
     _renderOptions = _renderOptions.copyWith(bodyFont: font);
-    _persistDebounced();
+    _persistPreferences();
     compileDocument();
   }
 
   void setCodeFont(String? font) {
     _isReloading = true;
     _renderOptions = _renderOptions.copyWith(codeFont: font);
-    _persistDebounced();
+    _persistPreferences();
     compileDocument();
   }
 

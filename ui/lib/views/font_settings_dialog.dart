@@ -22,6 +22,7 @@ class _FontSettingsDialog extends StatefulWidget {
 class _FontSettingsDialogState extends State<_FontSettingsDialog> {
   late String? _selectedBodyFont;
   late String? _selectedCodeFont;
+  bool _isScanningFonts = false;
 
   @override
   void initState() {
@@ -54,11 +55,14 @@ class _FontSettingsDialogState extends State<_FontSettingsDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final report = widget.controller.fontReport;
-    final hasCjkMono = report['has_cjk_monospace'] == true;
-    final mapleInstalled = report['maple_mono_installed'] == true;
+    return ListenableBuilder(
+      listenable: widget.controller,
+      builder: (context, _) {
+        final theme = Theme.of(context);
+        final isDark = theme.brightness == Brightness.dark;
+        final report = widget.controller.fontReport;
+        final hasCjkMono = report['has_cjk_monospace'] == true;
+        final mapleInstalled = report['maple_mono_installed'] == true;
 
     final bodyFontOptions = [
       {'label': '系统出版推荐 (Inter + SF Pro + 苹方/微软雅黑)', 'value': null},
@@ -225,12 +229,26 @@ class _FontSettingsDialogState extends State<_FontSettingsDialog> {
                                 ),
                               ),
                               TextButton.icon(
-                                icon: const Icon(Icons.refresh_rounded, size: 14),
-                                label: const Text('重新检测', style: TextStyle(fontSize: 11.5)),
-                                onPressed: () {
-                                  widget.controller.refreshFontReport();
-                                  setState(() {});
-                                },
+                                icon: _isScanningFonts
+                                    ? const SizedBox(
+                                        width: 14,
+                                        height: 14,
+                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                      )
+                                    : const Icon(Icons.refresh_rounded, size: 14),
+                                label: Text(_isScanningFonts ? '正在检测...' : '重新检测', style: const TextStyle(fontSize: 11.5)),
+                                onPressed: _isScanningFonts
+                                    ? null
+                                    : () async {
+                                        setState(() => _isScanningFonts = true);
+                                        try {
+                                          await widget.controller.refreshFontReport();
+                                        } finally {
+                                          if (mounted) {
+                                            setState(() => _isScanningFonts = false);
+                                          }
+                                        }
+                                      },
                                 style: TextButton.styleFrom(
                                   visualDensity: VisualDensity.compact,
                                 ),
@@ -495,6 +513,8 @@ class _FontSettingsDialogState extends State<_FontSettingsDialog> {
           ],
         ),
       ),
+    );
+      },
     );
   }
 }

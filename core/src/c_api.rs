@@ -66,77 +66,85 @@ pub extern "C" fn sogood_free_buffer(buf: *mut SogoodBuffer) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sogood_compile_markdown(
-
     markdown_ptr: *const c_char,
     title_ptr: *const c_char,
     doc_dir_ptr: *const c_char,
     options_json_ptr: *const c_char,
 ) -> *mut SogoodBuffer {
-    clear_last_error();
+    std::panic::catch_unwind(|| {
+        clear_last_error();
 
-    if markdown_ptr.is_null() {
-        set_last_error("Markdown pointer is null".to_string());
-        return std::ptr::null_mut();
-    }
-
-    let markdown = match unsafe { CStr::from_ptr(markdown_ptr) }.to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_last_error(format!("Invalid UTF-8 in markdown string: {}", e));
+        if markdown_ptr.is_null() {
+            set_last_error("Markdown pointer is null".to_string());
             return std::ptr::null_mut();
         }
-    };
 
-    let title = if title_ptr.is_null() {
-        "Document"
-    } else {
-        unsafe { CStr::from_ptr(title_ptr) }.to_str().unwrap_or("Document")
-    };
+        let markdown = match unsafe { CStr::from_ptr(markdown_ptr) }.to_str() {
+            Ok(s) => s,
+            Err(e) => {
+                set_last_error(format!("Invalid UTF-8 in markdown string: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
 
-    let doc_dir = if doc_dir_ptr.is_null() {
-        "."
-    } else {
-        unsafe { CStr::from_ptr(doc_dir_ptr) }.to_str().unwrap_or(".")
-    };
+        let title = if title_ptr.is_null() {
+            "Document"
+        } else {
+            unsafe { CStr::from_ptr(title_ptr) }.to_str().unwrap_or("Document")
+        };
 
-    let options: RenderOptions = if !options_json_ptr.is_null() {
-        if let Ok(json_str) = unsafe { CStr::from_ptr(options_json_ptr) }.to_str() {
-            serde_json::from_str(json_str).unwrap_or_default()
+        let doc_dir = if doc_dir_ptr.is_null() {
+            "."
+        } else {
+            unsafe { CStr::from_ptr(doc_dir_ptr) }.to_str().unwrap_or(".")
+        };
+
+        let options: RenderOptions = if !options_json_ptr.is_null() {
+            if let Ok(json_str) = unsafe { CStr::from_ptr(options_json_ptr) }.to_str() {
+                serde_json::from_str(json_str).unwrap_or_default()
+            } else {
+                RenderOptions::default()
+            }
         } else {
             RenderOptions::default()
-        }
-    } else {
-        RenderOptions::default()
-    };
+        };
 
-    match compile_markdown_to_pdf(markdown, title, Path::new(doc_dir), &options) {
-        Ok(pdf_bytes) => {
-            let mut buf = pdf_bytes.into_boxed_slice();
-            let data = buf.as_mut_ptr();
-            let len = buf.len();
-            let capacity = len;
-            std::mem::forget(buf);
+        match compile_markdown_to_pdf(markdown, title, Path::new(doc_dir), &options) {
+            Ok(pdf_bytes) => {
+                let mut buf = pdf_bytes.into_boxed_slice();
+                let data = buf.as_mut_ptr();
+                let len = buf.len();
+                let capacity = len;
+                std::mem::forget(buf);
 
-            Box::into_raw(Box::new(SogoodBuffer { data, len, capacity }))
+                Box::into_raw(Box::new(SogoodBuffer { data, len, capacity }))
+            }
+            Err(e) => {
+                set_last_error(e.to_string());
+                std::ptr::null_mut()
+            }
         }
-        Err(e) => {
-            set_last_error(e.to_string());
-            std::ptr::null_mut()
-        }
-    }
+    })
+    .unwrap_or_else(|_| {
+        set_last_error("Internal panic caught in sogood_compile_markdown".to_string());
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sogood_detect_fonts() -> *mut SogoodBuffer {
-    let report = crate::compiler::world::detect_font_capabilities();
-    let json_bytes = serde_json::to_vec(&report).unwrap_or_else(|_| b"{}".to_vec());
-    let mut boxed_slice = json_bytes.into_boxed_slice();
-    let data = boxed_slice.as_mut_ptr();
-    let len = boxed_slice.len();
-    let capacity = len;
-    std::mem::forget(boxed_slice);
+    std::panic::catch_unwind(|| {
+        let report = crate::compiler::world::detect_font_capabilities();
+        let json_bytes = serde_json::to_vec(&report).unwrap_or_else(|_| b"{}".to_vec());
+        let mut boxed_slice = json_bytes.into_boxed_slice();
+        let data = boxed_slice.as_mut_ptr();
+        let len = boxed_slice.len();
+        let capacity = len;
+        std::mem::forget(boxed_slice);
 
-    Box::into_raw(Box::new(SogoodBuffer { data, len, capacity }))
+        Box::into_raw(Box::new(SogoodBuffer { data, len, capacity }))
+    })
+    .unwrap_or_else(|_| std::ptr::null_mut())
 }
 
 #[cfg(test)]

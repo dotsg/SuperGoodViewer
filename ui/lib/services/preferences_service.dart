@@ -12,13 +12,19 @@ class PreferencesService {
   static File? _cachedConfigFile;
   static Future<void>? _pendingSave;
 
+  @visibleForTesting
+  static File? testConfigFileOverride;
+
+  @visibleForTesting
+  static void setConfigFileForTesting(File? file) {
+    testConfigFileOverride = file;
+    _cachedConfigFile = file;
+    _pendingSave = null;
+  }
+
   static Future<File> _getConfigFile() async {
+    if (testConfigFileOverride != null) return testConfigFileOverride!;
     if (_cachedConfigFile != null) return _cachedConfigFile!;
-    if (Platform.environment.containsKey('FLUTTER_TEST')) {
-      final tempDir = Directory.systemTemp.createTempSync('sogoodviewer_test_');
-      _cachedConfigFile = File(p.join(tempDir.path, _prefFileName));
-      return _cachedConfigFile!;
-    }
     try {
       final appSupportDir = await getApplicationSupportDirectory();
       if (!await appSupportDir.exists()) {
@@ -56,6 +62,15 @@ class PreferencesService {
   }
 
   static Future<void> save(Map<String, dynamic> prefs) async {
+    // Snapshot and serialize immediately so caller modifications don't race
+    final String jsonStr;
+    try {
+      jsonStr = json.encode(prefs);
+    } catch (e) {
+      debugPrint('PreferencesService.save serialization error: $e');
+      return;
+    }
+
     final prev = _pendingSave;
     final completer = Completer<void>();
     _pendingSave = completer.future;
@@ -66,7 +81,6 @@ class PreferencesService {
       }
       final file = await _getConfigFile();
       final tmpFile = File('${file.path}.tmp');
-      final jsonStr = json.encode(prefs);
       await tmpFile.writeAsString(jsonStr, flush: true);
       if (await tmpFile.exists()) {
         await tmpFile.rename(file.path);

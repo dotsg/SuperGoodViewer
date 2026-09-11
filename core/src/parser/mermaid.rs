@@ -19,13 +19,26 @@ impl BoundedCache {
         }
     }
 
-    fn get(&self, key: &str) -> Option<Bytes> {
-        self.map.get(key).cloned()
+    fn get(&mut self, key: &str) -> Option<Bytes> {
+        if let Some(val) = self.map.get(key) {
+            let val = val.clone();
+            if let Some(pos) = self.order.iter().position(|k| k == key) {
+                let k = self.order.remove(pos).unwrap();
+                self.order.push_back(k);
+            }
+            Some(val)
+        } else {
+            None
+        }
     }
 
     fn insert(&mut self, key: String, val: Bytes) {
         if self.map.contains_key(&key) {
-            self.map.insert(key, val);
+            self.map.insert(key.clone(), val);
+            if let Some(pos) = self.order.iter().position(|k| k == &key) {
+                let k = self.order.remove(pos).unwrap();
+                self.order.push_back(k);
+            }
             return;
         }
         if self.map.len() >= self.capacity {
@@ -72,85 +85,100 @@ fn unwrap_sub_sup_braces(s: &str) -> String {
     res
 }
 
-fn macro_replacement(name: &str) -> Option<(&'static str, bool)> {
-    match name {
-        // Greek Upper (eats trailing space as LaTeX command delimiter)
-        "Delta" => Some(("Δ", true)),
-        "Gamma" => Some(("Γ", true)),
-        "Theta" => Some(("Θ", true)),
-        "Lambda" => Some(("Λ", true)),
-        "Xi" => Some(("Ξ", true)),
-        "Pi" => Some(("Π", true)),
-        "Sigma" => Some(("Σ", true)),
-        "Phi" => Some(("Φ", true)),
-        "Psi" => Some(("Ψ", true)),
-        "Omega" => Some(("Ω", true)),
-        // Greek Lower
-        "alpha" => Some(("α", true)),
-        "beta" => Some(("β", true)),
-        "gamma" => Some(("γ", true)),
-        "delta" => Some(("δ", true)),
-        "epsilon" => Some(("ε", true)),
-        "varepsilon" => Some(("ε", true)),
-        "zeta" => Some(("ζ", true)),
-        "eta" => Some(("η", true)),
-        "theta" => Some(("θ", true)),
-        "vartheta" => Some(("θ", true)),
-        "iota" => Some(("ι", true)),
-        "kappa" => Some(("κ", true)),
-        "lambda" => Some(("λ", true)),
-        "mu" => Some(("μ", true)),
-        "nu" => Some(("ν", true)),
-        "xi" => Some(("ξ", true)),
-        "pi" => Some(("π", true)),
-        "rho" => Some(("ρ", true)),
-        "sigma" => Some(("σ", true)),
-        "tau" => Some(("τ", true)),
-        "upsilon" => Some(("υ", true)),
-        "phi" => Some(("ϕ", true)),
-        "varphi" => Some(("φ", true)),
-        "chi" => Some(("χ", true)),
-        "psi" => Some(("ψ", true)),
-        "omega" => Some(("ω", true)),
-        // Quantum & Brackets
-        "rangle" => Some(("⟩", false)),
-        "langle" => Some(("⟨", false)),
-        "vert" => Some(("|", false)),
-        // Operators & Relations
-        "in" => Some(("∈", false)),
-        "notin" => Some(("∉", false)),
-        "subset" => Some(("⊂", false)),
-        "subseteq" => Some(("⊆", false)),
-        "times" => Some(("×", false)),
-        "cdot" => Some(("·", false)),
-        "pm" => Some(("±", false)),
-        "mp" => Some(("∓", false)),
-        "div" => Some(("÷", false)),
-        "le" => Some(("≤", false)),
-        "leq" => Some(("≤", false)),
-        "ge" => Some(("≥", false)),
-        "geq" => Some(("≥", false)),
-        "ne" => Some(("≠", false)),
-        "neq" => Some(("≠", false)),
-        "approx" => Some(("≈", false)),
-        "equiv" => Some(("≡", false)),
-        "sim" => Some(("∼", false)),
-        "to" => Some(("→", false)),
-        "rightarrow" => Some(("→", false)),
-        "leftarrow" => Some(("←", false)),
-        "Rightarrow" => Some(("⇒", false)),
-        "Leftarrow" => Some(("⇐", false)),
-        "infty" => Some(("∞", false)),
-        "hbar" => Some(("ℏ", false)),
-        "partial" => Some(("∂", false)),
-        "nabla" => Some(("∇", false)),
-        "sum" => Some(("∑", false)),
-        "prod" => Some(("∏", false)),
-        "int" => Some(("∫", false)),
-        "quad" => Some((" ", false)),
-        "qquad" => Some(("  ", false)),
-        _ => None,
+// Ordered by descending length so longer prefixes match first (e.g. infty before in, leq before le)
+const MACROS: &[(&str, &str, bool)] = &[
+    // Length 10
+    ("varepsilon", "ε", true),
+    ("rightarrow", "→", false),
+    ("Rightarrow", "⇒", false),
+    ("leftarrow", "←", false),
+    ("Leftarrow", "⇐", false),
+    // Length 8
+    ("vartheta", "θ", true),
+    ("subseteq", "⊆", false),
+    // Length 7
+    ("epsilon", "ε", true),
+    ("upsilon", "υ", true),
+    // Length 6
+    ("lambda", "λ", true),
+    ("Lambda", "Λ", true),
+    ("varphi", "φ", true),
+    ("rangle", "⟩", false),
+    ("langle", "⟨", false),
+    ("approx", "≈", false),
+    // Length 5
+    ("Delta", "Δ", true),
+    ("Gamma", "Γ", true),
+    ("Theta", "Θ", true),
+    ("Sigma", "Σ", true),
+    ("Omega", "Ω", true),
+    ("alpha", "α", true),
+    ("gamma", "γ", true),
+    ("delta", "δ", true),
+    ("theta", "θ", true),
+    ("kappa", "κ", true),
+    ("sigma", "σ", true),
+    ("omega", "ω", true),
+    ("notin", "∉", false),
+    ("subset", "⊂", false),
+    ("equiv", "≡", false),
+    ("infty", "∞", false),
+    ("partial", "∂", false),
+    ("nabla", "∇", false),
+    ("qquad", " ", false),
+    // Length 4
+    ("beta", "β", true),
+    ("zeta", "ζ", true),
+    ("iota", "ι", true),
+    ("times", "×", false),
+    ("cdot", "·", false),
+    ("neq", "≠", false),
+    ("hbar", "ℏ", false),
+    ("prod", "∏", false),
+    ("quad", " ", false),
+    ("vert", "|", false),
+    // Length 3
+    ("Phi", "Φ", true),
+    ("Psi", "Ψ", true),
+    ("eta", "η", true),
+    ("rho", "ρ", true),
+    ("tau", "τ", true),
+    ("phi", "ϕ", true),
+    ("chi", "χ", true),
+    ("psi", "ψ", true),
+    ("pm", "±", false),
+    ("mp", "∓", false),
+    ("div", "÷", false),
+    ("leq", "≤", false),
+    ("geq", "≥", false),
+    ("sim", "∼", false),
+    ("sum", "∑", false),
+    ("int", "∫", false),
+    // Length 2
+    ("Xi", "Ξ", true),
+    ("Pi", "Π", true),
+    ("mu", "μ", true),
+    ("nu", "ν", true),
+    ("xi", "ξ", true),
+    ("pi", "π", true),
+    ("in", "∈", false),
+    ("le", "≤", false),
+    ("ge", "≥", false),
+    ("ne", "≠", false),
+    ("to", "→", false),
+];
+
+fn match_macro_prefix(chars: &[char]) -> Option<(&'static str, usize, bool)> {
+    for &(name, rep, eat_space) in MACROS {
+        let name_chars = name.chars().count();
+        if chars.len() >= name_chars {
+            let matches = chars.iter().take(name_chars).zip(name.chars()).all(|(&c1, c2)| c1 == c2);
+            if matches {
+                return Some((rep, name_chars, eat_space));
+            }
+        }
     }
+    None
 }
 
 fn to_superscript(c: char) -> Option<char> {
@@ -189,8 +217,7 @@ fn to_subscript(c: char) -> Option<char> {
     }
 }
 
-/// Translates common LaTeX math expressions inside Mermaid diagrams into clean Unicode symbols
-/// in a high-efficiency single pass without intermediate string allocations.
+/// Translates common LaTeX math expressions inside Mermaid diagrams into clean Unicode symbols.
 pub fn latex_to_unicode(math: &str) -> String {
     let unwrapped = unwrap_sub_sup_braces(math.trim());
     let chars: Vec<char> = unwrapped.chars().collect();
@@ -212,26 +239,18 @@ pub fn latex_to_unicode(math: &str) -> String {
                 '}' => { out.push('}'); i += 1; }
                 '%' => { out.push('%'); i += 1; }
                 ' ' => { out.push(' '); i += 1; }
-                _ if next_c.is_alphabetic() => {
-                    let start = i;
-                    while i < len && chars[i].is_alphabetic() {
-                        i += 1;
-                    }
-                    let name: String = chars[start..i].iter().collect();
-                    if let Some((rep, eat_space)) = macro_replacement(&name) {
+                _ => {
+                    if let Some((rep, match_len, eat_space)) = match_macro_prefix(&chars[i..]) {
                         out.push_str(rep);
+                        i += match_len;
                         if eat_space && i < len && chars[i] == ' ' {
                             i += 1;
                         }
                     } else {
                         out.push('\\');
-                        out.push_str(&name);
+                        out.push(next_c);
+                        i += 1;
                     }
-                }
-                _ => {
-                    out.push('\\');
-                    out.push(next_c);
-                    i += 1;
                 }
             }
         } else if c == '^' {
@@ -258,18 +277,28 @@ pub fn latex_to_unicode(math: &str) -> String {
             } else {
                 out.push('_');
             }
-        } else if c == ' ' {
-            if !out.ends_with(' ') && !out.is_empty() {
-                out.push(' ');
-            }
-            i += 1;
         } else {
             out.push(c);
             i += 1;
         }
     }
 
-    out.trim().to_string()
+    // Collapse multiple spaces and trim
+    let mut cleaned = String::with_capacity(out.len());
+    let mut prev_space = false;
+    for c in out.chars() {
+        if c == ' ' {
+            if !prev_space {
+                cleaned.push(' ');
+                prev_space = true;
+            }
+        } else {
+            cleaned.push(c);
+            prev_space = false;
+        }
+    }
+
+    cleaned.trim().to_string()
 }
 
 /// Preprocesses Mermaid diagram source code, converting embedded LaTeX math `$ ... $` or `$$ ... $$`
@@ -337,7 +366,7 @@ pub fn render_mermaid(code: &str) -> RenderedMermaid {
 
     // Check cache
     {
-        let cache = get_cache().read();
+        let mut cache = get_cache().write();
         if let Some(bytes) = cache.get(&hash) {
             return RenderedMermaid {
                 virtual_filename,
@@ -419,6 +448,11 @@ mod tests {
     #[test]
     fn test_latex_to_unicode_conversion() {
         assert_eq!(latex_to_unicode(r"\Delta \tau"), "Δτ");
+        assert_eq!(latex_to_unicode(r"\DeltaE"), "ΔE");
+        assert_eq!(latex_to_unicode(r"x \quad y"), "x y");
+        assert_eq!(latex_to_unicode(r"a \qquad b"), "a b");
+        assert_eq!(latex_to_unicode(r"p \ q"), "p q");
+        assert_eq!(latex_to_unicode(r"\leq \infty"), "≤ ∞");
         assert_eq!(latex_to_unicode(r"|\Psi^+\rangle_{BC}"), "|Ψ⁺⟩_BC");
         assert_eq!(latex_to_unicode(r"|\Phi^+\rangle_{AB}"), "|Φ⁺⟩_AB");
         assert_eq!(latex_to_unicode(r"b_1 b_2 \in \{00,01,10,11\}"), "b₁ b₂ ∈ {00,01,10,11}");
@@ -494,12 +528,13 @@ mod tests {
         cache.insert("k1".to_string(), Bytes::new(b"v1"));
         cache.insert("k2".to_string(), Bytes::new(b"v2"));
         cache.insert("k3".to_string(), Bytes::new(b"v3"));
+        // Access k1 so it becomes most recently used
         assert_eq!(cache.get("k1"), Some(Bytes::new(b"v1")));
 
         cache.insert("k4".to_string(), Bytes::new(b"v4"));
-        // k1 should be evicted since capacity is 3
-        assert_eq!(cache.get("k1"), None);
-        assert_eq!(cache.get("k2"), Some(Bytes::new(b"v2")));
+        // k2 should be evicted (LRU) because k1 was promoted by get()
+        assert_eq!(cache.get("k2"), None);
+        assert_eq!(cache.get("k1"), Some(Bytes::new(b"v1")));
         assert_eq!(cache.get("k3"), Some(Bytes::new(b"v3")));
         assert_eq!(cache.get("k4"), Some(Bytes::new(b"v4")));
     }

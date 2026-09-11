@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:sogoodviewer/controllers/reader_controller.dart';
 import 'package:sogoodviewer/models/render_options.dart';
 import 'package:sogoodviewer/services/preferences_service.dart';
@@ -7,6 +9,22 @@ import 'package:sogoodviewer/views/sidebar_view.dart';
 import 'package:sogoodviewer/views/workspace_view.dart';
 
 void main() {
+  late Directory tempTestDir;
+
+  setUpAll(() {
+    tempTestDir = Directory.systemTemp.createTempSync('sogoodviewer_test_');
+    PreferencesService.setConfigFileForTesting(
+      File(p.join(tempTestDir.path, 'preferences.json')),
+    );
+  });
+
+  tearDownAll(() {
+    PreferencesService.setConfigFileForTesting(null);
+    if (tempTestDir.existsSync()) {
+      tempTestDir.deleteSync(recursive: true);
+    }
+  });
+
   group('RenderOptions Tests', () {
     test('default options are fluid and light', () {
       const options = RenderOptions();
