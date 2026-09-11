@@ -1029,6 +1029,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           pageImageCachingDelay: Duration.zero,
           partialImageLoadingDelay: Duration.zero,
         ),
+        maxImageBytesCachedOnMemory: 256 * 1024 * 1024,
+        verticalCacheExtent: 1.5,
+        horizontalCacheExtent: 1.5,
+        onePassRenderingSizeThreshold: isFluid ? 12000 : 3000,
         layoutPages: isFluid
             ? null
             : (pages, params) => _layoutA4Pages(

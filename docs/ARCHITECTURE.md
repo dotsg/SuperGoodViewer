@@ -8,11 +8,11 @@ SoGoodViewer is a high-performance, read-only Markdown desktop viewer designed f
 
 ```
 +──────────────────────────────────────────────────────────────────────────+
-|                    UI Shell (Flutter Desktop - macOS/Win/Linux)           |
+|                    UI Shell (Flutter Desktop - macOS/Win/Linux)          |
 |                                                                          |
-|  - Modern Cupertino/Metal Desktop UI (Impeller Rendering Engine)        |
-|  - Collapsible Sidebar: TOC, File Management, Reading Preferences       |
-|  - Top Bar: Fluid / Paged Toggle, Light / Dark Toggle, 0ms PDF Export   |
+|  - Modern Cupertino/Metal Desktop UI (Impeller Rendering Engine)         |
+|  - Collapsible Sidebar: TOC, File Management, Reading Preferences        |
+|  - Top Bar: Fluid / Paged Toggle, Light / Dark Toggle, 0ms PDF Export    |
 |  - PDF Viewport: pdfrx (Google PDFium C++ Subpixel Antialiased Engine)   |
 |  - Scroll Position Memory (Scroll Ratio Retention across reloads)        |
 +────────────────────────────────────┬─────────────────────────────────────+
@@ -23,15 +23,15 @@ SoGoodViewer is a high-performance, read-only Markdown desktop viewer designed f
 +──────────────────────────────────────────────────────────────────────────+
 |                    Core Engine (Rust Embedded `sogood_core`)             |
 |                                                                          |
-|  1. Markdown & AST Transpiler (pulldown-cmark)                          |
-|     ├── LaTeX Math Conversion (mitex TeX-to-Typst AST mapper)           |
-|     ├── Mermaid Vector Engine (mermaid-rs-renderer + SHA-256 Cache)     |
+|  1. Markdown & AST Transpiler (pulldown-cmark)                           |
+|     ├── LaTeX Math Conversion (mitex TeX-to-Typst AST mapper)            |
+|     ├── Mermaid Vector Engine (mermaid-rs-renderer + SHA-256 Cache)      |
 |     └── VFS Asset Resolver (resolves ./images/ against doc directory)    |
 |                                                                          |
-|  2. Typst In-Memory Compiler (`typst` & `typst-pdf` crates)             |
+|  2. Typst In-Memory Compiler (`typst` & `typst-pdf` crates)              |
 |     ├── MemoryWorld Implementation (implements `typst::World` trait)     |
-|     ├── GlobalFontStore (OnceLock singleton caching embedded+system)    |
-|     └── In-memory compilation: Document -> Vec<u8> PDF binary stream    |
+|     ├── GlobalFontStore (OnceLock singleton caching embedded+system)     |
+|     └── In-memory compilation: Document -> Vec<u8> PDF binary stream     |
 +──────────────────────────────────────────────────────────────────────────+
 ```
 
