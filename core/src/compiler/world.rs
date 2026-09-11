@@ -70,17 +70,39 @@ impl GlobalFontStore {
                 "Source Han Serif SC",
             ];
 
+            let mut font_file_cache: HashMap<PathBuf, Bytes> = HashMap::new();
             for face in db.faces() {
                 let is_target = face.families.iter().any(|(f_name, _)| {
                     target_families.iter().any(|tf| tf.eq_ignore_ascii_case(f_name))
                 });
                 if is_target {
-                    db.with_face_data(face.id, |data, index| {
-                        let bytes = Bytes::new(data.to_vec());
-                        if let Some(font) = Font::new(bytes, index) {
-                            fonts.push(font);
+                    match &face.source {
+                        fontdb::Source::File(path) => {
+                            let bytes = if let Some(b) = font_file_cache.get(path) {
+                                b.clone()
+                            } else {
+                                match fs::read(path) {
+                                    Ok(data) => {
+                                        let b = Bytes::new(data);
+                                        font_file_cache.insert(path.clone(), b.clone());
+                                        b
+                                    }
+                                    Err(_) => continue,
+                                }
+                            };
+                            if let Some(font) = Font::new(bytes, face.index) {
+                                fonts.push(font);
+                            }
                         }
-                    });
+                        _ => {
+                            db.with_face_data(face.id, |data, index| {
+                                let bytes = Bytes::new(data.to_vec());
+                                if let Some(font) = Font::new(bytes, index) {
+                                    fonts.push(font);
+                                }
+                            });
+                        }
+                    }
                 }
             }
 

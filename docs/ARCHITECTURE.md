@@ -55,10 +55,13 @@ pub struct SogoodBuffer {
 2. **Transfer to Dart**: Dart reads the byte stream directly into a managed `Uint8List` via `buffer.data.asTypedList(buffer.len)`.
 3. **Deallocation**: Dart calls `sogood_free_buffer(bufferPtr)`, ensuring memory is reclaimed by Rust using `Vec::from_raw_parts` without leaks.
 
-### 2.2 Global Font Store
+### 2.2 Global Font Store & Memory Optimization
 Scanning and parsing system fonts on every keypress or reload can take 300ms–800ms. SoGoodViewer uses a thread-safe `OnceLock<GlobalFontStore>`:
 - Embedded Typst fonts (New Computer Modern, DejaVu, Latin Modern Math, etc.) and primary system fonts (PingFang SC, Microsoft YaHei, Inter, Segoe UI) are indexed **once** at initial launch.
-- Subsequent compilations reference the cached `LazyHash<FontBook>`, bringing re-compilation latency down to **10ms ~ 30ms**.
+- **TTC (TrueType Collection) In-Memory Deduplication**: TTC font files containing multiple faces (such as macOS `PingFang.ttc` 74.6MB with 6 faces) are read only once and deduplicated via an in-memory `PathBuf -> Arc<Bytes>` cache, reducing runtime memory footprint by over **815 MB** (a 69% reduction).
+- Subsequent compilations reference the cached `LazyHash<FontBook>`, bringing re-compilation latency down to **0.5ms ~ 5ms**.
+
+See [BENCHMARKS.md](BENCHMARKS.md) for detailed performance metrics and comparison with Obsidian, Typora, MarkText, and VS Code.
 
 ---
 
