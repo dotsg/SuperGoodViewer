@@ -18,7 +18,7 @@
 | 测试维度 | SoGoodViewer (本品) | Obsidian | Typora | MarkText | VS Code |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | **底层架构** | **Rust + Flutter (Impeller Metal)** | Electron (Chromium+Node) | Cocoa + WKWebView | Electron (Chromium+Node) | Electron (Chromium+Node) |
-| **应用安装体积** | **90 MB** (内嵌17款字体) | 482 MB | 46 MB (依赖系统WebKit) | 367 MB | 932 MB |
+| **应用安装体积** | **94 MB** (内嵌17款字体) | 482 MB | 46 MB (依赖系统WebKit) | 367 MB | 932 MB |
 | **常驻进程数** | **1 个原生进程** | 4 个独立进程 | 2 个独立进程 | 5 个独立进程 | 8+ 个独立进程 |
 | **冷启动到首帧耗时** | **< 60 ms** (后台 Isolate 异步字体发现) | 1,500 ms - 2,500 ms | 450 ms - 600 ms | 1,800 ms - 3,000 ms | 1,800 ms - 3,500 ms |
 | **常驻内存占用 (RSS)** | **~365 MB** (含字体与PDF引擎) | ~627 MB (全进程汇总) | ~266 MB (含WebKit进程) | ~715 MB (全进程汇总) | ~950 MB (全进程汇总) |
@@ -39,15 +39,15 @@
 Visual Studio Code  ████████████████████████████████ 932 MB
 Obsidian            ████████████████ 482 MB
 MarkText            ████████████ 367 MB
-SoGoodViewer        ███ 90 MB (全自包含: 引擎+17款字体+矢量库)
+SoGoodViewer        ████ 94 MB (全自包含: 引擎+17款字体+矢量库)
 Typora              █ 46 MB (外挂依赖系统 WebKit 运行库)
 ```
 
-### SoGoodViewer Release 安装包 (90 MB) 组成明细：
+### SoGoodViewer Release 安装包 (94 MB) 组成明细：
 
 | 组成模块 | 磁盘大小 | 作用说明 |
 | :--- | :---: | :--- |
-| `libsogood_core.dylib` | **37 MB** | 纯 Rust 编写的排版核心，完整内嵌 **Typst 0.15.1 编译器**、**17 款开源出版级字体**、**MiTeX 公式引擎**与 **Mermaid 离线矢量引擎**。零网络请求，零外部依赖（经 LTO 全局优化与符号剥离，由 56MB 压缩至 37MB）。 |
+| `libsogood_core.dylib` | **41 MB** | 纯 Rust 编写的排版核心，完整内嵌 **Typst 0.15.1 编译器**、**17 款开源出版级字体**、**MiTeX 公式引擎**与 **Mermaid 离线矢量引擎**。零网络请求，零外部依赖（经 LTO 跨模块优化与符号剥离，并保留 `panic = "unwind"` 保证 C-ABI catch_unwind 异常安全，由 56MB 压缩至 41MB）。 |
 | `FlutterMacOS.framework` | **29 MB** | Flutter 桌面端原生运行库，提供基于 **Apple Metal Impeller** 的亚像素级 GPU 渲染底座。 |
 | `App.framework` | **12 MB** | AOT 高度优化编译的 Dart 业务逻辑及 Cupertino/Zen UI 界面代码。 |
 | `PDFium.framework` | **11 MB** | 经过 Google 工业级验证的高性能 C++ PDF 矢量解析与渲染引擎（pdfrx 绑定）。 |
