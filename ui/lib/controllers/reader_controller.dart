@@ -26,6 +26,12 @@ class OutlineItem {
   String toString() => 'OutlineItem(H$level: $title, line: $lineNumber)';
 }
 
+enum AutoFitMode {
+  none,
+  fitWidth,
+  fitPage,
+}
+
 class ReaderController extends ChangeNotifier {
   String? _currentFilePath;
   String _currentMarkdown = '';
@@ -44,6 +50,7 @@ class ReaderController extends ChangeNotifier {
   double _lastScrollRatio = 0.0;
   int _lastPageNumber = 1;
   double _lastZoom = 1.0;
+  AutoFitMode _autoFitMode = AutoFitMode.none;
   bool _isReloading = false;
   bool _autoReload = true;
   StreamSubscription<FileSystemEvent>? _watcherSubscription;
@@ -67,6 +74,7 @@ class ReaderController extends ChangeNotifier {
   double get lastScrollRatio => _lastScrollRatio;
   int get lastPageNumber => _lastPageNumber;
   double get lastZoom => _lastZoom;
+  AutoFitMode get autoFitMode => _autoFitMode;
   bool get isReloading => _isReloading;
   bool get autoReload => _autoReload;
   List<String> get recentFiles => List.unmodifiable(_recentFiles);
@@ -98,6 +106,14 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
+  void setAutoFitMode(AutoFitMode mode) {
+    if (_autoFitMode != mode) {
+      _autoFitMode = mode;
+      _persistDebounced();
+      notifyListeners();
+    }
+  }
+
   ReaderController({String? initialFilePath, bool autoRestorePreferences = true}) {
     unawaited(refreshFontReport());
     _setSampleDocumentContent();
@@ -117,6 +133,7 @@ class ReaderController extends ChangeNotifier {
       final savedTheme = prefs['theme'] as String?;
       final savedMode = prefs['mode'] as String?;
       final savedTwoPage = prefs['isTwoPage'] as bool?;
+      final savedAutoFit = prefs['autoFitMode'] as String?;
       final recent = (prefs['recentFiles'] as List<dynamic>?)?.cast<String>();
 
       if (recent != null && recent.isNotEmpty) {
@@ -132,6 +149,12 @@ class ReaderController extends ChangeNotifier {
       }
       if (savedTwoPage != null) {
         _isTwoPage = savedTwoPage;
+      }
+      if (savedAutoFit != null) {
+        _autoFitMode = AutoFitMode.values.firstWhere(
+          (m) => m.name == savedAutoFit,
+          orElse: () => AutoFitMode.none,
+        );
       }
 
       if (lastFile != null && lastFile.isNotEmpty) {
@@ -159,6 +182,7 @@ class ReaderController extends ChangeNotifier {
       'theme': _renderOptions.theme,
       'mode': _renderOptions.mode,
       'isTwoPage': _isTwoPage,
+      'autoFitMode': _autoFitMode.name,
       'fontSize': _renderOptions.fontSize,
       'bodyFont': _renderOptions.bodyFont,
       'codeFont': _renderOptions.codeFont,

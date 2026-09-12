@@ -175,12 +175,13 @@ class SoGoodSizeDelegate implements PdfViewerSizeDelegate {
       final docWidth = layout.documentSize.width;
       final fitWidth = (viewSize.width - bmh - pageMargin * 2) / (docWidth > 0 ? docWidth : 800.0);
       final clampedFitWidth = fitWidth.clamp(minScale, maxScale);
+      final comfortableFit = (clampedFitWidth < 1.15 ? clampedFitWidth : 1.15).clamp(minScale, maxScale);
 
       return PdfViewerLayoutMetrics(
         minScale: minScale,
         maxScale: maxScale,
         coverScale: clampedFitWidth,
-        alternativeFitScale: clampedFitWidth,
+        alternativeFitScale: comfortableFit,
       );
     } else {
       // Paged A4 mode
@@ -235,38 +236,57 @@ class SoGoodSizeDelegate implements PdfViewerSizeDelegate {
     final controller = _controller;
     if (controller == null) return;
 
-    if (readerController.isReloading) {
-      // Restoring reading position after reload/theme/edit
+    final fitMode = readerController.autoFitMode;
+    final double initialZoom;
+    if (fitMode == AutoFitMode.fitWidth) {
+      initialZoom = coverScale.clamp(minScale, maxScale);
+    } else if (fitMode == AutoFitMode.fitPage) {
+      initialZoom = (alternativeFitScale ?? coverScale).clamp(minScale, maxScale);
+    } else if (readerController.isReloading) {
       if (isFluid) {
         final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
         final rawFitWidth = state.viewSize.width / docWidth;
-        final zoom = (rawFitWidth > 1.35 ? 1.25 : rawFitWidth).clamp(minScale, maxScale);
-        final targetY = readerController.lastScrollRatio * layout.documentSize.height;
-        controller.setZoom(Offset(docWidth / 2, targetY), zoom, duration: Duration.zero);
-        controller.goToPosition(documentOffset: Offset(0, targetY));
+        initialZoom = (rawFitWidth > 1.35 ? 1.25 : rawFitWidth).clamp(minScale, maxScale);
       } else {
-        final targetPage = readerController.lastPageNumber.clamp(1, layout.pageLayouts.length);
-        final page = layout.pageLayouts[targetPage - 1];
-        final zoom = (alternativeFitScale ?? 1.0).clamp(0.2, maxScale);
-        controller.setZoom(page.center, zoom, duration: Duration.zero);
-        controller.goToPage(pageNumber: targetPage, duration: Duration.zero);
+        initialZoom = (alternativeFitScale ?? 1.0).clamp(0.2, maxScale);
       }
     } else {
       // Fresh document load
       if (isFluid) {
         final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
         final rawFitWidth = state.viewSize.width / docWidth;
-        final initialZoom = (rawFitWidth > 1.35 ? 1.25 : rawFitWidth).clamp(minScale, maxScale);
+        initialZoom = (rawFitWidth > 1.35 ? 1.25 : rawFitWidth).clamp(minScale, maxScale);
+      } else {
+        initialZoom = (alternativeFitScale ?? 1.0).clamp(0.2, maxScale);
+      }
+    }
+
+    if (readerController.isReloading) {
+      // Restoring reading position after reload/theme/edit
+      if (isFluid) {
+        final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
+        final targetY = readerController.lastScrollRatio * layout.documentSize.height;
+        controller.setZoom(Offset(docWidth / 2, targetY), initialZoom, duration: Duration.zero);
+        controller.goToPosition(documentOffset: Offset(0, targetY));
+      } else {
+        final targetPage = readerController.lastPageNumber.clamp(1, layout.pageLayouts.length);
+        final page = layout.pageLayouts[targetPage - 1];
+        controller.setZoom(page.center, initialZoom, duration: Duration.zero);
+        controller.goToPage(pageNumber: targetPage, duration: Duration.zero);
+      }
+    } else {
+      // Fresh document load
+      if (isFluid) {
+        final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
         final center = Offset(docWidth / 2, 0);
         controller.setZoom(center, initialZoom, duration: Duration.zero);
       } else {
-        final zoom = (alternativeFitScale ?? 1.0).clamp(0.2, maxScale);
         if (isTwoPage && layout.pageLayouts.length > 1) {
           final spreadCenter = Offset(layout.documentSize.width / 2, layout.pageLayouts.first.center.dy);
-          controller.setZoom(spreadCenter, zoom, duration: Duration.zero);
+          controller.setZoom(spreadCenter, initialZoom, duration: Duration.zero);
         } else {
           final page = layout.pageLayouts.first;
-          controller.setZoom(page.center, zoom, duration: Duration.zero);
+          controller.setZoom(page.center, initialZoom, duration: Duration.zero);
         }
       }
     }
@@ -293,7 +313,16 @@ class SoGoodSizeDelegate implements PdfViewerSizeDelegate {
         final pageNum = hit?.page.pageNumber ?? anchorPageNumber;
         final clampedPage = pageNum.clamp(1, newLayout.pageLayouts.length);
         final newRect = newLayout.pageLayouts[clampedPage - 1];
-        controller.goToPosition(documentOffset: newRect.topLeft, zoom: currentZoom);
+        final fitMode = readerController.autoFitMode;
+        final double targetZoom;
+        if (fitMode == AutoFitMode.fitWidth) {
+          targetZoom = newState.coverScale;
+        } else if (fitMode == AutoFitMode.fitPage) {
+          targetZoom = newState.alternativeFitScale ?? newState.coverScale;
+        } else {
+          targetZoom = currentZoom;
+        }
+        controller.goToPosition(documentOffset: newRect.topLeft, zoom: targetZoom);
       }
       return;
     }
@@ -303,26 +332,81 @@ class SoGoodSizeDelegate implements PdfViewerSizeDelegate {
       final newSize = newState.viewSize;
       if (oldSize.width <= 0 || newSize.width <= 0) return;
 
+      final fitMode = readerController.autoFitMode;
+      final double targetZoom;
+      if (fitMode == AutoFitMode.fitWidth) {
+        targetZoom = newState.coverScale;
+      } else if (fitMode == AutoFitMode.fitPage) {
+        targetZoom = (newState.alternativeFitScale ?? newState.coverScale);
+      } else {
+        targetZoom = currentZoom.clamp(minScale, maxScale);
+      }
+
       if (isFluid) {
         final oldCenterInDoc = controller.value.calcPosition(oldSize);
         final docWidth = newState.layout?.documentSize.width ?? 800.0;
-        final clampedZoom = currentZoom.clamp(minScale, maxScale);
         final newMatrix = controller.calcMatrixFor(
           Offset(docWidth / 2, oldCenterInDoc.dy),
-          zoom: clampedZoom,
+          zoom: targetZoom.clamp(minScale, maxScale),
+          viewSize: newSize,
+        );
+        final clampedMatrix = controller.calcMatrixForClampedToNearestBoundary(
+          newMatrix,
           viewSize: newSize,
         );
         controller.stopInteractiveViewerAnimation();
-        controller.value = newMatrix;
+        controller.value = clampedMatrix;
       } else {
-        final oldCenterInDoc = controller.value.calcPosition(oldSize);
+        Offset targetCenter;
+        final layout = newState.layout;
+        final currentPage = controller.pageNumber ?? 1;
+        if (fitMode == AutoFitMode.fitPage && layout != null && layout.pageLayouts.isNotEmpty) {
+          if (isTwoPage && layout.pageLayouts.length > 1) {
+            final spreadIndex = (currentPage - 1) ~/ 2;
+            final leftIdx = (spreadIndex * 2).clamp(0, layout.pageLayouts.length - 1);
+            final leftRect = layout.pageLayouts[leftIdx];
+            final rightRect = (leftIdx + 1 < layout.pageLayouts.length)
+                ? layout.pageLayouts[leftIdx + 1]
+                : leftRect;
+            targetCenter = Offset(
+              (leftRect.left + rightRect.right) / 2,
+              (leftRect.center.dy + rightRect.center.dy) / 2,
+            );
+          } else {
+            final pageIdx = (currentPage - 1).clamp(0, layout.pageLayouts.length - 1);
+            targetCenter = layout.pageLayouts[pageIdx].center;
+          }
+        } else if (fitMode == AutoFitMode.fitWidth && layout != null && layout.pageLayouts.isNotEmpty) {
+          final oldCenterInDoc = controller.value.calcPosition(oldSize);
+          double targetCenterX = oldCenterInDoc.dx;
+          if (isTwoPage && layout.pageLayouts.length > 1) {
+            final spreadIndex = (currentPage - 1) ~/ 2;
+            final leftIdx = (spreadIndex * 2).clamp(0, layout.pageLayouts.length - 1);
+            final leftRect = layout.pageLayouts[leftIdx];
+            final rightRect = (leftIdx + 1 < layout.pageLayouts.length)
+                ? layout.pageLayouts[leftIdx + 1]
+                : leftRect;
+            targetCenterX = (leftRect.left + rightRect.right) / 2;
+          } else {
+            final pageIdx = (currentPage - 1).clamp(0, layout.pageLayouts.length - 1);
+            targetCenterX = layout.pageLayouts[pageIdx].center.dx;
+          }
+          targetCenter = Offset(targetCenterX, oldCenterInDoc.dy);
+        } else {
+          targetCenter = controller.value.calcPosition(oldSize);
+        }
+
         final newMatrix = controller.calcMatrixFor(
-          oldCenterInDoc,
-          zoom: currentZoom.clamp(0.2, maxScale),
+          targetCenter,
+          zoom: targetZoom.clamp(0.2, maxScale),
+          viewSize: newSize,
+        );
+        final clampedMatrix = controller.calcMatrixForClampedToNearestBoundary(
+          newMatrix,
           viewSize: newSize,
         );
         controller.stopInteractiveViewerAnimation();
-        controller.value = newMatrix;
+        controller.value = clampedMatrix;
       }
     }
   }
@@ -416,6 +500,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   final List<Uint8List?> _slotBytes = [null, null];
   final List<int> _slotDocHash = [0, 0];
   bool _isRestoringScroll = false;
+  bool _isProgrammaticZooming = false;
   double _currentZoom = 1.0;
   int _lastReportedPage = 1;
   int _lastReportedCount = 1;
@@ -461,12 +546,11 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       return;
     }
 
-    final bytesChanged = newBytes != oldWidget.pdfBytes;
-    final hashChanged = newBytes.hashCode != _slotDocHash[_activeSlot];
-
-    if (bytesChanged && hashChanged) {
-      if (widget.documentTitle != oldWidget.documentTitle) {
-        // Different document opened: direct reload
+    if (newBytes.hashCode != _slotDocHash[_activeSlot]) {
+      if (widget.controller.renderOptions.mode != oldWidget.controller.renderOptions.mode ||
+          widget.controller.isTwoPage != oldWidget.controller.isTwoPage ||
+          widget.documentTitle != oldWidget.documentTitle) {
+        // Mode change or different document opened: direct reload
         _cleanupTimer?.cancel();
         _activeSlot = 0;
         _pendingSlot = null;
@@ -498,6 +582,21 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         _currentZoom = zoom;
         widget.controller.updateZoom(zoom);
         widget.onZoomChanged?.call(_currentZoom);
+
+        if (!_isProgrammaticZooming) {
+          final mode = widget.controller.autoFitMode;
+          if (mode == AutoFitMode.fitWidth) {
+            final expected = ctrl.coverScale;
+            if ((zoom - expected).abs() > 0.06) {
+              widget.controller.setAutoFitMode(AutoFitMode.none);
+            }
+          } else if (mode == AutoFitMode.fitPage) {
+            final expected = ctrl.alternativeFitScale ?? ctrl.coverScale;
+            if ((zoom - expected).abs() > 0.06) {
+              widget.controller.setAutoFitMode(AutoFitMode.none);
+            }
+          }
+        }
       }
 
       final pageNum = ctrl.pageNumber ?? 1;
@@ -633,6 +732,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
   Future<void> zoomIn({Offset? focalPoint}) async {
     if (!_pdfController.isReady) return;
+    widget.controller.setAutoFitMode(AutoFitMode.none);
     final current = _pdfController.currentZoom;
     double target = current * 1.2;
     for (final step in kZoomLadder) {
@@ -644,15 +744,23 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final minS = widget.controller.renderOptions.isFluid ? 0.35 : 0.2;
     target = target.clamp(minS, 5.0);
     final center = _calcStableZoomCenter(focalPoint);
-    await _pdfController.setZoom(
-      center,
-      target,
-      duration: const Duration(milliseconds: 180),
-    );
+    _isProgrammaticZooming = true;
+    try {
+      await _pdfController.setZoom(
+        center,
+        target,
+        duration: const Duration(milliseconds: 180),
+      );
+    } finally {
+      Future.delayed(const Duration(milliseconds: 200), () {
+        _isProgrammaticZooming = false;
+      });
+    }
   }
 
   Future<void> zoomOut({Offset? focalPoint}) async {
     if (!_pdfController.isReady) return;
+    widget.controller.setAutoFitMode(AutoFitMode.none);
     final current = _pdfController.currentZoom;
     double target = current / 1.2;
     for (var i = kZoomLadder.length - 1; i >= 0; i--) {
@@ -665,113 +773,92 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final minS = widget.controller.renderOptions.isFluid ? 0.35 : 0.2;
     target = target.clamp(minS, 5.0);
     final center = _calcStableZoomCenter(focalPoint);
-    await _pdfController.setZoom(
-      center,
-      target,
-      duration: const Duration(milliseconds: 180),
-    );
+    _isProgrammaticZooming = true;
+    try {
+      await _pdfController.setZoom(
+        center,
+        target,
+        duration: const Duration(milliseconds: 180),
+      );
+    } finally {
+      Future.delayed(const Duration(milliseconds: 200), () {
+        _isProgrammaticZooming = false;
+      });
+    }
   }
 
   Future<void> resetZoom() async {
     if (!_pdfController.isReady) return;
+    widget.controller.setAutoFitMode(AutoFitMode.none);
     final center = _calcStableZoomCenter(null);
-    await _pdfController.setZoom(
-      center,
-      1.0,
-      duration: const Duration(milliseconds: 180),
-    );
+    _isProgrammaticZooming = true;
+    try {
+      await _pdfController.setZoom(
+        center,
+        1.0,
+        duration: const Duration(milliseconds: 180),
+      );
+    } finally {
+      Future.delayed(const Duration(milliseconds: 200), () {
+        _isProgrammaticZooming = false;
+      });
+    }
   }
 
   Future<void> zoomTo(double targetZoom, {Offset? focalPoint}) async {
     if (!_pdfController.isReady) return;
+    widget.controller.setAutoFitMode(AutoFitMode.none);
     final minS = widget.controller.renderOptions.isFluid ? 0.35 : 0.2;
     final center = _calcStableZoomCenter(focalPoint);
-    await _pdfController.setZoom(
-      center,
-      targetZoom.clamp(minS, 5.0),
-      duration: const Duration(milliseconds: 180),
-    );
+    _isProgrammaticZooming = true;
+    try {
+      await _pdfController.setZoom(
+        center,
+        targetZoom.clamp(minS, 5.0),
+        duration: const Duration(milliseconds: 180),
+      );
+    } finally {
+      Future.delayed(const Duration(milliseconds: 200), () {
+        _isProgrammaticZooming = false;
+      });
+    }
   }
 
   Future<void> fitWidth() async {
     if (!_pdfController.isReady) return;
-    final layout = _pdfController.layout;
-    final viewWidth = _pdfController.viewSize.width;
-    final margin = _pdfController.params.margin;
-
-    if (widget.controller.renderOptions.isFluid) {
-      final docWidth = layout.documentSize.width;
-      if (docWidth <= 0) return;
-      final targetZoom = ((viewWidth - margin * 2) / docWidth).clamp(0.2, 5.0);
+    widget.controller.setAutoFitMode(AutoFitMode.fitWidth);
+    _isProgrammaticZooming = true;
+    try {
+      final targetZoom = _pdfController.coverScale;
       final center = _calcStableZoomCenter(null);
       await _pdfController.setZoom(
         center,
         targetZoom,
         duration: const Duration(milliseconds: 200),
       );
-    } else {
-      final isTwoPage = widget.controller.isTwoPage && layout.pageLayouts.length > 1;
-      final spreadWidth = isTwoPage
-          ? (layout.pageLayouts[0].width + layout.pageLayouts[1].width + 12.0)
-          : (layout.pageLayouts.isNotEmpty ? layout.pageLayouts.first.width : layout.documentSize.width);
-      if (spreadWidth <= 0) return;
-      final targetZoom = ((viewWidth - margin * 2) / spreadWidth).clamp(0.2, 5.0);
-      final center = _calcStableZoomCenter(null);
-      await _pdfController.setZoom(
-        center,
-        targetZoom,
-        duration: const Duration(milliseconds: 200),
-      );
+    } finally {
+      Future.delayed(const Duration(milliseconds: 220), () {
+        _isProgrammaticZooming = false;
+      });
     }
   }
 
   Future<void> fitPage() async {
     if (!_pdfController.isReady) return;
-    final layout = _pdfController.layout;
-    final pageLayouts = layout.pageLayouts;
-    if (pageLayouts.isEmpty) return;
-
-    final viewSize = _pdfController.viewSize;
-    final margin = _pdfController.params.margin;
-
-    if (widget.controller.renderOptions.isFluid) {
-      final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
-      final fitWidthZoom = (viewSize.width - margin * 2) / docWidth;
-      final targetZoom = (fitWidthZoom < 1.15 ? fitWidthZoom : 1.15).clamp(0.35, 5.0);
+    widget.controller.setAutoFitMode(AutoFitMode.fitPage);
+    _isProgrammaticZooming = true;
+    try {
+      final targetZoom = _pdfController.alternativeFitScale ?? _pdfController.coverScale;
       final center = _calcStableZoomCenter(null);
       await _pdfController.setZoom(
         center,
         targetZoom,
         duration: const Duration(milliseconds: 200),
       );
-    } else {
-      final isTwoPage = widget.controller.isTwoPage && pageLayouts.length > 1;
-      if (isTwoPage) {
-        final p1 = pageLayouts[0];
-        final p2 = pageLayouts[1];
-        final spreadWidth = p1.width + p2.width + 12.0;
-        final spreadHeight = math.max(p1.height, p2.height);
-        final zoomX = (viewSize.width - margin * 2) / spreadWidth;
-        final zoomY = (viewSize.height - margin * 2) / spreadHeight;
-        final targetZoom = math.min(zoomX, zoomY).clamp(0.2, 5.0);
-        final center = _calcStableZoomCenter(null);
-        await _pdfController.setZoom(
-          center,
-          targetZoom,
-          duration: const Duration(milliseconds: 200),
-        );
-      } else {
-        final pageIndex = ((_pdfController.pageNumber ?? 1) - 1).clamp(0, pageLayouts.length - 1);
-        final page = pageLayouts[pageIndex];
-        final zoomX = (viewSize.width - margin * 2) / page.width;
-        final zoomY = (viewSize.height - margin * 2) / page.height;
-        final targetZoom = math.min(zoomX, zoomY).clamp(0.2, 5.0);
-        await _pdfController.setZoom(
-          page.center,
-          targetZoom,
-          duration: const Duration(milliseconds: 200),
-        );
-      }
+    } finally {
+      Future.delayed(const Duration(milliseconds: 220), () {
+        _isProgrammaticZooming = false;
+      });
     }
   }
 

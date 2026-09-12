@@ -232,6 +232,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handleZoomIn() async {
+    widget.controller.setAutoFitMode(AutoFitMode.none);
     await _pdfCanvasKey.currentState?.zoomIn();
     final zoom = _pdfCanvasKey.currentState?.currentZoom ?? _currentZoom;
     setState(() => _currentZoom = zoom);
@@ -239,6 +240,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handleZoomOut() async {
+    widget.controller.setAutoFitMode(AutoFitMode.none);
     await _pdfCanvasKey.currentState?.zoomOut();
     final zoom = _pdfCanvasKey.currentState?.currentZoom ?? _currentZoom;
     setState(() => _currentZoom = zoom);
@@ -246,12 +248,14 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handleResetZoom() async {
+    widget.controller.setAutoFitMode(AutoFitMode.none);
     await _pdfCanvasKey.currentState?.resetZoom();
     setState(() => _currentZoom = 1.0);
     _showZoomHud('实际大小 100%');
   }
 
   void _handleFitWidth() async {
+    widget.controller.setAutoFitMode(AutoFitMode.fitWidth);
     await _pdfCanvasKey.currentState?.fitWidth();
     final zoom = _pdfCanvasKey.currentState?.currentZoom ?? _currentZoom;
     setState(() => _currentZoom = zoom);
@@ -259,6 +263,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handleFitPage() async {
+    widget.controller.setAutoFitMode(AutoFitMode.fitPage);
     await _pdfCanvasKey.currentState?.fitPage();
     final zoom = _pdfCanvasKey.currentState?.currentZoom ?? _currentZoom;
     setState(() => _currentZoom = zoom);
@@ -266,6 +271,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handleZoomTo(double targetZoom) async {
+    widget.controller.setAutoFitMode(AutoFitMode.none);
     await _pdfCanvasKey.currentState?.zoomTo(targetZoom);
     setState(() => _currentZoom = targetZoom);
     _showZoomHud('${(targetZoom * 100).round()}%');
@@ -711,6 +717,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               ),
               _ZoomDropdownBadge(
                 currentZoom: _currentZoom,
+                autoFitMode: controller.autoFitMode,
                 isDark: isDark,
                 onZoomSelected: (zoom) {
                   if (zoom == -1.0) {
@@ -737,12 +744,14 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 icon: Icons.fit_screen_outlined,
                 tooltip: '满窗口 / 适应宽度 (Cmd+9)',
                 iconSize: 15,
+                isSelected: controller.autoFitMode == AutoFitMode.fitWidth,
                 onPressed: _handleFitWidth,
               ),
               _PillIconButton(
                 icon: Icons.crop_free_rounded,
                 tooltip: '满屏 / 适应整页 (Cmd+1)',
                 iconSize: 15,
+                isSelected: controller.autoFitMode == AutoFitMode.fitPage,
                 onPressed: _handleFitPage,
               ),
               _PillDivider(isDark: isDark),
@@ -818,7 +827,13 @@ class _PillIconButton extends StatelessWidget {
       child: InkWell(
         onTap: onPressed,
         borderRadius: BorderRadius.circular(16),
-        child: Padding(
+        child: Container(
+          decoration: isSelected
+              ? BoxDecoration(
+                  color: theme.colorScheme.primary.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(10),
+                )
+              : null,
           padding: const EdgeInsets.all(7),
           child: Icon(icon, size: iconSize, color: color),
         ),
@@ -897,11 +912,13 @@ class _PillDivider extends StatelessWidget {
 
 class _ZoomDropdownBadge extends StatelessWidget {
   final double currentZoom;
+  final AutoFitMode autoFitMode;
   final bool isDark;
   final ValueChanged<double> onZoomSelected;
 
   const _ZoomDropdownBadge({
     required this.currentZoom,
+    required this.autoFitMode,
     required this.isDark,
     required this.onZoomSelected,
   });
@@ -910,6 +927,7 @@ class _ZoomDropdownBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final percentText = '${(currentZoom * 100).round()}%';
     final textColor = isDark ? Colors.white : Colors.black87;
+    final theme = Theme.of(context);
 
     return PopupMenuButton<double>(
       tooltip: '页面缩放比例与预设',
@@ -918,27 +936,55 @@ class _ZoomDropdownBadge extends StatelessWidget {
       color: isDark ? const Color(0xFF262626) : Colors.white,
       onSelected: onZoomSelected,
       itemBuilder: (context) => [
-        const PopupMenuItem<double>(
+        PopupMenuItem<double>(
           value: -1.0,
           child: Row(
             children: [
-              Icon(Icons.fit_screen_outlined, size: 16),
-              SizedBox(width: 8),
-              Text('满窗口 (适应宽度)', style: TextStyle(fontSize: 12.5)),
-              Spacer(),
-              Text('Cmd+9', style: TextStyle(fontSize: 11, color: Colors.grey)),
+              Icon(
+                Icons.fit_screen_outlined,
+                size: 16,
+                color: autoFitMode == AutoFitMode.fitWidth ? theme.colorScheme.primary : null,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '满窗口 (适应宽度)',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: autoFitMode == AutoFitMode.fitWidth ? FontWeight.w600 : FontWeight.normal,
+                  color: autoFitMode == AutoFitMode.fitWidth ? theme.colorScheme.primary : null,
+                ),
+              ),
+              const Spacer(),
+              if (autoFitMode == AutoFitMode.fitWidth)
+                Icon(Icons.check_rounded, size: 14, color: theme.colorScheme.primary)
+              else
+                const Text('Cmd+9', style: TextStyle(fontSize: 11, color: Colors.grey)),
             ],
           ),
         ),
-        const PopupMenuItem<double>(
+        PopupMenuItem<double>(
           value: -2.0,
           child: Row(
             children: [
-              Icon(Icons.crop_free_rounded, size: 16),
-              SizedBox(width: 8),
-              Text('满屏 (适应整页)', style: TextStyle(fontSize: 12.5)),
-              Spacer(),
-              Text('Cmd+1', style: TextStyle(fontSize: 11, color: Colors.grey)),
+              Icon(
+                Icons.crop_free_rounded,
+                size: 16,
+                color: autoFitMode == AutoFitMode.fitPage ? theme.colorScheme.primary : null,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '满屏 (适应整页)',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: autoFitMode == AutoFitMode.fitPage ? FontWeight.w600 : FontWeight.normal,
+                  color: autoFitMode == AutoFitMode.fitPage ? theme.colorScheme.primary : null,
+                ),
+              ),
+              const Spacer(),
+              if (autoFitMode == AutoFitMode.fitPage)
+                Icon(Icons.check_rounded, size: 14, color: theme.colorScheme.primary)
+              else
+                const Text('Cmd+1', style: TextStyle(fontSize: 11, color: Colors.grey)),
             ],
           ),
         ),
