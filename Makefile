@@ -1,4 +1,4 @@
-.PHONY: all build build-core build-app test test-core test-app clean run-macos
+.PHONY: all build build-core build-app test test-core test-app clean run-macos dmg
 
 all: build test
 
@@ -31,10 +31,18 @@ test-app:
 	@cd ui && flutter test
 
 run-macos: build-core
-	@echo "==> Launching SoGoodViewer in dev mode..."
+	@echo "==> Launching SuperGoodViewer in dev mode..."
 	@cd ui && flutter run -d macos
 
 clean:
 	@echo "==> Cleaning artifacts..."
 	@cd core && cargo clean
 	@cd ui && flutter clean
+
+dmg: build
+	@echo "==> Creating macOS DMG..."
+	@hdiutil create -volname "SuperGoodViewer" \
+		-srcfolder "ui/build/macos/Build/Products/Release/sogoodviewer.app" \
+		-ov -format UDZO \
+		"SuperGoodViewer-macos.dmg"
+	@echo "==> DMG generated: SuperGoodViewer-macos.dmg"

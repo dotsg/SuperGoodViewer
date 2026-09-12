@@ -388,7 +388,7 @@ class _SidebarViewState extends State<SidebarView> {
                   const SizedBox(width: 10),
                   const Expanded(
                     child: Text(
-                      'SoGoodViewer',
+                      '超好读',
                       style: TextStyle(
                         fontWeight: FontWeight.w700,
                         fontSize: 15,

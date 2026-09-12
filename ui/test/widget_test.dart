@@ -79,7 +79,7 @@ void main() {
   group('ReaderController State Tests', () {
     test('initializes with demo document', () {
       final controller = ReaderController();
-      expect(controller.documentTitle, 'SoGoodViewer Demo');
+      expect(controller.documentTitle, 'SuperGoodViewer Demo');
       expect(controller.currentMarkdown, isNotEmpty);
       expect(controller.renderOptions.isFluid, true);
       expect(controller.renderOptions.isDark, false);
@@ -232,7 +232,7 @@ void main() {
       expect(find.byType(SidebarView), findsNothing);
 
       // Document title should be displayed in the floating pill
-      expect(find.text('SoGoodViewer Demo'), findsOneWidget);
+      expect(find.text('SuperGoodViewer Demo'), findsOneWidget);
 
       // Check floating pill action buttons
       expect(find.byTooltip('打开本地 Markdown (Cmd+O)'), findsOneWidget);

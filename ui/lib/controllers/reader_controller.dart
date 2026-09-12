@@ -466,12 +466,12 @@ class ReaderController extends ChangeNotifier {
 
   void _setSampleDocumentContent() {
     _currentFilePath = null;
-    _documentTitle = 'SoGoodViewer Demo';
+    _documentTitle = 'SuperGoodViewer Demo';
     _currentMarkdown = r'''
-# SoGoodViewer 🚀
+# SuperGoodViewer 🚀
 ### 出版级排版 Markdown 桌面阅读器
 
-欢迎体验 **SoGoodViewer**！本应用通过 **Typst 嵌入式编译 + PDFium 矢量渲染**，为您提供极致的阅读美感与跨平台 100% 像素级一致性。
+欢迎体验 **SuperGoodViewer**！本应用通过 **Typst 嵌入式编译 + PDFium 矢量渲染**，为您提供极致的阅读美感与跨平台 100% 像素级一致性。
 
 ---
 
@@ -528,7 +528,7 @@ graph LR
 
 ## 🎯 核心工程特性对比
 
-| 衡量维度 | SoGoodViewer (纯原生) | 传统 Electron / WebView 阅读器 |
+| 衡量维度 | SuperGoodViewer (纯原生) | 传统 Electron / WebView 阅读器 |
 | :--- | :--- | :--- |
 | **排版引擎** | **Typst 出版级矢量排版** | 浏览器 DOM / Webview 屏幕流动 |
 | **内存占用** | **~ 45 MB** | **~ 350 MB - 1 GB** |

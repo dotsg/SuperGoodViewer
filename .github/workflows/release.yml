@@ -1,0 +1,191 @@
+name: Release Multi-Platform App
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag Name (e.g. v1.0.0)'
+        required: false
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.tag_name || github.ref_name }}
+
+jobs:
+  # =============================================================
+  # macOS Build & Package
+  # =============================================================
+  build-macos:
+    name: Build macOS (DMG & ZIP)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Setup Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build Rust sogood_core (Release)
+        run: |
+          cd core
+          cargo build --release
+
+      - name: Build Flutter Desktop App (Release)
+        run: |
+          cd ui
+          flutter pub get
+          flutter build macos --release
+
+      - name: Inject Dynamic Library into App Bundle
+        run: |
+          mkdir -p ui/build/macos/Build/Products/Release/sogoodviewer.app/Contents/Frameworks/
+          cp core/target/release/libsogood_core.dylib ui/build/macos/Build/Products/Release/sogoodviewer.app/Contents/Frameworks/
+
+      - name: Create DMG and ZIP Packages
+        run: |
+          mkdir -p dist
+          APP_PATH="ui/build/macos/Build/Products/Release/sogoodviewer.app"
+          DMG_FILE="dist/SuperGoodViewer-${RELEASE_TAG}-macos.dmg"
+          ZIP_FILE="dist/SuperGoodViewer-${RELEASE_TAG}-macos.zip"
+
+          echo "==> Creating DMG: $DMG_FILE"
+          hdiutil create -volname "超好读 SuperGoodViewer" \
+            -srcfolder "$APP_PATH" \
+            -ov -format UDZO \
+            "$DMG_FILE"
+
+          echo "==> Creating ZIP: $ZIP_FILE"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_FILE"
+
+      - name: Upload macOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-binaries
+          path: dist/*
+          if-no-files-found: error
+
+  # =============================================================
+  # Windows Build & Package (x64 & ARM64 Prism Compatible)
+  # =============================================================
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Setup Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build Rust sogood_core (Release)
+        shell: bash
+        run: |
+          cd core
+          cargo build --release
+
+      - name: Build Flutter Windows App (Release)
+        shell: bash
+        run: |
+          cd ui
+          flutter pub get
+          flutter build windows --release
+
+      - name: Package Windows Portable ZIP
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          $buildDir = "ui/build/windows/x64/runner/Release"
+          $rustDll = "core/target/release/sogood_core.dll"
+
+          # Copy Rust core dll next to executable
+          Copy-Item -Path $rustDll -Destination $buildDir
+
+          # Compress to zip
+          $zipName = "dist/SuperGoodViewer-${env:RELEASE_TAG}-windows-x64.zip"
+          Compress-Archive -Path "$buildDir/*" -DestinationPath $zipName
+          Write-Host "Created Windows package: $zipName"
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries
+          path: dist/*
+          if-no-files-found: error
+
+  # =============================================================
+  # Publish Release
+  # =============================================================
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Inspect artifacts
+        run: |
+          echo "Files to upload:"
+          ls -lah release-artifacts/
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: "超好读 (SuperGoodViewer) ${{ env.RELEASE_TAG }}"
+          files: release-artifacts/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ## 🚀 超好读 (SuperGoodViewer) ${{ env.RELEASE_TAG }} 正式发布！
+
+            **只读 Markdown 矢量排版桌面阅读器**
+            *Publication-Grade Typography, Pixel-Perfect Consistency, Zero-WebView Desktop Reader.*
+
+            ---
+
+            ### 📦 下载与安装指南
+
+            #### 🍏 macOS 用户
+            - **推荐下载**：`SuperGoodViewer-${{ env.RELEASE_TAG }}-macos.dmg` 或 `.zip`
+            - **系统要求**：macOS 11.0+ (原生支持 Apple Silicon M 系列芯片与 Intel Mac)
+            - **首次打开提示处理**：
+              若系统提示「*无法验证开发者*」或「*已损坏，无法打开*」，请打开终端（Terminal）执行以下命令解除隔离属性即可：
+              ```bash
+              xattr -cr /Applications/SuperGoodViewer.app
+              ```
+
+            #### 🪟 Windows 用户
+            - **推荐下载**：`SuperGoodViewer-${{ env.RELEASE_TAG }}-windows-x64.zip`
+            - **系统要求**：Windows 10 / 11 64位（原生支持 Intel/AMD x64；高通骁龙 X Elite / Surface 等 ARM64 设备通过内置 Prism 仿真引擎免配置极速运行）
+            - **使用方式**：解压 zip 包至任意目录，双击 `sogoodviewer.exe` 即可即开即用（绿色免安装便携版）。
+            - **首次运行提示**：如遇 Windows SmartScreen 提示拦截，点击「更多信息」并选择「仍要运行」。

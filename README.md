@@ -1,4 +1,4 @@
-# SoGoodViewer 🚀
+# 超好读 (SuperGoodViewer) 🚀
 
 > **只读 Markdown 矢量排版桌面阅读器**  
 > *Publication-Grade Typography, Pixel-Perfect Consistency, Zero-WebView Desktop Reader.*
@@ -7,7 +7,7 @@
 [![CI Status](https://img.shields.io/badge/CI-Passing-brightgreen.svg)]()
 [![Platform: macOS | Windows | Linux](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)]()
 
-SoGoodViewer 是一款专为排版强迫症与极致阅读体验打造的跨平台桌面 Markdown 阅读器。系统彻底舍弃传统 WebView 屏幕流动排版方案，采用 **“Markdown $\to$ 嵌入式 Rust Typst 内存编译 $\to$ 本地 Google PDFium 矢量渲染”** 的全原生架构，带来真正的跨平台像素级一致性与 0 毫秒即时导出无损 PDF 体验。
+**超好读 (SuperGoodViewer)** 是一款专为排版强迫症与极致阅读体验打造的跨平台桌面 Markdown 阅读器。系统彻底舍弃传统 WebView 屏幕流动排版方案，采用 **“Markdown $\to$ 嵌入式 Rust Typst 内存编译 $\to$ 本地 Google PDFium 矢量渲染”** 的全原生架构，带来真正的跨平台像素级一致性与 0 毫秒即时导出无损 PDF 体验。
 
 ---
 
@@ -27,9 +27,9 @@ SoGoodViewer 是一款专为排版强迫症与极致阅读体验打造的跨平�
 
 ## ⚡ 性能基准对比 (Benchmarks)
 
-SoGoodViewer 在体积、启动耗时、排版速度与内存管理上对传统 Electron / WebView 类笔记软件实现了**数量级超越**：
+SuperGoodViewer 在体积、启动耗时、排版速度与内存管理上对传统 Electron / WebView 类笔记软件实现了**数量级超越**：
 
-| 测试维度                        |                      SoGoodViewer (本品)                       |       Obsidian        |         Typora         |      MarkText       |       VS Code       |
+| 测试维度                        |                     SuperGoodViewer (本品)                     |       Obsidian        |         Typora         |      MarkText       |       VS Code       |
 | ------------------------------- | :------------------------------------------------------------: | :-------------------: | :--------------------: | :-----------------: | :-----------------: |
 | **底层引擎**                    |                   **Rust + Metal Impeller**                    |  Electron (Chromium)  |   Cocoa + WKWebView    | Electron (Chromium) | Electron (Chromium) |
 | **应用体积**                    |                    **94 MB** (自带17款字体)                    |        482 MB         | 46 MB (依附系统WebKit) |       367 MB        |       932 MB        |

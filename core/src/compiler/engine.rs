@@ -86,7 +86,7 @@ mod tests {
         let source = r#"
         #set page(width: 400pt, height: auto, margin: 20pt)
         = Hello World
-        This is a test from SoGoodViewer!
+        This is a test from SuperGoodViewer!
         $ E = m c^2 $
         $ partial $
         "#;

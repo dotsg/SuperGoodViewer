@@ -75,21 +75,21 @@ PdfPageLayout _layoutA4Pages(List<PdfPage> pages, PdfViewerParams params, {requi
   }
 }
 
-/// Sizing strategy tailor-made for SoGoodViewer.
+/// Sizing strategy tailor-made for SuperGoodViewer.
 ///
 /// 1. In Fluid Mode: The document is a single continuous tall page.
 ///    It strictly anchors to horizontal fit and maintains a safe floor scale (0.35).
 /// 2. In A4 Two-Page Mode: Computes spread width and height across paired facing pages
 ///    to cleanly fill both pages on screen in full-page / full-window mode.
 /// 3. In Reload / Edit / Theme Toggle: Intelligently restores saved reading position.
-class SoGoodSizeDelegateProvider extends PdfViewerSizeDelegateProvider {
+class SuperGoodSizeDelegateProvider extends PdfViewerSizeDelegateProvider {
   final ReaderController readerController;
   final bool isFluid;
   final bool isTwoPage;
   final double minScale;
   final double maxScale;
 
-  const SoGoodSizeDelegateProvider({
+  const SuperGoodSizeDelegateProvider({
     required this.readerController,
     required this.isFluid,
     required this.isTwoPage,
@@ -98,7 +98,7 @@ class SoGoodSizeDelegateProvider extends PdfViewerSizeDelegateProvider {
   });
 
   @override
-  PdfViewerSizeDelegate create() => SoGoodSizeDelegate(
+  PdfViewerSizeDelegate create() => SuperGoodSizeDelegate(
         readerController: readerController,
         isFluid: isFluid,
         isTwoPage: isTwoPage,
@@ -109,7 +109,7 @@ class SoGoodSizeDelegateProvider extends PdfViewerSizeDelegateProvider {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is SoGoodSizeDelegateProvider &&
+      other is SuperGoodSizeDelegateProvider &&
           other.readerController == readerController &&
           other.isFluid == isFluid &&
           other.isTwoPage == isTwoPage &&
@@ -120,7 +120,10 @@ class SoGoodSizeDelegateProvider extends PdfViewerSizeDelegateProvider {
   int get hashCode => Object.hash(readerController, isFluid, isTwoPage, minScale, maxScale);
 }
 
-class SoGoodSizeDelegate implements PdfViewerSizeDelegate {
+typedef SoGoodSizeDelegateProvider = SuperGoodSizeDelegateProvider;
+typedef SoGoodSizeDelegate = SuperGoodSizeDelegate;
+
+class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
   final ReaderController readerController;
   final bool isFluid;
   final bool isTwoPage;
@@ -129,7 +132,7 @@ class SoGoodSizeDelegate implements PdfViewerSizeDelegate {
 
   PdfViewerController? _controller;
 
-  SoGoodSizeDelegate({
+  SuperGoodSizeDelegate({
     required this.readerController,
     required this.isFluid,
     required this.isTwoPage,
@@ -412,26 +415,29 @@ class SoGoodSizeDelegate implements PdfViewerSizeDelegate {
   }
 }
 
-class SoGoodZoomStepsDelegateProvider extends PdfViewerZoomStepsDelegateProvider {
+class SuperGoodZoomStepsDelegateProvider extends PdfViewerZoomStepsDelegateProvider {
   final bool isFluid;
 
-  const SoGoodZoomStepsDelegateProvider({required this.isFluid});
+  const SuperGoodZoomStepsDelegateProvider({required this.isFluid});
 
   @override
-  PdfViewerZoomStepsDelegate create() => SoGoodZoomStepsDelegate(isFluid: isFluid);
+  PdfViewerZoomStepsDelegate create() => SuperGoodZoomStepsDelegate(isFluid: isFluid);
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is SoGoodZoomStepsDelegateProvider && other.isFluid == isFluid;
+      other is SuperGoodZoomStepsDelegateProvider && other.isFluid == isFluid;
 
   @override
   int get hashCode => isFluid.hashCode;
 }
 
-class SoGoodZoomStepsDelegate implements PdfViewerZoomStepsDelegate {
+typedef SoGoodZoomStepsDelegateProvider = SuperGoodZoomStepsDelegateProvider;
+typedef SoGoodZoomStepsDelegate = SuperGoodZoomStepsDelegate;
+
+class SuperGoodZoomStepsDelegate implements PdfViewerZoomStepsDelegate {
   final bool isFluid;
-  SoGoodZoomStepsDelegate({required this.isFluid});
+  SuperGoodZoomStepsDelegate({required this.isFluid});
 
   @override
   void dispose() {}
@@ -1212,14 +1218,14 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
                   params,
                   isTwoPage: widget.controller.isTwoPage,
                 ),
-        sizeDelegateProvider: SoGoodSizeDelegateProvider(
+        sizeDelegateProvider: SuperGoodSizeDelegateProvider(
           readerController: widget.controller,
           isFluid: isFluid,
           isTwoPage: widget.controller.isTwoPage,
           minScale: isFluid ? 0.35 : 0.2,
           maxScale: 5.0,
         ),
-        zoomStepsDelegateProvider: SoGoodZoomStepsDelegateProvider(
+        zoomStepsDelegateProvider: SuperGoodZoomStepsDelegateProvider(
           isFluid: widget.controller.renderOptions.isFluid,
         ),
         textSelectionParams: const PdfTextSelectionParams(

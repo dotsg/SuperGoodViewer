@@ -132,7 +132,7 @@ pub fn convert_markdown_to_typst(
     };
 
     out.push_str(&format!(
-        r##"// Auto-generated Typst markup by SoGoodViewer
+        r##"// Auto-generated Typst markup by SuperGoodViewer
 #set page(
   width: {page_width},
   height: {page_height},

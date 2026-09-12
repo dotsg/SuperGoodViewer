@@ -6,18 +6,20 @@ import 'services/startup_metrics.dart';
 void main(List<String> args) {
   StartupMetrics.begin();
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(SoGoodViewerApp(initialFile: args.isNotEmpty ? args.first : null));
+  runApp(SuperGoodViewerApp(initialFile: args.isNotEmpty ? args.first : null));
 }
 
-class SoGoodViewerApp extends StatefulWidget {
+class SuperGoodViewerApp extends StatefulWidget {
   final String? initialFile;
-  const SoGoodViewerApp({super.key, this.initialFile});
+  const SuperGoodViewerApp({super.key, this.initialFile});
 
   @override
-  State<SoGoodViewerApp> createState() => _SoGoodViewerAppState();
+  State<SuperGoodViewerApp> createState() => _SuperGoodViewerAppState();
 }
 
-class _SoGoodViewerAppState extends State<SoGoodViewerApp> {
+typedef SoGoodViewerApp = SuperGoodViewerApp;
+
+class _SuperGoodViewerAppState extends State<SuperGoodViewerApp> {
   late final ReaderController _controller;
 
   @override
@@ -74,7 +76,7 @@ class _SoGoodViewerAppState extends State<SoGoodViewerApp> {
         final isDark = _controller.renderOptions.isDark;
 
         return MaterialApp(
-          title: 'SoGoodViewer',
+          title: '超好读',
           debugShowCheckedModeBanner: false,
           themeMode: isDark ? ThemeMode.dark : ThemeMode.light,
           theme: _lightTheme,

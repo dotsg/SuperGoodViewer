@@ -32,10 +32,10 @@ void main() {
     });
   });
 
-  group('SoGoodSizeDelegate calculateMetrics Tests', () {
+  group('SuperGoodSizeDelegate calculateMetrics Tests', () {
     test('Fluid mode: coverScale matches fitWidth and alternativeFitScale is comfortable fit', () {
       final controller = ReaderController(autoRestorePreferences: false);
-      final delegate = SoGoodSizeDelegate(
+      final delegate = SuperGoodSizeDelegate(
         readerController: controller,
         isFluid: true,
         isTwoPage: false,
@@ -63,7 +63,7 @@ void main() {
 
     test('A4 mode single page: coverScale is fitWidth, alternativeFitScale is fitPage', () {
       final controller = ReaderController(autoRestorePreferences: false);
-      final delegate = SoGoodSizeDelegate(
+      final delegate = SuperGoodSizeDelegate(
         readerController: controller,
         isFluid: false,
         isTwoPage: false,
@@ -91,7 +91,7 @@ void main() {
 
     test('A4 mode two-page spread: calculates spread dimensions accurately', () {
       final controller = ReaderController(autoRestorePreferences: false);
-      final delegate = SoGoodSizeDelegate(
+      final delegate = SuperGoodSizeDelegate(
         readerController: controller,
         isFluid: false,
         isTwoPage: true,

@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-/// Represents rendering configuration for SoGoodViewer.
+/// Represents rendering configuration for SuperGoodViewer.
 class RenderOptions {
   final String mode; // "fluid" (continuous auto-height) or "paged" (A4 paginated)
   final String theme; // "light" or "dark"

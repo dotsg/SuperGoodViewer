@@ -8,7 +8,7 @@ use sogood_core::parser::mermaid::render_mermaid;
 
 fn main() {
     println!("============================================================");
-    println!("     SoGoodViewer Core Micro-Benchmark Suite (Rust)         ");
+    println!("     SuperGoodViewer Core Micro-Benchmark Suite (Rust)      ");
     println!("============================================================");
     println!();
 

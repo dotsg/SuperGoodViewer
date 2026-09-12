@@ -1,6 +1,6 @@
-# SoGoodViewer Architecture & Technical Design
+# SuperGoodViewer Architecture & Technical Design
 
-SoGoodViewer is a high-performance, read-only Markdown desktop viewer designed for users who demand publication-grade typography, zero-drift cross-platform consistency, and instant PDF export.
+SuperGoodViewer is a high-performance, read-only Markdown desktop viewer designed for users who demand publication-grade typography, zero-drift cross-platform consistency, and instant PDF export.
 
 ---
 
@@ -56,7 +56,7 @@ pub struct SogoodBuffer {
 3. **Deallocation**: Dart calls `sogood_free_buffer(bufferPtr)`, ensuring memory is reclaimed by Rust using `Vec::from_raw_parts` without leaks.
 
 ### 2.2 Global Font Store & Memory Optimization
-Scanning and parsing system fonts on every keypress or reload can take 300ms–800ms. SoGoodViewer uses a thread-safe `OnceLock<GlobalFontStore>`:
+Scanning and parsing system fonts on every keypress or reload can take 300ms–800ms. SuperGoodViewer uses a thread-safe `OnceLock<GlobalFontStore>`:
 - Embedded Typst fonts (New Computer Modern, DejaVu, Latin Modern Math, etc.) and primary system fonts (PingFang SC, Microsoft YaHei, Inter, Segoe UI) are indexed **once** at initial launch.
 - **TTC (TrueType Collection) In-Memory Deduplication**: TTC font files containing multiple faces (such as macOS `PingFang.ttc` 74.6MB with 6 faces) are read only once and deduplicated via an in-memory `PathBuf -> Arc<Bytes>` cache, so 141 matched faces read only 48 distinct files instead of re-allocating per face.
 - **Memory-mapped font files**: those 48 files are mapped with `memmap2` rather than read onto the heap, so font bytes are clean file-backed pages — only pages actually touched during shaping become resident, and the kernel can evict them under pressure. Measured in isolation, loading 158 fonts costs **11 MB** of `phys_footprint` versus **548 MB** with `fs::read`. Whole-app resident footprint dropped from ~695 MB to **~158 MB**. See [BENCHMARKS.md](BENCHMARKS.md) for the measured attribution.
@@ -69,7 +69,7 @@ See [BENCHMARKS.md](BENCHMARKS.md) for detailed performance metrics and comparis
 ## 3. Mermaid & Asset Resolution
 
 ### 3.1 Headless Vector Mermaid Rendering
-Official Mermaid CLI spawns Puppeteer/Chromium, consuming hundreds of megabytes. SoGoodViewer integrates `mermaid-rs-renderer`:
+Official Mermaid CLI spawns Puppeteer/Chromium, consuming hundreds of megabytes. SuperGoodViewer integrates `mermaid-rs-renderer`:
 - Parses diagram AST directly in Rust.
 - Calculates node geometry and edge paths.
 - Emits clean SVG vector strings without browser dependencies.

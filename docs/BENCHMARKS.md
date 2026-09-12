@@ -1,10 +1,10 @@
-# SoGoodViewer 性能基准测试与对比报告 (Performance Benchmarks)
+# SuperGoodViewer 性能基准测试与对比报告 (Performance Benchmarks)
 
 > **测试环境规格**:  
 > - **硬件平台**: Apple Silicon (Mac M系列), 36 GB 统一内存, APFS 高速固态硬盘  
 > - **操作系统**: macOS Sonoma / Sequoia  
 > - **测试基准软件版本**:  
->   - **SoGoodViewer**: v0.1.0 (Release 编译, Flutter 3.22+ Impeller Metal + Rust 1.80+ Core)  
+>   - **SuperGoodViewer**: v0.1.0 (Release 编译, Flutter 3.22+ Impeller Metal + Rust 1.80+ Core)  
 >   - **Obsidian**: v1.6+ (Electron 30+, Chromium V8, 官方发布版)  
 >   - **Typora**: v1.9+ (Native Cocoa + WebKit WKWebView 引擎)  
 >   - **MarkText**: v0.17+ (Electron + Muya 所见即所得引擎)  
@@ -15,7 +15,7 @@
 
 ## 📊 1. 核心指标对比概览 (Executive Summary)
 
-| 测试维度                        |           SoGoodViewer (本品)           |          Obsidian           |         Typora         |         MarkText         |         VS Code          |
+| 测试维度                        |           SuperGoodViewer (本品)           |          Obsidian           |         Typora         |         MarkText         |         VS Code          |
 | ------------------------------- | :-------------------------------------: | :-------------------------: | :--------------------: | :----------------------: | :----------------------: |
 | **底层架构**                    |   **Rust + Flutter (Impeller Metal)**   |  Electron (Chromium+Node)   |   Cocoa + WKWebView    | Electron (Chromium+Node) | Electron (Chromium+Node) |
 | **应用安装体积**                |        **94 MB** (内嵌17款字体)         |           482 MB            | 46 MB (依赖系统WebKit) |          367 MB          |          932 MB          |
@@ -39,11 +39,11 @@
 Visual Studio Code  ████████████████████████████████ 932 MB
 Obsidian            ████████████████ 482 MB
 MarkText            ████████████ 367 MB
-SoGoodViewer        ████ 94 MB (全自包含: 引擎+17款字体+矢量库)
+SuperGoodViewer        ████ 94 MB (全自包含: 引擎+17款字体+矢量库)
 Typora              █ 46 MB (外挂依赖系统 WebKit 运行库)
 ```
 
-### SoGoodViewer Release 安装包 (94 MB) 组成明细：
+### SuperGoodViewer Release 安装包 (94 MB) 组成明细：
 
 | 组成模块                      |  磁盘大小   | 作用说明                                                                                                                                                                                                                                                                   |
 | ----------------------------- | :---------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -55,7 +55,7 @@ Typora              █ 46 MB (外挂依赖系统 WebKit 运行库)
 | 资源图标与签名                | **~250 KB** | macOS App 图标集 (icns) 与 CodeSignature。                                                                                                                                                                                                                                 |
 
 > **设计说明**：  
-> Typora 虽为 46 MB，但其自身仅是 Cocoa 薄壳，运行时必须唤起系统数十倍体积的 `com.apple.WebKit.WebContent` 动态库与服务。而 SoGoodViewer 是一个**真正的全功能自包含应用**（自带完整的编译器、公式引擎、图表渲染器与字体字形库），即使在未连接互联网或缺少系统排版工具链的环境下，也能保证 100% 像素级一致渲染。
+> Typora 虽为 46 MB，但其自身仅是 Cocoa 薄壳，运行时必须唤起系统数十倍体积的 `com.apple.WebKit.WebContent` 动态库与服务。而 SuperGoodViewer 是一个**真正的全功能自包含应用**（自带完整的编译器、公式引擎、图表渲染器与字体字形库），即使在未连接互联网或缺少系统排版工具链的环境下，也能保证 100% 像素级一致渲染。
 
 ---
 
@@ -73,7 +73,7 @@ Typora              █ 46 MB (外挂依赖系统 WebKit 运行库)
 | **麦克斯韦方程组** | `$\nabla \times \mathbf{E} = -\frac{\partial \mathbf{B}}{\partial t}$` |  **6.66 µs**  |  **150,155 ops/s**   |
 | **3x3 矩阵**       | `$\begin{pmatrix} a & b & c \\ d & e & f \\ g & h & i \end{pmatrix}$`  |  **3.65 µs**  |  **274,025 ops/s**   |
 
-> **对比洞察**：传统基于 JavaScript 的 KaTeX / MathJax 需要通过浏览器 DOM 创建数以千计的 HTML 元素，公式解析平均需要 **2ms ~ 10ms**。SoGoodViewer 在 Rust 抽象语法树层级以微秒级吞吐，公式渲染速度快 **300 ~ 1500 倍**。
+> **对比洞察**：传统基于 JavaScript 的 KaTeX / MathJax 需要通过浏览器 DOM 创建数以千计的 HTML 元素，公式解析平均需要 **2ms ~ 10ms**。SuperGoodViewer 在 Rust 抽象语法树层级以微秒级吞吐，公式渲染速度快 **300 ~ 1500 倍**。
 
 ### 3.2 Mermaid 离线矢量图表渲染 (`mermaid-rs-renderer`)
 测试标准流程图（含 4 个节点及分支条件）的生成耗时：
@@ -83,7 +83,7 @@ Typora              █ 46 MB (外挂依赖系统 WebKit 运行库)
 | **冷启动初次渲染 (Cold Render)**  | **28.94 ms**  | 9,108 Bytes SVG | 纯 Rust 解析几何拓扑，直接输出纯矢量 SVG 路径   |
 | **增量缓存命中 (Warm Cache Hit)** | **829.93 ns** | 9,108 Bytes SVG | SHA-256 内容寻址哈希表，**每秒可处理 120 万次** |
 
-> **对比洞察**：Obsidian 与 VS Code 在渲染 Mermaid 时需调用无头 Chromium 或在前端 DOM 运行庞大的 `mermaid.js` 脚本，单图往往需要 **150ms ~ 500ms**，甚至造成页面卡顿；SoGoodViewer 纯离线运算仅需 **28ms**，二次刷新更降低至 **0.0008ms**。
+> **对比洞察**：Obsidian 与 VS Code 在渲染 Mermaid 时需调用无头 Chromium 或在前端 DOM 运行庞大的 `mermaid.js` 脚本，单图往往需要 **150ms ~ 500ms**，甚至造成页面卡顿；SuperGoodViewer 纯离线运算仅需 **28ms**，二次刷新更降低至 **0.0008ms**。
 
 ### 3.3 端到端排版编译吞吐量 (Markdown $\to$ Typst $\to$ PDF 字节流)
 全真模拟真实 Markdown 文档从解析、排版到生成完整 PDF 矢量二进制的端到端耗时：
@@ -96,7 +96,7 @@ Typora              █ 46 MB (外挂依赖系统 WebKit 运行库)
 | **书籍章节 (~100 KB)**            | 20 个完整章节、长文深度排版、30+ 页        |        **2.55 ms**         |         **4.54 ms**         |    165 KB     |
 | **真实综合文档 test.md (~22 KB)** | 复杂时序图、LaTeX 数学公式、ASCII 矩阵表格 | **8.77 ms** (单核~13-23ms) | **10.67 ms** (单核~15-25ms) |    444 KB     |
 
-> **测试结论**：即便面对 100KB、30 页以上的技术书籍，或是含有多阶段复杂 Mermaid 时序图与高阶 LaTeX 公式嵌入的真实综合文档 (`test.md`，输出高达 444 KB 矢量 PDF)，SoGoodViewer 在优化后也仅需 **8.7ms ~ 10.7ms**（单核 ~13-23ms）。相比人类视觉暂留门槛 (16ms)，用户完全感知不到任何排版等待。
+> **测试结论**：即便面对 100KB、30 页以上的技术书籍，或是含有多阶段复杂 Mermaid 时序图与高阶 LaTeX 公式嵌入的真实综合文档 (`test.md`，输出高达 444 KB 矢量 PDF)，SuperGoodViewer 在优化后也仅需 **8.7ms ~ 10.7ms**（单核 ~13-23ms）。相比人类视觉暂留门槛 (16ms)，用户完全感知不到任何排版等待。
 
 ---
 
@@ -128,7 +128,7 @@ Typora              █ 46 MB (外挂依赖系统 WebKit 运行库)
 
 | 软件名称         | 系统进程架构                                              | 常驻内存 (RSS) | 内存说明                                                                  |
 | ---------------- | --------------------------------------------------------- | :------------: | ------------------------------------------------------------------------- |
-| **SoGoodViewer** | **1 个原生进程** (`sogoodviewer`)                         |  **~158 MB**   | 单进程自包含；系统字体经内存映射，不计入常驻；峰值约 600 MB               |
+| **SuperGoodViewer** | **1 个原生进程** (`sogoodviewer`)                         |  **~158 MB**   | 单进程自包含；系统字体经内存映射，不计入常驻；峰值约 600 MB               |
 | **Typora**       | **2 个独立进程** (`Typora` + `com.apple.WebKit`)          |  **~266 MB**   | 双进程分离，内存随浏览长文档逐渐增加                                      |
 | **Obsidian**     | **4 个独立进程** (Main, Renderer, GPU, Utility)           |  **~627 MB**   | Chromium 多进程沙盒架构，V8 虚拟机内存常驻较高                            |
 | **MarkText**     | **5 个独立进程** (Main, Renderer, GPU, Crashpad, Utility) |  **~715 MB**   | 多进程常驻，空载内存开销明显                                              |
@@ -169,20 +169,20 @@ app 实际映射的是仓库里的旧 dylib 而非自身 bundle 内的引擎。�
 ### 4.2 交互响应度 (Interaction & Frame Rate)
 
 1. **窗口动态拉伸 (Window Resizing)**：
-   - **SoGoodViewer**: **120 FPS 锁定满帧**。流式模式固定黄金行宽 720pt，A4 模式固定页面比例，拉伸窗口只进行 Metal GPU 画布外边距缩放和视口裁剪，**拉伸过程 0 次触发编译器**，全程丝滑无抖动。
+   - **SuperGoodViewer**: **120 FPS 锁定满帧**。流式模式固定黄金行宽 720pt，A4 模式固定页面比例，拉伸窗口只进行 Metal GPU 画布外边距缩放和视口裁剪，**拉伸过程 0 次触发编译器**，全程丝滑无抖动。
    - **Obsidian / MarkText**: **30 ~ 45 FPS**。每次拉伸窗口宽度均触发浏览器 DOM Reflow（回流计算）和 CSS Flexbox 重新计算，导致窗口出现拉伸撕裂或跳动。
 2. **主题模式切换 (`Cmd + T`)**：
-   - **SoGoodViewer**: **2 ~ 4 ms**。内存中瞬间重置调色板并重排，画面立即可见。
+   - **SuperGoodViewer**: **2 ~ 4 ms**。内存中瞬间重置调色板并重排，画面立即可见。
    - **Obsidian / VS Code**: **50 ~ 150 ms**。修改根节点 CSS 变量，级联遍历数万个 DOM 节点应用颜色。
 3. **实时文件热重载 (Live Hot-Reload)**：
-   - **SoGoodViewer**: 200ms 防抖 + 0.8ms 编译 $\approx$ **200.8 ms** 全链路触达视口，且**精准保持当前滚动百分比**，无跳顶困扰。
+   - **SuperGoodViewer**: 200ms 防抖 + 0.8ms 编译 $\approx$ **200.8 ms** 全链路触达视口，且**精准保持当前滚动百分比**，无跳顶困扰。
 4. **无损 PDF 导出 (`Cmd + E`)**：
-   - **SoGoodViewer**: **0 ms 即时写盘**。当前内存缓冲区中的渲染成果本质就是符合 PDF/X 规范的高精度矢量 PDF，导出仅需单次文件 I/O 写入。
+   - **SuperGoodViewer**: **0 ms 即时写盘**。当前内存缓冲区中的渲染成果本质就是符合 PDF/X 规范的高精度矢量 PDF，导出仅需单次文件 I/O 写入。
    - **其他软件**: 需启动 Chromium 无头打印管道或调用系统打印机驱动，耗时 **2 ~ 5 秒**。
 
 ---
 
-## 🎯 5. 为什么 SoGoodViewer 能够实现数量级超越？
+## 🎯 5. 为什么 SuperGoodViewer 能够实现数量级超越？
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -199,7 +199,7 @@ app 实际映射的是仓库里的旧 dylib 而非自身 bundle 内的引擎。�
                            VS
 
 ┌────────────────────────────────────────────────────────────┐
-│ SoGoodViewer 纯原生全闭环架构                              │
+│ SuperGoodViewer 纯原生全闭环架构                              │
 │                                                            │
 │ Markdown  ──►  pulldown-cmark (Rust 零拷贝解析)            │
 │                       │                                    │

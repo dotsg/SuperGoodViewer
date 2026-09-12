@@ -27,9 +27,9 @@ mod tests {
     #[test]
     fn test_e2e_markdown_to_pdf_fluid_mode() {
         let md = r#"
-# SoGoodViewer: Modern Desktop Markdown Reader
+# SuperGoodViewer: Modern Desktop Markdown Reader
 
-Welcome to **SoGoodViewer**! This is a test document.
+Welcome to **SuperGoodViewer**! This is a test document.
 
 ## Mathematical Equations
 Inline formula: $e^{i \pi} + 1 = 0$
@@ -48,7 +48,7 @@ graph LR
 ```
 
 ## Features & Comparison
-| Feature | SoGoodViewer | Electron Viewer |
+| Feature | SuperGoodViewer | Electron Viewer |
 | :--- | :--- | :--- |
 | Engine | Typst + PDFium | Chromium WebView |
 | Memory | < 60 MB | > 300 MB |
@@ -94,7 +94,7 @@ $ \nabla \times \mathbf{E} = -\frac{\partial \mathbf{B}}{\partial t} $
 
 ```rust
 fn main() {
-    println!("Hello from SoGoodViewer!");
+    println!("Hello from SuperGoodViewer!");
 }
 ```
 "#;
@@ -144,10 +144,10 @@ fn main() {
     #[test]
     fn test_compile_sample_document_full_modes() {
         let sample_md = r#"
-# SoGoodViewer 🚀
+# SuperGoodViewer 🚀
 ### 出版级排版 Markdown 桌面阅读器
 
-欢迎体验 **SoGoodViewer**！本应用通过 **Typst 嵌入式编译 + PDFium 矢量渲染**，为您提供极致的阅读美感与跨平台 100% 像素级一致性。
+欢迎体验 **SuperGoodViewer**！本应用通过 **Typst 嵌入式编译 + PDFium 矢量渲染**，为您提供极致的阅读美感与跨平台 100% 像素级一致性。
 
 ---
 
@@ -204,7 +204,7 @@ graph LR
 
 ## 🎯 核心工程特性对比
 
-| 衡量维度 | SoGoodViewer (纯原生) | 传统 Electron / WebView 阅读器 |
+| 衡量维度 | SuperGoodViewer (纯原生) | 传统 Electron / WebView 阅读器 |
 | :--- | :--- | :--- |
 | **排版引擎** | **Typst 出版级矢量排版** | 浏览器 DOM / Webview 屏幕流动 |
 | **内存占用** | **~ 45 MB** | **~ 350 MB - 1 GB** |
