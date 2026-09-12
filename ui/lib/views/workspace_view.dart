@@ -154,17 +154,22 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     }
   }
 
+  void _showCopiedFeedback() {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('已复制所选文本'),
+        duration: Duration(seconds: 1),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   Future<void> _handleCopySelection() async {
     final copied = await _pdfCanvasKey.currentState?.copyTextSelection() ?? false;
     if (!mounted) return;
     if (copied) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('已复制所选文本'),
-          duration: Duration(seconds: 1),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      _showCopiedFeedback();
     }
   }
 
@@ -406,22 +411,18 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                           });
                         }
                       },
+                      onTextCopied: _showCopiedFeedback,
                     ),
 
-                    // Top Hover Zone: moving mouse to the top edge gracefully brings up the floating controls
+                    // Top Hover Zone: moving mouse to the very top edge gracefully brings up the floating controls
                     Positioned(
                       top: 0,
                       left: 0,
                       right: 0,
-                      height: 72,
+                      height: 18,
                       child: MouseRegion(
                         hitTestBehavior: HitTestBehavior.translucent,
                         onEnter: (_) => _showToolbarTemporarily(),
-                        onHover: (event) {
-                          if (event.position.dy <= 72) {
-                            _showToolbarTemporarily();
-                          }
-                        },
                       ),
                     ),
 

@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../controllers/reader_controller.dart';
@@ -384,6 +384,7 @@ class PdfCanvasView extends StatefulWidget {
   final VoidCallback? onExportPdf;
   final ValueChanged<double>? onZoomChanged;
   final void Function(int pageNumber, int pageCount)? onPageChanged;
+  final VoidCallback? onTextCopied;
 
   const PdfCanvasView({
     super.key,
@@ -397,6 +398,7 @@ class PdfCanvasView extends StatefulWidget {
     this.onExportPdf,
     this.onZoomChanged,
     this.onPageChanged,
+    this.onTextCopied,
   });
 
   @override
@@ -845,9 +847,62 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     );
   }
 
+  /// Sanitizes text before passing to system clipboard.
+  /// Fixes broken surrogate pairs, unmapped font codes, and null bytes that cause
+  /// macOS NSJSONSerialization / FlutterJSONMessageCodec to abort/crash.
+  static String sanitizeForClipboard(String text) {
+    if (text.isEmpty) return text;
+    final buffer = StringBuffer();
+    final len = text.length;
+    for (var i = 0; i < len; i++) {
+      final code = text.codeUnitAt(i);
+      // Strip null characters from embedded font padding
+      if (code == 0) continue;
+
+      // Check for high surrogate (0xD800..0xDBFF)
+      if (code >= 0xD800 && code <= 0xDBFF) {
+        if (i + 1 < len) {
+          final next = text.codeUnitAt(i + 1);
+          if (next >= 0xDC00 && next <= 0xDFFF) {
+            buffer.writeCharCode(code);
+            buffer.writeCharCode(next);
+            i++;
+            continue;
+          }
+        }
+        buffer.writeCharCode(0xFFFD);
+        continue;
+      }
+
+      // Check for unpaired low surrogate (0xDC00..0xDFFF)
+      if (code >= 0xDC00 && code <= 0xDFFF) {
+        buffer.writeCharCode(0xFFFD);
+        continue;
+      }
+
+      buffer.writeCharCode(code);
+    }
+    return buffer.toString();
+  }
+
+  Future<bool> _safeCopySelectedText(PdfTextSelectionDelegate delegate) async {
+    if (!delegate.hasSelectedText || !delegate.isCopyAllowed) return false;
+    try {
+      final rawText = await delegate.getSelectedText();
+      if (rawText.isEmpty) return false;
+      final cleanText = sanitizeForClipboard(rawText);
+      if (cleanText.isEmpty) return false;
+      await Clipboard.setData(ClipboardData(text: cleanText));
+      return true;
+    } catch (e) {
+      debugPrint('[Clipboard] Failed to copy text: $e');
+      return false;
+    }
+  }
+
   Future<bool> copyTextSelection() async {
     if (_pdfController.isReady) {
-      return await _pdfController.textSelectionDelegate.copyTextSelection();
+      return await _safeCopySelectedText(_pdfController.textSelectionDelegate);
     }
     return false;
   }
@@ -858,141 +913,174 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     }
   }
 
-  void _enrichContextMenu(
+  Widget? _buildCustomContextMenu(
+    BuildContext context,
     PdfViewerContextMenuBuilderParams params,
-    List<ContextMenuButtonItem> items,
   ) {
-    if (widget.onOpenFile != null) {
+    final isText = params.contextMenuFor == PdfViewerPart.selectedText ||
+        (params.isTextSelectionEnabled && params.textSelectionDelegate.hasSelectedText);
+
+    final items = <ContextMenuButtonItem>[];
+
+    if (isText) {
+      // 1. Text Selection Context Menu: strictly text actions
+      if (params.isTextSelectionEnabled && params.textSelectionDelegate.isCopyAllowed) {
+        items.add(
+          ContextMenuButtonItem(
+            label: '复制 (Cmd+C)',
+            type: ContextMenuButtonType.copy,
+            onPressed: () async {
+              params.dismissContextMenu();
+              final copied = await _safeCopySelectedText(params.textSelectionDelegate);
+              if (copied && mounted) {
+                widget.onTextCopied?.call();
+              }
+            },
+          ),
+        );
+      }
+      if (params.isTextSelectionEnabled && !params.textSelectionDelegate.isSelectingAllText) {
+        items.add(
+          ContextMenuButtonItem(
+            label: '全选 (Cmd+A)',
+            type: ContextMenuButtonType.selectAll,
+            onPressed: () {
+              params.dismissContextMenu();
+              params.textSelectionDelegate.selectAllText();
+            },
+          ),
+        );
+      }
+    } else {
+      // 2. Canvas / Background Context Menu: document & view actions
+      if (params.isTextSelectionEnabled) {
+        items.add(
+          ContextMenuButtonItem(
+            label: '全选文本 (Cmd+A)',
+            type: ContextMenuButtonType.selectAll,
+            onPressed: () {
+              params.dismissContextMenu();
+              params.textSelectionDelegate.selectAllText();
+            },
+          ),
+        );
+      }
       items.add(
         ContextMenuButtonItem(
-          label: '打开文件... (Cmd+O)',
+          label: '满窗口 (适应宽度) (Cmd+9)',
           onPressed: () {
             params.dismissContextMenu();
-            widget.onOpenFile!();
+            fitWidth();
           },
         ),
       );
+      items.add(
+        ContextMenuButtonItem(
+          label: '满屏 (适应整页) (Cmd+1)',
+          onPressed: () {
+            params.dismissContextMenu();
+            fitPage();
+          },
+        ),
+      );
+      items.add(
+        ContextMenuButtonItem(
+          label: '实际大小 100% (Cmd+0)',
+          onPressed: () {
+            params.dismissContextMenu();
+            resetZoom();
+          },
+        ),
+      );
+      items.add(
+        ContextMenuButtonItem(
+          label: '放大 (Cmd+=)',
+          onPressed: () {
+            params.dismissContextMenu();
+            zoomIn();
+          },
+        ),
+      );
+      items.add(
+        ContextMenuButtonItem(
+          label: '缩小 (Cmd+-)',
+          onPressed: () {
+            params.dismissContextMenu();
+            zoomOut();
+          },
+        ),
+      );
+      if (!widget.controller.renderOptions.isFluid) {
+        items.add(
+          ContextMenuButtonItem(
+            label: widget.controller.isTwoPage
+                ? '切换为单页纵向浏览 (Cmd+D)'
+                : '切换为双页对开浏览 (Cmd+D)',
+            onPressed: () {
+              params.dismissContextMenu();
+              widget.controller.toggleTwoPage();
+            },
+          ),
+        );
+      }
+      items.add(
+        ContextMenuButtonItem(
+          label: widget.controller.renderOptions.isFluid
+              ? '切换为 A4 出版模式 (Cmd+P)'
+              : '切换为自适应流式 (Cmd+P)',
+          onPressed: () {
+            params.dismissContextMenu();
+            widget.controller.toggleMode();
+          },
+        ),
+      );
+      items.add(
+        ContextMenuButtonItem(
+          label: widget.controller.renderOptions.isDark
+              ? '切换为明亮主题 (Cmd+T)'
+              : '切换为暗黑主题 (Cmd+T)',
+          onPressed: () {
+            params.dismissContextMenu();
+            widget.controller.toggleTheme();
+          },
+        ),
+      );
+      if (widget.onToggleSidebar != null) {
+        items.add(
+          ContextMenuButtonItem(
+            label: '展开/收起侧边栏 (Cmd+B)',
+            onPressed: () {
+              params.dismissContextMenu();
+              widget.onToggleSidebar!();
+            },
+          ),
+        );
+      }
+      if (widget.onExportPdf != null) {
+        items.add(
+          ContextMenuButtonItem(
+            label: '导出出版级 PDF... (Cmd+E)',
+            onPressed: () {
+              params.dismissContextMenu();
+              widget.onExportPdf!();
+            },
+          ),
+        );
+      }
     }
-    items.add(
-      ContextMenuButtonItem(
-        label: '放大页面 (Cmd+=)',
-        onPressed: () {
-          params.dismissContextMenu();
-          zoomIn();
-        },
-      ),
-    );
-    items.add(
-      ContextMenuButtonItem(
-        label: '缩小页面 (Cmd+-)',
-        onPressed: () {
-          params.dismissContextMenu();
-          zoomOut();
-        },
-      ),
-    );
-    items.add(
-      ContextMenuButtonItem(
-        label: '实际大小 100% (Cmd+0)',
-        onPressed: () {
-          params.dismissContextMenu();
-          resetZoom();
-        },
-      ),
-    );
-    items.add(
-      ContextMenuButtonItem(
-        label: '满窗口 (适应宽度) (Cmd+9)',
-        onPressed: () {
-          params.dismissContextMenu();
-          fitWidth();
-        },
-      ),
-    );
-    items.add(
-      ContextMenuButtonItem(
-        label: '满屏 (适应整页) (Cmd+1)',
-        onPressed: () {
-          params.dismissContextMenu();
-          fitPage();
-        },
-      ),
-    );
-    if (!widget.controller.renderOptions.isFluid) {
-      items.add(
-        ContextMenuButtonItem(
-          label: widget.controller.isTwoPage
-              ? '切换为单页纵向浏览 (Cmd+D)'
-              : '切换为双页对开浏览 (Cmd+D)',
-          onPressed: () {
-            params.dismissContextMenu();
-            widget.controller.toggleTwoPage();
-          },
+
+    if (items.isEmpty) return null;
+
+    return Align(
+      alignment: Alignment.topLeft,
+      child: AdaptiveTextSelectionToolbar.buttonItems(
+        anchors: TextSelectionToolbarAnchors(
+          primaryAnchor: params.anchorA,
+          secondaryAnchor: params.anchorB,
         ),
-      );
-      items.add(
-        ContextMenuButtonItem(
-          label: '上一页 (←)',
-          onPressed: () {
-            params.dismissContextMenu();
-            prevPage();
-          },
-        ),
-      );
-      items.add(
-        ContextMenuButtonItem(
-          label: '下一页 (→)',
-          onPressed: () {
-            params.dismissContextMenu();
-            nextPage();
-          },
-        ),
-      );
-    }
-    items.add(
-      ContextMenuButtonItem(
-        label: widget.controller.renderOptions.isFluid
-            ? '切换为 A4 出版模式 (Cmd+P)'
-            : '切换为自适应流式 (Cmd+P)',
-        onPressed: () {
-          params.dismissContextMenu();
-          widget.controller.toggleMode();
-        },
+        buttonItems: items,
       ),
     );
-    items.add(
-      ContextMenuButtonItem(
-        label: widget.controller.renderOptions.isDark
-            ? '切换为明亮主题 (Cmd+T)'
-            : '切换为暗黑主题 (Cmd+T)',
-        onPressed: () {
-          params.dismissContextMenu();
-          widget.controller.toggleTheme();
-        },
-      ),
-    );
-    if (widget.onToggleSidebar != null) {
-      items.add(
-        ContextMenuButtonItem(
-          label: '展开/收起侧边栏 (Cmd+B)',
-          onPressed: () {
-            params.dismissContextMenu();
-            widget.onToggleSidebar!();
-          },
-        ),
-      );
-    }
-    if (widget.onExportPdf != null) {
-      items.add(
-        ContextMenuButtonItem(
-          label: '导出出版级 PDF... (Cmd+E)',
-          onPressed: () {
-            params.dismissContextMenu();
-            widget.onExportPdf!();
-          },
-        ),
-      );
-    }
   }
 
   Widget _buildPdfViewer(
@@ -1049,7 +1137,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         ),
         textSelectionParams: const PdfTextSelectionParams(
           enabled: true,
-          showContextMenuAutomatically: true,
+          showContextMenuAutomatically: false,
         ),
         onViewerReady: (document, controller) {
           StartupMetrics.markFirstDocument();
@@ -1080,14 +1168,23 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           widget.onPageChanged?.call(pNum, pCnt);
         },
         onGeneralTap: (context, controller, details) {
+          if (details.type == PdfViewerGeneralTapType.doubleTap) {
+            controller.textSelectionDelegate.selectWord(details.documentPosition);
+            return true;
+          }
+          if (details.type == PdfViewerGeneralTapType.secondaryTap) {
+            if (details.tapOn == PdfViewerPart.nonSelectedText) {
+              controller.textSelectionDelegate.selectWord(details.documentPosition);
+            }
+          }
           if (details.type == PdfViewerGeneralTapType.tap) {
-            widget.onCanvasTapped?.call();
+            if (details.tapOn == PdfViewerPart.background) {
+              widget.onCanvasTapped?.call();
+            }
           }
           return false;
         },
-        customizeContextMenuItems: (params, items) {
-          _enrichContextMenu(params, items);
-        },
+        buildContextMenu: (context, params) => _buildCustomContextMenu(context, params),
         linkHandlerParams: PdfLinkHandlerParams(
           linkColor: Colors.transparent,
           onLinkTap: (link) async {
