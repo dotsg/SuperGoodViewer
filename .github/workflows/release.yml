@@ -8,6 +8,11 @@ on:
 permissions:
   contents: write
 
+# Re-pushing the same tag cancels the superseded run instead of stacking builds.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # =============================================================
   # macOS Build & Package (DMG Only)
@@ -30,6 +35,12 @@ jobs:
         with:
           channel: stable
           cache: true
+
+      - name: Cache Rust Build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: macos-arm64
 
       - name: Build Rust sogood_core (Release)
         run: |
@@ -100,6 +111,17 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Exclude Rust target dir from Defender
+        shell: pwsh
+        continue-on-error: true
+        run: Add-MpPreference -ExclusionPath "${{ github.workspace }}\core\target"
+
+      - name: Cache Rust Build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: win-x64
+
       - name: Build Rust sogood_core (Release)
         shell: bash
         run: |
@@ -161,6 +183,17 @@ jobs:
         with:
           channel: stable
           cache: true
+
+      - name: Exclude Rust target dir from Defender
+        shell: pwsh
+        continue-on-error: true
+        run: Add-MpPreference -ExclusionPath "${{ github.workspace }}\core\target"
+
+      - name: Cache Rust Build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: win-arm64
 
       - name: Build Rust sogood_core (ARM64 Release)
         shell: bash
