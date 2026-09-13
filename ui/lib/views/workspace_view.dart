@@ -664,7 +664,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     ReaderController controller,
   ) {
     return Container(
-      height: 38,
+      height: 32,
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F7F7),
         border: Border(
@@ -679,14 +679,19 @@ class _WorkspaceViewState extends State<WorkspaceView> {
           // When sidebar is closed, provide safe space for macOS traffic lights & sidebar button
           if (!_isSidebarOpen) ...[
             const SizedBox(width: 78),
-            IconButton(
-              tooltip: '切换侧边栏 (Cmd+B)',
-              icon: const Icon(Icons.view_sidebar_outlined, size: 17),
-              onPressed: () => setState(() => _isSidebarOpen = true),
-              style: IconButton.styleFrom(
-                padding: const EdgeInsets.all(4),
-                minimumSize: const Size(26, 26),
-                foregroundColor: isDark ? Colors.white70 : Colors.black54,
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: IconButton(
+                tooltip: '切换侧边栏 (Cmd+B)',
+                icon: const Icon(Icons.view_sidebar_outlined, size: 16),
+                onPressed: () => setState(() => _isSidebarOpen = true),
+                style: IconButton.styleFrom(
+                  padding: EdgeInsets.zero,
+                  minimumSize: const Size(24, 24),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  foregroundColor: isDark ? Colors.white70 : Colors.black54,
+                ),
               ),
             ),
             const SizedBox(width: 8),
@@ -707,7 +712,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 } catch (_) {}
               },
               child: Container(
-                height: 38,
+                height: 32,
                 alignment: Alignment.center,
                 child: !_isToolbarVisible && controller.documentTitle.isNotEmpty
                     ? Text(
@@ -726,7 +731,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
             ),
           ),
 
-          if (!_isSidebarOpen) const SizedBox(width: 78 + 34),
+          if (!_isSidebarOpen) const SizedBox(width: 78 + 32),
         ],
       ),
     );

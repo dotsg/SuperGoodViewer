@@ -356,8 +356,8 @@ class _SidebarViewState extends State<SidebarView> {
           children: [
             // Sidebar Top Header (Aligned with macOS Traffic Lights)
             Container(
-              height: 38,
-              padding: const EdgeInsets.only(right: 10),
+              height: 32,
+              padding: const EdgeInsets.only(right: 8),
               decoration: BoxDecoration(
                 border: Border(
                   bottom: BorderSide(
@@ -371,11 +371,11 @@ class _SidebarViewState extends State<SidebarView> {
                   // Dedicated safe spacing for macOS traffic lights (Close/Miniaturize/Zoom)
                   const SizedBox(width: 78),
                   Container(
-                    width: 22,
-                    height: 22,
+                    width: 20,
+                    height: 20,
                     decoration: BoxDecoration(
                       color: theme.colorScheme.primary,
-                      borderRadius: BorderRadius.circular(5),
+                      borderRadius: BorderRadius.circular(4),
                     ),
                     child: const Center(
                       child: Text(
@@ -383,7 +383,7 @@ class _SidebarViewState extends State<SidebarView> {
                         style: TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
-                          fontSize: 13,
+                          fontSize: 12,
                         ),
                       ),
                     ),
@@ -394,30 +394,40 @@ class _SidebarViewState extends State<SidebarView> {
                       '超好读',
                       style: TextStyle(
                         fontWeight: FontWeight.w700,
-                        fontSize: 14,
+                        fontSize: 13,
                         letterSpacing: -0.3,
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  IconButton(
-                    tooltip: '打开本地 Markdown 文件 (Cmd+O)',
-                    icon: const Icon(Icons.folder_open_rounded, size: 17),
-                    onPressed: () => _pickAndOpenFile(context),
-                    style: IconButton.styleFrom(
-                      padding: const EdgeInsets.all(4),
-                      minimumSize: const Size(26, 26),
+                  SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: IconButton(
+                      tooltip: '打开本地 Markdown 文件 (Cmd+O)',
+                      icon: const Icon(Icons.folder_open_rounded, size: 16),
+                      onPressed: () => _pickAndOpenFile(context),
+                      style: IconButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        minimumSize: const Size(24, 24),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
                     ),
                   ),
                   if (widget.onClose != null) ...[
-                    const SizedBox(width: 2),
-                    IconButton(
-                      tooltip: '收起侧边栏 (Cmd+B 或 Esc)',
-                      icon: const Icon(Icons.close_rounded, size: 17),
-                      onPressed: widget.onClose,
-                      style: IconButton.styleFrom(
-                        padding: const EdgeInsets.all(4),
-                        minimumSize: const Size(26, 26),
+                    const SizedBox(width: 4),
+                    SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: IconButton(
+                        tooltip: '收起侧边栏 (Cmd+B 或 Esc)',
+                        icon: const Icon(Icons.close_rounded, size: 16),
+                        onPressed: widget.onClose,
+                        style: IconButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          minimumSize: const Size(24, 24),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
                       ),
                     ),
                   ],
