@@ -91,8 +91,6 @@ class RemoteImageService {
     _tempFileCounter = 0;
   }
 
-  @visibleForTesting
-  void resetPruneThrottle() => resetForTesting();
 
   @visibleForTesting
   void recordFailureForTesting(String cleanUrl, Duration ttl) {
@@ -355,11 +353,10 @@ class RemoteImageService {
       }
 
       // 2. Reject explicit HTML error/anti-leech pages or JSON error payloads
-      // (allowing application/octet-stream from S3/OSS/CDNs to be validated by magic bytes)
+      // (allowing application/octet-stream, text/plain, and CDN fallbacks to be validated by magic bytes)
       final contentType = response.headers.value(HttpHeaders.contentTypeHeader)?.toLowerCase() ?? '';
       if (contentType.startsWith('text/html') ||
-          contentType.startsWith('application/json') ||
-          contentType.startsWith('text/plain')) {
+          contentType.startsWith('application/json')) {
         debugPrint('[RemoteImageService] Explicit non-image Content-Type ($contentType) for $cleanUrl');
         try {
           await response.drain<void>();
@@ -418,7 +415,11 @@ class RemoteImageService {
       return false;
     } catch (e) {
       debugPrint('[RemoteImageService] Error downloading $cleanUrl: $e');
-      final isTransient = e is TimeoutException || e is IOException;
+      final isTransient = e is SocketException ||
+          e is TimeoutException ||
+          e is HttpException ||
+          e is HandshakeException ||
+          e is TlsException;
       _recordFailure(cleanUrl, isTransient ? _transientFailureTtl : _deterministicFailureTtl);
       try {
         final tmp = File(tempFilePath);

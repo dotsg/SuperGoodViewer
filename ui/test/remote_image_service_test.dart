@@ -159,8 +159,6 @@ And another one with single quotes:
     });
 
     test('pruneCacheIfNeeded evicts oldest modified files when limit is exceeded and cleans orphan tmp files', () async {
-      RemoteImageService.instance.resetPruneThrottle();
-
       final file1 = File(p.join(tempDir.path, 'img1.png'));
       final file2 = File(p.join(tempDir.path, 'img2.png'));
       final file3 = File(p.join(tempDir.path, 'img3.png'));

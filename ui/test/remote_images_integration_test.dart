@@ -66,6 +66,12 @@ void main() {
           ..headers.contentType = ContentType('application', 'octet-stream')
           ..add(samplePngBytes)
           ..close();
+      } else if (path.contains('text_plain_image')) {
+        request.response
+          ..statusCode = HttpStatus.ok
+          ..headers.contentType = ContentType('text', 'plain')
+          ..add(samplePngBytes)
+          ..close();
       } else {
         request.response
           ..statusCode = HttpStatus.notFound
@@ -186,6 +192,16 @@ void main() {
     final success = await RemoteImageService.instance.fetchAndCacheImage(octetUrl);
     expect(success, isTrue, reason: 'Image with application/octet-stream and valid magic bytes should be accepted');
     expect(RemoteImageService.instance.isCached(octetUrl), isTrue);
+  });
+
+  test('successfully downloads images served as text/plain when magic bytes are valid', () async {
+    final textPlainUrl = '$serverBaseUrl/text_plain_image.png';
+
+    expect(RemoteImageService.instance.isCached(textPlainUrl), isFalse);
+
+    final success = await RemoteImageService.instance.fetchAndCacheImage(textPlainUrl);
+    expect(success, isTrue, reason: 'Image with text/plain Content-Type and valid magic bytes should be accepted');
+    expect(RemoteImageService.instance.isCached(textPlainUrl), isTrue);
   });
 
   test('records 404 in negative cache, avoids duplicate HTTP requests, and clears on demand', () async {

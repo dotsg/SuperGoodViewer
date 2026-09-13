@@ -500,7 +500,6 @@ class ReaderController extends ChangeNotifier {
           }
           _currentMarkdown = text;
           _extractOutline(_currentMarkdown);
-          RemoteImageService.instance.clearNegativeCache();
           _triggerRemoteImageDownloads();
           startReloading();
           await compileDocument();
