@@ -1,5 +1,6 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import '../controllers/reader_controller.dart';
 import 'font_settings_dialog.dart';
@@ -370,34 +371,20 @@ class _SidebarViewState extends State<SidebarView> {
                 children: [
                   // Dedicated safe spacing for macOS traffic lights (Close/Miniaturize/Zoom)
                   const SizedBox(width: 78),
-                  Container(
-                    width: 20,
-                    height: 20,
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.primary,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: const Center(
-                      child: Text(
-                        'S',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      '超好读',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                        letterSpacing: -0.3,
-                      ),
-                      overflow: TextOverflow.ellipsis,
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onPanStart: (_) {
+                        try {
+                          const MethodChannel('com.sogoodviewer.window').invokeMethod('startDragging');
+                        } catch (_) {}
+                      },
+                      onDoubleTap: () {
+                        try {
+                          const MethodChannel('com.sogoodviewer.window').invokeMethod('zoom');
+                        } catch (_) {}
+                      },
+                      child: const SizedBox.expand(),
                     ),
                   ),
                   SizedBox(
