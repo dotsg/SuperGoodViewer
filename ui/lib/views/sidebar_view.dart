@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import '../controllers/reader_controller.dart';
+import 'cli_tools_dialog.dart';
 import 'font_settings_dialog.dart';
 
 class SidebarView extends StatefulWidget {
@@ -276,24 +277,71 @@ class _SidebarViewState extends State<SidebarView> {
 
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-          child: Text(
-            '历史文件',
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-            ),
+          child: Row(
+            children: [
+              Text(
+                '历史文件',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                ),
+              ),
+              const Spacer(),
+              if (widget.controller.recentFiles.isNotEmpty)
+                InkWell(
+                  onTap: widget.controller.clearRecentFiles,
+                  borderRadius: BorderRadius.circular(4),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    child: Text(
+                      '清空',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
 
         Expanded(
           child: widget.controller.recentFiles.isEmpty
               ? Center(
-                  child: Text(
-                    '暂无历史文件',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.history_rounded,
+                          size: 32,
+                          color: theme.colorScheme.onSurface.withValues(alpha: 0.25),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '暂无历史文件',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          icon: const Icon(Icons.auto_awesome, size: 14),
+                          label: const Text('载入精选样例', style: TextStyle(fontSize: 11.5)),
+                          onPressed: widget.controller.loadSampleDocument,
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            visualDensity: VisualDensity.compact,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 )
@@ -561,32 +609,133 @@ class _SidebarViewState extends State<SidebarView> {
                   : _buildRecentFilesAndSettings(theme, isDark),
             ),
 
-            // Bottom Actions: Typography & Sample Document
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+            // Compact macOS-style 38px Footer Bar
+            Container(
+              height: 38,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                border: Border(
+                  top: BorderSide(
+                    color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFE5E5E5),
+                    width: 1,
+                  ),
+                ),
+              ),
+              child: Row(
                 children: [
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.font_download_outlined, size: 15),
-                    label: const Text('字体与 CJK 对齐', style: TextStyle(fontSize: 12)),
-                    onPressed: () => showFontSettingsDialog(context, controller),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
+                  // Typography & CJK Alignment Settings
+                  Expanded(
+                    child: Tooltip(
+                      message: '字体排版与 CJK 1:2 等宽对齐设置 (Cmd+Shift+F)',
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(6),
+                        onTap: () => showFontSettingsDialog(context, controller),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.font_download_outlined,
+                                size: 14,
+                                color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '排版字体',
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.8),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                  const SizedBox(height: 6),
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.auto_awesome, size: 15),
-                    label: const Text('载入精选样例', style: TextStyle(fontSize: 12)),
-                    onPressed: controller.loadSampleDocument,
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
+                  Container(
+                    width: 1,
+                    height: 14,
+                    color: isDark ? const Color(0x22FFFFFF) : const Color(0x18000000),
+                  ),
+                  // CLI Tools
+                  Tooltip(
+                    message: '命令行工具 (sgv) 与设置',
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(6),
+                      onTap: () => showCliToolsDialog(context),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.terminal_rounded,
+                              size: 14,
+                              color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'CLI',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: theme.colorScheme.onSurface.withValues(alpha: 0.8),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Container(
+                    width: 1,
+                    height: 14,
+                    color: isDark ? const Color(0x22FFFFFF) : const Color(0x18000000),
+                  ),
+                  // More Actions Popup (Sample document / Clear history)
+                  PopupMenuButton<String>(
+                    tooltip: '更多操作',
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    color: isDark ? const Color(0xFF262626) : Colors.white,
+                    onSelected: (val) {
+                      if (val == 'sample') {
+                        controller.loadSampleDocument();
+                      } else if (val == 'clear_recent') {
+                        controller.clearRecentFiles();
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      PopupMenuItem<String>(
+                        value: 'sample',
+                        child: Row(
+                          children: const [
+                            Icon(Icons.auto_awesome, size: 15),
+                            SizedBox(width: 8),
+                            Text('载入精选样例', style: TextStyle(fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                      if (controller.recentFiles.isNotEmpty) ...[
+                        const PopupMenuDivider(),
+                        PopupMenuItem<String>(
+                          value: 'clear_recent',
+                          child: Row(
+                            children: const [
+                              Icon(Icons.delete_outline_rounded, size: 15, color: Colors.redAccent),
+                              SizedBox(width: 8),
+                              Text('清空最近记录', style: TextStyle(fontSize: 12, color: Colors.redAccent)),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 6),
+                      child: Icon(
+                        Icons.more_horiz_rounded,
+                        size: 16,
+                        color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
                       ),
                     ),
                   ),

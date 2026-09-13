@@ -137,22 +137,28 @@ void main() {
       );
       await tester.pump();
 
-      final fitWidthBtn = find.byTooltip('满窗口 / 适应宽度 (Cmd+9)');
-      final fitPageBtn = find.byTooltip('满屏 / 适应整页 (Cmd+1)');
+      final zoomBadge = find.byTooltip('页面缩放比例与预设');
       final zoomInBtn = find.byTooltip('放大页面 (Cmd+=)');
 
-      expect(fitWidthBtn, findsOneWidget);
-      expect(fitPageBtn, findsOneWidget);
+      expect(zoomBadge, findsOneWidget);
       expect(controller.autoFitMode, equals(AutoFitMode.none));
 
-      // Click Fit Width -> autoFitMode becomes fitWidth
-      await tester.tap(fitWidthBtn);
-      await tester.pump(const Duration(milliseconds: 300));
+      // Click Fit Width from zoom dropdown -> autoFitMode becomes fitWidth
+      await tester.tap(zoomBadge);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.tap(find.text('满窗口 (适应宽度)'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
       expect(controller.autoFitMode, equals(AutoFitMode.fitWidth));
 
-      // Click Fit Page -> autoFitMode becomes fitPage
-      await tester.tap(fitPageBtn);
-      await tester.pump(const Duration(milliseconds: 300));
+      // Click Fit Page from zoom dropdown -> autoFitMode becomes fitPage
+      await tester.tap(zoomBadge);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.tap(find.text('满屏 (适应整页)'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
       expect(controller.autoFitMode, equals(AutoFitMode.fitPage));
 
       // Click Zoom In -> autoFitMode becomes none (manual zoom)

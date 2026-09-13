@@ -278,6 +278,12 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
+  void clearRecentFiles() {
+    _recentFiles.clear();
+    _persistPreferences();
+    notifyListeners();
+  }
+
   void _setupFileWatcher(String filePath) {
     _watcherSubscription?.cancel();
     if (!_autoReload) return;

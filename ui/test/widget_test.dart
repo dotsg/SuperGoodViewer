@@ -263,6 +263,11 @@ void main() {
       expect(find.byType(SidebarView), findsOneWidget);
       expect(find.text('大纲目录'), findsOneWidget);
 
+      // Verify compact macOS-style 38px footer bar items
+      expect(find.text('排版字体'), findsOneWidget);
+      expect(find.text('CLI'), findsOneWidget);
+      expect(find.byTooltip('更多操作'), findsOneWidget);
+
       // Switch to Recents & Settings tab
       await tester.tap(find.text('最近文件'));
       await tester.pump();
@@ -305,14 +310,10 @@ void main() {
       // Page zoom buttons & badge exist
       final zoomOutBtn = find.byTooltip('缩小页面 (Cmd+-)');
       final zoomInBtn = find.byTooltip('放大页面 (Cmd+=)');
-      final fitWidthBtn = find.byTooltip('满窗口 / 适应宽度 (Cmd+9)');
-      final fitPageBtn = find.byTooltip('满屏 / 适应整页 (Cmd+1)');
       final zoomBadge = find.byTooltip('页面缩放比例与预设');
 
       expect(zoomOutBtn, findsOneWidget);
       expect(zoomInBtn, findsOneWidget);
-      expect(fitWidthBtn, findsOneWidget);
-      expect(fitPageBtn, findsOneWidget);
       expect(zoomBadge, findsOneWidget);
       expect(find.text('100%'), findsOneWidget);
 
@@ -320,17 +321,10 @@ void main() {
       await tester.tap(zoomInBtn);
       await tester.pump(const Duration(milliseconds: 300));
 
-      // Tap fit width button
-      await tester.tap(fitWidthBtn);
-      await tester.pump(const Duration(milliseconds: 300));
-
-      // Tap fit page button
-      await tester.tap(fitPageBtn);
-      await tester.pump(const Duration(milliseconds: 300));
-
       // Open zoom preset dropdown
       await tester.tap(zoomBadge);
-      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
 
       expect(find.text('满窗口 (适应宽度)'), findsOneWidget);
       expect(find.text('满屏 (适应整页)'), findsOneWidget);
@@ -339,8 +333,13 @@ void main() {
       expect(find.text('150%'), findsOneWidget);
 
       // Tap '满窗口 (适应宽度)' preset from popup menu
-      await tester.tap(find.text('满窗口 (适应宽度)'), warnIfMissed: false);
-      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.text('满窗口 (适应宽度)'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(controller.autoFitMode, equals(AutoFitMode.fitWidth));
+
+      await tester.pump(const Duration(seconds: 1));
+      controller.dispose();
     });
 
     testWidgets('font settings button opens font dialog with CJK status and font size adjustments', (tester) async {
@@ -356,10 +355,18 @@ void main() {
         ),
       );
 
-      final fontBtn = find.byTooltip('字体排版与 CJK 1:2 等宽对齐设置 (Cmd+Shift+F)');
-      expect(fontBtn, findsOneWidget);
-      await tester.tap(fontBtn);
-      await tester.pump(const Duration(milliseconds: 300));
+      // Open font settings via "更多选项" menu in bottom floating pill
+      final moreBtn = find.byTooltip('更多选项');
+      expect(moreBtn, findsOneWidget);
+      await tester.tap(moreBtn);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      final fontMenuItem = find.text('排版与字体设置');
+      expect(fontMenuItem, findsOneWidget);
+      await tester.tap(fontMenuItem);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
 
       expect(find.text('字体排版与中英文等宽对齐'), findsOneWidget);
       expect(find.text('正文排版字体 (Body Typography)'), findsOneWidget);
@@ -384,6 +391,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.text('字体排版与中英文等宽对齐'), findsNothing);
+
+      await tester.pump(const Duration(seconds: 1));
+      controller.dispose();
     });
 
     testWidgets('A4 mode displays two-page spread toggle and page navigation controls', (tester) async {

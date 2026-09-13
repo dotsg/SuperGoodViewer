@@ -612,11 +612,23 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                       ),
                     ),
 
-                    // Zen Floating Frosted Glass Pill Toolbar
-                    AnimatedPositioned(
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeOutCubic,
-                      top: _shouldShowTitleBar ? 46 : 18,
+                    // Bottom Hover Zone: moving mouse to the bottom edge brings up the floating reading toolbar
+                    Positioned(
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      height: 32,
+                      child: MouseRegion(
+                        hitTestBehavior: HitTestBehavior.translucent,
+                        onEnter: (_) {
+                          _showToolbarTemporarily();
+                        },
+                      ),
+                    ),
+
+                    // Zen Floating Frosted Glass Pill Toolbar (Bottom Reading HUD)
+                    Positioned(
+                      bottom: 24,
                       left: 0,
                       right: 0,
                       child: Center(
@@ -636,7 +648,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                               curve: Curves.easeOutCubic,
                               offset: _isToolbarVisible
                                   ? Offset.zero
-                                  : const Offset(0, -1.2),
+                                  : const Offset(0, 1.4),
                               child: AnimatedOpacity(
                                 duration: const Duration(milliseconds: 200),
                                 opacity: _isToolbarVisible ? 1.0 : 0.0,
@@ -648,10 +660,10 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                       ),
                     ),
 
-                    // Transient Zoom HUD Capsule
+                    // Transient Zoom HUD Capsule (Floats above the bottom pill toolbar)
                     if (_isZoomHudVisible)
                       Positioned(
-                        bottom: 36,
+                        bottom: 84,
                         left: 0,
                         right: 0,
                         child: Center(
@@ -866,7 +878,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                         child: Container(
                           height: 32,
                           alignment: Alignment.center,
-                          child: !_isToolbarVisible && controller.documentTitle.isNotEmpty
+                          child: controller.documentTitle.isNotEmpty
                               ? Text(
                                   controller.documentTitle,
                                   style: TextStyle(
@@ -952,36 +964,6 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               ),
               _PillDivider(isDark: isDark),
 
-              // Document Title & Compiling indicator
-              Container(
-                constraints: const BoxConstraints(maxWidth: 160),
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        controller.documentTitle,
-                        style: const TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (controller.isCompiling) ...[
-                      const SizedBox(width: 6),
-                      const SizedBox(
-                        width: 12,
-                        height: 12,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              _PillDivider(isDark: isDark),
-
               // Mode switcher (Fluid vs A4 Paged)
               _ModePill(
                 mode: controller.renderOptions.mode,
@@ -1047,23 +1029,6 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               ),
               _PillDivider(isDark: isDark),
 
-              // Quick Fit-to-Window & Fit-to-Page Buttons
-              _PillIconButton(
-                icon: Icons.fit_screen_outlined,
-                tooltip: '满窗口 / 适应宽度 (Cmd+9)',
-                iconSize: 15,
-                isSelected: controller.autoFitMode == AutoFitMode.fitWidth,
-                onPressed: _handleFitWidth,
-              ),
-              _PillIconButton(
-                icon: Icons.crop_free_rounded,
-                tooltip: '满屏 / 适应整页 (Cmd+1)',
-                iconSize: 15,
-                isSelected: controller.autoFitMode == AutoFitMode.fitPage,
-                onPressed: _handleFitPage,
-              ),
-              _PillDivider(isDark: isDark),
-
               // Theme Toggle (Light / Dark)
               _PillIconButton(
                 icon: controller.renderOptions.isDark
@@ -1076,27 +1041,21 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               ),
               _PillDivider(isDark: isDark),
 
-              // Typography & Font Settings (Maple Mono / CJK Alignment)
-              _PillIconButton(
-                icon: Icons.font_download_outlined,
-                tooltip: '字体排版与 CJK 1:2 等宽对齐设置 (Cmd+Shift+F)',
-                onPressed: () => showFontSettingsDialog(context, controller),
-              ),
-              _PillDivider(isDark: isDark),
-
-              // Command Line Tool (sgv) & Terminal Settings
-              _PillIconButton(
-                icon: Icons.terminal_rounded,
-                tooltip: '命令行工具 (sgv) 与设置',
-                onPressed: () => showCliToolsDialog(context),
-              ),
-              _PillDivider(isDark: isDark),
-
               // Export PDF
               _PillIconButton(
                 icon: Icons.download_rounded,
                 tooltip: '导出出版级 PDF (Cmd+E)',
                 onPressed: _handleExportPdf,
+              ),
+              _PillDivider(isDark: isDark),
+
+              // More Options Menu (Font settings, CLI tools, Sample doc, Hide toolbar)
+              _MoreActionsPillMenu(
+                isDark: isDark,
+                onOpenFontSettings: () => showFontSettingsDialog(context, controller),
+                onOpenCliTools: () => showCliToolsDialog(context),
+                onLoadSample: controller.loadSampleDocument,
+                onHideToolbar: () => setState(() => _isToolbarVisible = false),
               ),
               _PillDivider(isDark: isDark),
 
@@ -1248,7 +1207,6 @@ class _ZoomDropdownBadge extends StatelessWidget {
 
     return PopupMenuButton<double>(
       tooltip: '页面缩放比例与预设',
-      offset: const Offset(0, 36),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       color: isDark ? const Color(0xFF262626) : Colors.white,
       onSelected: onZoomSelected,
@@ -1374,6 +1332,104 @@ class _ZoomDropdownBadge extends StatelessWidget {
             Text(shortcut, style: const TextStyle(fontSize: 11, color: Colors.grey)),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _MoreActionsPillMenu extends StatelessWidget {
+  final bool isDark;
+  final VoidCallback onOpenFontSettings;
+  final VoidCallback onOpenCliTools;
+  final VoidCallback onLoadSample;
+  final VoidCallback onHideToolbar;
+
+  const _MoreActionsPillMenu({
+    required this.isDark,
+    required this.onOpenFontSettings,
+    required this.onOpenCliTools,
+    required this.onLoadSample,
+    required this.onHideToolbar,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return PopupMenuButton<String>(
+      tooltip: '更多选项',
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      color: isDark ? const Color(0xFF262626) : Colors.white,
+      onSelected: (value) {
+        switch (value) {
+          case 'font':
+            onOpenFontSettings();
+            break;
+          case 'cli':
+            onOpenCliTools();
+            break;
+          case 'sample':
+            onLoadSample();
+            break;
+          case 'hide':
+            onHideToolbar();
+            break;
+        }
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem<String>(
+          value: 'font',
+          child: Row(
+            children: const [
+              Icon(Icons.font_download_outlined, size: 16),
+              SizedBox(width: 8),
+              Text('排版与字体设置', style: TextStyle(fontSize: 12.5)),
+              Spacer(),
+              Text('Cmd+Shift+F', style: TextStyle(fontSize: 11, color: Colors.grey)),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'cli',
+          child: Row(
+            children: const [
+              Icon(Icons.terminal_rounded, size: 16),
+              SizedBox(width: 8),
+              Text('命令行工具 (sgv)', style: TextStyle(fontSize: 12.5)),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'sample',
+          child: Row(
+            children: const [
+              Icon(Icons.auto_awesome, size: 16),
+              SizedBox(width: 8),
+              Text('载入精选样例', style: TextStyle(fontSize: 12.5)),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(),
+        PopupMenuItem<String>(
+          value: 'hide',
+          child: Row(
+            children: const [
+              Icon(Icons.visibility_off_outlined, size: 16),
+              SizedBox(width: 8),
+              Text('隐藏底部工具栏', style: TextStyle(fontSize: 12.5)),
+              Spacer(),
+              Text('Esc', style: TextStyle(fontSize: 11, color: Colors.grey)),
+            ],
+          ),
+        ),
+      ],
+      child: Container(
+        padding: const EdgeInsets.all(7),
+        child: Icon(
+          Icons.more_horiz_rounded,
+          size: 18,
+          color: theme.colorScheme.onSurface.withValues(alpha: 0.75),
+        ),
       ),
     );
   }
