@@ -40,9 +40,16 @@ clean:
 	@cd ui && flutter clean
 
 dmg: build
+	@echo "==> Preparing macOS DMG staging folder..."
+	@rm -rf build/dmg-staging
+	@mkdir -p build/dmg-staging
+	@cp -R "ui/build/macos/Build/Products/Release/sogoodviewer.app" build/dmg-staging/
+	@ln -s /Applications build/dmg-staging/Applications
 	@echo "==> Creating macOS DMG..."
-	@hdiutil create -volname "SuperGoodViewer" \
-		-srcfolder "ui/build/macos/Build/Products/Release/sogoodviewer.app" \
+	@hdiutil create -volname "超好读 SuperGoodViewer" \
+		-srcfolder "build/dmg-staging" \
 		-ov -format UDZO \
 		"SuperGoodViewer-macos.dmg"
+	@rm -rf build/dmg-staging
 	@echo "==> DMG generated: SuperGoodViewer-macos.dmg"
+

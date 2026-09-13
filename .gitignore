@@ -21,3 +21,8 @@ ui/pubspec.lock
 .idea/
 *.swp
 *.bak
+
+# Packaging artifacts
+*.dmg
+dist/
+

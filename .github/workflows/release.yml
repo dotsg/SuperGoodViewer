@@ -52,12 +52,21 @@ jobs:
           mkdir -p dist
           APP_PATH="ui/build/macos/Build/Products/Release/sogoodviewer.app"
           DMG_FILE="dist/SuperGoodViewer-${{ github.ref_name }}-macos.dmg"
+          STAGING_DIR="dist/dmg_staging"
+
+          echo "==> Preparing DMG staging directory with Applications shortcut..."
+          rm -rf "$STAGING_DIR"
+          mkdir -p "$STAGING_DIR"
+          cp -R "$APP_PATH" "$STAGING_DIR/"
+          ln -s /Applications "$STAGING_DIR/Applications"
 
           echo "==> Creating DMG: $DMG_FILE"
           hdiutil create -volname "超好读 SuperGoodViewer" \
-            -srcfolder "$APP_PATH" \
+            -srcfolder "$STAGING_DIR" \
             -ov -format UDZO \
             "$DMG_FILE"
+          rm -rf "$STAGING_DIR"
+
 
       - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
