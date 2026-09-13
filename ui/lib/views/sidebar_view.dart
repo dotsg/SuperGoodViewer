@@ -28,7 +28,7 @@ class _SidebarViewState extends State<SidebarView> {
   Future<void> _pickAndOpenFile(BuildContext context) async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['md', 'markdown', 'txt'],
+      allowedExtensions: ['md', 'markdown', 'txt', 'pdf'],
     );
 
     if (result != null && result.files.single.path != null) {
@@ -172,11 +172,11 @@ class _SidebarViewState extends State<SidebarView> {
                         borderRadius: BorderRadius.circular(3),
                       ),
                       child: Text(
-                        'H${item.level}',
+                        item.pageNumber != null ? 'P${item.pageNumber}' : 'H${item.level}',
                         style: TextStyle(
                           fontSize: 9,
                           fontWeight: FontWeight.bold,
-                          color: item.level == 1
+                          color: (item.pageNumber != null || item.level == 1)
                               ? theme.colorScheme.primary
                               : theme.colorScheme.onSurface.withValues(alpha: 0.6),
                         ),
@@ -285,13 +285,18 @@ class _SidebarViewState extends State<SidebarView> {
                   itemBuilder: (context, index) {
                     final path = widget.controller.recentFiles[index];
                     final isSelected = path == widget.controller.currentFilePath;
+                    final isPdf = path.toLowerCase().endsWith('.pdf');
                     return ListTile(
                       dense: true,
                       selected: isSelected,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(6),
                       ),
-                      leading: const Icon(Icons.article_outlined, size: 16),
+                      leading: Icon(
+                        isPdf ? Icons.picture_as_pdf_outlined : Icons.article_outlined,
+                        size: 16,
+                        color: isPdf ? Colors.redAccent.withValues(alpha: 0.8) : null,
+                      ),
                       title: Text(
                         p.basename(path),
                         style: const TextStyle(fontSize: 12),
@@ -373,7 +378,7 @@ class _SidebarViewState extends State<SidebarView> {
                     width: 24,
                     height: 24,
                     child: IconButton(
-                      tooltip: '打开本地 Markdown 文件 (${widget.controller.shortcutService.getShortcutLabel('openFile')})',
+                      tooltip: '打开本地文件 (${widget.controller.shortcutService.getShortcutLabel('openFile')})',
                       icon: const Icon(Icons.folder_open_rounded, size: 16),
                       onPressed: () => _pickAndOpenFile(context),
                       style: IconButton.styleFrom(

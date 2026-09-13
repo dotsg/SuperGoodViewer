@@ -234,8 +234,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['md', 'markdown', 'txt'],
-        dialogTitle: '选择要阅读的 Markdown 文件',
+        allowedExtensions: ['md', 'markdown', 'txt', 'pdf'],
+        dialogTitle: '选择要阅读的 Markdown 或 PDF 文件',
       );
 
       if (result != null && result.files.isNotEmpty) {
@@ -930,7 +930,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               // Open Local File
               _PillIconButton(
                 icon: Icons.folder_open_rounded,
-                tooltip: '打开本地 Markdown (${controller.shortcutService.getShortcutLabel('openFile')})',
+                tooltip: '打开本地文档 (${controller.shortcutService.getShortcutLabel('openFile')})',
                 onPressed: _pickAndOpenFile,
               ),
               _PillDivider(isDark: isDark),
@@ -948,17 +948,19 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               ),
               _PillDivider(isDark: isDark),
 
-              // Mode switcher (Fluid vs A4 Paged)
-              _ModePill(
-                mode: controller.renderOptions.mode,
-                shortcutLabel: controller.shortcutService.getShortcutLabel('toggleMode'),
-                onToggle: controller.toggleMode,
-                isDark: isDark,
-              ),
-              _PillDivider(isDark: isDark),
+              // Mode switcher (Fluid vs A4 Paged) - Markdown only
+              if (!controller.isPdfDocument) ...[
+                _ModePill(
+                  mode: controller.renderOptions.mode,
+                  shortcutLabel: controller.shortcutService.getShortcutLabel('toggleMode'),
+                  onToggle: controller.toggleMode,
+                  isDark: isDark,
+                ),
+                _PillDivider(isDark: isDark),
+              ],
 
-              // When in A4 Paged mode, show Two-Page Spread toggle and Page Navigation
-              if (!controller.renderOptions.isFluid) ...[
+              // When in A4 Paged mode or reading a PDF, show Two-Page Spread toggle and Page Navigation
+              if (controller.isPdfDocument || !controller.renderOptions.isFluid) ...[
                 _PillIconButton(
                   icon: controller.isTwoPage
                       ? Icons.auto_stories_rounded

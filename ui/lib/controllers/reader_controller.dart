@@ -17,16 +17,18 @@ class OutlineItem {
   final int level;
   final String anchor;
   final int lineNumber;
+  final int? pageNumber;
 
   const OutlineItem({
     required this.title,
     required this.level,
     required this.anchor,
     required this.lineNumber,
+    this.pageNumber,
   });
 
   @override
-  String toString() => 'OutlineItem(H$level: $title, line: $lineNumber)';
+  String toString() => 'OutlineItem(H$level: $title, line: $lineNumber, page: $pageNumber)';
 }
 
 enum AutoFitMode {
@@ -40,6 +42,7 @@ class ReaderController extends ChangeNotifier {
   String _currentMarkdown = '';
   String _documentTitle = 'Welcome';
   Uint8List? _currentPdfBytes;
+  bool _isRawPdf = false;
   RenderOptions _renderOptions = RenderOptions(
     mode: 'fluid',
     theme: 'light',
@@ -100,6 +103,8 @@ class ReaderController extends ChangeNotifier {
   bool get isTwoPage => _isTwoPage;
   List<OutlineItem> get outlineItems => _outlineItems;
   OutlineItem? get requestedJumpItem => _requestedJumpItem;
+  bool get isPdfDocument =>
+      _isRawPdf || (_currentFilePath?.toLowerCase().endsWith('.pdf') ?? false);
 
   /// Top scroll deadband threshold (in points). Offsets <= this value are treated as top of document.
   static const double topScrollThreshold = 20.0;
@@ -122,6 +127,11 @@ class ReaderController extends ChangeNotifier {
 
   void jumpToOutline(OutlineItem item) {
     _requestedJumpItem = item;
+    notifyListeners();
+  }
+
+  void setPdfOutlines(List<OutlineItem> items) {
+    _outlineItems = List.unmodifiable(items);
     notifyListeners();
   }
 
@@ -364,16 +374,64 @@ class ReaderController extends ChangeNotifier {
 
     try {
       final bytes = file.readAsBytesSync();
+      final isPdf = filePath.toLowerCase().endsWith('.pdf') ||
+          (bytes.length >= 4 &&
+              bytes[0] == 0x25 && // '%'
+              bytes[1] == 0x50 && // 'P'
+              bytes[2] == 0x44 && // 'D'
+              bytes[3] == 0x46); // 'F'
+
+      _currentFilePath = filePath;
+      _documentTitle = p.basenameWithoutExtension(filePath);
+
+      if (isPdf) {
+        _isRawPdf = true;
+        _currentMarkdown = '';
+        _outlineItems = [];
+        _currentPdfBytes = bytes;
+        _errorMessage = null;
+
+        if (!preservePosition) {
+          final history = _fileHistory[filePath];
+          if (history != null) {
+            _lastScrollRatio = (history['scrollRatio'] as num?)?.toDouble() ?? 0.0;
+            _lastScrollOffset = (history['scrollOffset'] as num?)?.toDouble() ?? 0.0;
+            _lastPageNumber = (history['pageNumber'] as num?)?.toInt() ?? 1;
+            _lastZoom = (history['zoom'] as num?)?.toDouble() ?? _lastZoom;
+            startReloading();
+          } else {
+            _lastScrollRatio = 0.0;
+            _lastScrollOffset = 0.0;
+            _lastPageNumber = 1;
+            finishReloading();
+          }
+        } else {
+          startReloading();
+        }
+
+        // Add to recent files
+        _recentFiles.remove(filePath);
+        _recentFiles.insert(0, filePath);
+        if (_recentFiles.length > 10) {
+          _recentFiles.removeLast();
+        }
+
+        RemoteImageService.instance.clearNegativeCache();
+        _persistDebounced();
+        _setupFileWatcher(filePath);
+        notifyListeners();
+        return;
+      }
+
+      _isRawPdf = false;
       String content;
       try {
         content = utf8.decode(bytes);
       } catch (_) {
         content = utf8.decode(bytes, allowMalformed: true);
       }
-      _currentFilePath = filePath;
       _currentMarkdown = content;
       _extractOutline(_currentMarkdown);
-      _documentTitle = p.basenameWithoutExtension(filePath);
 
       if (!preservePosition) {
         final history = _fileHistory[filePath];
@@ -493,6 +551,16 @@ class ReaderController extends ChangeNotifier {
       final file = File(_currentFilePath!);
       if (await file.exists()) {
         try {
+          if (isPdfDocument) {
+            final bytes = await file.readAsBytes();
+            if (_currentPdfBytes != null && listEquals(bytes, _currentPdfBytes)) {
+              return;
+            }
+            _currentPdfBytes = bytes;
+            startReloading();
+            notifyListeners();
+            return;
+          }
           final bytes = await file.readAsBytes();
           final text = utf8.decode(bytes, allowMalformed: true);
           if (text == _currentMarkdown) {
@@ -512,6 +580,17 @@ class ReaderController extends ChangeNotifier {
 
   /// Manually refreshes the current document, clearing negative image cache and re-triggering downloads.
   Future<void> refreshDocument() async {
+    if (isPdfDocument) {
+      if (_currentFilePath != null) {
+        final file = File(_currentFilePath!);
+        if (await file.exists()) {
+          _currentPdfBytes = await file.readAsBytes();
+          startReloading();
+          notifyListeners();
+        }
+      }
+      return;
+    }
     RemoteImageService.instance.clearNegativeCache();
     _triggerRemoteImageDownloads();
     await compileDocument();
@@ -534,6 +613,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   Future<void> compileDocument() async {
+    if (isPdfDocument) return;
     if (_currentMarkdown.isEmpty) return;
 
     final int generation = ++_compileGeneration;
@@ -596,6 +676,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void toggleMode() {
+    if (isPdfDocument) return;
     renderOptionsChanged = true;
     startReloading();
     final nextMode = _renderOptions.mode == 'fluid' ? 'paged' : 'fluid';
@@ -622,6 +703,10 @@ class ReaderController extends ChangeNotifier {
     _renderOptions = _renderOptions.copyWith(theme: nextTheme);
     _persistDebounced();
     notifyListeners();
+    if (isPdfDocument) {
+      finishReloading();
+      return;
+    }
     if (_currentFilePath != null) {
       final cached = DocumentCacheService.getCachedPdf(_currentFilePath!, _renderOptions);
       if (cached != null && cached.isNotEmpty) {
@@ -711,8 +796,8 @@ class ReaderController extends ChangeNotifier {
     try {
       Uint8List? bytesToExport;
 
-      if (_renderOptions.theme == 'light') {
-        // Already in light mode: use current in-memory PDF immediately (0ms fast path)
+      if (isPdfDocument || _renderOptions.theme == 'light') {
+        // Direct PDF or light mode: use current in-memory PDF immediately (0ms fast path)
         bytesToExport = _currentPdfBytes;
       } else {
         // When viewing in dark mode, strictly export publication-grade light mode document
