@@ -1049,10 +1049,12 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               ),
               _PillDivider(isDark: isDark),
 
-              // More Options Menu (Font settings, CLI tools, Sample doc, Hide toolbar)
+              // More Options Menu (Font settings, Auto reload toggle, CLI tools, Sample doc, Hide toolbar)
               _MoreActionsPillMenu(
                 isDark: isDark,
+                autoReload: controller.autoReload,
                 onOpenFontSettings: () => showFontSettingsDialog(context, controller),
+                onToggleAutoReload: () => controller.setAutoReload(!controller.autoReload),
                 onOpenCliTools: () => showCliToolsDialog(context),
                 onLoadSample: controller.loadSampleDocument,
                 onHideToolbar: () => setState(() => _isToolbarVisible = false),
@@ -1339,14 +1341,18 @@ class _ZoomDropdownBadge extends StatelessWidget {
 
 class _MoreActionsPillMenu extends StatelessWidget {
   final bool isDark;
+  final bool autoReload;
   final VoidCallback onOpenFontSettings;
+  final VoidCallback onToggleAutoReload;
   final VoidCallback onOpenCliTools;
   final VoidCallback onLoadSample;
   final VoidCallback onHideToolbar;
 
   const _MoreActionsPillMenu({
     required this.isDark,
+    required this.autoReload,
     required this.onOpenFontSettings,
+    required this.onToggleAutoReload,
     required this.onOpenCliTools,
     required this.onLoadSample,
     required this.onHideToolbar,
@@ -1364,6 +1370,9 @@ class _MoreActionsPillMenu extends StatelessWidget {
         switch (value) {
           case 'font':
             onOpenFontSettings();
+            break;
+          case 'reload':
+            onToggleAutoReload();
             break;
           case 'cli':
             onOpenCliTools();
@@ -1386,6 +1395,23 @@ class _MoreActionsPillMenu extends StatelessWidget {
               Text('排版与字体设置', style: TextStyle(fontSize: 12.5)),
               Spacer(),
               Text('Cmd+Shift+F', style: TextStyle(fontSize: 11, color: Colors.grey)),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'reload',
+          child: Row(
+            children: [
+              Icon(
+                autoReload ? Icons.check_rounded : Icons.radio_button_unchecked,
+                size: 14,
+                color: autoReload ? const Color(0xFF22C55E) : Colors.grey,
+              ),
+              const SizedBox(width: 8),
+              const Text('修改自动热重载', style: TextStyle(fontSize: 12.5)),
+              const Spacer(),
+              if (autoReload)
+                const Text('已开启', style: TextStyle(fontSize: 11, color: Color(0xFF22C55E))),
             ],
           ),
         ),

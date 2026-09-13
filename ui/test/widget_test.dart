@@ -264,14 +264,13 @@ void main() {
       expect(find.text('大纲目录'), findsOneWidget);
 
       // Verify compact macOS-style 38px footer bar items
-      expect(find.text('排版字体'), findsOneWidget);
-      expect(find.text('CLI'), findsOneWidget);
+      expect(find.text('排版与设置'), findsOneWidget);
       expect(find.byTooltip('更多操作'), findsOneWidget);
 
-      // Switch to Recents & Settings tab
+      // Switch to Recents tab
       await tester.tap(find.text('最近文件'));
       await tester.pump();
-      expect(find.text('排版偏好'), findsOneWidget);
+      expect(find.text('暂无历史文件'), findsOneWidget);
 
       // Close sidebar via header close button
       final closeBtn = find.byTooltip('收起侧边栏 (Cmd+B 或 Esc)');
@@ -364,6 +363,8 @@ void main() {
 
       final fontMenuItem = find.text('排版与字体设置');
       expect(fontMenuItem, findsOneWidget);
+      expect(find.text('修改自动热重载'), findsOneWidget);
+      expect(find.text('命令行工具 (sgv)'), findsOneWidget);
       await tester.tap(fontMenuItem);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
@@ -371,6 +372,7 @@ void main() {
       expect(find.text('字体排版与中英文等宽对齐'), findsOneWidget);
       expect(find.text('正文排版字体 (Body Typography)'), findsOneWidget);
       expect(find.text('排版基础字号 (Base Typesetting Font Size)'), findsOneWidget);
+      expect(find.text('文件修改自动热重载 (Auto Reload)'), findsOneWidget);
       expect(find.text('恢复默认 (10.5 pt)'), findsOneWidget);
       expect(find.text('恢复默认字体'), findsOneWidget);
 

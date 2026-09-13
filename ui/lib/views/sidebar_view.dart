@@ -205,82 +205,16 @@ class _SidebarViewState extends State<SidebarView> {
     );
   }
 
-  Widget _buildRecentFilesAndSettings(ThemeData theme, bool isDark) {
+  Widget _buildRecentFilesList(ThemeData theme, bool isDark) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Reading Preferences Section
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-          child: Text(
-            '排版偏好',
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Column(
-            children: [
-              ListTile(
-                dense: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                title: const Text('字号大小', style: TextStyle(fontSize: 12.5)),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.remove, size: 14),
-                      onPressed: () => widget.controller.setFontSize(
-                        widget.controller.renderOptions.fontSize - 0.5,
-                      ),
-                      style: IconButton.styleFrom(
-                        minimumSize: const Size(24, 24),
-                        padding: EdgeInsets.zero,
-                      ),
-                    ),
-                    Text(
-                      '${widget.controller.renderOptions.fontSize.toStringAsFixed(1)}pt',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.add, size: 14),
-                      onPressed: () => widget.controller.setFontSize(
-                        widget.controller.renderOptions.fontSize + 0.5,
-                      ),
-                      style: IconButton.styleFrom(
-                        minimumSize: const Size(24, 24),
-                        padding: EdgeInsets.zero,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              SwitchListTile(
-                dense: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                title: const Text('修改自动热重载', style: TextStyle(fontSize: 12.5)),
-                value: widget.controller.autoReload,
-                onChanged: widget.controller.setAutoReload,
-              ),
-            ],
-          ),
-        ),
-
-        const Divider(height: 16),
-
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
           child: Row(
             children: [
               Text(
-                '历史文件',
+                '历史文件${widget.controller.recentFiles.isNotEmpty ? ' (${widget.controller.recentFiles.length})' : ''}',
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
@@ -293,7 +227,7 @@ class _SidebarViewState extends State<SidebarView> {
                   onTap: widget.controller.clearRecentFiles,
                   borderRadius: BorderRadius.circular(4),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     child: Text(
                       '清空',
                       style: TextStyle(
@@ -602,11 +536,11 @@ class _SidebarViewState extends State<SidebarView> {
 
             const SizedBox(height: 4),
 
-            // Main Tab Content: Outline or Recents/Settings
+            // Main Tab Content: Outline or Recents
             Expanded(
               child: _selectedTab == 0
                   ? _buildOutlineList(theme, isDark)
-                  : _buildRecentFilesAndSettings(theme, isDark),
+                  : _buildRecentFilesList(theme, isDark),
             ),
 
             // Compact macOS-style 38px Footer Bar
@@ -623,10 +557,10 @@ class _SidebarViewState extends State<SidebarView> {
               ),
               child: Row(
                 children: [
-                  // Typography & CJK Alignment Settings
+                  // Typography & Reading Settings
                   Expanded(
                     child: Tooltip(
-                      message: '字体排版与 CJK 1:2 等宽对齐设置 (Cmd+Shift+F)',
+                      message: '字体排版与中英文等宽对齐设置 (Cmd+Shift+F)',
                       child: InkWell(
                         borderRadius: BorderRadius.circular(6),
                         onTap: () => showFontSettingsDialog(context, controller),
@@ -640,12 +574,12 @@ class _SidebarViewState extends State<SidebarView> {
                                 size: 14,
                                 color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
                               ),
-                              const SizedBox(width: 4),
+                              const SizedBox(width: 5),
                               Text(
-                                '排版字体',
+                                '排版与设置',
                                 style: TextStyle(
                                   fontSize: 11.5,
-                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.8),
+                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.85),
                                 ),
                               ),
                             ],
@@ -659,41 +593,7 @@ class _SidebarViewState extends State<SidebarView> {
                     height: 14,
                     color: isDark ? const Color(0x22FFFFFF) : const Color(0x18000000),
                   ),
-                  // CLI Tools
-                  Tooltip(
-                    message: '命令行工具 (sgv) 与设置',
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(6),
-                      onTap: () => showCliToolsDialog(context),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.terminal_rounded,
-                              size: 14,
-                              color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              'CLI',
-                              style: TextStyle(
-                                fontSize: 11.5,
-                                color: theme.colorScheme.onSurface.withValues(alpha: 0.8),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  Container(
-                    width: 1,
-                    height: 14,
-                    color: isDark ? const Color(0x22FFFFFF) : const Color(0x18000000),
-                  ),
-                  // More Actions Popup (Sample document / Clear history)
+                  // More Actions Popup (Sample document, Auto Reload toggle, CLI, Clear history)
                   PopupMenuButton<String>(
                     tooltip: '更多操作',
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -701,6 +601,10 @@ class _SidebarViewState extends State<SidebarView> {
                     onSelected: (val) {
                       if (val == 'sample') {
                         controller.loadSampleDocument();
+                      } else if (val == 'toggle_reload') {
+                        controller.setAutoReload(!controller.autoReload);
+                      } else if (val == 'cli') {
+                        showCliToolsDialog(context);
                       } else if (val == 'clear_recent') {
                         controller.clearRecentFiles();
                       }
@@ -713,6 +617,30 @@ class _SidebarViewState extends State<SidebarView> {
                             Icon(Icons.auto_awesome, size: 15),
                             SizedBox(width: 8),
                             Text('载入精选样例', style: TextStyle(fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem<String>(
+                        value: 'toggle_reload',
+                        child: Row(
+                          children: [
+                            Icon(
+                              controller.autoReload ? Icons.check_rounded : Icons.radio_button_unchecked,
+                              size: 14,
+                              color: controller.autoReload ? const Color(0xFF22C55E) : Colors.grey,
+                            ),
+                            const SizedBox(width: 8),
+                            const Text('修改自动热重载', style: TextStyle(fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem<String>(
+                        value: 'cli',
+                        child: Row(
+                          children: const [
+                            Icon(Icons.terminal_rounded, size: 15),
+                            SizedBox(width: 8),
+                            Text('命令行工具 (sgv)', style: TextStyle(fontSize: 12)),
                           ],
                         ),
                       ),
@@ -731,7 +659,7 @@ class _SidebarViewState extends State<SidebarView> {
                       ],
                     ],
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 6),
+                      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
                       child: Icon(
                         Icons.more_horiz_rounded,
                         size: 16,

@@ -439,6 +439,52 @@ class _FontSettingsDialogState extends State<_FontSettingsDialog> {
                     ),
                     const SizedBox(height: 12),
 
+                    // File Auto Reload Switch Card
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F5),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: isDark ? const Color(0xFF333333) : const Color(0xFFE0E0E0),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.sync_rounded,
+                            size: 18,
+                            color: theme.colorScheme.primary,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  '文件修改自动热重载 (Auto Reload)',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '外部编辑器（如 VS Code / Cursor）保存 Markdown 时自动重绘出版级预览',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Switch(
+                            value: widget.controller.autoReload,
+                            onChanged: widget.controller.setAutoReload,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
                     // Live Alignment Preview Card
                     const Text(
                       'ASCII 表格全角/半角对齐预览 (Live Alignment Preview)',
