@@ -27,7 +27,7 @@ fn clear_last_error() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sogood_get_version() -> *const c_char {
-    static VERSION: &[u8] = b"0.1.0\0";
+    static VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "\0");
     VERSION.as_ptr() as *const c_char
 }
 
@@ -155,7 +155,7 @@ mod tests {
     fn test_c_api_version() {
         let version_ptr = sogood_get_version();
         let version_cstr = unsafe { CStr::from_ptr(version_ptr) };
-        assert_eq!(version_cstr.to_str().unwrap(), "0.1.0");
+        assert_eq!(version_cstr.to_str().unwrap(), env!("CARGO_PKG_VERSION"));
     }
 
     #[test]

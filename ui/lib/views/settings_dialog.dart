@@ -30,6 +30,8 @@ void showSettingsDialog(
 }
 
 class SettingsDialog extends StatefulWidget {
+  static const String appVersion = '1.0.2';
+
   final ReaderController controller;
   final SettingsTab initialTab;
 
@@ -323,7 +325,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             child: Text(
-              'SuperGoodViewer v0.1.0',
+              'SuperGoodViewer v${SettingsDialog.appVersion}',
               style: TextStyle(
                 fontSize: 10.5,
                 color: isDark ? Colors.white38 : Colors.black38,
@@ -1861,7 +1863,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ),
               const SizedBox(height: 4),
               Text(
-                '版本 0.1.0 (Build 2026.09)',
+                '版本 ${SettingsDialog.appVersion} (Build 2026.09)',
                 style: TextStyle(
                   fontSize: 12,
                   color: isDark ? Colors.white54 : Colors.black45,

@@ -112,10 +112,10 @@ Markdown 源文档 (.md)
 
 ### 💻 客户端直接下载：
 前往 GitHub Releases 页面，即可直接下载预编译安装包：
-👉 **下载地址**：`https://github.com/dotsg/sogoodviewer/releases/tag/v1.0.0`
+👉 **下载地址**：`https://github.com/dotsg/sogoodviewer/releases/latest`
 
-- **🍏 macOS 用户**：下载 `SuperGoodViewer-v1.0.0-macos.dmg`（支持 Apple Silicon M 系列与 Intel Mac）
-- **🪟 Windows 用户**：下载 `SuperGoodViewer-v1.0.0-windows-x64.zip`（免安装绿色便携版，解压双击即用；通过 Windows 11 内置 Prism 引擎，高通骁龙 X Elite / Surface 等 ARM64 设备同样免配置极速运行）
+- **🍏 macOS 用户**：下载 `SuperGoodViewer-macos.dmg`（支持 Apple Silicon M 系列与 Intel Mac）
+- **🪟 Windows 用户**：下载 `SuperGoodViewer-windows-x64.zip`（免安装绿色便携版，解压双击即用；通过 Windows 11 内置 Prism 引擎，高通骁龙 X Elite / Surface 等 ARM64 设备同样免配置极速运行）
 
 ---
 
