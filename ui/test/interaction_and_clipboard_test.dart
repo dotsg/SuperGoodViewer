@@ -80,8 +80,19 @@ void main() {
       expect(p1.hashCode, equals(p2.hashCode));
       expect(p1 == p3, isFalse);
 
-      final delegate = p1.create();
-      expect(delegate, isNotNull);
+      SuperGoodScrollInteractionDelegate? createdDelegate;
+      final providerWithCallback = SuperGoodScrollInteractionDelegateProvider(
+        onDelegateCreated: (d) => createdDelegate = d,
+      );
+      final delegate2 = providerWithCallback.create();
+      expect(createdDelegate, equals(delegate2));
+      delegate2.dispose();
+    });
+
+    test('SuperGoodScrollInteractionDelegate.scrollByScreenDelta handles uninitialized controller safely', () {
+      final delegate = SuperGoodScrollInteractionDelegate(panFriction: 13.5, zoomFriction: 12.0);
+      // Calling scrollByScreenDelta before init should safely no-op without error
+      expect(() => delegate.scrollByScreenDelta(const Offset(0, -120)), returnsNormally);
       delegate.dispose();
     });
   });

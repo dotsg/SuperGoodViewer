@@ -465,17 +465,23 @@ class SuperGoodZoomStepsDelegate implements PdfViewerZoomStepsDelegate {
 class SuperGoodScrollInteractionDelegateProvider extends PdfViewerScrollInteractionDelegateProvider {
   final double panFriction;
   final double zoomFriction;
+  final void Function(SuperGoodScrollInteractionDelegate delegate)? onDelegateCreated;
 
   const SuperGoodScrollInteractionDelegateProvider({
     this.panFriction = 13.5,
     this.zoomFriction = 12.0,
+    this.onDelegateCreated,
   });
 
   @override
-  PdfViewerScrollInteractionDelegate create() => _SuperGoodScrollInteractionDelegate(
-        panFriction: panFriction,
-        zoomFriction: zoomFriction,
-      );
+  PdfViewerScrollInteractionDelegate create() {
+    final delegate = SuperGoodScrollInteractionDelegate(
+      panFriction: panFriction,
+      zoomFriction: zoomFriction,
+    );
+    onDelegateCreated?.call(delegate);
+    return delegate;
+  }
 
   @override
   bool operator ==(Object other) =>
@@ -488,8 +494,8 @@ class SuperGoodScrollInteractionDelegateProvider extends PdfViewerScrollInteract
   int get hashCode => Object.hash(panFriction, zoomFriction);
 }
 
-class _SuperGoodScrollInteractionDelegate implements PdfViewerScrollInteractionDelegate {
-  _SuperGoodScrollInteractionDelegate({
+class SuperGoodScrollInteractionDelegate implements PdfViewerScrollInteractionDelegate {
+  SuperGoodScrollInteractionDelegate({
     required this.panFriction,
     required this.zoomFriction,
   });
@@ -577,6 +583,55 @@ class _SuperGoodScrollInteractionDelegate implements PdfViewerScrollInteractionD
         final boost = math.pow(freqFactor, 1.25) * math.min(3.5, speed * 1.5);
         multiplier = (1.0 + boost).clamp(1.0, 4.5);
         _currentMultiplier = math.max(_currentMultiplier * 0.75, multiplier);
+      } else {
+        _currentMultiplier = 1.0;
+      }
+    } else {
+      _currentMultiplier = 1.0;
+    }
+    _lastPanEventTime = now;
+
+    final effectiveDelta = delta * _currentMultiplier;
+    _panTarget = _panTarget! + effectiveDelta;
+
+    if (_panTicker == null) {
+      _lastPanFrameTime = null;
+      _panTicker = vsync.createTicker(_onPanTick)..start();
+    }
+  }
+
+  /// Smoothly scrolls the canvas by a logical screen delta (e.g. from keyboard arrow keys or page navigation).
+  /// Unlike goToPosition, modifying the matrix directly preserves existing rendered bitmap tiles and
+  /// prevents white blank flashing or flickering.
+  void scrollByScreenDelta(Offset delta) {
+    final controller = _controller;
+    final vsync = _vsync;
+    if (controller == null || !controller.isReady || vsync == null) {
+      return;
+    }
+
+    // Stop zoom if panning starts
+    _zoomTicker?.dispose();
+    _zoomTicker = null;
+    _zoomTarget = null;
+
+    if (_panTarget == null) {
+      final currentTrans = controller.value.getTranslation();
+      _panTarget = Offset(currentTrans.x, currentTrans.y);
+    }
+
+    // Key repeat acceleration:
+    // When arrow keys are held down or pressed in quick succession (< 140ms),
+    // scale delta with smooth physics acceleration
+    final now = DateTime.now();
+    double multiplier = 1.0;
+    if (_lastPanEventTime != null) {
+      final intervalMs = now.difference(_lastPanEventTime!).inMicroseconds / 1000.0;
+      if (intervalMs < 140.0) {
+        final freqFactor = (140.0 - intervalMs) / 140.0;
+        final boost = math.pow(freqFactor, 1.2) * 1.5;
+        multiplier = (1.0 + boost).clamp(1.0, 3.5);
+        _currentMultiplier = math.max(_currentMultiplier * 0.8, multiplier);
       } else {
         _currentMultiplier = 1.0;
       }
@@ -742,6 +797,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   ];
   final List<Uint8List?> _slotBytes = [null, null];
   final List<int> _slotDocHash = [0, 0];
+  final List<SuperGoodScrollInteractionDelegate?> _scrollDelegates = [null, null];
   bool _isRestoringScroll = false;
   bool _isProgrammaticZooming = false;
   double _currentZoom = 1.0;
@@ -1185,6 +1241,15 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   }
 
   Future<void> scrollByDelta(double deltaY) async {
+    final delegate = _scrollDelegates[_activeSlot];
+    if (delegate != null && _pdfController.isReady) {
+      final zoom = currentZoom;
+      // In screen coordinates, scrolling DOWN (deltaY > 0) translates the viewport UP (negative Y)
+      final screenDeltaY = -deltaY * zoom;
+      delegate.scrollByScreenDelta(Offset(0, screenDeltaY));
+      return;
+    }
+
     if (!_pdfController.isReady) return;
     final currentPos = _pdfController.visibleRect.topLeft;
     final targetY = (currentPos.dy + deltaY).clamp(0.0, _pdfController.documentSize.height);
@@ -1448,7 +1513,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       params: PdfViewerParams(
         backgroundColor: canvasBg,
         scrollByMouseWheel: 1.0,
-        interactionDelegateProvider: const SuperGoodScrollInteractionDelegateProvider(),
+        interactionDelegateProvider: SuperGoodScrollInteractionDelegateProvider(
+          onDelegateCreated: (delegate) => _scrollDelegates[slotIndex] = delegate,
+        ),
         margin: isFluid ? 8.0 : 10.0,
         boundaryMargin: isFluid
             ? const EdgeInsets.only(top: 36, bottom: 24, left: 0, right: 0)
@@ -1462,7 +1529,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           offset: const Offset(0, 3),
         ),
         behaviorControlParams: const PdfViewerBehaviorControlParams(
-          enableLowResolutionPagePreview: false,
+          enableLowResolutionPagePreview: true,
           trailingPageLoadingDelay: Duration.zero,
           pageImageCachingDelay: Duration.zero,
           partialImageLoadingDelay: Duration.zero,
