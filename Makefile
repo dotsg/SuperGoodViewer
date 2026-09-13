@@ -81,7 +81,7 @@ build-windows-arm64:
 	@cd core && cargo build --release --lib --target aarch64-pc-windows-msvc
 	@echo "==> Configuring and building Flutter Windows ARM64 target..."
 	@cd ui && $(FLUTTER) build windows --config-only
-	@cmake -S ui/windows -B ui/build/windows_arm64 -G "Visual Studio 17 2022" -A ARM64 -DFLUTTER_TARGET_PLATFORM=windows-arm64
+	@cmake -S ui/windows -B ui/build/windows_arm64 -A ARM64 -DFLUTTER_TARGET_PLATFORM=windows-arm64
 	@cmake --build ui/build/windows_arm64 --config Release --target INSTALL
 	@echo "==> Injecting Rust ARM64 DLL & CLI scripts into Windows ARM64 bundle..."
 	@cp core/target/aarch64-pc-windows-msvc/release/sogood_core.dll ui/build/windows_arm64/runner/Release/
