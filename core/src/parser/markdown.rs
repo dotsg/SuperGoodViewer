@@ -202,7 +202,7 @@ pub fn convert_markdown_to_typst(
     };
     let page_height = if is_fluid { "auto".to_string() } else { "841.89pt".to_string() };
     let page_margin = if is_fluid {
-        "(x: 24pt, top: 0pt, bottom: 0pt)"
+        "(x: 24pt, top: 0pt, bottom: 56pt)"
     } else {
         "(x: 2cm, top: 2.5cm, bottom: 2.5cm)"
     };
@@ -870,10 +870,11 @@ Local image with dark border:
             ..Default::default()
         };
 
-        // 1. Short document uses auto height
+        // 1. Short document uses auto height and bottom padding
         let short_md = "# Quick Note\n\nShort content.";
         let short_parsed = convert_markdown_to_typst(short_md, "Short", &fluid_opts);
         assert!(short_parsed.typst_source.contains("height: auto"));
+        assert!(short_parsed.typst_source.contains("bottom: 56pt"));
 
         // 2. Medium/Long document also uses auto height so that the final page never has blank void
         let mut long_md = String::new();
@@ -882,5 +883,6 @@ Local image with dark border:
         }
         let long_parsed = convert_markdown_to_typst(&long_md, "Long", &fluid_opts);
         assert!(long_parsed.typst_source.contains("height: auto"));
+        assert!(long_parsed.typst_source.contains("bottom: 56pt"));
     }
 }
