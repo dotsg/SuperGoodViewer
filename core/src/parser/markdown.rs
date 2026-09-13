@@ -99,6 +99,71 @@ fn slugify_heading(text: &str) -> (String, Vec<String>) {
     (gfm, secondary)
 }
 
+/// Estimates the rendered vertical height of a Markdown document in points.
+///
+/// Used in fluid mode to dynamically determine whether to use `height: auto`
+/// (for short documents, eliminating trailing blank void) or a bounded page height
+/// (for long documents, enabling page-level virtualization and preventing GPU texture overflow).
+pub fn estimate_markdown_rendered_height(markdown: &str, font_size: f32) -> f32 {
+    let font_size = if font_size > 0.0 { font_size } else { 10.5 };
+    let line_height = (font_size * 1.65).max(14.0);
+    let mut total_height: f32 = 24.0; // initial padding / breathing room
+    let mut in_code_block = false;
+    let mut in_mermaid_block = false;
+
+    for line in markdown.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            if !in_code_block {
+                in_code_block = true;
+                if trimmed.starts_with("```mermaid") {
+                    in_mermaid_block = true;
+                    total_height += 250.0;
+                } else {
+                    total_height += 24.0; // code block vertical padding
+                }
+            } else {
+                in_code_block = false;
+                in_mermaid_block = false;
+            }
+            continue;
+        }
+
+        if in_mermaid_block {
+            continue;
+        }
+
+        if in_code_block {
+            total_height += line_height * 0.9;
+            continue;
+        }
+
+        if trimmed.is_empty() {
+            total_height += line_height * 0.6;
+        } else if trimmed.starts_with("# ") {
+            total_height += 65.0;
+        } else if trimmed.starts_with("## ") {
+            total_height += 50.0;
+        } else if trimmed.starts_with("### ") {
+            total_height += 40.0;
+        } else if trimmed.starts_with("#### ") {
+            total_height += 35.0;
+        } else if trimmed.starts_with('|') && trimmed.ends_with('|') {
+            total_height += 28.0;
+        } else if trimmed == "---" || trimmed == "***" || trimmed == "___" {
+            total_height += 24.0;
+        } else if trimmed.starts_with("$$") {
+            total_height += 60.0;
+        } else {
+            let char_count = trimmed.chars().count();
+            let wrapped_lines = ((char_count + 79) / 80).max(1);
+            total_height += wrapped_lines as f32 * line_height;
+        }
+    }
+
+    total_height
+}
+
 pub fn convert_markdown_to_typst(
     markdown: &str,
     title: &str,
@@ -135,7 +200,17 @@ pub fn convert_markdown_to_typst(
     } else {
         "595.28pt".to_string()
     };
-    let page_height = if is_fluid { "auto".to_string() } else { "841.89pt".to_string() };
+    let estimated_height = estimate_markdown_rendered_height(markdown, options.font_size);
+    let is_short_document = estimated_height <= 3000.0;
+    let page_height = if is_fluid {
+        if is_short_document {
+            "auto".to_string()
+        } else {
+            "2500pt".to_string()
+        }
+    } else {
+        "841.89pt".to_string()
+    };
     let page_margin = if is_fluid {
         "(x: 24pt, top: 0pt, bottom: 0pt)"
     } else {
@@ -796,5 +871,35 @@ Local image with dark border:
         for (name, _) in &parsed.virtual_files {
             assert!(name.to_string_lossy().contains("mermaid_dark_"));
         }
+    }
+
+    #[test]
+    fn test_adaptive_fluid_page_height_short_and_long() {
+        // 1. Short document should use auto height to avoid trailing blank void
+        let short_md = r#"
+# Quick Note
+Here is a brief memo with just two paragraphs.
+Everything should fit neatly on one continuous page without blank trailing space.
+"#;
+        let short_height = estimate_markdown_rendered_height(short_md, 10.5);
+        assert!(short_height < 500.0);
+
+        let fluid_opts = RenderOptions {
+            mode: "fluid".to_string(),
+            ..Default::default()
+        };
+        let short_parsed = convert_markdown_to_typst(short_md, "Short", &fluid_opts);
+        assert!(short_parsed.typst_source.contains("height: auto"));
+
+        // 2. Long document should use bounded 2500pt page height for virtualization & GPU texture safety
+        let mut long_md = String::new();
+        for i in 0..100 {
+            long_md.push_str(&format!("## Section {}\n\nThis is paragraph content for section {} to simulate a comprehensive multi-chapter document with plenty of text.\n\n", i, i));
+        }
+        let long_height = estimate_markdown_rendered_height(&long_md, 10.5);
+        assert!(long_height > 3000.0);
+
+        let long_parsed = convert_markdown_to_typst(&long_md, "Long", &fluid_opts);
+        assert!(long_parsed.typst_source.contains("height: 2500pt"));
     }
 }
