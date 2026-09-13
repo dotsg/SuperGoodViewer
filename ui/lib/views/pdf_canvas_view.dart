@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:vector_math/vector_math_64.dart' as vec;
 import '../controllers/reader_controller.dart';
 import '../services/startup_metrics.dart';
 
@@ -364,25 +366,9 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
         Offset targetCenter;
         final layout = newState.layout;
         final currentPage = controller.pageNumber ?? 1;
-        if (fitMode == AutoFitMode.fitPage && layout != null && layout.pageLayouts.isNotEmpty) {
-          if (isTwoPage && layout.pageLayouts.length > 1) {
-            final spreadIndex = (currentPage - 1) ~/ 2;
-            final leftIdx = (spreadIndex * 2).clamp(0, layout.pageLayouts.length - 1);
-            final leftRect = layout.pageLayouts[leftIdx];
-            final rightRect = (leftIdx + 1 < layout.pageLayouts.length)
-                ? layout.pageLayouts[leftIdx + 1]
-                : leftRect;
-            targetCenter = Offset(
-              (leftRect.left + rightRect.right) / 2,
-              (leftRect.center.dy + rightRect.center.dy) / 2,
-            );
-          } else {
-            final pageIdx = (currentPage - 1).clamp(0, layout.pageLayouts.length - 1);
-            targetCenter = layout.pageLayouts[pageIdx].center;
-          }
-        } else if (fitMode == AutoFitMode.fitWidth && layout != null && layout.pageLayouts.isNotEmpty) {
-          final oldCenterInDoc = controller.value.calcPosition(oldSize);
-          double targetCenterX = oldCenterInDoc.dx;
+        final oldCenterInDoc = controller.value.calcPosition(oldSize);
+        if (layout != null && layout.pageLayouts.isNotEmpty) {
+          double targetCenterX;
           if (isTwoPage && layout.pageLayouts.length > 1) {
             final spreadIndex = (currentPage - 1) ~/ 2;
             final leftIdx = (spreadIndex * 2).clamp(0, layout.pageLayouts.length - 1);
@@ -397,7 +383,7 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
           }
           targetCenter = Offset(targetCenterX, oldCenterInDoc.dy);
         } else {
-          targetCenter = controller.value.calcPosition(oldSize);
+          targetCenter = oldCenterInDoc;
         }
 
         final newMatrix = controller.calcMatrixFor(
@@ -461,6 +447,254 @@ class SuperGoodZoomStepsDelegate implements PdfViewerZoomStepsDelegate {
     }
     stops.sort();
     return stops;
+  }
+}
+
+/// Physics-based desktop scroll delegate with velocity acceleration tailor-made for SuperGoodViewer.
+///
+/// Provides:
+/// 1. Dynamic Mouse Wheel Acceleration:
+///    - For slow scrolls (reading): 1:1 precision without jumping.
+///    - For rapid scrolls (e.g. Logitech MX Master 3 free-spin or quick flicking):
+///      Dynamically accelerates up to 4.5x based on wheel event frequency and velocity.
+/// 2. Buttery Smooth Exponential Decay:
+///    - Runs at display refresh rate (60/120Hz ProMotion on macOS).
+///    - Accumulates incoming wheel deltas into a smooth physics target.
+/// 3. Zero-overshoot Boundary Clamping:
+///    - Prevents bouncing or getting stuck at document edges.
+class SuperGoodScrollInteractionDelegateProvider extends PdfViewerScrollInteractionDelegateProvider {
+  final double panFriction;
+  final double zoomFriction;
+
+  const SuperGoodScrollInteractionDelegateProvider({
+    this.panFriction = 13.5,
+    this.zoomFriction = 12.0,
+  });
+
+  @override
+  PdfViewerScrollInteractionDelegate create() => _SuperGoodScrollInteractionDelegate(
+        panFriction: panFriction,
+        zoomFriction: zoomFriction,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SuperGoodScrollInteractionDelegateProvider &&
+          other.panFriction == panFriction &&
+          other.zoomFriction == zoomFriction;
+
+  @override
+  int get hashCode => Object.hash(panFriction, zoomFriction);
+}
+
+class _SuperGoodScrollInteractionDelegate implements PdfViewerScrollInteractionDelegate {
+  _SuperGoodScrollInteractionDelegate({
+    required this.panFriction,
+    required this.zoomFriction,
+  });
+
+  final double panFriction;
+  final double zoomFriction;
+
+  PdfViewerController? _controller;
+  TickerProvider? _vsync;
+
+  // --- Pan Physics State ---
+  Ticker? _panTicker;
+  Offset? _panTarget;
+  Duration? _lastPanFrameTime;
+
+  // Acceleration tracking
+  DateTime? _lastPanEventTime;
+  double _currentMultiplier = 1.0;
+
+  // --- Zoom Physics State ---
+  Ticker? _zoomTicker;
+  double? _zoomTarget;
+  Duration? _lastZoomFrameTime;
+  Offset? _lastFocalPoint;
+
+  static const double _kEpsilon = 0.5;
+  static const double _kScaleEpsilon = 0.0001;
+
+  @override
+  void init(PdfViewerController controller, TickerProvider vsync) {
+    _controller = controller;
+    _vsync = vsync;
+  }
+
+  @override
+  void dispose() {
+    stop();
+    _controller = null;
+    _vsync = null;
+  }
+
+  @override
+  void stop() {
+    _panTicker?.dispose();
+    _panTicker = null;
+    _panTarget = null;
+    _lastPanFrameTime = null;
+    _lastPanEventTime = null;
+    _currentMultiplier = 1.0;
+
+    _zoomTicker?.dispose();
+    _zoomTicker = null;
+    _zoomTarget = null;
+    _lastZoomFrameTime = null;
+    _lastFocalPoint = null;
+  }
+
+  @override
+  void pan(Offset delta, PdfViewerLayoutMetrics layoutMetrics) {
+    final controller = _controller;
+    final vsync = _vsync;
+    if (controller == null || !controller.isReady || vsync == null) {
+      return;
+    }
+
+    // Stop zoom if panning starts
+    _zoomTicker?.dispose();
+    _zoomTicker = null;
+    _zoomTarget = null;
+
+    if (_panTarget == null) {
+      final currentTrans = controller.value.getTranslation();
+      _panTarget = Offset(currentTrans.x, currentTrans.y);
+    }
+
+    // Mouse wheel velocity acceleration curve:
+    // When wheel events arrive in rapid succession (< 110ms), scale the delta smoothly
+    final now = DateTime.now();
+    double multiplier = 1.0;
+    if (_lastPanEventTime != null) {
+      final intervalMs = now.difference(_lastPanEventTime!).inMicroseconds / 1000.0;
+      if (intervalMs < 110.0) {
+        final freqFactor = (110.0 - intervalMs) / 110.0;
+        final speed = delta.distance / math.max(1.0, intervalMs);
+        final boost = math.pow(freqFactor, 1.25) * math.min(3.5, speed * 1.5);
+        multiplier = (1.0 + boost).clamp(1.0, 4.5);
+        _currentMultiplier = math.max(_currentMultiplier * 0.75, multiplier);
+      } else {
+        _currentMultiplier = 1.0;
+      }
+    } else {
+      _currentMultiplier = 1.0;
+    }
+    _lastPanEventTime = now;
+
+    final effectiveDelta = delta * _currentMultiplier;
+    _panTarget = _panTarget! + effectiveDelta;
+
+    if (_panTicker == null) {
+      _lastPanFrameTime = null;
+      _panTicker = vsync.createTicker(_onPanTick)..start();
+    }
+  }
+
+  void _onPanTick(Duration elapsed) {
+    final controller = _controller;
+    if (controller == null || _panTarget == null) {
+      _panTicker?.dispose();
+      _panTicker = null;
+      return;
+    }
+
+    final dt = _lastPanFrameTime == null
+        ? (1.0 / 60.0)
+        : (elapsed - _lastPanFrameTime!).inMicroseconds / 1000000.0;
+    _lastPanFrameTime = elapsed;
+
+    final currentTransVec = controller.value.getTranslation();
+    final currentTrans = Offset(currentTransVec.x, currentTransVec.y);
+    final diff = _panTarget! - currentTrans;
+
+    if (diff.distance < _kEpsilon) {
+      _applyTranslation(_panTarget!);
+      _panTicker?.dispose();
+      _panTicker = null;
+      _panTarget = null;
+      _lastPanFrameTime = null;
+      return;
+    }
+
+    final alpha = 1.0 - math.exp(-panFriction * dt);
+    final newTrans = currentTrans + diff * alpha;
+    _applyTranslation(newTrans);
+  }
+
+  void _applyTranslation(Offset translation) {
+    final controller = _controller;
+    if (controller == null) return;
+
+    final currentMatrix = controller.value;
+    final newMatrix = currentMatrix.clone();
+    newMatrix.setTranslation(vec.Vector3(translation.dx, translation.dy, 0.0));
+
+    controller.value = controller.makeMatrixInSafeRange(newMatrix, forceClamp: true);
+
+    final actualTransVec = controller.value.getTranslation();
+    final actualTrans = Offset(actualTransVec.x, actualTransVec.y);
+
+    if (_panTarget != null) {
+      if ((actualTrans.dx - translation.dx).abs() > 1.0) {
+        _panTarget = Offset(actualTrans.dx, _panTarget!.dy);
+      }
+      if ((actualTrans.dy - translation.dy).abs() > 1.0) {
+        _panTarget = Offset(_panTarget!.dx, actualTrans.dy);
+      }
+    }
+  }
+
+  @override
+  void zoom(double scaleFactor, Offset focalPoint, PdfViewerLayoutMetrics layoutMetrics) {
+    final controller = _controller;
+    final vsync = _vsync;
+    if (controller == null || !controller.isReady || vsync == null) return;
+
+    _panTicker?.dispose();
+    _panTicker = null;
+    _panTarget = null;
+
+    final currentZoom = controller.currentZoom;
+    _zoomTarget ??= currentZoom;
+    _zoomTarget = (_zoomTarget! * scaleFactor).clamp(layoutMetrics.minScale, layoutMetrics.maxScale);
+    _lastFocalPoint = focalPoint;
+
+    if (_zoomTicker == null) {
+      _lastZoomFrameTime = null;
+      _zoomTicker = vsync.createTicker(_onZoomTick)..start();
+    }
+  }
+
+  void _onZoomTick(Duration elapsed) {
+    final controller = _controller;
+    if (controller == null || _zoomTarget == null || _lastFocalPoint == null) {
+      _zoomTicker?.dispose();
+      _zoomTicker = null;
+      return;
+    }
+
+    final dt = _lastZoomFrameTime == null ? 1.0 / 60.0 : (elapsed - _lastZoomFrameTime!).inMicroseconds / 1000000.0;
+    _lastZoomFrameTime = elapsed;
+
+    final currentZoom = controller.currentZoom;
+    final diff = _zoomTarget! - currentZoom;
+
+    if (diff.abs() < _kScaleEpsilon) {
+      controller.zoomOnLocalPosition(localPosition: _lastFocalPoint!, newZoom: _zoomTarget!, duration: Duration.zero);
+      _zoomTicker?.dispose();
+      _zoomTicker = null;
+      _zoomTarget = null;
+      _lastZoomFrameTime = null;
+      return;
+    }
+
+    final alpha = 1.0 - math.exp(-zoomFriction * dt);
+    final newZoom = currentZoom + diff * alpha;
+    controller.zoomOnLocalPosition(localPosition: _lastFocalPoint!, newZoom: newZoom, duration: Duration.zero);
   }
 }
 
@@ -631,12 +865,13 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       final isTwoPage = widget.controller.isTwoPage && !isFluid;
       final isAtTop = isFluid
           ? (currentTop <= 20.0)
-          : (pageNum <= (isTwoPage ? 2 : 1));
+          : (pageNum <= (isTwoPage ? 2 : 1) && currentTop <= 20.0);
+      final effectiveAtTop = isAtTop && deltaY <= 0.5;
 
-      if (deltaY.abs() > 0.5 || isAtTop != _lastReportedAtTop) {
+      if (deltaY.abs() > 0.5 || effectiveAtTop != _lastReportedAtTop) {
         _lastVisibleTop = currentTop;
-        _lastReportedAtTop = isAtTop;
-        widget.onScrollChanged?.call(deltaY: deltaY, isAtTop: isAtTop);
+        _lastReportedAtTop = effectiveAtTop;
+        widget.onScrollChanged?.call(deltaY: deltaY, isAtTop: effectiveAtTop);
       }
     }
   }
@@ -1212,10 +1447,12 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       controller: ctrl,
       params: PdfViewerParams(
         backgroundColor: canvasBg,
+        scrollByMouseWheel: 1.0,
+        interactionDelegateProvider: const SuperGoodScrollInteractionDelegateProvider(),
         margin: isFluid ? 8.0 : 10.0,
         boundaryMargin: isFluid
-            ? const EdgeInsets.only(top: 8, bottom: 24, left: 0, right: 0)
-            : const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+            ? const EdgeInsets.only(top: 36, bottom: 24, left: 0, right: 0)
+            : const EdgeInsets.only(top: 36, bottom: 16, left: 8, right: 8),
         pageAnchor: PdfPageAnchor.top,
         underflowAnchor: PdfPageAnchor.top,
         pageDropShadow: BoxShadow(

@@ -69,4 +69,20 @@ void main() {
       expect(decoded, contains('😀'));
     });
   });
+
+  group('Scroll Physics & Acceleration Delegate Tests', () {
+    test('SuperGoodScrollInteractionDelegateProvider equality and instance creation', () {
+      const p1 = SuperGoodScrollInteractionDelegateProvider(panFriction: 13.5, zoomFriction: 12.0);
+      const p2 = SuperGoodScrollInteractionDelegateProvider(panFriction: 13.5, zoomFriction: 12.0);
+      const p3 = SuperGoodScrollInteractionDelegateProvider(panFriction: 10.0, zoomFriction: 12.0);
+
+      expect(p1, equals(p2));
+      expect(p1.hashCode, equals(p2.hashCode));
+      expect(p1 == p3, isFalse);
+
+      final delegate = p1.create();
+      expect(delegate, isNotNull);
+      delegate.dispose();
+    });
+  });
 }
