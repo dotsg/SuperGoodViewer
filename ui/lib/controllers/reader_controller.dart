@@ -433,24 +433,47 @@ class ReaderController extends ChangeNotifier {
   }
 
   Timer? _debounceTimer;
+  DateTime? _firstStreamEventTime;
+  static const _debounceDelay = Duration(milliseconds: 150);
+  static const _maxWaitDelay = Duration(milliseconds: 500);
+
   void _onExternalFileModified() {
-    _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 400), () async {
-      if (_currentFilePath != null) {
-        final file = File(_currentFilePath!);
-        if (await file.exists()) {
-          try {
-            final bytes = await file.readAsBytes();
-            _currentMarkdown = utf8.decode(bytes, allowMalformed: true);
-            _extractOutline(_currentMarkdown);
-            startReloading();
-            await compileDocument();
-          } catch (e) {
-            debugPrint('Failed to reload modified file: $e');
-          }
+    final now = DateTime.now();
+    _firstStreamEventTime ??= now;
+
+    final elapsed = now.difference(_firstStreamEventTime!);
+    if (elapsed >= _maxWaitDelay) {
+      _debounceTimer?.cancel();
+      _debounceTimer = null;
+      _firstStreamEventTime = null;
+      _triggerExternalFileReload();
+    } else {
+      _debounceTimer?.cancel();
+      final remaining = _maxWaitDelay - elapsed;
+      final delay = remaining < _debounceDelay ? remaining : _debounceDelay;
+      _debounceTimer = Timer(delay, () {
+        _debounceTimer = null;
+        _firstStreamEventTime = null;
+        _triggerExternalFileReload();
+      });
+    }
+  }
+
+  Future<void> _triggerExternalFileReload() async {
+    if (_currentFilePath != null) {
+      final file = File(_currentFilePath!);
+      if (await file.exists()) {
+        try {
+          final bytes = await file.readAsBytes();
+          _currentMarkdown = utf8.decode(bytes, allowMalformed: true);
+          _extractOutline(_currentMarkdown);
+          startReloading();
+          await compileDocument();
+        } catch (e) {
+          debugPrint('Failed to reload modified file: $e');
         }
       }
-    });
+    }
   }
 
   Future<void> compileDocument() async {

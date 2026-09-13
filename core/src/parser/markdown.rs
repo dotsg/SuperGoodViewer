@@ -135,7 +135,7 @@ pub fn convert_markdown_to_typst(
     } else {
         "595.28pt".to_string()
     };
-    let page_height = if is_fluid { "1600pt".to_string() } else { "841.89pt".to_string() };
+    let page_height = if is_fluid { "6000pt".to_string() } else { "841.89pt".to_string() };
     let page_margin = if is_fluid {
         "(x: 24pt, top: 0pt, bottom: 0pt)"
     } else {
@@ -328,6 +328,10 @@ pub fn convert_markdown_to_typst(
         body_font_str = body_font_str,
         code_font_str = code_font_str
     ));
+
+    if is_fluid {
+        out.push_str("#v(12pt)\n");
+    }
 
     // 2. Parse Markdown AST with pulldown-cmark
     let mut parser_opts = Options::empty();

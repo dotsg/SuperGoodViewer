@@ -23,7 +23,7 @@ PdfPageLayout _layoutFluidPages(List<PdfPage> pages, PdfViewerParams params) {
   var y = 0.0;
   for (var i = 0; i < pages.length; i++) {
     final page = pages[i];
-    final rect = Rect.fromLTWH((width - page.width) / 2, y, page.width, page.height);
+    final rect = Rect.fromLTWH(0, y, width, page.height + 0.5);
     pageLayout.add(rect);
     y += page.height;
   }
@@ -159,7 +159,7 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
   });
 
   @override
-  double get onePassRenderingScaleThreshold => 200 / 72;
+  double get onePassRenderingScaleThreshold => isFluid ? 1.2 : 200 / 72;
 
   @override
   void init(PdfViewerController controller) {
@@ -811,6 +811,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   int _lastReportedCount = 1;
   double _lastVisibleTop = 0.0;
   bool _lastReportedAtTop = true;
+  bool _renderOptionsChanged = false;
 
   PdfViewerController get _pdfController => _controllers[_activeSlot];
   double get currentZoom => _pdfController.isReady ? _pdfController.currentZoom : _currentZoom;
@@ -854,6 +855,13 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     }
 
     if (newBytes.hashCode != _slotDocHash[_activeSlot]) {
+      final optionsChanged = widget.controller.renderOptions != oldWidget.controller.renderOptions ||
+          widget.controller.isTwoPage != oldWidget.controller.isTwoPage ||
+          widget.documentTitle != oldWidget.documentTitle;
+      if (optionsChanged) {
+        _renderOptionsChanged = true;
+      }
+
       if (widget.controller.renderOptions.mode != oldWidget.controller.renderOptions.mode ||
           widget.controller.isTwoPage != oldWidget.controller.isTwoPage ||
           widget.documentTitle != oldWidget.documentTitle) {
@@ -949,9 +957,19 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       final targetOffset = widget.controller.lastScrollOffset;
       final targetRatio = widget.controller.lastScrollRatio;
       if (docSize.height > 0) {
-        final targetY = targetOffset > 0.0
-            ? targetOffset.clamp(0.0, docSize.height)
-            : (targetRatio > 0.0 ? (targetRatio * docSize.height).clamp(0.0, docSize.height) : 0.0);
+        final visibleHeight = ctrl.visibleRect.height > 0 ? ctrl.visibleRect.height : 600.0;
+        final maxScroll = math.max(0.0, docSize.height - visibleHeight);
+
+        // When render options changed (font size, font family, theme, window width),
+        // total document height changed, so ratio is the accurate anchor.
+        // When options are identical (streaming content append / external edit),
+        // use absolute offset to prevent reading position from jumping.
+        final useOffset = !_renderOptionsChanged && targetOffset > 0.0;
+        final targetY = useOffset
+            ? targetOffset.clamp(0.0, maxScroll)
+            : (targetRatio > 0.0 ? (targetRatio * docSize.height).clamp(0.0, maxScroll) : 0.0);
+
+        _renderOptionsChanged = false;
 
         if (targetY > 0.0) {
           _isRestoringScroll = true;
@@ -971,6 +989,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         }
       }
     } else {
+      _renderOptionsChanged = false;
       final targetPage = widget.controller.lastPageNumber;
       if (targetPage > 1 && targetPage <= ctrl.pageCount) {
         _isRestoringScroll = true;
@@ -1543,7 +1562,16 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         boundaryMargin: isFluid
             ? const EdgeInsets.only(top: 36, bottom: 24, left: 0, right: 0)
             : const EdgeInsets.only(top: 36, bottom: 16, left: 8, right: 8),
-        verticalCacheExtent: 1.0,
+        maxImageBytesCachedOnMemory: 256 * 1024 * 1024,
+        verticalCacheExtent: 1.5,
+        pageBackgroundPaintCallbacks: [
+          (canvas, rect, page) {
+            canvas.drawRect(
+              rect,
+              Paint()..color = canvasBg,
+            );
+          },
+        ],
         pageAnchor: PdfPageAnchor.top,
         underflowAnchor: PdfPageAnchor.top,
         pageDropShadow: isFluid

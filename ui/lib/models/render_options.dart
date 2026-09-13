@@ -54,5 +54,19 @@ class RenderOptions {
     }
     return jsonEncode(map);
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RenderOptions &&
+          other.mode == mode &&
+          other.theme == theme &&
+          other.viewportWidth == viewportWidth &&
+          other.fontSize == fontSize &&
+          other.bodyFont == bodyFont &&
+          other.codeFont == codeFont;
+
+  @override
+  int get hashCode => Object.hash(mode, theme, viewportWidth, fontSize, bodyFont, codeFont);
 }
 
