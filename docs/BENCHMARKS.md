@@ -51,7 +51,7 @@ Typora              █ 46 MB (外挂依赖系统 WebKit 运行库)
 | `FlutterMacOS.framework`      |  **29 MB**  | Flutter 桌面端原生运行库，提供基于 **Apple Metal Impeller** 的亚像素级 GPU 渲染底座。                                                                                                                                                                                      |
 | `App.framework`               |  **12 MB**  | AOT 高度优化编译的 Dart 业务逻辑及 Cupertino/Zen UI 界面代码。                                                                                                                                                                                                             |
 | `PDFium.framework`            |  **11 MB**  | 经过 Google 工业级验证的高性能 C++ PDF 矢量解析与渲染引擎（pdfrx 绑定）。                                                                                                                                                                                                  |
-| `sogoodviewer` 原生主执行文件 | **436 KB**  | macOS 原生 Cocoa 入口与 Mach-O 执行启动器。                                                                                                                                                                                                                                |
+| `SuperGoodViewer` 原生主执行文件 | **436 KB**  | macOS 原生 Cocoa 入口与 Mach-O 执行启动器。                                                                                                                                                                                                                                |
 | 资源图标与签名                | **~250 KB** | macOS App 图标集 (icns) 与 CodeSignature。                                                                                                                                                                                                                                 |
 
 > **设计说明**：  
@@ -128,7 +128,7 @@ Typora              █ 46 MB (外挂依赖系统 WebKit 运行库)
 
 | 软件名称         | 系统进程架构                                              | 常驻内存 (RSS) | 内存说明                                                                  |
 | ---------------- | --------------------------------------------------------- | :------------: | ------------------------------------------------------------------------- |
-| **SuperGoodViewer** | **1 个原生进程** (`sogoodviewer`)                         |  **~158 MB**   | 单进程自包含；系统字体经内存映射，不计入常驻；峰值约 600 MB               |
+| **SuperGoodViewer** | **1 个原生进程** (`SuperGoodViewer`)                      |  **~158 MB**   | 单进程自包含；系统字体经内存映射，不计入常驻；峰值约 600 MB               |
 | **Typora**       | **2 个独立进程** (`Typora` + `com.apple.WebKit`)          |  **~266 MB**   | 双进程分离，内存随浏览长文档逐渐增加                                      |
 | **Obsidian**     | **4 个独立进程** (Main, Renderer, GPU, Utility)           |  **~627 MB**   | Chromium 多进程沙盒架构，V8 虚拟机内存常驻较高                            |
 | **MarkText**     | **5 个独立进程** (Main, Renderer, GPU, Crashpad, Utility) |  **~715 MB**   | 多进程常驻，空载内存开销明显                                              |

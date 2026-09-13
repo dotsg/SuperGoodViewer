@@ -343,5 +343,5 @@ class _PdfCanvasViewState extends State<PdfCanvasView> {
 * **代码生成工具**：`cargo install flutter_rust_bridge_codegen`
 
 ### 7.2 打包与分发规格
-* **终端无依赖**：编译输出的应用（`sogoodviewer.app` / `.exe` / `AppImage`）内嵌了所有必要的排版内核、数学转译器与图表渲染器，**无需用户主机安装任何第三方工具包**。
+* **终端无依赖**：编译输出的应用（`SuperGoodViewer.app` / `.exe` / `AppImage`）内嵌了所有必要的排版内核、数学转译器与图表渲染器，**无需用户主机安装任何第三方工具包**。
 * **冷启动性能目标**：文档冷启动解析并渲染首屏耗时控制在 **100ms** 以内；本地文件变更热重载控制在 **30ms** 以内。

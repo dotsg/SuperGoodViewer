@@ -5,13 +5,13 @@ all: build test
 # Build Rust dynamic library and Flutter Desktop app
 build: build-core build-app
 	@echo "==> Packaging dylib into macOS App Bundle..."
-	@mkdir -p ui/build/macos/Build/Products/Release/sogoodviewer.app/Contents/Frameworks/
-	@cp core/target/release/libsogood_core.dylib ui/build/macos/Build/Products/Release/sogoodviewer.app/Contents/Frameworks/
+	@mkdir -p ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Frameworks/
+	@cp core/target/release/libsogood_core.dylib ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Frameworks/
 	@echo "==> Packaging CLI script into macOS App Bundle..."
-	@mkdir -p ui/build/macos/Build/Products/Release/sogoodviewer.app/Contents/Resources/bin/
-	@cp ui/bin/sgv ui/build/macos/Build/Products/Release/sogoodviewer.app/Contents/Resources/bin/sgv
-	@chmod +x ui/build/macos/Build/Products/Release/sogoodviewer.app/Contents/Resources/bin/sgv
-	@echo "==> Build complete! Output: ui/build/macos/Build/Products/Release/sogoodviewer.app"
+	@mkdir -p ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/
+	@cp ui/bin/sgv ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv
+	@chmod +x ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv
+	@echo "==> Build complete! Output: ui/build/macos/Build/Products/Release/SuperGoodViewer.app"
 
 build-core:
 	@echo "==> Building Rust sogood_core (release)..."
@@ -47,7 +47,7 @@ dmg: build
 	@echo "==> Preparing macOS DMG staging folder..."
 	@rm -rf build/dmg-staging
 	@mkdir -p build/dmg-staging
-	@cp -R "ui/build/macos/Build/Products/Release/sogoodviewer.app" build/dmg-staging/SuperGoodViewer.app
+	@cp -R "ui/build/macos/Build/Products/Release/SuperGoodViewer.app" build/dmg-staging/SuperGoodViewer.app
 	@ln -s /Applications build/dmg-staging/Applications
 	@echo "==> Creating macOS DMG..."
 	@hdiutil create -volname "超好读 SuperGoodViewer" \

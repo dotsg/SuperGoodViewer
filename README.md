@@ -91,7 +91,7 @@ make run-macos
 make build
 ```
 编译生成的独立应用位于：
-`ui/build/macos/Build/Products/Release/sogoodviewer.app`
+`ui/build/macos/Build/Products/Release/SuperGoodViewer.app`
 
 ---
 
