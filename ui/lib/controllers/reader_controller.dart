@@ -4,7 +4,6 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart';
 import 'package:flutter/scheduler.dart';
 
 import 'package:path/path.dart' as p;
@@ -193,7 +192,7 @@ class ReaderController extends ChangeNotifier {
     if (_errorMessage == message) return;
     _errorMessage = message;
     try {
-      final binding = WidgetsBinding.instance;
+      final binding = SchedulerBinding.instance;
       if (binding.schedulerPhase == SchedulerPhase.persistentCallbacks) {
         binding.addPostFrameCallback((_) {
           if (!_isDisposed) {
@@ -443,6 +442,7 @@ class ReaderController extends ChangeNotifier {
   void _openFileInternal(String filePath, {bool preservePosition = false}) {
     final file = File(filePath);
     if (!file.existsSync()) {
+      _watcherSubscription?.cancel();
       _currentFilePath = filePath;
       _documentTitle = p.basenameWithoutExtension(filePath);
       _currentPdfBytes = null;

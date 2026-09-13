@@ -1760,6 +1760,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   ) {
     final ctrl = _controllers[slotIndex];
     final isPdfDoc = widget.controller.isPdfDocument;
+    final builtForPath = widget.controller.currentFilePath;
     final effectiveFluid = isFluid && !isPdfDoc;
     return PdfViewer.data(
       bytes,
@@ -1855,12 +1856,13 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           showContextMenuAutomatically: false,
         ),
         onDocumentLoadFinished: (documentRef, succeeded) {
-          final srcPath = widget.controller.currentFilePath;
           if (mounted &&
               widget.controller.isPdfDocument &&
-              widget.controller.currentFilePath == srcPath) {
+              widget.controller.currentFilePath == builtForPath) {
             if (succeeded) {
-              widget.controller.setErrorMessage(null);
+              if (widget.controller.errorMessage == 'Failed to load PDF document') {
+                widget.controller.setErrorMessage(null);
+              }
             } else {
               widget.controller.setErrorMessage('Failed to load PDF document');
             }
