@@ -876,7 +876,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     _restoredGeneration = 0;
     _controllers[0].addListener(_onViewerChanged0);
     _controllers[1].addListener(_onViewerChanged1);
-    _startDirectReloadWatchdog();
+    if (widget.pdfBytes != null && widget.pdfBytes!.isNotEmpty) {
+      _startDirectReloadWatchdog();
+    }
   }
 
   void _onViewerChanged0() => _onPdfViewerChanged(0);

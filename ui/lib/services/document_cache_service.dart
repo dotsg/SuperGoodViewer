@@ -133,11 +133,13 @@ class DocumentCacheService {
           } catch (_) {}
         }
         withStats.sort((a, b) => a.value.compareTo(b.value));
-        final toDelete = withStats.take(withStats.length - 40);
-        for (final entry in toDelete) {
-          try {
-            await entry.key.delete();
-          } catch (_) {}
+        if (withStats.length > 40) {
+          final toDelete = withStats.take(withStats.length - 40);
+          for (final entry in toDelete) {
+            try {
+              await entry.key.delete();
+            } catch (_) {}
+          }
         }
       }
     } catch (_) {}
@@ -215,8 +217,6 @@ class DocumentCacheService {
       return CacheClearResult(deletedCount: 0, freedBytes: 0, dirPath: _getCacheDir().path);
     }
   }
-
-
 
   /// Opens the cache directory in the system file manager (Finder on macOS / Explorer on Windows).
   static Future<bool> openCacheDirectory() async {
