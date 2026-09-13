@@ -207,7 +207,8 @@ jobs:
         shell: pwsh
         run: |
           cd ui
-          cmake -S windows -B build/windows_arm64 -A ARM64 -DFLUTTER_TARGET_PLATFORM=windows-arm64
+          $env:JAVA_HOME = ""
+          cmake -S windows -B build/windows_arm64 -A ARM64 -DFLUTTER_TARGET_PLATFORM=windows-arm64 -DCMAKE_DISABLE_FIND_PACKAGE_JNI=TRUE
           cmake --build build/windows_arm64 --config Release --target INSTALL
 
       - name: Package Windows ARM64 Portable ZIP
