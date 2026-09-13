@@ -78,6 +78,10 @@ And another one with single quotes:
       // SVG
       expect(RemoteImageService.isValidImageBytes(utf8.encode('<svg width="100" height="100"></svg>')), isTrue);
       expect(RemoteImageService.isValidImageBytes(utf8.encode('<?xml version="1.0"?><svg></svg>')), isTrue);
+      // SVG with UTF-8 BOM
+      expect(RemoteImageService.isValidImageBytes([0xEF, 0xBB, 0xBF, ...utf8.encode('<?xml version="1.0"?><svg></svg>')]), isTrue);
+      // SVG with <!DOCTYPE svg ...>
+      expect(RemoteImageService.isValidImageBytes(utf8.encode('<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg></svg>')), isTrue);
 
       // Rejections: HTML error page
       expect(RemoteImageService.isValidImageBytes(utf8.encode('<!DOCTYPE html><html><body>Error 403</body></html>')), isFalse);
@@ -127,10 +131,28 @@ And another one with single quotes:
       expect(RemoteImageService.instance.isCached(wechatUrlWithAnchor), isTrue);
     });
 
-    test('pruneCacheIfNeeded evicts oldest modified files when limit is exceeded', () async {
+    test('negative caching prevents retrying failed URLs within TTL', () {
+      RemoteImageService.instance.clearNegativeCache();
+      const failedUrl = 'https://example.com/broken.png';
+
+      expect(RemoteImageService.instance.isRecentlyFailed(failedUrl), isFalse);
+
+      // Trigger negative cache entry
+      RemoteImageService.instance.fetchAndCacheImage(failedUrl);
+
+      // In-memory negative cache check
+      expect(RemoteImageService.instance.isRecentlyFailed(failedUrl), isFalse); // not yet completed
+
+      RemoteImageService.instance.clearNegativeCache();
+    });
+
+    test('pruneCacheIfNeeded evicts oldest modified files when limit is exceeded and cleans orphan tmp files', () async {
+      RemoteImageService.instance.resetPruneThrottle();
+
       final file1 = File(p.join(tempDir.path, 'img1.png'));
       final file2 = File(p.join(tempDir.path, 'img2.png'));
       final file3 = File(p.join(tempDir.path, 'img3.png'));
+      final orphanTmp = File(p.join(tempDir.path, 'orphan_test.tmp'));
 
       file1.writeAsBytesSync(List.filled(1000, 1));
       await Future.delayed(const Duration(milliseconds: 10));
@@ -138,13 +160,19 @@ And another one with single quotes:
       await Future.delayed(const Duration(milliseconds: 10));
       file3.writeAsBytesSync(List.filled(1000, 3));
 
+      // Create an old orphan .tmp file (mtime 2 hours ago)
+      orphanTmp.writeAsBytesSync(List.filled(500, 0));
+      orphanTmp.setLastModifiedSync(DateTime.now().subtract(const Duration(hours: 2)));
+
       // Total size: 3000 bytes. If limit is 2800 bytes, target is 2800 * 0.75 = 2100 bytes.
       // img1 is oldest and will be evicted, leaving 2000 bytes.
+      // orphanTmp is older than 1 hour and must be pruned.
       await RemoteImageService.instance.pruneCacheIfNeeded(maxSizeBytes: 2800);
 
       expect(file1.existsSync(), isFalse);
       expect(file2.existsSync(), isTrue);
       expect(file3.existsSync(), isTrue);
+      expect(orphanTmp.existsSync(), isFalse);
     });
   });
 }

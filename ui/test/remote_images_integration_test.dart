@@ -46,6 +46,21 @@ void main() {
           ..headers.contentType = ContentType('image', 'png')
           ..add([1, 2, 3, 4, 5]) // Invalid magic bytes
           ..close();
+      } else if (path.contains('gzipped_image')) {
+        final gzipped = gzip.encode(samplePngBytes);
+        request.response
+          ..statusCode = HttpStatus.ok
+          ..headers.contentType = ContentType('image', 'png')
+          ..headers.set(HttpHeaders.contentEncodingHeader, 'gzip')
+          ..headers.contentLength = gzipped.length
+          ..add(gzipped)
+          ..close();
+      } else if (path.contains('octet_stream_image')) {
+        request.response
+          ..statusCode = HttpStatus.ok
+          ..headers.contentType = ContentType('application', 'octet-stream')
+          ..add(samplePngBytes)
+          ..close();
       } else {
         request.response
           ..statusCode = HttpStatus.notFound
@@ -140,5 +155,30 @@ void main() {
     for (final url in urls) {
       expect(RemoteImageService.instance.isCached(url), isTrue);
     }
+  });
+
+  test('successfully downloads and caches gzipped images without Content-Length mismatch failure', () async {
+    final gzipUrl = '$serverBaseUrl/gzipped_image.png';
+
+    expect(RemoteImageService.instance.isCached(gzipUrl), isFalse);
+
+    final success = await RemoteImageService.instance.fetchAndCacheImage(gzipUrl);
+    expect(success, isTrue, reason: 'Gzipped image should decompress and cache successfully');
+    expect(RemoteImageService.instance.isCached(gzipUrl), isTrue);
+
+    final filename = RemoteImageService.instance.urlToCacheFilename(gzipUrl);
+    final cachedFile = File(p.join(tempDir.path, filename));
+    expect(cachedFile.existsSync(), isTrue);
+    expect(cachedFile.lengthSync(), samplePngBytes.length);
+  });
+
+  test('successfully downloads images served as application/octet-stream when magic bytes are valid', () async {
+    final octetUrl = '$serverBaseUrl/octet_stream_image.png';
+
+    expect(RemoteImageService.instance.isCached(octetUrl), isFalse);
+
+    final success = await RemoteImageService.instance.fetchAndCacheImage(octetUrl);
+    expect(success, isTrue, reason: 'Image with application/octet-stream and valid magic bytes should be accepted');
+    expect(RemoteImageService.instance.isCached(octetUrl), isTrue);
   });
 }

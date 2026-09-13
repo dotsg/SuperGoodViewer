@@ -48,9 +48,10 @@ class _WorkerPool {
 /// 1. Controlled worker pool concurrency (default 5 workers) to avoid CDN rate-limiting or socket exhaustion.
 /// 2. Fast O(1) SHA-256 content-addressable disk cache matching Typst's MemoryWorld lookups (no directory scans).
 /// 3. In-flight request deduplication with clean URL keys and unique temporary filenames.
-/// 4. Strict response validation: HTTP 200, image/* Content-Type, Content-Length integrity, and image magic bytes.
-/// 5. Isolated session debounce states preventing cross-document re-render cancellations.
-/// 6. Automatic LRU size pruning when cache exceeds threshold (default 250 MB).
+/// 4. Strict response validation: HTTP 200, Content-Length integrity (honoring gzip decompression), and image magic bytes.
+/// 5. Negative caching with 10-minute TTL to prevent continuous network hammering on 404/broken URLs.
+/// 6. Isolated session debounce states preventing cross-document re-render cancellations.
+/// 7. Automatic oldest-first (FIFO) cache pruning to 75% when exceeding limit (default 250 MB) + orphan .tmp cleanup.
 class RemoteImageService {
   static final RemoteImageService instance = RemoteImageService._();
   RemoteImageService._();
@@ -61,6 +62,10 @@ class RemoteImageService {
 
   final _WorkerPool _pool = _WorkerPool(maxConcurrency: 5);
   final Map<String, Future<bool>> _inFlight = {};
+  final Map<String, DateTime> _negativeCache = {};
+  static const Duration _negativeCacheTtl = Duration(minutes: 10);
+  DateTime? _lastPruneTime;
+
   final HttpClient _httpClient = HttpClient()
     ..connectionTimeout = const Duration(seconds: 8)
     ..userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
@@ -69,6 +74,16 @@ class RemoteImageService {
   static void setCacheDirForTesting(Directory? dir) {
     _customCacheDirForTesting = dir;
     _cachedDir = dir;
+  }
+
+  @visibleForTesting
+  void clearNegativeCache() {
+    _negativeCache.clear();
+  }
+
+  @visibleForTesting
+  void resetPruneThrottle() {
+    _lastPruneTime = null;
   }
 
   /// Returns the platform-specific cache directory for remote images.
@@ -187,6 +202,17 @@ class RemoteImageService {
     return false;
   }
 
+  /// Checks if a URL recently failed (within 10-minute negative cache TTL).
+  bool isRecentlyFailed(String cleanUrl) {
+    final failedAt = _negativeCache[cleanUrl];
+    if (failedAt == null) return false;
+    if (DateTime.now().difference(failedAt) > _negativeCacheTtl) {
+      _negativeCache.remove(cleanUrl);
+      return false;
+    }
+    return true;
+  }
+
   /// Extracts all distinct HTTP/HTTPS image URLs from Markdown (both Markdown `![]()` and HTML `<img src="">`),
   /// normalizing each URL by removing client fragments.
   List<String> extractRemoteImageUrls(String markdown) {
@@ -228,10 +254,20 @@ class RemoteImageService {
         bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50) {
       return true;
     }
-    // SVG: starts with '<svg' or '<?xml'
-    if (bytes.length >= 5) {
-      final head = String.fromCharCodes(bytes.take(256)).toLowerCase().trimLeft();
-      if (head.startsWith('<svg') || head.startsWith('<?xml')) return true;
+
+    // SVG: strip UTF-8 BOM if present (EF BB BF)
+    var svgBytes = bytes;
+    if (svgBytes.length >= 3 && svgBytes[0] == 0xEF && svgBytes[1] == 0xBB && svgBytes[2] == 0xBF) {
+      svgBytes = svgBytes.sublist(3);
+    }
+    if (svgBytes.length >= 4) {
+      final head = String.fromCharCodes(svgBytes.take(256)).toLowerCase().trimLeft();
+      if (head.startsWith('<svg') ||
+          head.startsWith('<?xml') ||
+          head.startsWith('<!doctype svg') ||
+          (head.startsWith('<!doctype') && head.contains('<svg'))) {
+        return true;
+      }
     }
     return false;
   }
@@ -240,6 +276,7 @@ class RemoteImageService {
   Future<bool> fetchAndCacheImage(String url) {
     final cleanUrl = sanitizeImageUrl(url);
     if (isCached(cleanUrl)) return Future.value(true);
+    if (isRecentlyFailed(cleanUrl)) return Future.value(false);
 
     if (_inFlight.containsKey(cleanUrl)) {
       return _inFlight[cleanUrl]!;
@@ -270,16 +307,16 @@ class RemoteImageService {
       // 1. Verify HTTP 200
       if (response.statusCode != 200) {
         debugPrint('[RemoteImageService] Non-200 HTTP status ${response.statusCode} for $cleanUrl');
+        _negativeCache[cleanUrl] = DateTime.now();
         return false;
       }
 
-      // 2. Verify Content-Type is image/* (or image/svg+xml, text/xml)
+      // 2. Reject explicit HTML error/anti-leech pages or JSON error payloads
+      // (allowing application/octet-stream from S3/OSS/CDNs to be validated by magic bytes)
       final contentType = response.headers.value(HttpHeaders.contentTypeHeader)?.toLowerCase() ?? '';
-      final isImageContentType = contentType.startsWith('image/') ||
-          contentType.contains('svg') ||
-          (contentType.contains('xml') && cleanUrl.toLowerCase().contains('.svg'));
-      if (!isImageContentType) {
-        debugPrint('[RemoteImageService] Invalid non-image Content-Type ($contentType) for $cleanUrl');
+      if (contentType.startsWith('text/html') || contentType.startsWith('application/json')) {
+        debugPrint('[RemoteImageService] Explicit non-image Content-Type ($contentType) for $cleanUrl');
+        _negativeCache[cleanUrl] = DateTime.now();
         return false;
       }
 
@@ -296,9 +333,12 @@ class RemoteImageService {
       await sink.flush();
       await sink.close();
 
-      // 3. Verify Content-Length match if declared
-      if (response.contentLength > 0 && bytesWritten != response.contentLength) {
+      // 3. Verify Content-Length match if declared (skip if response was automatically uncompressed by HttpClient)
+      if (response.compressionState != HttpClientResponseCompressionState.decompressed &&
+          response.contentLength > 0 &&
+          bytesWritten != response.contentLength) {
         debugPrint('[RemoteImageService] Content-Length mismatch ($bytesWritten / ${response.contentLength}) for $cleanUrl');
+        _negativeCache[cleanUrl] = DateTime.now();
         try {
           if (tempFile.existsSync()) tempFile.deleteSync();
         } catch (_) {}
@@ -310,6 +350,7 @@ class RemoteImageService {
         final headerBytes = await tempFile.openRead(0, 256).first;
         if (!isValidImageBytes(headerBytes)) {
           debugPrint('[RemoteImageService] Corrupted or unknown image signature for $cleanUrl');
+          _negativeCache[cleanUrl] = DateTime.now();
           try {
             tempFile.deleteSync();
           } catch (_) {}
@@ -321,12 +362,15 @@ class RemoteImageService {
           targetFile.deleteSync();
         }
         await tempFile.rename(targetFile.path);
+        _negativeCache.remove(cleanUrl);
         debugPrint('[RemoteImageService] Cached valid image: $targetFilename ($bytesWritten bytes) for $cleanUrl');
         return true;
       }
+      _negativeCache[cleanUrl] = DateTime.now();
       return false;
     } catch (e) {
       debugPrint('[RemoteImageService] Error downloading $cleanUrl: $e');
+      _negativeCache[cleanUrl] = DateTime.now();
       try {
         final tmp = File(tempFilePath);
         if (tmp.existsSync()) {
@@ -343,8 +387,11 @@ class RemoteImageService {
   /// Each invocation encapsulates its own debounce timer and counter so concurrent
   /// sessions or rapid document reloads never cancel each other.
   void fetchImagesInMarkdown(String markdown, {required VoidCallback onBatchReady}) {
+    // Check and prune cache in background (throttled to at most once per 5 minutes)
+    unawaited(pruneCacheIfNeeded());
+
     final urls = extractRemoteImageUrls(markdown);
-    final uncachedUrls = urls.where((u) => !isCached(u)).toList();
+    final uncachedUrls = urls.where((u) => !isCached(u) && !isRecentlyFailed(u)).toList();
 
     if (uncachedUrls.isEmpty) return;
 
@@ -355,9 +402,9 @@ class RemoteImageService {
     int sessionNewImages = 0;
     int completedCount = 0;
 
-    void triggerBatch() {
+    void triggerBatch(String reason) {
       if (sessionNewImages > 0) {
-        debugPrint('[RemoteImageService] Debounced batch re-render triggered ($sessionNewImages new images)');
+        debugPrint('[RemoteImageService] Re-render triggered ($reason, $sessionNewImages new images)');
         sessionNewImages = 0;
         onBatchReady();
       }
@@ -369,32 +416,40 @@ class RemoteImageService {
         if (success) {
           sessionNewImages++;
           sessionDebounceTimer?.cancel();
-          sessionDebounceTimer = Timer(const Duration(milliseconds: 250), triggerBatch);
+          sessionDebounceTimer = Timer(const Duration(milliseconds: 250), () {
+            triggerBatch('debounced batch');
+          });
         }
 
         if (completedCount == uncachedUrls.length) {
           if (sessionNewImages > 0) {
             sessionDebounceTimer?.cancel();
-            debugPrint('[RemoteImageService] All downloads complete; final re-render triggered ($sessionNewImages images)');
-            triggerBatch();
+            triggerBatch('all downloads complete');
           }
-          // Asynchronously prune cache if size exceeds limits
-          pruneCacheIfNeeded();
         }
       }).catchError((e) {
         completedCount++;
         debugPrint('[RemoteImageService] Fetch failed for $url: $e');
         if (completedCount == uncachedUrls.length && sessionNewImages > 0) {
           sessionDebounceTimer?.cancel();
-          triggerBatch();
+          triggerBatch('all downloads complete');
         }
       });
     }
   }
 
-  /// Asynchronously prunes old cached images if the cache directory exceeds [maxSizeBytes].
-  /// Default limit is 250 MB; when exceeded, evicts oldest modified files until under 180 MB.
+  /// Asynchronously prunes old cached images if the cache directory exceeds [maxSizeBytes]
+  /// and cleans up orphan .tmp files older than 1 hour.
+  ///
+  /// Default limit is 250 MB; when exceeded, evicts oldest-first (FIFO based on modification time)
+  /// until under 75% of the limit. Throttled to at most once per 5 minutes.
   Future<void> pruneCacheIfNeeded({int maxSizeBytes = 250 * 1024 * 1024}) async {
+    final now = DateTime.now();
+    if (_lastPruneTime != null && now.difference(_lastPruneTime!) < const Duration(minutes: 5)) {
+      return;
+    }
+    _lastPruneTime = now;
+
     try {
       final dir = getCacheDirectory();
       if (!dir.existsSync()) return;
@@ -403,17 +458,27 @@ class RemoteImageService {
       int totalSize = 0;
 
       for (final entity in dir.listSync()) {
-        if (entity is File && !entity.path.endsWith('.tmp')) {
-          files.add(entity);
-          try {
-            totalSize += entity.lengthSync();
-          } catch (_) {}
+        if (entity is File) {
+          if (entity.path.endsWith('.tmp')) {
+            // Clean up orphan .tmp files older than 1 hour left behind by killed processes
+            try {
+              final mtime = entity.lastModifiedSync();
+              if (now.difference(mtime) > const Duration(hours: 1)) {
+                entity.deleteSync();
+              }
+            } catch (_) {}
+          } else {
+            files.add(entity);
+            try {
+              totalSize += entity.lengthSync();
+            } catch (_) {}
+          }
         }
       }
 
       if (totalSize > maxSizeBytes) {
         debugPrint('[RemoteImageService] Cache size (${totalSize ~/ 1024} KB) exceeds limit; pruning oldest items...');
-        // Sort by last modified ascending (oldest first)
+        // Sort by last modified ascending (oldest-first FIFO)
         files.sort((a, b) {
           final aTime = a.lastModifiedSync();
           final bTime = b.lastModifiedSync();
