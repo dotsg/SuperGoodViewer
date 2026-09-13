@@ -99,6 +99,23 @@ class ReaderController extends ChangeNotifier {
   List<OutlineItem> get outlineItems => _outlineItems;
   OutlineItem? get requestedJumpItem => _requestedJumpItem;
 
+  /// Top scroll deadband threshold (in points). Offsets <= this value are treated as top of document.
+  static const double topScrollThreshold = 20.0;
+
+  /// Determines whether fluid scroll restoration should use absolute offset (streaming append / edit)
+  /// or ratio-based positioning (options changed: theme/font/size/width/mode).
+  bool get shouldUseOffsetForRestore => !renderOptionsChanged && _lastScrollOffset > 0.0;
+
+  /// Calculates the effective target scroll offset Y in fluid mode based on document height.
+  /// If [maxScroll] is provided, clamps the result to [0.0, maxScroll].
+  double calculateFluidTargetScrollY(double docHeight, {double? maxScroll}) {
+    if (docHeight <= 0) return 0.0;
+    final raw = shouldUseOffsetForRestore
+        ? _lastScrollOffset
+        : (_lastScrollRatio > 0.0 ? _lastScrollRatio * docHeight : 0.0);
+    return maxScroll != null ? raw.clamp(0.0, maxScroll) : raw;
+  }
+
   void jumpToOutline(OutlineItem item) {
     _requestedJumpItem = item;
     notifyListeners();

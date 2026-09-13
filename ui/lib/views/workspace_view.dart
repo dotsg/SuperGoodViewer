@@ -64,7 +64,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     super.initState();
     final isFluid = widget.controller.renderOptions.isFluid;
     final atTop = isFluid
-        ? (widget.controller.lastScrollOffset <= 20.0 && widget.controller.lastScrollRatio <= 0.005)
+        ? (widget.controller.lastScrollOffset <= ReaderController.topScrollThreshold && widget.controller.lastScrollRatio <= 0.005)
         : (widget.controller.lastScrollRatio <= 0.005 && widget.controller.lastPageNumber <= 1);
     _isAtTop = atTop;
     _isTitleBarVisible = atTop;

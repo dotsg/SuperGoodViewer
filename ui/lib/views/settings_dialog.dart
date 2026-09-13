@@ -101,7 +101,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
   CliStatus _cliStatus = CliStatus.empty();
 
   // Cache state
-  late CacheStats _cacheStats;
+  CacheStats _cacheStats = CacheStats(
+    fileCount: 0,
+    totalBytes: 0,
+    dirPath: DocumentCacheService.cacheDirectoryPath,
+  );
+  bool _isLoadingCache = true;
   bool _isClearingCache = false;
 
   @override
@@ -111,24 +116,35 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _selectedBodyFont = widget.controller.renderOptions.bodyFont;
     _selectedCodeFont = widget.controller.renderOptions.codeFont;
     _selectedFontSize = widget.controller.renderOptions.fontSize;
-    _cacheStats = DocumentCacheService.getCacheStats();
+    _loadCacheStats();
     _loadCliStatus();
+  }
+
+  Future<void> _loadCacheStats() async {
+    final stats = await DocumentCacheService.getCacheStats();
+    if (mounted) {
+      setState(() {
+        _cacheStats = stats;
+        _isLoadingCache = false;
+      });
+    }
   }
 
   Future<void> _handleClearCache() async {
     setState(() => _isClearingCache = true);
     final cleared = await DocumentCacheService.clearCache();
+    final newStats = await DocumentCacheService.getCacheStats();
     if (mounted) {
       setState(() {
         _isClearingCache = false;
-        _cacheStats = DocumentCacheService.getCacheStats();
+        _cacheStats = newStats;
       });
       try {
         final messenger = ScaffoldMessenger.maybeOf(context);
         if (messenger != null) {
           messenger.showSnackBar(
             SnackBar(
-              content: Text('已清理 ${cleared.fileCount} 个编译缓存文件 (${cleared.formattedSize})'),
+              content: Text('已清理 ${cleared.deletedCount} 个编译缓存文件 (${cleared.formattedFreedSize})'),
               behavior: SnackBarBehavior.floating,
               duration: const Duration(seconds: 2),
             ),
@@ -718,9 +734,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          _cacheStats.fileCount > 0
-                              ? '已缓存 ${_cacheStats.fileCount} 个文档 (${_cacheStats.formattedSize})'
-                              : '暂无缓存文件 (0 B)',
+                          _isLoadingCache
+                              ? '正在读取缓存统计...'
+                              : (_cacheStats.fileCount > 0
+                                  ? '已缓存 ${_cacheStats.fileCount} 个文档 (${_cacheStats.formattedSize})'
+                                  : '暂无缓存文件 (0 B)'),
                           style: TextStyle(
                             fontSize: 11.5,
                             color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
@@ -743,7 +761,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         ? const SizedBox(width: 13, height: 13, child: CircularProgressIndicator(strokeWidth: 2))
                         : const Icon(Icons.cleaning_services_outlined, size: 15),
                     label: const Text('清理缓存', style: TextStyle(fontSize: 12)),
-                    onPressed: _cacheStats.fileCount == 0 || _isClearingCache
+                    onPressed: _isLoadingCache || _cacheStats.fileCount == 0 || _isClearingCache
                         ? null
                         : _handleClearCache,
                     style: OutlinedButton.styleFrom(

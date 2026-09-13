@@ -50,7 +50,7 @@ class DocumentCacheService {
   }
 
   static String _computeCacheFileName(String filePath, int mtime, int size, RenderOptions options) {
-    final raw = '$filePath#$mtime#$size#${options.mode}#${options.theme}#${options.fontSize}#${options.bodyFont ?? ''}#${options.codeFont ?? ''}';
+    final raw = '$filePath#$mtime#$size#${options.mode}#${options.theme}#${options.fontSize}#${options.viewportWidth}#${options.bodyFont ?? ''}#${options.codeFont ?? ''}';
     int hash = 0xcbf29ce484222325;
     for (final unit in utf8.encode(raw)) {
       hash ^= unit;
@@ -130,8 +130,30 @@ class DocumentCacheService {
   /// Returns the current cache directory path.
   static String get cacheDirectoryPath => _getCacheDir().path;
 
-  /// Returns current statistics on the compiled PDF disk cache.
-  static CacheStats getCacheStats() {
+  /// Returns current statistics on the compiled PDF disk cache asynchronously without blocking the UI thread.
+  static Future<CacheStats> getCacheStats() async {
+    try {
+      final dir = _getCacheDir();
+      if (!await dir.exists()) {
+        return CacheStats(fileCount: 0, totalBytes: 0, dirPath: dir.path);
+      }
+      final entities = await dir.list().toList();
+      final files = entities.where((entity) => entity is File && entity.path.endsWith('.pdf')).cast<File>().toList();
+      var total = 0;
+      for (final f in files) {
+        try {
+          total += await f.length();
+        } catch (_) {}
+      }
+      return CacheStats(fileCount: files.length, totalBytes: total, dirPath: dir.path);
+    } catch (e) {
+      debugPrint('[DocumentCacheService] getCacheStats error: $e');
+      return CacheStats(fileCount: 0, totalBytes: 0, dirPath: _getCacheDir().path);
+    }
+  }
+
+  /// Synchronous fallback for test or quick status check.
+  static CacheStats getCacheStatsSync() {
     try {
       final dir = _getCacheDir();
       if (!dir.existsSync()) {
@@ -150,13 +172,40 @@ class DocumentCacheService {
     }
   }
 
-  /// Clears all cached PDF files from disk.
-  /// Returns the number of files deleted and total bytes freed.
-  static Future<CacheStats> clearCache() async {
+  /// Clears all cached PDF files from disk asynchronously without blocking the UI thread.
+  /// Returns a [CacheClearResult] with deleted count and freed bytes.
+  static Future<CacheClearResult> clearCache() async {
+    try {
+      final dir = _getCacheDir();
+      if (!await dir.exists()) {
+        return CacheClearResult(deletedCount: 0, freedBytes: 0, dirPath: dir.path);
+      }
+      final entities = await dir.list().toList();
+      int deletedCount = 0;
+      int freedBytes = 0;
+      for (final entity in entities) {
+        if (entity is File && (entity.path.endsWith('.pdf') || entity.path.endsWith('.tmp'))) {
+          try {
+            final len = await entity.length();
+            await entity.delete();
+            deletedCount++;
+            freedBytes += len;
+          } catch (_) {}
+        }
+      }
+      return CacheClearResult(deletedCount: deletedCount, freedBytes: freedBytes, dirPath: dir.path);
+    } catch (e) {
+      debugPrint('[DocumentCacheService] clearCache error: $e');
+      return CacheClearResult(deletedCount: 0, freedBytes: 0, dirPath: _getCacheDir().path);
+    }
+  }
+
+  /// Synchronous clearing for tests or script operations.
+  static CacheClearResult clearCacheSync() {
     try {
       final dir = _getCacheDir();
       if (!dir.existsSync()) {
-        return CacheStats(fileCount: 0, totalBytes: 0, dirPath: dir.path);
+        return CacheClearResult(deletedCount: 0, freedBytes: 0, dirPath: dir.path);
       }
       final entities = dir.listSync();
       int deletedCount = 0;
@@ -171,10 +220,10 @@ class DocumentCacheService {
           } catch (_) {}
         }
       }
-      return CacheStats(fileCount: deletedCount, totalBytes: freedBytes, dirPath: dir.path);
+      return CacheClearResult(deletedCount: deletedCount, freedBytes: freedBytes, dirPath: dir.path);
     } catch (e) {
-      debugPrint('[DocumentCacheService] clearCache error: $e');
-      return CacheStats(fileCount: 0, totalBytes: 0, dirPath: _getCacheDir().path);
+      debugPrint('[DocumentCacheService] clearCacheSync error: $e');
+      return CacheClearResult(deletedCount: 0, freedBytes: 0, dirPath: _getCacheDir().path);
     }
   }
 
@@ -190,7 +239,8 @@ class DocumentCacheService {
         return res.exitCode == 0;
       } else if (Platform.isWindows) {
         final res = await Process.run('explorer.exe', [dir.path]);
-        return res.exitCode == 0;
+        // explorer.exe frequently exits with code 1 upon successfully spawning the Explorer window
+        return res.exitCode == 0 || res.exitCode == 1;
       } else if (Platform.isLinux) {
         final res = await Process.run('xdg-open', [dir.path]);
         return res.exitCode == 0;
@@ -224,4 +274,19 @@ class CacheStats {
   });
 
   String get formattedSize => DocumentCacheService.formatBytes(totalBytes);
+}
+
+/// Represents the result of a disk cache purge operation.
+class CacheClearResult {
+  final int deletedCount;
+  final int freedBytes;
+  final String dirPath;
+
+  const CacheClearResult({
+    required this.deletedCount,
+    required this.freedBytes,
+    required this.dirPath,
+  });
+
+  String get formattedFreedSize => DocumentCacheService.formatBytes(freedBytes);
 }

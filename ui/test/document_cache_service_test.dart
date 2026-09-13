@@ -66,14 +66,17 @@ void main() {
       expect(cachedAfterEdit, isNull);
     });
 
-    test('cache distinguishes different render options (mode, theme, fontSize)', () async {
-      const optionsFluidLight = RenderOptions(mode: 'fluid', theme: 'light');
+    test('cache distinguishes different render options (mode, theme, fontSize, viewportWidth)', () async {
+      const optionsFluidLight800 = RenderOptions(mode: 'fluid', theme: 'light', viewportWidth: 800.0);
+      const optionsFluidLight1200 = RenderOptions(mode: 'fluid', theme: 'light', viewportWidth: 1200.0);
       const optionsPagedDark = RenderOptions(mode: 'paged', theme: 'dark');
 
-      await DocumentCacheService.saveCachedPdf(sampleMdFile.path, optionsFluidLight, dummyPdfHeader);
+      await DocumentCacheService.saveCachedPdf(sampleMdFile.path, optionsFluidLight800, dummyPdfHeader);
 
-      // Hit for fluid light
-      expect(DocumentCacheService.getCachedPdf(sampleMdFile.path, optionsFluidLight), isNotNull);
+      // Hit for exact match (viewportWidth 800)
+      expect(DocumentCacheService.getCachedPdf(sampleMdFile.path, optionsFluidLight800), isNotNull);
+      // Miss for different viewportWidth (1200)
+      expect(DocumentCacheService.getCachedPdf(sampleMdFile.path, optionsFluidLight1200), isNull);
       // Miss for paged dark
       expect(DocumentCacheService.getCachedPdf(sampleMdFile.path, optionsPagedDark), isNull);
     });
@@ -81,26 +84,28 @@ void main() {
     test('getCacheStats and clearCache calculate and purge cache files accurately', () async {
       const options = RenderOptions();
       // Initially 0 files in temp dir
-      var stats = DocumentCacheService.getCacheStats();
+      var stats = await DocumentCacheService.getCacheStats();
       expect(stats.fileCount, 0);
       expect(stats.totalBytes, 0);
       expect(stats.formattedSize, '0 B');
+      expect(DocumentCacheService.getCacheStatsSync().fileCount, 0);
 
       // Save a file
       await DocumentCacheService.saveCachedPdf(sampleMdFile.path, options, dummyPdfHeader);
 
-      stats = DocumentCacheService.getCacheStats();
+      stats = await DocumentCacheService.getCacheStats();
       expect(stats.fileCount, 1);
       expect(stats.totalBytes, dummyPdfHeader.length);
       expect(stats.formattedSize, contains('B'));
 
       // Clear cache
       final cleared = await DocumentCacheService.clearCache();
-      expect(cleared.fileCount, 1);
-      expect(cleared.totalBytes, dummyPdfHeader.length);
+      expect(cleared.deletedCount, 1);
+      expect(cleared.freedBytes, dummyPdfHeader.length);
+      expect(cleared.formattedFreedSize, contains('B'));
 
       // Verify empty after clear
-      stats = DocumentCacheService.getCacheStats();
+      stats = await DocumentCacheService.getCacheStats();
       expect(stats.fileCount, 0);
       expect(stats.totalBytes, 0);
       expect(DocumentCacheService.getCachedPdf(sampleMdFile.path, options), isNull);
@@ -137,10 +142,10 @@ void main() {
 
   group('ReaderController Instant Cache Integration', () {
     test('openFile uses cached PDF immediately without waiting for compileDocument', () async {
-      const options = RenderOptions();
+      final controller = ReaderController(autoRestorePreferences: false);
+      final options = controller.renderOptions;
       await DocumentCacheService.saveCachedPdf(sampleMdFile.path, options, dummyPdfHeader);
 
-      final controller = ReaderController(autoRestorePreferences: false);
       await controller.openFile(sampleMdFile.path);
 
       // Controller should instantly have the cached PDF bytes

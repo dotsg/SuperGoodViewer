@@ -279,13 +279,12 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
       // Restoring reading position after reload/theme/edit/session restore
       if (isFluid) {
         final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
-        final targetOffset = readerController.lastScrollOffset;
         final maxScroll = math.max(0.0, layout.documentSize.height - state.viewSize.height);
-        final useOffset = !readerController.renderOptionsChanged && targetOffset > 0.0;
-        final targetY = useOffset
-            ? targetOffset.clamp(0.0, maxScroll)
-            : (readerController.lastScrollRatio * layout.documentSize.height).clamp(0.0, maxScroll);
-        if (targetY > 20.0) {
+        final targetY = readerController.calculateFluidTargetScrollY(
+          layout.documentSize.height,
+          maxScroll: maxScroll,
+        );
+        if (targetY > ReaderController.topScrollThreshold) {
           controller.setZoom(Offset(docWidth / 2, targetY), initialZoom, duration: Duration.zero);
           controller.goToPosition(documentOffset: Offset(0, targetY));
         } else {
@@ -831,6 +830,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   bool _lastReportedAtTop = true;
   bool _modeOrDocChanged = false;
   Timer? _pendingWatchdogTimer;
+  Timer? _directReloadWatchdogTimer;
   Timer? _swapFallbackTimer;
   bool _pendingViewerReady = false;
   bool _pendingImageLoaded = false;
@@ -884,10 +884,26 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   void dispose() {
     _cleanupTimer?.cancel();
     _pendingWatchdogTimer?.cancel();
+    _directReloadWatchdogTimer?.cancel();
     _swapFallbackTimer?.cancel();
     _controllers[0].removeListener(_onViewerChanged0);
     _controllers[1].removeListener(_onViewerChanged1);
     super.dispose();
+  }
+
+  void _startDirectReloadWatchdog() {
+    _directReloadWatchdogTimer?.cancel();
+    final targetGen = _mountGeneration;
+    // 1500ms watchdog: If active slot direct reload (or initial load) fails to fire onViewerReady,
+    // ensure _isRestoringScroll and readerController are safely unlocked.
+    _directReloadWatchdogTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted && _restoredGeneration < targetGen) {
+        debugPrint('[PdfCanvasView] Direct reload watchdog: onViewerReady timed out for gen $targetGen, unlocking scroll');
+        _restoredGeneration = targetGen;
+        widget.controller.finishReloading();
+        setState(() {});
+      }
+    });
   }
 
   void _startPendingWatchdog() {
@@ -994,6 +1010,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       _mountGeneration++;
       _pendingViewerReady = false;
       _pendingImageLoaded = false;
+      _startDirectReloadWatchdog();
       setState(() {});
       return;
     }
@@ -1017,6 +1034,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         _slotDocHash[1] = 0;
         _pendingViewerReady = false;
         _pendingImageLoaded = false;
+        _startDirectReloadWatchdog();
         setState(() {});
       } else {
         // Same document updated (hot reload / edit / theme / stream):
@@ -1104,12 +1122,12 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   }
 
   void _restoreScrollFor(PdfViewerController ctrl) {
-    final renderOptionsChanged = widget.controller.renderOptionsChanged;
-    widget.controller.renderOptionsChanged = false;
+    _directReloadWatchdogTimer?.cancel();
     final restoreGen = _mountGeneration;
 
     if (!ctrl.isReady) {
       _restoredGeneration = restoreGen;
+      widget.controller.renderOptionsChanged = false;
       widget.controller.finishReloading();
       return;
     }
@@ -1117,22 +1135,16 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final isFluid = widget.renderOptions.isFluid;
 
     if (isFluid) {
-      final targetOffset = widget.controller.lastScrollOffset;
-      final targetRatio = widget.controller.lastScrollRatio;
       if (docSize.height > 0) {
         final visibleHeight = ctrl.visibleRect.height > 0 ? ctrl.visibleRect.height : 600.0;
         final maxScroll = math.max(0.0, docSize.height - visibleHeight);
+        final targetY = widget.controller.calculateFluidTargetScrollY(
+          docSize.height,
+          maxScroll: maxScroll,
+        );
+        widget.controller.renderOptionsChanged = false;
 
-        // When render options changed (font size, font family, theme, window width),
-        // total document height changed, so ratio is the accurate anchor.
-        // When options are identical (streaming content append / external edit),
-        // use absolute offset to prevent reading position from jumping.
-        final useOffset = !renderOptionsChanged && targetOffset > 0.0;
-        final targetY = useOffset
-            ? targetOffset.clamp(0.0, maxScroll)
-            : (targetRatio > 0.0 ? (targetRatio * docSize.height).clamp(0.0, maxScroll) : 0.0);
-
-        if (targetY > 20.0) {
+        if (targetY > ReaderController.topScrollThreshold) {
           ctrl.goToPosition(documentOffset: Offset(0, targetY));
 
           Future.delayed(const Duration(milliseconds: 250), () {
@@ -1150,6 +1162,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         }
       }
     } else {
+      widget.controller.renderOptionsChanged = false;
       final targetPage = widget.controller.lastPageNumber;
       if (targetPage > 1 && targetPage <= ctrl.pageCount) {
         ctrl.goToPage(pageNumber: targetPage, duration: Duration.zero);
@@ -1719,15 +1732,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           if (isFluid) {
             final layouts = controller.layout.pageLayouts;
             if (layouts.isEmpty) return 1;
-            final targetOffset = widget.controller.lastScrollOffset;
-            final targetRatio = widget.controller.lastScrollRatio;
-            final useOffset = !widget.controller.renderOptionsChanged && targetOffset > 0.0;
             final docHeight = controller.layout.documentSize.height;
-            final targetY = useOffset
-                ? targetOffset
-                : (targetRatio > 0.0 && docHeight > 0.0 ? targetRatio * docHeight : 0.0);
+            final targetY = widget.controller.calculateFluidTargetScrollY(docHeight);
 
-            if (targetY <= 20.0) return 1;
+            if (targetY <= ReaderController.topScrollThreshold) return 1;
 
             for (var i = 0; i < layouts.length; i++) {
               final rect = layouts[i];

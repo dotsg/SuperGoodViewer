@@ -219,16 +219,20 @@ void main() {
       dummyFile.writeAsStringSync('%PDF-1.7\n12345');
 
       final controller = ReaderController(autoRestorePreferences: false);
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: SettingsDialog(
-              controller: controller,
-              initialTab: SettingsTab.general,
+      await tester.runAsync(() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SettingsDialog(
+                controller: controller,
+                initialTab: SettingsTab.general,
+              ),
             ),
           ),
-        ),
-      );
+        );
+        await Future.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
 
       // Verify cache section elements
       expect(find.text('预编译 PDF 缓存 (Compiled Cache)'), findsOneWidget);
@@ -237,9 +241,11 @@ void main() {
       expect(find.text('打开目录'), findsOneWidget);
       expect(find.text('清理缓存'), findsOneWidget);
 
-      // Click clear cache
-      await tester.tap(find.text('清理缓存'));
-      await tester.pump();
+      // Click clear cache inside runAsync so stream I/O completes
+      await tester.runAsync(() async {
+        await tester.tap(find.text('清理缓存'));
+        await Future.delayed(const Duration(milliseconds: 100));
+      });
       await tester.pump();
 
       // Verify cache cleared
