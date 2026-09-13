@@ -286,9 +286,6 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
         controller.setZoom(page.center, initialZoom, duration: Duration.zero);
         controller.goToPage(pageNumber: targetPage, duration: Duration.zero);
       }
-      Future.delayed(const Duration(milliseconds: 200), () {
-        readerController.finishReloading();
-      });
     } else {
       // Fresh document load
       if (isFluid) {
@@ -959,6 +956,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         Future.delayed(const Duration(milliseconds: 250), () {
           if (mounted) {
             _isRestoringScroll = false;
+            _lastVisibleTop = targetY;
+            final isAtTop = targetY <= 20.0;
+            _lastReportedAtTop = isAtTop;
+            widget.onScrollChanged?.call(deltaY: 0, isAtTop: isAtTop);
           }
           widget.controller.finishReloading();
         });
@@ -973,12 +974,16 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         Future.delayed(const Duration(milliseconds: 250), () {
           if (mounted) {
             _isRestoringScroll = false;
+            _lastReportedAtTop = false;
+            widget.onScrollChanged?.call(deltaY: 0, isAtTop: false);
           }
           widget.controller.finishReloading();
         });
         return;
       }
     }
+    _lastReportedAtTop = true;
+    widget.onScrollChanged?.call(deltaY: 0, isAtTop: true);
     widget.controller.finishReloading();
   }
 
@@ -1517,6 +1522,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final ctrl = _controllers[slotIndex];
     return PdfViewer.data(
       bytes,
+      initialPageNumber: isFluid ? 1 : widget.controller.lastPageNumber.clamp(1, 999999),
       key: ValueKey(
         'slot_${slotIndex}_${_slotDocHash[slotIndex]}_${widget.controller.renderOptions.mode}_${widget.controller.isTwoPage}',
       ),
@@ -1714,6 +1720,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       body: Listener(
         behavior: HitTestBehavior.translucent,
         onPointerSignal: (event) {
+          if (_isRestoringScroll || widget.controller.isReloading) return;
           if (event is PointerScrollEvent) {
             if (event.scrollDelta.dy > 1.0) {
               widget.onScrollChanged?.call(deltaY: event.scrollDelta.dy, isAtTop: false);
@@ -1722,6 +1729,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           widget.onUserScrolled?.call();
         },
         onPointerPanZoomUpdate: (event) {
+          if (_isRestoringScroll || widget.controller.isReloading) return;
           if (event.panDelta.dy < -1.0) {
             widget.onScrollChanged?.call(deltaY: -event.panDelta.dy, isAtTop: false);
           }

@@ -62,6 +62,9 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   @override
   void initState() {
     super.initState();
+    final atTop = widget.controller.lastScrollRatio <= 0.005 && widget.controller.lastPageNumber <= 1;
+    _isAtTop = atTop;
+    _isTitleBarVisible = atTop;
     _initWindowChannel();
     // Briefly display the toolbar on launch so the user discovers the controls
     _showToolbarTemporarily();
@@ -234,11 +237,6 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       if (result != null && result.files.isNotEmpty) {
         final path = result.files.single.path;
         if (path != null) {
-          setState(() {
-            _isAtTop = true;
-            _isTitleBarVisible = true;
-          });
-          _updateTrafficLights();
           await widget.controller.openFile(path);
         }
       }
