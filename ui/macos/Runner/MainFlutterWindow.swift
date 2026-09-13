@@ -49,6 +49,12 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
       } else if call.method == "zoom" {
         self?.zoom(nil)
         result(nil)
+      } else if call.method == "setTrafficLightsVisible" {
+        let visible = (call.arguments as? Bool) ?? true
+        self?.standardWindowButton(.closeButton)?.isHidden = !visible
+        self?.standardWindowButton(.miniaturizeButton)?.isHidden = !visible
+        self?.standardWindowButton(.zoomButton)?.isHidden = !visible
+        result(nil)
       } else {
         result(FlutterMethodNotImplemented)
       }

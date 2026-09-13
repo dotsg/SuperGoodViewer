@@ -29,6 +29,26 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   Timer? _toolbarTimer;
   final GlobalKey<PdfCanvasViewState> _pdfCanvasKey = GlobalKey<PdfCanvasViewState>();
 
+  // Titlebar auto-hide on scroll
+  bool _isTitleBarVisible = true;
+  bool _isAtTop = true;
+  bool _isHoveringTitleBar = false;
+  Timer? _titleBarHoverTimer;
+
+  bool get _shouldShowTitleBar {
+    if (_isFullScreen) return false;
+    if (_isSidebarOpen) return true;
+    if (_isHoveringTitleBar) return true;
+    return _isAtTop && _isTitleBarVisible;
+  }
+
+  void _updateTrafficLights() {
+    final show = _shouldShowTitleBar;
+    try {
+      _windowChannel.invokeMethod('setTrafficLightsVisible', show);
+    } catch (_) {}
+  }
+
   int _currentPage = 1;
   int _pageCount = 1;
 
@@ -46,6 +66,9 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     _initWindowChannel();
     // Briefly display the toolbar on launch so the user discovers the controls
     _showToolbarTemporarily();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _updateTrafficLights();
+    });
     widget.controller.addListener(_onControllerChanged);
     NativeCliService.channel.setMethodCallHandler(_handleNativeMethodCall);
     _checkInitialFileFromSystem();
@@ -62,12 +85,14 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         final isFs = call.arguments as bool? ?? false;
         if (mounted && _isFullScreen != isFs) {
           setState(() => _isFullScreen = isFs);
+          _updateTrafficLights();
         }
       }
     });
     _windowChannel.invokeMethod<bool>('isFullScreen').then((isFs) {
       if (isFs != null && mounted && _isFullScreen != isFs) {
         setState(() => _isFullScreen = isFs);
+        _updateTrafficLights();
       }
     }).catchError((_) {});
   }
@@ -108,7 +133,38 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     widget.controller.removeListener(_onControllerChanged);
     _toolbarTimer?.cancel();
     _zoomHudTimer?.cancel();
+    _titleBarHoverTimer?.cancel();
     super.dispose();
+  }
+
+  void _handleScrollChanged({required double deltaY, required bool isAtTop}) {
+    if (isAtTop) {
+      _titleBarHoverTimer?.cancel();
+      if (!_isAtTop || !_isTitleBarVisible) {
+        setState(() {
+          _isAtTop = true;
+          _isTitleBarVisible = true;
+        });
+        _updateTrafficLights();
+      }
+      return;
+    }
+
+    // When scrolling down, cancel hover so titlebar reliably hides
+    if (deltaY > 1.0) {
+      _isHoveringTitleBar = false;
+      _titleBarHoverTimer?.cancel();
+    }
+
+    if (_isAtTop || _isTitleBarVisible) {
+      setState(() {
+        _isAtTop = false;
+        if (!_isSidebarOpen && !_isHoveringTitleBar) {
+          _isTitleBarVisible = false;
+        }
+      });
+      _updateTrafficLights();
+    }
   }
 
   void _showToolbarTemporarily() {
@@ -152,6 +208,22 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     }
   }
 
+  void _setSidebarOpen(bool open) {
+    if (_isSidebarOpen != open) {
+      setState(() {
+        _isSidebarOpen = open;
+        if (!open && !_isAtTop && !_isHoveringTitleBar) {
+          _isTitleBarVisible = false;
+        }
+      });
+      _updateTrafficLights();
+    }
+  }
+
+  void _toggleSidebar() {
+    _setSidebarOpen(!_isSidebarOpen);
+  }
+
   Future<void> _pickAndOpenFile() async {
     try {
       final result = await FilePicker.platform.pickFiles(
@@ -163,6 +235,11 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       if (result != null && result.files.isNotEmpty) {
         final path = result.files.single.path;
         if (path != null) {
+          setState(() {
+            _isAtTop = true;
+            _isTitleBarVisible = true;
+          });
+          _updateTrafficLights();
           await widget.controller.openFile(path);
         }
       }
@@ -225,6 +302,13 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handleNextPage() {
+    if (!_isSidebarOpen && !_isHoveringTitleBar && (_isTitleBarVisible || _isAtTop)) {
+      setState(() {
+        _isAtTop = false;
+        _isTitleBarVisible = false;
+      });
+      _updateTrafficLights();
+    }
     if (widget.controller.renderOptions.isFluid) {
       _pdfCanvasKey.currentState?.scrollByDelta(420);
     } else {
@@ -236,15 +320,34 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     if (widget.controller.renderOptions.isFluid) {
       _pdfCanvasKey.currentState?.scrollByDelta(-420);
     } else {
+      if (_currentPage <= 2) {
+        setState(() {
+          _isAtTop = true;
+          _isTitleBarVisible = true;
+        });
+        _updateTrafficLights();
+      }
       _pdfCanvasKey.currentState?.prevPage();
     }
   }
 
   void _handleFirstPage() {
+    setState(() {
+      _isAtTop = true;
+      _isTitleBarVisible = true;
+    });
+    _updateTrafficLights();
     _pdfCanvasKey.currentState?.goToPageNumber(1);
   }
 
   void _handleLastPage() {
+    if (!_isSidebarOpen && !_isHoveringTitleBar) {
+      setState(() {
+        _isAtTop = false;
+        _isTitleBarVisible = false;
+      });
+      _updateTrafficLights();
+    }
     _pdfCanvasKey.currentState?.goToPageNumber(_pageCount);
   }
 
@@ -344,12 +447,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
           bindings: {
         const SingleActivator(LogicalKeyboardKey.keyO, meta: true): _pickAndOpenFile,
         const SingleActivator(LogicalKeyboardKey.keyO, control: true): _pickAndOpenFile,
-        const SingleActivator(LogicalKeyboardKey.keyB, meta: true): () {
-          setState(() => _isSidebarOpen = !_isSidebarOpen);
-        },
-        const SingleActivator(LogicalKeyboardKey.keyB, control: true): () {
-          setState(() => _isSidebarOpen = !_isSidebarOpen);
-        },
+        const SingleActivator(LogicalKeyboardKey.keyB, meta: true): _toggleSidebar,
+        const SingleActivator(LogicalKeyboardKey.keyB, control: true): _toggleSidebar,
         const SingleActivator(LogicalKeyboardKey.keyE, meta: true): _handleExportPdf,
         const SingleActivator(LogicalKeyboardKey.keyE, control: true): _handleExportPdf,
         const SingleActivator(LogicalKeyboardKey.keyR, meta: true):
@@ -380,6 +479,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         const SingleActivator(LogicalKeyboardKey.space, shift: true): _handlePrevPage,
         const SingleActivator(LogicalKeyboardKey.home): _handleFirstPage,
         const SingleActivator(LogicalKeyboardKey.end): _handleLastPage,
+        const SingleActivator(LogicalKeyboardKey.arrowUp, meta: true): _handleFirstPage,
+        const SingleActivator(LogicalKeyboardKey.arrowDown, meta: true): _handleLastPage,
         const SingleActivator(LogicalKeyboardKey.keyD, meta: true): _handleToggleTwoPage,
         const SingleActivator(LogicalKeyboardKey.keyD, control: true): _handleToggleTwoPage,
 
@@ -412,7 +513,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
           if (_isToolbarVisible) {
             setState(() => _isToolbarVisible = false);
           } else if (_isSidebarOpen) {
-            setState(() => _isSidebarOpen = false);
+            _setSidebarOpen(false);
           }
         },
         const SingleActivator(LogicalKeyboardKey.keyC, meta: true):
@@ -438,7 +539,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               if (_isSidebarOpen)
                 SidebarView(
                   controller: controller,
-                  onClose: () => setState(() => _isSidebarOpen = false),
+                  onClose: () => _setSidebarOpen(false),
                   onJumpToOutline: (item) => _pdfCanvasKey.currentState?.jumpToOutline(item),
                 ),
 
@@ -461,10 +562,10 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                             documentTitle: controller.documentTitle,
                             controller: controller,
                             onUserScrolled: _hideToolbar,
+                            onScrollChanged: _handleScrollChanged,
                             onCanvasTapped: _toggleToolbar,
                             onOpenFile: _pickAndOpenFile,
-                            onToggleSidebar: () =>
-                                setState(() => _isSidebarOpen = !_isSidebarOpen),
+                            onToggleSidebar: _toggleSidebar,
                             onExportPdf: _handleExportPdf,
                             onZoomChanged: (zoom) {
                               if (mounted && (zoom - _currentZoom).abs() > 0.005) {
@@ -482,15 +583,31 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                             onTextCopied: _showCopiedFeedback,
                           ),
 
-                          // Top Hover Zone: moving mouse to the very top edge gracefully brings up the floating controls
+                          // Top Hover Zone: moving mouse to the very top edge gracefully brings up titlebar and floating controls
                           Positioned(
                             top: 0,
                             left: 0,
                             right: 0,
-                            height: 24,
+                            height: 32,
                             child: MouseRegion(
                               hitTestBehavior: HitTestBehavior.translucent,
-                              onEnter: (_) => _showToolbarTemporarily(),
+                              onEnter: (_) {
+                                _titleBarHoverTimer?.cancel();
+                                if (!_isHoveringTitleBar) {
+                                  setState(() => _isHoveringTitleBar = true);
+                                  _updateTrafficLights();
+                                }
+                                _showToolbarTemporarily();
+                              },
+                              onExit: (_) {
+                                _titleBarHoverTimer?.cancel();
+                                _titleBarHoverTimer = Timer(const Duration(milliseconds: 800), () {
+                                  if (mounted) {
+                                    setState(() => _isHoveringTitleBar = false);
+                                    _updateTrafficLights();
+                                  }
+                                });
+                              },
                             ),
                           ),
 
@@ -663,76 +780,111 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     bool isDark,
     ReaderController controller,
   ) {
-    return Container(
-      height: 32,
+    final show = _shouldShowTitleBar;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeInOutCubic,
+      height: show ? 32.0 : 0.0,
+      clipBehavior: Clip.hardEdge,
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F7F7),
-        border: Border(
-          bottom: BorderSide(
-            color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFE5E5E5),
-            width: 1,
-          ),
-        ),
+        border: show
+            ? Border(
+                bottom: BorderSide(
+                  color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFE5E5E5),
+                  width: 1,
+                ),
+              )
+            : null,
       ),
-      child: Row(
-        children: [
-          // When sidebar is closed, provide safe space for macOS traffic lights & sidebar button
-          if (!_isSidebarOpen) ...[
-            const SizedBox(width: 78),
-            SizedBox(
-              width: 24,
-              height: 24,
-              child: IconButton(
-                tooltip: '切换侧边栏 (Cmd+B)',
-                icon: const Icon(Icons.view_sidebar_outlined, size: 16),
-                onPressed: () => setState(() => _isSidebarOpen = true),
-                style: IconButton.styleFrom(
-                  padding: EdgeInsets.zero,
-                  minimumSize: const Size(24, 24),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  foregroundColor: isDark ? Colors.white70 : Colors.black54,
+      child: OverflowBox(
+        minHeight: 32.0,
+        maxHeight: 32.0,
+        alignment: Alignment.topCenter,
+        child: MouseRegion(
+          onEnter: (_) {
+            _titleBarHoverTimer?.cancel();
+            if (!_isHoveringTitleBar) {
+              setState(() => _isHoveringTitleBar = true);
+              _updateTrafficLights();
+            }
+          },
+          onExit: (_) {
+            _titleBarHoverTimer?.cancel();
+            _titleBarHoverTimer = Timer(const Duration(milliseconds: 800), () {
+              if (mounted) {
+                setState(() => _isHoveringTitleBar = false);
+                _updateTrafficLights();
+              }
+            });
+          },
+          child: Material(
+            type: MaterialType.transparency,
+            child: Row(
+            children: [
+              // When sidebar is closed, provide safe space for macOS traffic lights & sidebar button
+              if (!_isSidebarOpen) ...[
+                const SizedBox(width: 78),
+                Tooltip(
+                  message: '切换侧边栏 (Cmd+B)',
+                  child: InkWell(
+                    onTap: () => _setSidebarOpen(true),
+                    borderRadius: BorderRadius.circular(4),
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: Center(
+                        child: Icon(
+                          Icons.view_sidebar_outlined,
+                          size: 16,
+                          color: isDark ? Colors.white70 : Colors.black54,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+
+              // Native window drag / caption area
+              Expanded(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onPanStart: (_) {
+                    try {
+                      _windowChannel.invokeMethod('startDragging');
+                    } catch (_) {}
+                  },
+                  onDoubleTap: () {
+                    try {
+                      _windowChannel.invokeMethod('zoom');
+                    } catch (_) {}
+                  },
+                  child: Container(
+                    height: 32,
+                    alignment: Alignment.center,
+                    child: !_isToolbarVisible && controller.documentTitle.isNotEmpty
+                        ? Text(
+                            controller.documentTitle,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
+                              letterSpacing: -0.2,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          )
+                        : const SizedBox.shrink(),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 8),
-          ],
 
-          // Native window drag / caption area
-          Expanded(
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onPanStart: (_) {
-                try {
-                  _windowChannel.invokeMethod('startDragging');
-                } catch (_) {}
-              },
-              onDoubleTap: () {
-                try {
-                  _windowChannel.invokeMethod('zoom');
-                } catch (_) {}
-              },
-              child: Container(
-                height: 32,
-                alignment: Alignment.center,
-                child: !_isToolbarVisible && controller.documentTitle.isNotEmpty
-                    ? Text(
-                        controller.documentTitle,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
-                          letterSpacing: -0.2,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      )
-                    : const SizedBox.shrink(),
-              ),
-            ),
+              if (!_isSidebarOpen) const SizedBox(width: 78 + 32),
+            ],
           ),
-
-          if (!_isSidebarOpen) const SizedBox(width: 78 + 32),
-        ],
+        ),
+        ),
       ),
     );
   }
@@ -791,7 +943,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                     : Icons.view_sidebar_outlined,
                 tooltip: _isSidebarOpen ? '收起侧边栏 (Cmd+B)' : '展开侧边栏 (Cmd+B)',
                 isSelected: _isSidebarOpen,
-                onPressed: () => setState(() => _isSidebarOpen = !_isSidebarOpen),
+                onPressed: _toggleSidebar,
               ),
               _PillDivider(isDark: isDark),
 

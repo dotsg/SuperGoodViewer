@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pdfrx/pdfrx.dart';
@@ -475,6 +476,7 @@ class PdfCanvasView extends StatefulWidget {
   final ValueChanged<double>? onZoomChanged;
   final void Function(int pageNumber, int pageCount)? onPageChanged;
   final VoidCallback? onTextCopied;
+  final void Function({required double deltaY, required bool isAtTop})? onScrollChanged;
 
   const PdfCanvasView({
     super.key,
@@ -489,6 +491,7 @@ class PdfCanvasView extends StatefulWidget {
     this.onZoomChanged,
     this.onPageChanged,
     this.onTextCopied,
+    this.onScrollChanged,
   });
 
   @override
@@ -510,6 +513,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   double _currentZoom = 1.0;
   int _lastReportedPage = 1;
   int _lastReportedCount = 1;
+  double _lastVisibleTop = 0.0;
+  bool _lastReportedAtTop = true;
 
   PdfViewerController get _pdfController => _controllers[_activeSlot];
   double get currentZoom => _pdfController.isReady ? _pdfController.currentZoom : _currentZoom;
@@ -618,6 +623,20 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (docSize.height > 0) {
         final ratio = (ctrl.visibleRect.top / docSize.height).clamp(0.0, 1.0);
         widget.controller.updateScrollRatio(ratio);
+      }
+
+      final currentTop = ctrl.visibleRect.top;
+      final deltaY = currentTop - _lastVisibleTop;
+      final isFluid = widget.controller.renderOptions.isFluid;
+      final isTwoPage = widget.controller.isTwoPage && !isFluid;
+      final isAtTop = isFluid
+          ? (currentTop <= 20.0)
+          : (pageNum <= (isTwoPage ? 2 : 1));
+
+      if (deltaY.abs() > 0.5 || isAtTop != _lastReportedAtTop) {
+        _lastVisibleTop = currentTop;
+        _lastReportedAtTop = isAtTop;
+        widget.onScrollChanged?.call(deltaY: deltaY, isAtTop: isAtTop);
       }
     }
   }
@@ -1376,9 +1395,17 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       body: Listener(
         behavior: HitTestBehavior.translucent,
         onPointerSignal: (event) {
+          if (event is PointerScrollEvent) {
+            if (event.scrollDelta.dy > 1.0) {
+              widget.onScrollChanged?.call(deltaY: event.scrollDelta.dy, isAtTop: false);
+            }
+          }
           widget.onUserScrolled?.call();
         },
-        onPointerPanZoomUpdate: (_) {
+        onPointerPanZoomUpdate: (event) {
+          if (event.panDelta.dy < -1.0) {
+            widget.onScrollChanged?.call(deltaY: -event.panDelta.dy, isAtTop: false);
+          }
           widget.onUserScrolled?.call();
         },
         child: SizedBox.expand(

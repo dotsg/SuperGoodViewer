@@ -1,10 +1,12 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sogoodviewer/controllers/reader_controller.dart';
 import 'package:sogoodviewer/models/render_options.dart';
 import 'package:sogoodviewer/services/preferences_service.dart';
+import 'package:sogoodviewer/views/pdf_canvas_view.dart';
 import 'package:sogoodviewer/views/sidebar_view.dart';
 import 'package:sogoodviewer/views/workspace_view.dart';
 
@@ -438,6 +440,62 @@ void main() {
 
       expect(find.text('跳转到页面'), findsNothing);
       await tester.pump(const Duration(milliseconds: 700));
+      controller.dispose();
+    });
+
+    testWidgets('titlebar auto-hides on scroll down and shows at page top', (tester) async {
+      final controller = ReaderController();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WorkspaceView(controller: controller),
+        ),
+      );
+
+      // Initially at top of page, sidebar closed: titlebar is visible
+      expect(find.byTooltip('切换侧边栏 (Cmd+B)'), findsOneWidget);
+
+      final pdfCanvasFinder = find.byType(PdfCanvasView);
+      expect(pdfCanvasFinder, findsOneWidget);
+      final pdfCanvas = tester.widget<PdfCanvasView>(pdfCanvasFinder);
+
+      // Simulate scrolling down
+      pdfCanvas.onScrollChanged?.call(deltaY: 50.0, isAtTop: false);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      // Titlebar has animated to height 0 (hidden)
+      final titleBarContainer = find.byWidgetPredicate(
+        (widget) => widget is AnimatedContainer && widget.constraints?.maxHeight == 0.0,
+      );
+      expect(titleBarContainer, findsOneWidget);
+
+      // Simulate scrolling back to top
+      pdfCanvas.onScrollChanged?.call(deltaY: -20.0, isAtTop: true);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      // Titlebar has animated back to height 32 (shown)
+      final titleBarVisible = find.byWidgetPredicate(
+        (widget) => widget is AnimatedContainer && widget.constraints?.maxHeight == 32.0,
+      );
+      expect(titleBarVisible, findsOneWidget);
+
+      // Now open sidebar: titlebar should remain visible even when scrolling down
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.meta);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyB);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.meta);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byType(SidebarView), findsOneWidget);
+
+      // Scroll down while sidebar is open
+      pdfCanvas.onScrollChanged?.call(deltaY: 100.0, isAtTop: false);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      // Titlebar is STILL visible (height 32)
+      final titleBarStillVisible = find.byWidgetPredicate(
+        (widget) => widget is AnimatedContainer && widget.constraints?.maxHeight == 32.0,
+      );
+      expect(titleBarStillVisible, findsOneWidget);
+
       controller.dispose();
     });
   });
