@@ -20,6 +20,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // Single-instance enforcement: if an instance is already running, forward
   // any command-line file payload to the running window via WM_COPYDATA and exit.
   constexpr const wchar_t kMutexName[] = L"SuperGoodViewer_SingleInstance_Mutex";
+  // Window title: "超好读"
+  // Explicit Unicode escape sequence \u8D85\u597D\u8BFB ensures 100% immunity to MSVC/ACP encoding issues.
+  constexpr const wchar_t kAppWindowTitle[] = L"\u8D85\u597D\u8BFB";
+
   HANDLE mutex = ::CreateMutex(nullptr, TRUE, kMutexName);
   bool already_running = (::GetLastError() == ERROR_ALREADY_EXISTS);
 
@@ -27,9 +31,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       GetCommandLineArguments();
 
   if (already_running) {
-    HWND existing_hwnd = ::FindWindow(L"FLUTTER_RUNNER_WIN32_WINDOW", nullptr);
+    HWND existing_hwnd = ::FindWindow(L"FLUTTER_RUNNER_WIN32_WINDOW", kAppWindowTitle);
     if (!existing_hwnd) {
-      existing_hwnd = ::FindWindow(nullptr, L"超好读");
+      existing_hwnd = ::FindWindow(nullptr, kAppWindowTitle);
+    }
+    if (!existing_hwnd) {
+      existing_hwnd = ::FindWindow(L"FLUTTER_RUNNER_WIN32_WINDOW", nullptr);
     }
     if (existing_hwnd) {
       for (size_t i = 0; i < command_line_arguments.size(); ++i) {
@@ -61,7 +68,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  if (!window.Create(L"超好读", origin, size)) {
+  if (!window.Create(kAppWindowTitle, origin, size)) {
     if (mutex) ::CloseHandle(mutex);
     return EXIT_FAILURE;
   }
