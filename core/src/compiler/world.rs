@@ -163,6 +163,13 @@ impl GlobalFontStore {
                 "courier new",
                 // Math Fonts
                 "stix two",
+                // Emoji Fonts
+                "apple color emoji",
+                "segoe ui emoji",
+                "noto color emoji",
+                "noto emoji",
+                "twemoji",
+                "emoji",
             ];
 
             let mut font_file_cache: HashMap<PathBuf, Bytes> = HashMap::new();
@@ -191,9 +198,12 @@ impl GlobalFontStore {
                     }
                 }
 
-                // Track detected font families
+                // Track detected font families (excluding emoji fonts from UI font selection list)
                 for (f, _) in &face.families {
                     let l = f.to_lowercase();
+                    if l.contains("emoji") {
+                        continue;
+                    }
                     if l.contains("mono") || l.contains("code") || l.contains("menlo") || l.contains("monaco") || l.contains("consolas") || l.contains("courier") || face.monospaced {
                         detected_mono.insert(f.clone());
                     } else {

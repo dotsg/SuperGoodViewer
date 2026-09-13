@@ -99,6 +99,219 @@ fn slugify_heading(text: &str) -> (String, Vec<String>) {
     (gfm, secondary)
 }
 
+fn decode_html_entities(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&nbsp;", " ")
+}
+
+fn extract_html_attr(tag: &str, attr: &str) -> Option<String> {
+    let lower_tag = tag.to_lowercase();
+    let needle_double = format!("{}=\"", attr);
+    let needle_single = format!("{}='", attr);
+    let (start_idx, quote_char) = if let Some(pos) = lower_tag.find(&needle_double) {
+        (pos + needle_double.len(), '"')
+    } else if let Some(pos) = lower_tag.find(&needle_single) {
+        (pos + needle_single.len(), '\'')
+    } else {
+        return None;
+    };
+    let rest = &tag[start_idx..];
+    if let Some(end_idx) = rest.find(quote_char) {
+        Some(rest[..end_idx].to_string())
+    } else {
+        None
+    }
+}
+
+fn parse_dimension(val: &str) -> String {
+    let s = val.trim();
+    if s.ends_with('%') {
+        s.to_string()
+    } else if let Some(num) = s.strip_suffix("px") {
+        format!("{}pt", num.trim())
+    } else if let Some(num) = s.strip_suffix("pt") {
+        format!("{}pt", num.trim())
+    } else if s.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        format!("{}pt", s)
+    } else {
+        format!("{}pt", s)
+    }
+}
+
+fn render_html_image(
+    tag: &str,
+    in_center: bool,
+    is_dark: bool,
+    badge_bg: &str,
+    badge_stroke: &str,
+    badge_fg: &str,
+) -> String {
+    let src = extract_html_attr(tag, "src").unwrap_or_default();
+    if src.is_empty() {
+        return String::new();
+    }
+    let alt = extract_html_attr(tag, "alt").unwrap_or_else(|| "图片".to_string());
+    let width = extract_html_attr(tag, "width");
+    let height = extract_html_attr(tag, "height");
+
+    let is_url = src.starts_with("http://") || src.starts_with("https://");
+    if is_url {
+        let escaped_alt = escape_typst_text(&alt);
+        return format!(
+            "#link(\"{src}\")[#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 4pt, y: 2pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🔗 {escaped_alt}]]]"
+        );
+    }
+
+    let mut args = Vec::new();
+    if let Some(w) = width {
+        args.push(format!("width: {}", parse_dimension(&w)));
+    }
+    if let Some(h) = height {
+        args.push(format!("height: {}", parse_dimension(&h)));
+    }
+    let args_str = if args.is_empty() {
+        String::new()
+    } else {
+        format!(", {}", args.join(", "))
+    };
+
+    let (img_stroke, img_radius) = if is_dark {
+        ("0.5pt + rgb(\"#383e4a\")", "4pt")
+    } else {
+        ("none", "4pt")
+    };
+
+    let block_str = format!("#block(radius: {img_radius}, stroke: {img_stroke}, clip: true)[#image(\"{src}\"{args_str})]");
+    if in_center {
+        format!("\n{}\n", block_str)
+    } else {
+        format!("\n#align(center)[{}]\n\n", block_str)
+    }
+}
+
+struct HtmlTranspiler<'a> {
+    center_depth: usize,
+    is_dark: bool,
+    badge_bg: &'a str,
+    badge_stroke: &'a str,
+    badge_fg: &'a str,
+}
+
+impl<'a> HtmlTranspiler<'a> {
+    fn new(is_dark: bool, badge_bg: &'a str, badge_stroke: &'a str, badge_fg: &'a str) -> Self {
+        Self {
+            center_depth: 0,
+            is_dark,
+            badge_bg,
+            badge_stroke,
+            badge_fg,
+        }
+    }
+
+    fn transpile_chunk(&mut self, chunk: &str, out: &mut String) {
+        let mut rest = chunk;
+        while !rest.is_empty() {
+            if let Some(start) = rest.find('<') {
+                let (before, tag_start) = rest.split_at(start);
+                if !before.is_empty() {
+                    out.push_str(&escape_typst_text(&decode_html_entities(before)));
+                }
+                if let Some(end) = tag_start.find('>') {
+                    let tag = &tag_start[..=end];
+                    rest = &tag_start[end + 1..];
+                    self.handle_tag(tag, out);
+                } else {
+                    out.push_str(&escape_typst_text(&decode_html_entities(tag_start)));
+                    break;
+                }
+            } else {
+                out.push_str(&escape_typst_text(&decode_html_entities(rest)));
+                break;
+            }
+        }
+    }
+
+    fn handle_tag(&mut self, tag: &str, out: &mut String) {
+        let lower = tag.to_lowercase();
+        let trimmed_lower = lower.trim();
+        if trimmed_lower.starts_with("<!--") {
+            return;
+        }
+        if trimmed_lower.starts_with("<img") {
+            let rendered = render_html_image(
+                tag,
+                self.center_depth > 0,
+                self.is_dark,
+                self.badge_bg,
+                self.badge_stroke,
+                self.badge_fg,
+            );
+            out.push_str(&rendered);
+        } else if (trimmed_lower.starts_with("<div")
+            && (lower.contains("center") || lower.contains("align=\"center\"") || lower.contains("align='center'")))
+            || trimmed_lower == "<center>"
+        {
+            self.center_depth += 1;
+            out.push_str("\n#align(center)[\n");
+        } else if trimmed_lower == "</div>" || trimmed_lower == "</center>" {
+            if self.center_depth > 0 {
+                self.center_depth -= 1;
+                out.push_str("]\n\n");
+            }
+        } else if trimmed_lower.starts_with("<h1") {
+            out.push_str("\n= ");
+        } else if trimmed_lower == "</h1>" {
+            out.push_str("\n\n");
+        } else if trimmed_lower.starts_with("<h2") {
+            out.push_str("\n== ");
+        } else if trimmed_lower == "</h2>" {
+            out.push_str("\n\n");
+        } else if trimmed_lower.starts_with("<h3") {
+            out.push_str("\n=== ");
+        } else if trimmed_lower == "</h3>" {
+            out.push_str("\n\n");
+        } else if trimmed_lower.starts_with("<h4") {
+            out.push_str("\n==== ");
+        } else if trimmed_lower == "</h4>" {
+            out.push_str("\n\n");
+        } else if trimmed_lower.starts_with("<p") {
+            out.push('\n');
+        } else if trimmed_lower == "</p>" {
+            out.push_str("\n\n");
+        } else if trimmed_lower == "<strong>" || trimmed_lower == "<b>" {
+            out.push('*');
+        } else if trimmed_lower == "</strong>" || trimmed_lower == "</b>" {
+            out.push('*');
+        } else if trimmed_lower == "<em>" || trimmed_lower == "<i>" {
+            out.push('_');
+        } else if trimmed_lower == "</em>" || trimmed_lower == "</i>" {
+            out.push('_');
+        } else if trimmed_lower == "<br>" || trimmed_lower == "<br/>" || trimmed_lower == "<br />" {
+            out.push_str("\\ \n");
+        } else if trimmed_lower.starts_with("<a ") {
+            if let Some(href) = extract_html_attr(tag, "href") {
+                out.push_str(&format!("#link(\"{}\")[", href));
+            } else {
+                out.push('[');
+            }
+        } else if trimmed_lower == "</a>" {
+            out.push(']');
+        }
+    }
+
+    fn finish(&mut self, out: &mut String) {
+        while self.center_depth > 0 {
+            self.center_depth -= 1;
+            out.push_str("]\n\n");
+        }
+    }
+}
+
 pub fn convert_markdown_to_typst(
     markdown: &str,
     title: &str,
@@ -176,6 +389,10 @@ pub fn convert_markdown_to_typst(
         "Microsoft YaHei",
         "Noto Sans CJK SC",
         "STIX Two Text",
+        "Apple Color Emoji",
+        "Segoe UI Emoji",
+        "Noto Color Emoji",
+        "Twemoji Mozilla",
     ];
     let custom_body = options.body_font.as_deref().unwrap_or("").trim();
     let body_font_str = if !custom_body.is_empty() {
@@ -199,6 +416,10 @@ pub fn convert_markdown_to_typst(
         "Consolas",
         "PingFang SC",
         "DejaVu Sans Mono",
+        "Apple Color Emoji",
+        "Segoe UI Emoji",
+        "Noto Color Emoji",
+        "Twemoji Mozilla",
     ];
     let custom_code = options.code_font.as_deref().unwrap_or("").trim();
     let code_font_str = if !custom_code.is_empty() {
@@ -355,6 +576,7 @@ pub fn convert_markdown_to_typst(
     let mut current_heading: Option<(HeadingLevel, String)> = None;
     let mut registered_slugs: HashSet<String> = HashSet::new();
     let mut referenced_anchors: HashSet<String> = HashSet::new();
+    let mut html_transpiler = HtmlTranspiler::new(is_dark, badge_bg, badge_stroke, badge_fg);
 
     for event in parser {
         match event {
@@ -654,9 +876,14 @@ pub fn convert_markdown_to_typst(
 
             Event::SoftBreak => out.push('\n'),
             Event::HardBreak => out.push_str("\\ \n"),
+            Event::Html(raw) | Event::InlineHtml(raw) => {
+                html_transpiler.transpile_chunk(&raw, &mut out);
+            }
             _ => {}
         }
     }
+
+    html_transpiler.finish(&mut out);
 
     // Safely emit metadata anchors for any referenced links that don't match a defined heading
     // This prevents Typst compilation errors if an external markdown contains broken or missing local anchors
@@ -819,5 +1046,32 @@ Local image with dark border:
         let long_parsed = convert_markdown_to_typst(&long_md, "Long", &fluid_opts);
         assert!(long_parsed.typst_source.contains("height: auto"));
         assert!(long_parsed.typst_source.contains("bottom: 56pt"));
+    }
+
+    #[test]
+    fn test_html_readme_header() {
+        let md = r#"<div align="center">
+  <img src="docs/images/app_logo.png" width="128" height="128" alt="超好读 Logo" />
+  <h1>超好读 (SuperGoodViewer) 🚀</h1>
+  <p><strong>只读 Markdown 矢量排版桌面阅读器</strong></p>
+  <p><em>Publication-Grade Typography, Pixel-Perfect Consistency, Zero-WebView Desktop Reader.</em></p>
+</div>"#;
+        let options = RenderOptions::default();
+        let parsed = convert_markdown_to_typst(md, "README", &options);
+        println!("Generated Typst:\n{}", parsed.typst_source);
+
+        assert!(parsed.typst_source.contains("#align(center)"));
+        assert!(parsed.typst_source.contains("#image(\"docs/images/app_logo.png\""));
+        assert!(parsed.typst_source.contains("width: 128pt"));
+        assert!(parsed.typst_source.contains("height: 128pt"));
+        assert!(parsed.typst_source.contains("超好读 (SuperGoodViewer) 🚀"));
+
+        // Test actual compilation with the real docs/images/app_logo.png from repo root
+        let res = crate::compiler::engine::compile_typst_to_pdf(&parsed.typst_source, "..", parsed.virtual_files);
+        assert!(res.is_ok(), "Typst compilation failed: {:?}", res.err());
+        let pdf = res.unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
+        println!("README header compiled PDF size: {} bytes", pdf.len());
+        assert!(pdf.len() > 10_000);
     }
 }

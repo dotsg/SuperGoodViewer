@@ -84,6 +84,17 @@ graph LR
     }
 
     #[test]
+    fn test_emoji_compilation() {
+        let md = "🚀 ✨ 🎯 📐 📊 🖥 🪟 ⚙️ ⌨️ ⚡ 💾 🎨 📦 👉";
+        let options = RenderOptions::default();
+        let result = compile_markdown_to_pdf(md, "Emoji Test", ".", &options);
+        assert!(result.is_ok());
+        let pdf = result.unwrap();
+        println!("Emoji PDF bytes: {}", pdf.len());
+        assert!(pdf.len() > 50_000, "Emoji PDF should contain embedded font glyph data");
+    }
+
+    #[test]
     fn test_e2e_markdown_to_pdf_dark_paged_mode() {
         let md = r#"
 # Dark Mode Paper
