@@ -6,7 +6,7 @@
 </div>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Release: v1.0.2](https://img.shields.io/badge/Release-v1.0.2-blue.svg)](https://github.com/dotsg/sogoodviewer/releases/latest)
+[![Release: v1.0.4](https://img.shields.io/badge/Release-v1.0.4-blue.svg)](https://github.com/dotsg/sogoodviewer/releases/latest)
 [![CI Status](https://img.shields.io/badge/CI-Passing-brightgreen.svg)]()
 [![Platform: macOS | Windows | Linux](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)]()
 
@@ -167,13 +167,31 @@ sgv -h
 ## 📝 更新日志 (Changelog)
 
 ### v1.0.4 (2026-09)
+- **Windows 全平台特性对齐与原生 ARM64 支持**：
+  - 实现 Win32 平台原生交互：原生无边框全屏切换 (`F11`)、窗口标题栏拖拽、滚轮缩放与快捷键控制；
+  - Win32 互斥锁 (Mutex) 单实例控制与 IPC 消息机制：通过 `WM_COPYDATA` 实现终端或外部热唤醒已运行窗口并即时打开新文档；
+  - Windows 命令行工具 (`sgv` CLI)：新增 `sgv.cmd` 与 `sgv.ps1` 启动脚本，偏好设置中支持免提权一键安装/卸载，智能写入 `%LOCALAPPDATA%` 并动态安全维护用户注册表 PATH，控制台自动适配 UTF-8 (65001 代码页) 防乱码；
+  - Windows ARM64 (WoA) 原生交叉编译支持：核心库与 UI 支持 `aarch64-pc-windows-msvc` 原生构建，新增打包命令与 CI 自动化发布便携包；
+  - Windows 字体与界面适配：适配 Segoe UI 与微软雅黑回退链，去除 macOS 专属交通灯安全留白，修复 MSVC 编译编码避免窗口标题乱码。
+- **远程/网络图片异步下载与渐进式渲染**：
+  - 自动识别 Markdown 文档中的远程 HTTP/HTTPS 图片，后台非阻塞异步并发下载与工作池并发调度；
+  - 本地磁盘 SHA-256 URL 散列缓存，引入支持 TTL 与容量上限的负缓存 (Negative Cache) 机制，区分瞬时网络异常与 404 等永久失败；
+  - 严格的安全与格式校验：校验 Magic Bytes 真实文件类型、Content-Length、Content-Encoding (gzip) 解压，严格验证 SVG 结构，防范畸形文件与注入；
+  - 渐进式排版渲染 (Progressive Re-render)：文档首开秒级即时呈现，远程图片下载就绪后防抖自动触发局部无感知平滑重排。
+- **彩色 Emoji 表情与字体回退系统**：
+  - 编译器内核集成各平台原生彩色表情字体扫描与回退（macOS Apple Color Emoji、Windows Segoe UI Emoji、Linux Noto Color Emoji），彻底消除表情符号在 Typst 编译时的缺失与方块乱码。
+- **Markdown 本地文档相对路径跳转与超链接导航**：
+  - 原生 PDF 画布视图全面拦截并解析相对路径 Markdown 超链接（如 `[Doc](docs/ARCHITECTURE.md)`），点击即在阅读器中无缝切换并打开目标文档；
+  - 结合文档内锚点跳转，打通跨文档知识跳转网络；外部 HTTP/HTTPS 链接继续唤起系统默认浏览器。
+- **HTML 标签转译与内联/块级排版增强**：
+  - 支持解析常用 HTML 结构标签（如 `<div align="center">` 居中容器）并转换为 Typst 原生对齐容器；
+  - 加固 `<img width="...">` / `<img height="...">` 尺寸解析，严格校验合法数值并规范化格式输出（支持 `5.px`、`.5`、科学计数法与正负号），自动拦截无效参数与潜在代码注入风险；
+  - 修复标题元数据锚点周围出现的意外括号字符。
 - **Typst 编译转义与稳定性加固 (#1)**：
   - 修复标题含 ASCII 双引号导致 Typst 报错 `expected comma` 的问题，完善 Typst 代码模式字符串字面量转义；
   - Markdown 标题备用 slug、跳转锚点、外部链接及兜底锚点标签全面增加转义保护；
   - 解决 LaTeX Math 在公式解析失败触发 fallback 时若包含引号引发 Typst `unknown variable` 的隐患；
   - 优化锚点去重逻辑，消除未命中备用锚点产生的冗余兜底元数据标签。
-- **HTML 尺寸属性解析与安全收口**：
-  - 加固 `<img width="...">` / `<img height="...">` 尺寸解析，严格校验合法数值并规范化格式输出（支持 `5.px`、`.5`、科学计数法与正负号），自动拦截无效参数与潜在代码注入风险。
 
 ### v1.0.3 (2026-09)
 - **流式阅读体验与排版升级**：
@@ -213,11 +231,17 @@ sgv -h
   - 垂直方向局部预渲染缓冲区 (Vertical Pre-rendering Buffer) 与迟滞缓存策略，消除极速滚动白屏；
   - 优化构建系统，彻底隔离基准测试目标与核心动态库。
 
-### v1.0.1
-- 正式发布官方视觉 Logo 与应用图标，全平台 macOS、Windows 高清图标与 DMG 拖拽安装适配。
+### v1.0.1 (2026-09)
+- **品牌视觉与全平台图标整合**：正式发布官方视觉 Logo 与应用图标，完成 macOS、Windows 原生高清图标与 DMG 拖拽安装适配。
+- **发布自动化工作流优化**：精简 GitHub Actions Release 工作流，严格仅在推送新 Tag 时触发构建与多平台制品打包。
 
-### v1.0.0
-- 首次发布：纯 Rust 内存编译 Typst、出版级 LaTeX 数学公式、离线矢量 Mermaid、双排版视窗及 0ms 无损 PDF 导出。
+### v1.0.0 (2026-09)
+- **首次正式发布**：
+  - **Rust + Typst + PDFium 全原生架构**：彻底舍弃传统 WebView，纯 Rust 内存流水线，实现毫秒级极速排版与 0ms 即时导出出版级无损 PDF；
+  - **出版级 LaTeX 数学公式与离线矢量 Mermaid**：集成 mitex 原生转译复杂微积分、矩阵与多行对齐方程；基于 `mermaid-rs-renderer` 纯 Rust 离线秒级生成矢量图表，内置 SHA-256 增量图表缓存；
+  - **双排版视窗模型 (Dual-Layout)**：自适应流式视窗 (Fluid Screen, 720pt 黄金阅读行宽, 120 FPS 满帧 GPU 变换) 与 A4 出版打印视图 (Paged, 标准 A4 页面排版, 支持单页与双页对开)；
+  - **出版级中西文字体库与等宽对齐**：内置 17 款开源出版级字体，搭载 Maple Mono 实现 CJK 1:2 中西文完美等宽对齐；
+  - **阅读交互与基础功能**：目录大纲树侧边栏导航、文档内标题锚点跳转、缩放自适应、浅色/暗黑主题原生切换与零闪烁双缓冲实时热重载。
 
 ---
 
