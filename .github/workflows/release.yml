@@ -4,14 +4,23 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g. v1.0.5)'
+        required: true
+        default: 'v1.0.5'
 
 permissions:
   contents: write
 
-# Re-pushing the same tag cancels the superseded run instead of stacking builds.
+# Re-running the release cancels superseded builds for the same version
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.version || github.ref }}
   cancel-in-progress: true
+
+env:
+  RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
 
 jobs:
   # =============================================================
@@ -65,7 +74,7 @@ jobs:
         run: |
           mkdir -p dist
           APP_PATH="ui/build/macos/Build/Products/Release/sogoodviewer.app"
-          DMG_FILE="dist/SuperGoodViewer-${{ github.ref_name }}-macos.dmg"
+          DMG_FILE="dist/SuperGoodViewer-${{ env.RELEASE_VERSION }}-macos.dmg"
           STAGING_DIR="dist/dmg_staging"
 
           echo "==> Preparing DMG staging directory with Applications shortcut..."
@@ -150,7 +159,7 @@ jobs:
           Copy-Item -Path "ui/bin/sgv.ps1" -Destination $buildDir
 
           # Compress to zip
-          $zipName = "dist/SuperGoodViewer-${{ github.ref_name }}-windows-x64.zip"
+          $zipName = "dist/SuperGoodViewer-${{ env.RELEASE_VERSION }}-windows-x64.zip"
           Compress-Archive -Path "$buildDir/*" -DestinationPath $zipName
           Write-Host "Created Windows x64 package: $zipName"
 
@@ -252,7 +261,7 @@ jobs:
           Copy-Item -Path "core/target/aarch64-pc-windows-msvc/release/sogood_core.dll" -Destination $buildDir -Force
           Copy-Item -Path "ui/bin/sgv.cmd" -Destination $buildDir -Force
           Copy-Item -Path "ui/bin/sgv.ps1" -Destination $buildDir -Force
-          $zipName = "dist/SuperGoodViewer-${{ github.ref_name }}-windows-arm64.zip"
+          $zipName = "dist/SuperGoodViewer-${{ env.RELEASE_VERSION }}-windows-arm64.zip"
           Compress-Archive -Path "$buildDir/*" -DestinationPath $zipName
           Write-Host "Created Windows ARM64 package: $zipName"
 
@@ -286,14 +295,15 @@ jobs:
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: "超好读 (SuperGoodViewer) ${{ github.ref_name }}"
+          tag_name: ${{ env.RELEASE_VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: "超好读 (SuperGoodViewer) ${{ env.RELEASE_VERSION }}"
           files: release-artifacts/*
           draft: false
           prerelease: false
           generate_release_notes: true
           body: |
-            ## 🚀 超好读 (SuperGoodViewer) ${{ github.ref_name }} 正式发布！
+            ## 🚀 超好读 (SuperGoodViewer) ${{ env.RELEASE_VERSION }} 正式发布！
 
             **只读 Markdown 矢量排版桌面阅读器**
             *Publication-Grade Typography, Pixel-Perfect Consistency, Zero-WebView Desktop Reader.*
@@ -303,7 +313,7 @@ jobs:
             ### 📦 下载与安装指南
 
             #### 🍏 macOS 用户
-            - **下载文件**：`SuperGoodViewer-${{ github.ref_name }}-macos.dmg`
+            - **下载文件**：`SuperGoodViewer-${{ env.RELEASE_VERSION }}-macos.dmg`
             - **系统要求**：macOS 11.0+ (原生支持 Apple Silicon M 系列芯片与 Intel Mac)
             - **首次打开提示处理**：
               若系统提示「*无法验证开发者*」或「*已损坏，无法打开*」，请打开终端（Terminal）执行以下命令解除隔离属性即可：
@@ -312,7 +322,7 @@ jobs:
               ```
 
             #### 🪟 Windows 用户
-            - **Intel / AMD 64位 PC**：下载 `SuperGoodViewer-${{ github.ref_name }}-windows-x64.zip`
-            - **高通骁龙 X / Surface 等 ARM64 设备**：下载 `SuperGoodViewer-${{ github.ref_name }}-windows-arm64.zip`（100% 纯原生 Native ARM64 架构，零转译开销与超高能效）
+            - **Intel / AMD 64位 PC**：下载 `SuperGoodViewer-${{ env.RELEASE_VERSION }}-windows-x64.zip`
+            - **高通骁龙 X / Surface 等 ARM64 设备**：下载 `SuperGoodViewer-${{ env.RELEASE_VERSION }}-windows-arm64.zip`（100% 纯原生 Native ARM64 架构，零转译开销与超高能效）
             - **使用方式**：解压 zip 包至任意目录，双击 `SuperGoodViewer.exe` 即可即开即用（绿色免安装便携版）；亦可将解压目录加入系统环境变量或使用内置的 `sgv.cmd` / `sgv.ps1` 命令行工具快速预览文档。
             - **首次运行提示**：如遇 Windows SmartScreen 提示拦截，点击「更多信息」并选择「仍要运行」。
