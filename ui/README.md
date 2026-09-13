@@ -1,17 +1,28 @@
-# sogoodviewer
+# SuperGoodViewer (UI Frontend)
 
-A new Flutter project.
+This directory contains the desktop Flutter application for **SuperGoodViewer (超好读)**.
 
-## Getting Started
+## Overview
 
-This project is a starting point for a Flutter application.
+The Flutter frontend acts as a high-performance shell over the embedded Rust core (`sogood_core`):
+- **Document Viewport**: Uses `pdfrx` and Google's C++ PDFium library to render vector-sharp PDF page buffers in real-time.
+- **Native Method Channels**:
+  - `com.sogoodviewer.window`: Controls borderless fullscreen, custom titlebar window dragging, and zoom.
+  - `com.sogoodviewer.app`: Manages single-instance IPC (`WM_COPYDATA` / `onOpenFile`) and CLI script installation (`sgv.cmd` / `sgv.ps1` / macOS symlinks).
+- **Embedded Engine FFI**: Connects to `sogood_core.dll` (Windows) / `libsogood_core.dylib` (macOS) via `dart:ffi`.
 
-A few resources to get you started if this is your first Flutter project:
+## Build & Test Commands
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+From repo root:
+```bash
+# Run unit tests and static analysis
+make test-app
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+# Run desktop app in debug mode
+make run-macos     # macOS
+make run-windows   # Windows
+
+# Build release desktop app
+make build-windows       # Windows x64
+make build-windows-arm64 # Windows ARM64
+```
