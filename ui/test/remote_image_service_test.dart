@@ -8,11 +8,13 @@ void main() {
   late Directory tempDir;
 
   setUp(() {
+    RemoteImageService.instance.resetForTesting();
     tempDir = Directory.systemTemp.createTempSync('sgv_remote_img_test_');
     RemoteImageService.setCacheDirForTesting(tempDir);
   });
 
   tearDown(() {
+    RemoteImageService.instance.resetForTesting();
     RemoteImageService.setCacheDirForTesting(null);
     try {
       if (tempDir.existsSync()) {
@@ -131,19 +133,29 @@ And another one with single quotes:
       expect(RemoteImageService.instance.isCached(wechatUrlWithAnchor), isTrue);
     });
 
-    test('negative caching prevents retrying failed URLs within TTL', () {
-      RemoteImageService.instance.clearNegativeCache();
+    test('negative caching distinguishes TTLs, honors expiration, and can be cleared', () {
       const failedUrl = 'https://example.com/broken.png';
 
       expect(RemoteImageService.instance.isRecentlyFailed(failedUrl), isFalse);
 
-      // Trigger negative cache entry
-      RemoteImageService.instance.fetchAndCacheImage(failedUrl);
+      // Record failure with short TTL
+      RemoteImageService.instance.recordFailureForTesting(failedUrl, const Duration(milliseconds: 50));
+      expect(RemoteImageService.instance.isRecentlyFailed(failedUrl), isTrue);
 
-      // In-memory negative cache check
-      expect(RemoteImageService.instance.isRecentlyFailed(failedUrl), isFalse); // not yet completed
+      final remaining = RemoteImageService.instance.getRemainingFailureTtl(failedUrl);
+      expect(remaining, isNotNull);
+      expect(remaining!.inMilliseconds, greaterThan(0));
 
+      // Clear negative cache
       RemoteImageService.instance.clearNegativeCache();
+      expect(RemoteImageService.instance.isRecentlyFailed(failedUrl), isFalse);
+
+      // Re-record with very short TTL and verify expiration
+      RemoteImageService.instance.recordFailureForTesting(failedUrl, const Duration(milliseconds: 20));
+      expect(RemoteImageService.instance.isRecentlyFailed(failedUrl), isTrue);
+
+      sleep(const Duration(milliseconds: 30));
+      expect(RemoteImageService.instance.isRecentlyFailed(failedUrl), isFalse);
     });
 
     test('pruneCacheIfNeeded evicts oldest modified files when limit is exceeded and cleans orphan tmp files', () async {

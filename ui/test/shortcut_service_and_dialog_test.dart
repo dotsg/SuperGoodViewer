@@ -171,7 +171,7 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
-      final controller = ReaderController();
+      final controller = ReaderController(autoRestorePreferences: false);
       addTearDown(controller.dispose);
 
       await tester.pumpWidget(
@@ -217,7 +217,7 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
-      final controller = ReaderController();
+      final controller = ReaderController(autoRestorePreferences: false);
       addTearDown(controller.dispose);
 
       // Customize toggleMode to key G

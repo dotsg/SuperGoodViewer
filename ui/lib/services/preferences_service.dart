@@ -28,6 +28,15 @@ class PreferencesService {
     if (testConfigFileOverride != null) return testConfigFileOverride!;
     if (_cachedConfigFile != null) return _cachedConfigFile!;
 
+    if (Platform.environment.containsKey('FLUTTER_TEST')) {
+      final testDir = Directory(p.join(Directory.systemTemp.path, 'sgv_flutter_test_prefs'));
+      if (!testDir.existsSync()) {
+        testDir.createSync(recursive: true);
+      }
+      _cachedConfigFile = File(p.join(testDir.path, _prefFileName));
+      return _cachedConfigFile!;
+    }
+
     try {
       final home = Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
       if (home != null) {

@@ -18,7 +18,11 @@ void main() {
     0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
   ];
 
+  int serverRequestCount = 0;
+
   setUp(() async {
+    RemoteImageService.instance.resetForTesting();
+    serverRequestCount = 0;
     tempDir = Directory.systemTemp.createTempSync('sgv_mock_img_test_');
     RemoteImageService.setCacheDirForTesting(tempDir);
 
@@ -27,6 +31,7 @@ void main() {
     serverBaseUrl = 'http://${mockServer.address.host}:${mockServer.port}';
 
     mockServer.listen((HttpRequest request) {
+      serverRequestCount++;
       final path = request.uri.path;
       if (path.contains('valid_png') || path.contains('wechat_style')) {
         request.response
@@ -70,6 +75,7 @@ void main() {
   });
 
   tearDown(() async {
+    RemoteImageService.instance.resetForTesting();
     await mockServer.close(force: true);
     RemoteImageService.setCacheDirForTesting(null);
     try {
@@ -180,5 +186,31 @@ void main() {
     final success = await RemoteImageService.instance.fetchAndCacheImage(octetUrl);
     expect(success, isTrue, reason: 'Image with application/octet-stream and valid magic bytes should be accepted');
     expect(RemoteImageService.instance.isCached(octetUrl), isTrue);
+  });
+
+  test('records 404 in negative cache, avoids duplicate HTTP requests, and clears on demand', () async {
+    final nonexistentUrl = '$serverBaseUrl/nonexistent_image.png';
+    final initialCount = serverRequestCount;
+
+    expect(RemoteImageService.instance.isRecentlyFailed(nonexistentUrl), isFalse);
+
+    // 1st request: 404 from mock server
+    final success = await RemoteImageService.instance.fetchAndCacheImage(nonexistentUrl);
+    expect(success, isFalse);
+    expect(RemoteImageService.instance.isRecentlyFailed(nonexistentUrl), isTrue);
+    expect(serverRequestCount, initialCount + 1);
+
+    // 2nd request: blocked by negative cache, server should NOT receive any new request
+    final secondSuccess = await RemoteImageService.instance.fetchAndCacheImage(nonexistentUrl);
+    expect(secondSuccess, isFalse);
+    expect(serverRequestCount, initialCount + 1);
+
+    // After clearing negative cache, a new request is permitted
+    RemoteImageService.instance.clearNegativeCache();
+    expect(RemoteImageService.instance.isRecentlyFailed(nonexistentUrl), isFalse);
+
+    final thirdSuccess = await RemoteImageService.instance.fetchAndCacheImage(nonexistentUrl);
+    expect(thirdSuccess, isFalse);
+    expect(serverRequestCount, initialCount + 2);
   });
 }

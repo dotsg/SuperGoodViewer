@@ -400,6 +400,7 @@ class ReaderController extends ChangeNotifier {
         _recentFiles.removeLast();
       }
 
+      RemoteImageService.instance.clearNegativeCache();
       _persistDebounced();
       _setupFileWatcher(filePath);
       _triggerRemoteImageDownloads();
@@ -499,6 +500,7 @@ class ReaderController extends ChangeNotifier {
           }
           _currentMarkdown = text;
           _extractOutline(_currentMarkdown);
+          RemoteImageService.instance.clearNegativeCache();
           _triggerRemoteImageDownloads();
           startReloading();
           await compileDocument();
@@ -507,6 +509,13 @@ class ReaderController extends ChangeNotifier {
         }
       }
     }
+  }
+
+  /// Manually refreshes the current document, clearing negative image cache and re-triggering downloads.
+  Future<void> refreshDocument() async {
+    RemoteImageService.instance.clearNegativeCache();
+    _triggerRemoteImageDownloads();
+    await compileDocument();
   }
 
   void _triggerRemoteImageDownloads() {

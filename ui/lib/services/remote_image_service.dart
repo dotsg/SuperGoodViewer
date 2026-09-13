@@ -63,7 +63,9 @@ class RemoteImageService {
   final _WorkerPool _pool = _WorkerPool(maxConcurrency: 5);
   final Map<String, Future<bool>> _inFlight = {};
   final Map<String, DateTime> _negativeCache = {};
-  static const Duration _negativeCacheTtl = Duration(minutes: 10);
+  static const Duration _deterministicFailureTtl = Duration(minutes: 10);
+  static const Duration _transientFailureTtl = Duration(seconds: 30);
+  static const int _maxNegativeCacheEntries = 1000;
   DateTime? _lastPruneTime;
 
   final HttpClient _httpClient = HttpClient()
@@ -76,14 +78,51 @@ class RemoteImageService {
     _cachedDir = dir;
   }
 
-  @visibleForTesting
+  /// Clears the negative cache, allowing previously failed URLs to be retried immediately.
   void clearNegativeCache() {
     _negativeCache.clear();
   }
 
+  /// Resets testing-related singleton state (caches, throttles, and counters).
   @visibleForTesting
-  void resetPruneThrottle() {
+  void resetForTesting() {
+    _negativeCache.clear();
     _lastPruneTime = null;
+    _tempFileCounter = 0;
+  }
+
+  @visibleForTesting
+  void resetPruneThrottle() => resetForTesting();
+
+  @visibleForTesting
+  void recordFailureForTesting(String cleanUrl, Duration ttl) {
+    _recordFailure(cleanUrl, ttl);
+  }
+
+  @visibleForTesting
+  Duration? getRemainingFailureTtl(String cleanUrl) {
+    final expiresAt = _negativeCache[cleanUrl];
+    if (expiresAt == null) return null;
+    final diff = expiresAt.difference(DateTime.now());
+    return diff.isNegative ? Duration.zero : diff;
+  }
+
+  void _cleanNegativeCache(DateTime now) {
+    _negativeCache.removeWhere((_, expiresAt) => now.isAfter(expiresAt));
+    if (_negativeCache.length > _maxNegativeCacheEntries) {
+      final sorted = _negativeCache.entries.toList()
+        ..sort((a, b) => a.value.compareTo(b.value));
+      final removeCount = _negativeCache.length - _maxNegativeCacheEntries;
+      for (int i = 0; i < removeCount; i++) {
+        _negativeCache.remove(sorted[i].key);
+      }
+    }
+  }
+
+  void _recordFailure(String cleanUrl, Duration ttl) {
+    final now = DateTime.now();
+    _cleanNegativeCache(now);
+    _negativeCache[cleanUrl] = now.add(ttl);
   }
 
   /// Returns the platform-specific cache directory for remote images.
@@ -202,11 +241,11 @@ class RemoteImageService {
     return false;
   }
 
-  /// Checks if a URL recently failed (within 10-minute negative cache TTL).
+  /// Checks if a URL recently failed and is within its negative cache TTL.
   bool isRecentlyFailed(String cleanUrl) {
-    final failedAt = _negativeCache[cleanUrl];
-    if (failedAt == null) return false;
-    if (DateTime.now().difference(failedAt) > _negativeCacheTtl) {
+    final expiresAt = _negativeCache[cleanUrl];
+    if (expiresAt == null) return false;
+    if (DateTime.now().isAfter(expiresAt)) {
       _negativeCache.remove(cleanUrl);
       return false;
     }
@@ -307,16 +346,25 @@ class RemoteImageService {
       // 1. Verify HTTP 200
       if (response.statusCode != 200) {
         debugPrint('[RemoteImageService] Non-200 HTTP status ${response.statusCode} for $cleanUrl');
-        _negativeCache[cleanUrl] = DateTime.now();
+        try {
+          await response.drain<void>();
+        } catch (_) {}
+        final isDeterministic = response.statusCode >= 400 && response.statusCode < 500;
+        _recordFailure(cleanUrl, isDeterministic ? _deterministicFailureTtl : _transientFailureTtl);
         return false;
       }
 
       // 2. Reject explicit HTML error/anti-leech pages or JSON error payloads
       // (allowing application/octet-stream from S3/OSS/CDNs to be validated by magic bytes)
       final contentType = response.headers.value(HttpHeaders.contentTypeHeader)?.toLowerCase() ?? '';
-      if (contentType.startsWith('text/html') || contentType.startsWith('application/json')) {
+      if (contentType.startsWith('text/html') ||
+          contentType.startsWith('application/json') ||
+          contentType.startsWith('text/plain')) {
         debugPrint('[RemoteImageService] Explicit non-image Content-Type ($contentType) for $cleanUrl');
-        _negativeCache[cleanUrl] = DateTime.now();
+        try {
+          await response.drain<void>();
+        } catch (_) {}
+        _recordFailure(cleanUrl, _deterministicFailureTtl);
         return false;
       }
 
@@ -338,7 +386,7 @@ class RemoteImageService {
           response.contentLength > 0 &&
           bytesWritten != response.contentLength) {
         debugPrint('[RemoteImageService] Content-Length mismatch ($bytesWritten / ${response.contentLength}) for $cleanUrl');
-        _negativeCache[cleanUrl] = DateTime.now();
+        _recordFailure(cleanUrl, _transientFailureTtl);
         try {
           if (tempFile.existsSync()) tempFile.deleteSync();
         } catch (_) {}
@@ -350,7 +398,7 @@ class RemoteImageService {
         final headerBytes = await tempFile.openRead(0, 256).first;
         if (!isValidImageBytes(headerBytes)) {
           debugPrint('[RemoteImageService] Corrupted or unknown image signature for $cleanUrl');
-          _negativeCache[cleanUrl] = DateTime.now();
+          _recordFailure(cleanUrl, _deterministicFailureTtl);
           try {
             tempFile.deleteSync();
           } catch (_) {}
@@ -366,11 +414,12 @@ class RemoteImageService {
         debugPrint('[RemoteImageService] Cached valid image: $targetFilename ($bytesWritten bytes) for $cleanUrl');
         return true;
       }
-      _negativeCache[cleanUrl] = DateTime.now();
+      _recordFailure(cleanUrl, _deterministicFailureTtl);
       return false;
     } catch (e) {
       debugPrint('[RemoteImageService] Error downloading $cleanUrl: $e');
-      _negativeCache[cleanUrl] = DateTime.now();
+      final isTransient = e is TimeoutException || e is IOException;
+      _recordFailure(cleanUrl, isTransient ? _transientFailureTtl : _deterministicFailureTtl);
       try {
         final tmp = File(tempFilePath);
         if (tmp.existsSync()) {
@@ -445,6 +494,8 @@ class RemoteImageService {
   /// until under 75% of the limit. Throttled to at most once per 5 minutes.
   Future<void> pruneCacheIfNeeded({int maxSizeBytes = 250 * 1024 * 1024}) async {
     final now = DateTime.now();
+    _cleanNegativeCache(now);
+
     if (_lastPruneTime != null && now.difference(_lastPruneTime!) < const Duration(minutes: 5)) {
       return;
     }
