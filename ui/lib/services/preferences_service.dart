@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 /// Lightweight cross-platform preferences service.
 /// Persists user settings, last opened document, and layout state.
@@ -22,43 +21,61 @@ class PreferencesService {
     _pendingSave = null;
   }
 
-  static Future<File> _getConfigFile() async {
+  static File _resolveConfigFileSync() {
     if (testConfigFileOverride != null) return testConfigFileOverride!;
     if (_cachedConfigFile != null) return _cachedConfigFile!;
+
     try {
-      final appSupportDir = await getApplicationSupportDirectory();
-      if (!await appSupportDir.exists()) {
-        await appSupportDir.create(recursive: true);
+      final home = Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+      if (home != null) {
+        final Directory appSupportDir;
+        if (Platform.isMacOS) {
+          appSupportDir = Directory(p.join(home, 'Library', 'Application Support', 'com.sogood.sogoodviewer'));
+        } else if (Platform.isWindows) {
+          final appData = Platform.environment['APPDATA'] ?? home;
+          appSupportDir = Directory(p.join(appData, 'com.sogood.sogoodviewer'));
+        } else {
+          appSupportDir = Directory(p.join(home, '.sogoodviewer'));
+        }
+        if (!appSupportDir.existsSync()) {
+          appSupportDir.createSync(recursive: true);
+        }
+        _cachedConfigFile = File(p.join(appSupportDir.path, _prefFileName));
+        return _cachedConfigFile!;
       }
-      _cachedConfigFile = File(p.join(appSupportDir.path, _prefFileName));
-    } catch (_) {
-      final home = Platform.environment['HOME'] ??
-          Platform.environment['USERPROFILE'] ??
-          '.';
-      final dir = Directory(p.join(home, '.sogoodviewer'));
-      if (!dir.existsSync()) {
-        dir.createSync(recursive: true);
-      }
-      _cachedConfigFile = File(p.join(dir.path, _prefFileName));
-    }
+    } catch (_) {}
+
+    final dir = Directory(p.join(Directory.current.path, '.sogoodviewer'));
+    _cachedConfigFile = File(p.join(dir.path, _prefFileName));
     return _cachedConfigFile!;
   }
 
-  static Future<Map<String, dynamic>> load() async {
+  static Future<File> _getConfigFile() async {
+    if (testConfigFileOverride != null) return testConfigFileOverride!;
+    if (_cachedConfigFile != null) return _cachedConfigFile!;
+    return _resolveConfigFileSync();
+  }
+
+  static Map<String, dynamic> loadSync() {
     try {
-      final file = await _getConfigFile();
-      if (await file.exists()) {
-        final content = await file.readAsString();
-        if (content.trim().isEmpty) return {};
-        final data = json.decode(content);
-        if (data is Map<String, dynamic>) {
-          return data;
+      final file = _resolveConfigFileSync();
+      if (file.existsSync()) {
+        final content = file.readAsStringSync();
+        if (content.trim().isNotEmpty) {
+          final data = json.decode(content);
+          if (data is Map<String, dynamic>) {
+            return data;
+          }
         }
       }
     } catch (e) {
-      debugPrint('PreferencesService.load error: $e');
+      debugPrint('PreferencesService.loadSync error: $e');
     }
     return {};
+  }
+
+  static Future<Map<String, dynamic>> load() async {
+    return loadSync();
   }
 
   static Future<void> save(Map<String, dynamic> prefs) async {

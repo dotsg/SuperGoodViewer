@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import '../bridge/native_engine.dart';
 import '../models/render_options.dart';
+import '../services/document_cache_service.dart';
 import '../services/preferences_service.dart';
 
 class OutlineItem {
@@ -118,7 +119,8 @@ class ReaderController extends ChangeNotifier {
     unawaited(refreshFontReport());
     _setSampleDocumentContent();
     if (initialFilePath != null && initialFilePath.isNotEmpty) {
-      openFile(initialFilePath);
+      _initPreferencesOnly();
+      _openFileInternal(initialFilePath, preservePosition: false);
     } else if (autoRestorePreferences) {
       _initSession();
     } else {
@@ -126,10 +128,9 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
-  Future<void> _initSession() async {
+  void _initPreferencesOnly() {
     try {
-      final prefs = await PreferencesService.load();
-      final lastFile = prefs['lastOpenedFile'] as String?;
+      final prefs = PreferencesService.loadSync();
       final savedTheme = prefs['theme'] as String?;
       final savedMode = prefs['mode'] as String?;
       final savedTwoPage = prefs['isTwoPage'] as bool?;
@@ -156,15 +157,25 @@ class ReaderController extends ChangeNotifier {
           orElse: () => AutoFitMode.none,
         );
       }
+    } catch (e) {
+      debugPrint('Error loading preferences: $e');
+    }
+  }
+
+  void _initSession() {
+    try {
+      _initPreferencesOnly();
+      final prefs = PreferencesService.loadSync();
+      final lastFile = prefs['lastOpenedFile'] as String?;
 
       if (lastFile != null && lastFile.isNotEmpty) {
         final file = File(lastFile);
-        if (await file.exists()) {
+        if (file.existsSync()) {
           final savedScroll = (prefs['lastScrollRatio'] as num?)?.toDouble() ?? 0.0;
           final savedPage = (prefs['lastPageNumber'] as num?)?.toInt() ?? 1;
           _lastScrollRatio = savedScroll;
           _lastPageNumber = savedPage;
-          await openFile(lastFile, preservePosition: true);
+          _openFileInternal(lastFile, preservePosition: true);
           return;
         }
       }
@@ -172,7 +183,7 @@ class ReaderController extends ChangeNotifier {
       debugPrint('Error restoring last session: $e');
     }
     // Only compile sample document if no valid previous file exists
-    await compileDocument();
+    compileDocument();
   }
 
   void _persistPreferences() {
@@ -225,12 +236,12 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
-  Future<void> openFile(String filePath, {bool preservePosition = false}) async {
+  void _openFileInternal(String filePath, {bool preservePosition = false}) {
     final file = File(filePath);
-    if (!await file.exists()) {
+    if (!file.existsSync()) {
       final msg = 'File not found: $filePath';
       if (_currentPdfBytes == null) {
-        await compileDocument();
+        compileDocument();
       }
       _errorMessage = msg;
       notifyListeners();
@@ -238,7 +249,7 @@ class ReaderController extends ChangeNotifier {
     }
 
     try {
-      final bytes = await file.readAsBytes();
+      final bytes = file.readAsBytesSync();
       String content;
       try {
         content = utf8.decode(bytes);
@@ -265,17 +276,32 @@ class ReaderController extends ChangeNotifier {
         _recentFiles.removeLast();
       }
 
-      _persistPreferences();
+      _persistDebounced();
       _setupFileWatcher(filePath);
-      await compileDocument();
+
+      // Check fast disk cache for pre-compiled PDF!
+      final cachedPdf = DocumentCacheService.getCachedPdf(filePath, _renderOptions);
+      if (cachedPdf != null && cachedPdf.isNotEmpty) {
+        _currentPdfBytes = cachedPdf;
+        _errorMessage = null;
+        debugPrint('[ReaderController] Fast cache hit: instant PDF loaded (${cachedPdf.length} bytes) for $filePath');
+        notifyListeners();
+        return;
+      }
+
+      compileDocument();
     } catch (e) {
       final msg = 'Failed to read file: $e';
       if (_currentPdfBytes == null) {
-        await compileDocument();
+        compileDocument();
       }
       _errorMessage = msg;
       notifyListeners();
     }
+  }
+
+  Future<void> openFile(String filePath, {bool preservePosition = false}) async {
+    _openFileInternal(filePath, preservePosition: preservePosition);
   }
 
   void clearRecentFiles() {
@@ -365,6 +391,9 @@ class ReaderController extends ChangeNotifier {
           _currentPdfBytes = pdfBytes;
           _errorMessage = null;
           debugPrint('[ReaderController] compileDocument: SUCCESS gen $generation (${pdfBytes.length} bytes)');
+          if (_currentFilePath != null) {
+            unawaited(DocumentCacheService.saveCachedPdf(_currentFilePath!, _renderOptions, pdfBytes));
+          }
         } else {
           _errorMessage = NativeEngine.instance.getLastError() ?? 'Compilation failed';
           debugPrint('[ReaderController] compileDocument: FAILED gen $generation ($_errorMessage)');
@@ -390,7 +419,18 @@ class ReaderController extends ChangeNotifier {
     _isReloading = true;
     final nextMode = _renderOptions.mode == 'fluid' ? 'paged' : 'fluid';
     _renderOptions = _renderOptions.copyWith(mode: nextMode);
-    _persistPreferences();
+    _persistDebounced();
+    notifyListeners();
+    if (_currentFilePath != null) {
+      final cached = DocumentCacheService.getCachedPdf(_currentFilePath!, _renderOptions);
+      if (cached != null && cached.isNotEmpty) {
+        _currentPdfBytes = cached;
+        _errorMessage = null;
+        debugPrint('[ReaderController] Mode toggle cache hit: instant PDF loaded');
+        notifyListeners();
+        return;
+      }
+    }
     compileDocument();
   }
 
@@ -398,7 +438,18 @@ class ReaderController extends ChangeNotifier {
     _isReloading = true;
     final nextTheme = _renderOptions.theme == 'light' ? 'dark' : 'light';
     _renderOptions = _renderOptions.copyWith(theme: nextTheme);
-    _persistPreferences();
+    _persistDebounced();
+    notifyListeners();
+    if (_currentFilePath != null) {
+      final cached = DocumentCacheService.getCachedPdf(_currentFilePath!, _renderOptions);
+      if (cached != null && cached.isNotEmpty) {
+        _currentPdfBytes = cached;
+        _errorMessage = null;
+        debugPrint('[ReaderController] Theme toggle cache hit: instant PDF loaded');
+        notifyListeners();
+        return;
+      }
+    }
     compileDocument();
   }
 

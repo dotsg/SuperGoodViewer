@@ -1529,7 +1529,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           offset: const Offset(0, 3),
         ),
         behaviorControlParams: const PdfViewerBehaviorControlParams(
-          enableLowResolutionPagePreview: true,
+          enableLowResolutionPagePreview: false,
           trailingPageLoadingDelay: Duration.zero,
           pageImageCachingDelay: Duration.zero,
           partialImageLoadingDelay: Duration.zero,
