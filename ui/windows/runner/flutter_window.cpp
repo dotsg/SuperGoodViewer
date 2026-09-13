@@ -200,8 +200,39 @@ std::wstring GetLocalAppDataPath() {
     CoTaskMemFree(local_app_data);
     return path;
   }
+  // Robust fallback 1: read %LOCALAPPDATA% environment variable if Shell API fails
+  wchar_t env_buf[MAX_PATH];
+  DWORD len = ::GetEnvironmentVariableW(L"LOCALAPPDATA", env_buf, MAX_PATH);
+  if (len > 0 && len < MAX_PATH) {
+    return std::wstring(env_buf);
+  }
+  // Robust fallback 2: check %USERPROFILE%\AppData\Local
+  len = ::GetEnvironmentVariableW(L"USERPROFILE", env_buf, MAX_PATH);
+  if (len > 0 && len < MAX_PATH) {
+    std::wstring p = std::wstring(env_buf) + L"\\AppData\\Local";
+    if (std::filesystem::exists(p)) {
+      return p;
+    }
+  }
   return L"";
 }
+
+struct CliLocations {
+  std::wstring custom_dir;
+  std::wstring custom_cmd;
+  std::wstring winapps_dir;
+  std::wstring winapps_cmd;
+
+  static bool TryGet(CliLocations& out) {
+    std::wstring base_path = GetLocalAppDataPath();
+    if (base_path.empty()) return false;
+    out.custom_dir = base_path + L"\\SuperGoodViewer\\bin";
+    out.custom_cmd = out.custom_dir + L"\\sgv.cmd";
+    out.winapps_dir = base_path + L"\\Microsoft\\WindowsApps";
+    out.winapps_cmd = out.winapps_dir + L"\\sgv.cmd";
+    return true;
+  }
+};
 
 bool CanWriteToDir(const std::wstring& dir) {
   if (dir.empty() || !std::filesystem::exists(dir)) return false;
@@ -215,6 +246,23 @@ bool CanWriteToDir(const std::wstring& dir) {
     return true;
   }
   return false;
+}
+
+std::wstring ResolveCliPath(const CliLocations& loc) {
+  // 1. If already installed in either location, return the existing script path
+  if (std::filesystem::exists(loc.custom_cmd)) {
+    return loc.custom_cmd;
+  }
+  if (std::filesystem::exists(loc.winapps_cmd)) {
+    return loc.winapps_cmd;
+  }
+
+  // 2. Not yet installed: prefer WindowsApps only if writable, otherwise use SuperGoodViewer\bin.
+  // Pure query: do not create directories as a side effect.
+  if (CanWriteToDir(loc.winapps_dir)) {
+    return loc.winapps_cmd;
+  }
+  return loc.custom_cmd;
 }
 
 std::vector<std::wstring> GetPathSegments(const std::wstring& path_str) {
@@ -330,7 +378,6 @@ void AddToUserPathIfMissing(const std::wstring& dir_to_add) {
 }
 
 void RemoveFromUserPathIfPresent(const std::wstring& dir_to_remove) {
-  if (dir_to_remove.empty()) return;
   std::wstring current_path;
   DWORD type = REG_EXPAND_SZ;
   if (!ReadUserPath(current_path, type) || current_path.empty()) {
@@ -341,7 +388,19 @@ void RemoveFromUserPathIfPresent(const std::wstring& dir_to_remove) {
   std::wstring new_path;
   bool changed = false;
   for (const auto& seg : segments) {
-    if (AreDirsEqual(seg, dir_to_remove)) {
+    bool match = false;
+    if (!dir_to_remove.empty() && AreDirsEqual(seg, dir_to_remove)) {
+      match = true;
+    } else {
+      // Also match any segment ending in \SuperGoodViewer\bin
+      std::wstring s = seg;
+      while (!s.empty() && (s.back() == L'\\' || s.back() == L'/')) s.pop_back();
+      std::transform(s.begin(), s.end(), s.begin(), ::towlower);
+      if (s.size() >= 20 && s.substr(s.size() - 20) == L"\\supergoodviewer\\bin") {
+        match = true;
+      }
+    }
+    if (match) {
       changed = true;
     } else {
       if (!new_path.empty()) new_path += L';';
@@ -372,28 +431,9 @@ void RemoveCliFiles(const std::wstring& cmd_path) {
 }  // namespace
 
 std::wstring FlutterWindow::GetInstalledCliPath() {
-  std::wstring base_path = GetLocalAppDataPath();
-  if (base_path.empty()) return L"";
-
-  // 1. If already installed in either location, return the existing script path
-  std::wstring custom_dir = base_path + L"\\SuperGoodViewer\\bin";
-  std::wstring custom_cmd = custom_dir + L"\\sgv.cmd";
-  if (std::filesystem::exists(custom_cmd)) {
-    return custom_cmd;
-  }
-
-  std::wstring winapps_dir = base_path + L"\\Microsoft\\WindowsApps";
-  std::wstring winapps_cmd = winapps_dir + L"\\sgv.cmd";
-  if (std::filesystem::exists(winapps_cmd)) {
-    return winapps_cmd;
-  }
-
-  // 2. Not yet installed: prefer WindowsApps only if writable, otherwise use SuperGoodViewer\bin.
-  // Pure query function: do not create directories as a side effect (e.g. when called by CheckCliStatus).
-  if (CanWriteToDir(winapps_dir)) {
-    return winapps_cmd;
-  }
-  return custom_cmd;
+  CliLocations loc;
+  if (!CliLocations::TryGet(loc)) return L"";
+  return ResolveCliPath(loc);
 }
 
 flutter::EncodableMap FlutterWindow::CheckCliStatus() {
@@ -430,43 +470,33 @@ flutter::EncodableMap FlutterWindow::CheckCliStatus() {
 
 flutter::EncodableMap FlutterWindow::InstallCli() {
   flutter::EncodableMap res;
-  std::wstring base_path = GetLocalAppDataPath();
-  if (base_path.empty()) {
+  CliLocations loc;
+  if (!CliLocations::TryGet(loc)) {
     res[flutter::EncodableValue("status")] = flutter::EncodableValue("error");
     res[flutter::EncodableValue("message")] = flutter::EncodableValue("无法定位本地应用数据目录");
     return res;
   }
 
-  std::wstring custom_dir = base_path + L"\\SuperGoodViewer\\bin";
-  std::wstring custom_cmd = custom_dir + L"\\sgv.cmd";
-  std::wstring winapps_dir = base_path + L"\\Microsoft\\WindowsApps";
-  std::wstring winapps_cmd = winapps_dir + L"\\sgv.cmd";
-
-  std::wstring cli_path = GetInstalledCliPath();
-  if (cli_path.empty()) {
-    res[flutter::EncodableValue("status")] = flutter::EncodableValue("error");
-    res[flutter::EncodableValue("message")] = flutter::EncodableValue("无法定位安装目录");
-    return res;
-  }
+  std::wstring cli_path = ResolveCliPath(loc);
+  std::wstring initial_target = cli_path;
 
   wchar_t exe_buf[MAX_PATH] = {0};
   GetModuleFileNameW(nullptr, exe_buf, MAX_PATH);
   std::wstring exe_path(exe_buf);
   std::string exe_utf8 = Utf8FromUtf16(exe_path.c_str());
 
-  std::wstring initial_target = cli_path;
   std::filesystem::path parent_dir = std::filesystem::path(cli_path).parent_path();
   std::error_code ec;
   std::filesystem::create_directories(parent_dir, ec);
 
   std::ofstream file(cli_path, std::ios::trunc);
-  // Point 3: Only attempt fallback if initial target was NOT already custom_dir (i.e. was WindowsApps and failed)
-  if (!file.is_open() && !AreDirsEqual(parent_dir.wstring(), custom_dir)) {
-    cli_path = custom_cmd;
-    std::filesystem::create_directories(custom_dir, ec);
+  // Only attempt fallback if initial target was NOT already custom_dir (i.e. was WindowsApps and failed)
+  if (!file.is_open() && !AreDirsEqual(parent_dir.wstring(), loc.custom_dir)) {
+    cli_path = loc.custom_cmd;
+    std::filesystem::create_directories(loc.custom_dir, ec);
     file.open(cli_path, std::ios::trunc);
     if (file.is_open()) {
-      // Point 1: Clean up stale script left at the old failed location (WindowsApps)
+      // Clean up stale script left at the old failed location (WindowsApps)
       RemoveCliFiles(initial_target);
     }
   }
@@ -537,16 +567,16 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
     ps1_file.close();
   }
 
-  // Point 2: Reuse already-known base_path directly without redundant SHGetKnownFolderPath call!
+  // Cross-location cleanup & PATH synchronization using loc directly
   std::wstring parent_dir_str = std::filesystem::path(cli_path).parent_path().wstring();
-  if (AreDirsEqual(parent_dir_str, custom_dir)) {
+  if (AreDirsEqual(parent_dir_str, loc.custom_dir)) {
     // Installed to custom SuperGoodViewer\bin: register to PATH, clean any conflicting script in WindowsApps
     AddToUserPathIfMissing(parent_dir_str);
-    RemoveCliFiles(winapps_cmd);
+    RemoveCliFiles(loc.winapps_cmd);
   } else {
     // Installed to WindowsApps: clean any old script in SuperGoodViewer\bin, unregister from PATH
-    RemoveCliFiles(custom_cmd);
-    RemoveFromUserPathIfPresent(custom_dir);
+    RemoveCliFiles(loc.custom_cmd);
+    RemoveFromUserPathIfPresent(loc.custom_dir);
   }
 
   std::string cli_path_utf8 = Utf8FromUtf16(cli_path.c_str());
@@ -556,14 +586,14 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
 }
 
 flutter::EncodableMap FlutterWindow::UninstallCli() {
-  std::wstring base_path = GetLocalAppDataPath();
-  if (!base_path.empty()) {
-    RemoveCliFiles(base_path + L"\\Microsoft\\WindowsApps\\sgv.cmd");
-    RemoveCliFiles(base_path + L"\\SuperGoodViewer\\bin\\sgv.cmd");
-    RemoveFromUserPathIfPresent(base_path + L"\\SuperGoodViewer\\bin");
+  CliLocations loc;
+  if (CliLocations::TryGet(loc)) {
+    RemoveCliFiles(loc.winapps_cmd);
+    RemoveCliFiles(loc.custom_cmd);
+    RemoveFromUserPathIfPresent(loc.custom_dir);
   } else {
-    std::wstring cli_path = GetInstalledCliPath();
-    RemoveCliFiles(cli_path);
+    // Ultimate fallback if known-folder resolution failed: clean any SGV bin entry from User PATH
+    RemoveFromUserPathIfPresent(L"");
   }
 
   flutter::EncodableMap res;
