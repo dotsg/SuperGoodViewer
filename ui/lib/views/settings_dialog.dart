@@ -32,7 +32,7 @@ void showSettingsDialog(
 }
 
 class SettingsDialog extends StatefulWidget {
-  static const String appVersion = '1.0.4';
+  static const String appVersion = '1.0.5';
 
   final ReaderController controller;
   final SettingsTab initialTab;

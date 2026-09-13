@@ -6,7 +6,7 @@
 </div>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Release: v1.0.4](https://img.shields.io/badge/Release-v1.0.4-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
+[![Release: v1.0.5](https://img.shields.io/badge/Release-v1.0.5-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
 [![CI Status](https://img.shields.io/badge/CI-Passing-brightgreen.svg)]()
 [![Platform: macOS | Windows | Linux](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)]()
 
@@ -165,6 +165,21 @@ sgv -h
 ---
 
 ## 📝 更新日志 (Changelog)
+
+### v1.0.5 (2026-09)
+- **原生 PDF 阅读器与大纲目录导航**：
+  - 核心架构全面支持直接打开本地 `.pdf` 文件进行独立矢量渲染，无需经过 Markdown 编译包装；
+  - 自动从 PDF 解析提取多级大纲目录（TOC / Outline），无缝展示在侧边栏并带有页码徽标（`P{n}`），支持点击平滑滚动跳转；
+  - 智能切换工作模式：精准区分 Markdown 排版与 PDF 独立阅读，在 PDF 模式下自动隐藏无意义的排版参数（分页/流式、双页折叠、字体大小等）；
+  - 支持 PDF 文件变动热重载监控（外部编辑即时刷新）与文件缺失统一占位展示；
+  - 完善格式探测（严格基于 Magic Bytes 偏移识别，避免开头含 `%PDF` 字面量的 Markdown 文件被误判）与异常容错；
+  - 修复双缓冲 slot 复用下大纲异步回调覆写下一文档、slot 脏状态竞态等系列稳定性问题。
+- **CI/CD 流水线与发布自动化增强**：
+  - 支持在 `main` 分支通过 GitHub Actions `workflow_dispatch` 手动输入版本号触发发版，由 Action 自动打 Tag 并发布 Release；
+  - 建立 Rust / Flutter 编译依赖缓存全生命周期闭环（直接读写 `main` 分支全局缓存池），大幅缩减 Release 构建耗时；
+  - 在 Windows Runner 上排除 Rust 编译输出目录的 Windows Defender 杀毒扫描，提升 30%~50% 编译效率；
+  - 在构建任务起始阶段增加严格的版本格式校验，并与 `Cargo.toml` 和 `pubspec.yaml` 源码版本强绑定，0.1 秒内快速失败防错；
+  - 解决 Windows ARM64 交叉编译中 JNI 插件与 x64 JVM 的链接冲突。
 
 ### v1.0.4 (2026-09)
 - **Windows 全平台特性对齐与原生 ARM64 支持**：
