@@ -5,6 +5,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../controllers/reader_controller.dart';
+import '../services/native_cli_service.dart';
+import 'cli_tools_dialog.dart';
 import 'font_settings_dialog.dart';
 import 'pdf_canvas_view.dart';
 import 'sidebar_view.dart';
@@ -42,6 +44,28 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     // Briefly display the toolbar on launch so the user discovers the controls
     _showToolbarTemporarily();
     widget.controller.addListener(_onControllerChanged);
+    NativeCliService.channel.setMethodCallHandler(_handleNativeMethodCall);
+    _checkInitialFileFromSystem();
+  }
+
+  Future<void> _handleNativeMethodCall(MethodCall call) async {
+    if (call.method == 'onOpenFile') {
+      final path = call.arguments as String?;
+      if (path != null && path.isNotEmpty) {
+        await widget.controller.openFile(path);
+      }
+    } else if (call.method == 'showCliDialog') {
+      if (mounted) {
+        showCliToolsDialog(context);
+      }
+    }
+  }
+
+  Future<void> _checkInitialFileFromSystem() async {
+    final file = await NativeCliService.getInitialFile();
+    if (file != null && file.isNotEmpty) {
+      await widget.controller.openFile(file);
+    }
   }
 
   void _onControllerChanged() {
@@ -54,6 +78,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
   @override
   void dispose() {
+    NativeCliService.channel.setMethodCallHandler(null);
     widget.controller.removeListener(_onControllerChanged);
     _toolbarTimer?.cancel();
     _zoomHudTimer?.cancel();
@@ -780,6 +805,14 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 icon: Icons.font_download_outlined,
                 tooltip: '字体排版与 CJK 1:2 等宽对齐设置 (Cmd+Shift+F)',
                 onPressed: () => showFontSettingsDialog(context, controller),
+              ),
+              _PillDivider(isDark: isDark),
+
+              // Command Line Tool (sgv) & Terminal Settings
+              _PillIconButton(
+                icon: Icons.terminal_rounded,
+                tooltip: '命令行工具 (sgv) 与设置',
+                onPressed: () => showCliToolsDialog(context),
               ),
               _PillDivider(isDark: isDark),
 

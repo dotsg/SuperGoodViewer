@@ -7,6 +7,10 @@ build: build-core build-app
 	@echo "==> Packaging dylib into macOS App Bundle..."
 	@mkdir -p ui/build/macos/Build/Products/Release/sogoodviewer.app/Contents/Frameworks/
 	@cp core/target/release/libsogood_core.dylib ui/build/macos/Build/Products/Release/sogoodviewer.app/Contents/Frameworks/
+	@echo "==> Packaging CLI script into macOS App Bundle..."
+	@mkdir -p ui/build/macos/Build/Products/Release/sogoodviewer.app/Contents/Resources/bin/
+	@cp ui/bin/sgv ui/build/macos/Build/Products/Release/sogoodviewer.app/Contents/Resources/bin/sgv
+	@chmod +x ui/build/macos/Build/Products/Release/sogoodviewer.app/Contents/Resources/bin/sgv
 	@echo "==> Build complete! Output: ui/build/macos/Build/Products/Release/sogoodviewer.app"
 
 build-core:

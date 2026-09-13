@@ -1,0 +1,55 @@
+#!/bin/bash
+# ==============================================================================
+# sgv - SuperGoodViewer (超好读) Command Line Launcher
+# ==============================================================================
+
+# 1. Resolve symlink chain to locate the physical script directory
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+
+# 2. Locate the SuperGoodViewer.app bundle
+# Standard location: SuperGoodViewer.app/Contents/Resources/bin/sgv
+APP_DIR="$(cd "$SCRIPT_DIR/../../.." >/dev/null 2>&1 && pwd)"
+
+if [ ! -d "$APP_DIR" ] || [[ "$APP_DIR" != *".app" ]]; then
+  if [ -d "/Applications/SuperGoodViewer.app" ]; then
+    APP_DIR="/Applications/SuperGoodViewer.app"
+  elif [ -d "$HOME/Applications/SuperGoodViewer.app" ]; then
+    APP_DIR="$HOME/Applications/SuperGoodViewer.app"
+  elif [ -d "/Applications/超好读.app" ]; then
+    APP_DIR="/Applications/超好读.app"
+  else
+    APP_DIR="SuperGoodViewer"
+  fi
+fi
+
+# 3. Handle help and flags
+if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+  echo "SuperGoodViewer (超好读) CLI Launcher"
+  echo ""
+  echo "Usage:"
+  echo "  sgv [file.md ...]      Open markdown file(s) in SuperGoodViewer"
+  echo "  sgv                    Launch or focus SuperGoodViewer"
+  echo "  sgv -h, --help         Show this help message"
+  exit 0
+fi
+
+# 4. Open application or files
+if [ $# -eq 0 ]; then
+  open -a "$APP_DIR"
+else
+  for f in "$@"; do
+    if [ -e "$f" ]; then
+      ABS_PATH="$(cd "$(dirname "$f")" && pwd)/$(basename "$f")"
+      open -a "$APP_DIR" "$ABS_PATH"
+    else
+      echo "sgv: error: file not found: $f" >&2
+      exit 1
+    fi
+  done
+fi
