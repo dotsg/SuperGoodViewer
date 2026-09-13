@@ -598,33 +598,40 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     bool isDark,
     ReaderController controller,
   ) {
+    const double pillHeight = 44.0;
+    const double pillRadius = pillHeight / 2; // 22.0: Exact symmetrical semicircle pill ends
+
     return Container(
-      height: 44,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xD8202020) : const Color(0xF2FFFFFF),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: isDark ? const Color(0x30FFFFFF) : const Color(0x18000000),
-          width: 1,
-        ),
+        borderRadius: BorderRadius.circular(pillRadius),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.08),
-            blurRadius: 20,
-            offset: const Offset(0, 5),
+            color: Colors.black.withValues(alpha: isDark ? 0.40 : 0.08),
+            blurRadius: 18,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(pillRadius),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: Container(
+            height: pillHeight,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xD0202020) : const Color(0xE8FFFFFF),
+              borderRadius: BorderRadius.circular(pillRadius),
+              border: Border.all(
+                color: isDark ? const Color(0x33FFFFFF) : const Color(0x1F000000),
+                width: 1,
+              ),
+            ),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
               // Open Local File
               _PillIconButton(
                 icon: Icons.folder_open_rounded,
@@ -795,7 +802,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         ),
       ),
     ),
-  );
+  ),
+);
   }
 }
 
