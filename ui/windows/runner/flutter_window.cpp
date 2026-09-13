@@ -194,17 +194,79 @@ void FlutterWindow::HandleOpenFile(const std::string& path) {
 namespace {
 
 std::wstring GetEnvVar(const wchar_t* name) {
-  DWORD len = ::GetEnvironmentVariableW(name, nullptr, 0);
-  if (len == 0) {
-    return L"";
-  }
-  std::wstring val(len, L'\0');
-  DWORD written = ::GetEnvironmentVariableW(name, val.data(), len);
-  if (written > 0 && written < len) {
-    val.resize(written);
-    return val;
+  DWORD required = ::GetEnvironmentVariableW(name, nullptr, 0);
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    if (required == 0) {
+      return L"";
+    }
+    std::wstring val(required, L'\0');
+    DWORD written = ::GetEnvironmentVariableW(name, val.data(), required);
+    if (written > 0 && written < required) {
+      val.resize(written);
+      return val;
+    }
+    if (written >= required) {
+      // Buffer was too small because env var grew (TOCTOU); retry with new required size
+      required = written;
+      continue;
+    }
+    break;
   }
   return L"";
+}
+
+std::wstring GetCurrentExecutablePath() {
+  std::vector<wchar_t> buffer(MAX_PATH);
+  while (true) {
+    DWORD len = ::GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (len == 0) {
+      return L"";
+    }
+    if (len < buffer.size()) {
+      return std::wstring(buffer.data(), len);
+    }
+    // On buffer overflow / truncation, GetModuleFileNameW returns buffer.size()
+    // Double buffer and retry.
+    if (buffer.size() >= 32768) {
+      return L"";
+    }
+    buffer.resize(buffer.size() * 2);
+  }
+}
+
+std::wstring GetRegistryLocalAppData() {
+  HKEY hkey;
+  if (::RegOpenKeyExW(HKEY_CURRENT_USER,
+                      L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+                      0, KEY_READ, &hkey) != ERROR_SUCCESS) {
+    return L"";
+  }
+  DWORD type = 0;
+  DWORD size = 0;
+  LONG status = ::RegQueryValueExW(hkey, L"Local AppData", nullptr, &type, nullptr, &size);
+  if (status != ERROR_SUCCESS || size == 0) {
+    ::RegCloseKey(hkey);
+    return L"";
+  }
+  std::vector<wchar_t> buf(size / sizeof(wchar_t) + 2, 0);
+  status = ::RegQueryValueExW(hkey, L"Local AppData", nullptr, &type,
+                              reinterpret_cast<LPBYTE>(buf.data()), &size);
+  ::RegCloseKey(hkey);
+  if (status != ERROR_SUCCESS) {
+    return L"";
+  }
+  // Expand %USERPROFILE% if REG_EXPAND_SZ
+  DWORD exp_len = ::ExpandEnvironmentStringsW(buf.data(), nullptr, 0);
+  if (exp_len == 0) {
+    return buf.data();
+  }
+  std::wstring exp_buf(exp_len, L'\0');
+  DWORD written = ::ExpandEnvironmentStringsW(buf.data(), exp_buf.data(), exp_len);
+  if (written > 0 && written < exp_len) {
+    exp_buf.resize(written);
+    return exp_buf;
+  }
+  return buf.data();
 }
 
 std::wstring GetLocalAppDataPath() {
@@ -219,10 +281,28 @@ std::wstring GetLocalAppDataPath() {
   if (!env_local.empty()) {
     return env_local;
   }
-  // Robust fallback 2: check %USERPROFILE%\AppData\Local with non-throwing filesystem query
+  // Robust fallback 2: query User Shell Folders registry
+  std::wstring reg_local = GetRegistryLocalAppData();
+  if (!reg_local.empty()) {
+    std::error_code ec;
+    if (std::filesystem::is_directory(reg_local, ec)) {
+      return reg_local;
+    }
+  }
+  // Robust fallback 3: check %USERPROFILE%\AppData\Local with non-throwing filesystem query
   std::wstring env_profile = GetEnvVar(L"USERPROFILE");
   if (!env_profile.empty()) {
     std::wstring p = env_profile + L"\\AppData\\Local";
+    std::error_code ec;
+    if (std::filesystem::is_directory(p, ec)) {
+      return p;
+    }
+  }
+  // Robust fallback 4: check %HOMEDRIVE%%HOMEPATH%\AppData\Local
+  std::wstring home_drive = GetEnvVar(L"HOMEDRIVE");
+  std::wstring home_path = GetEnvVar(L"HOMEPATH");
+  if (!home_drive.empty() && !home_path.empty()) {
+    std::wstring p = home_drive + home_path + L"\\AppData\\Local";
     std::error_code ec;
     if (std::filesystem::is_directory(p, ec)) {
       return p;
@@ -447,9 +527,7 @@ flutter::EncodableMap FlutterWindow::CheckCliStatus() {
   std::error_code ec;
   bool exists = !cli_path.empty() && std::filesystem::exists(cli_path, ec);
 
-  wchar_t exe_buf[MAX_PATH] = {0};
-  GetModuleFileNameW(nullptr, exe_buf, MAX_PATH);
-  std::wstring exe_path(exe_buf);
+  std::wstring exe_path = GetCurrentExecutablePath();
 
   std::string path_utf8 = Utf8FromUtf16(cli_path.c_str());
   std::string target_utf8 = Utf8FromUtf16(exe_path.c_str());
@@ -487,9 +565,12 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
   std::wstring cli_path = ResolveCliPath(loc);
   std::wstring initial_target = cli_path;
 
-  wchar_t exe_buf[MAX_PATH] = {0};
-  GetModuleFileNameW(nullptr, exe_buf, MAX_PATH);
-  std::wstring exe_path(exe_buf);
+  std::wstring exe_path = GetCurrentExecutablePath();
+  if (exe_path.empty()) {
+    res[flutter::EncodableValue("status")] = flutter::EncodableValue("error");
+    res[flutter::EncodableValue("message")] = flutter::EncodableValue("无法获取当前程序路径");
+    return res;
+  }
   std::string exe_utf8 = Utf8FromUtf16(exe_path.c_str());
 
   std::filesystem::path parent_dir = std::filesystem::path(cli_path).parent_path();
@@ -593,14 +674,47 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
 }
 
 flutter::EncodableMap FlutterWindow::UninstallCli() {
+  flutter::EncodableMap res;
+  bool cleaned = false;
+
   CliLocations loc;
   if (CliLocations::TryGet(loc)) {
     RemoveCliFiles(loc.winapps_cmd);
     RemoveCliFiles(loc.custom_cmd);
     RemoveFromUserPathIfPresent(loc.custom_dir);
+    cleaned = true;
+  } else {
+    // Ultimate fallback if LocalAppData is unresolvable:
+    // Search User PATH registry for any segment containing our sgv.cmd launcher
+    std::wstring current_path;
+    DWORD type = REG_EXPAND_SZ;
+    if (ReadUserPath(current_path, type) && !current_path.empty()) {
+      std::vector<std::wstring> segments = GetPathSegments(current_path);
+      for (const auto& seg : segments) {
+        std::wstring candidate_cmd = seg + L"\\sgv.cmd";
+        std::error_code ec;
+        if (std::filesystem::exists(candidate_cmd, ec)) {
+          std::ifstream f(candidate_cmd);
+          if (f.is_open()) {
+            std::string content((std::istreambuf_iterator<char>(f)),
+                                std::istreambuf_iterator<char>());
+            if (content.find("SuperGoodViewer") != std::string::npos) {
+              RemoveCliFiles(candidate_cmd);
+              RemoveFromUserPathIfPresent(seg);
+              cleaned = true;
+            }
+          }
+        }
+      }
+    }
   }
 
-  flutter::EncodableMap res;
+  if (!cleaned) {
+    res[flutter::EncodableValue("status")] = flutter::EncodableValue("error");
+    res[flutter::EncodableValue("message")] = flutter::EncodableValue("无法定位安装目录以完成卸载");
+    return res;
+  }
+
   res[flutter::EncodableValue("status")] = flutter::EncodableValue("success");
   return res;
 }
