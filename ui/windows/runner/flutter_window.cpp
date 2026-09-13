@@ -207,87 +207,112 @@ bool CanWriteToDir(const std::wstring& dir) {
   return false;
 }
 
-void AddToUserPathIfMissing(const std::wstring& dir_to_add) {
-  HKEY hkey;
-  if (::RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_READ | KEY_WRITE, &hkey) == ERROR_SUCCESS) {
-    DWORD type = 0;
-    DWORD size = 0;
-    if (::RegQueryValueExW(hkey, L"Path", nullptr, &type, nullptr, &size) == ERROR_SUCCESS && size > 0) {
-      std::vector<wchar_t> buffer(size / sizeof(wchar_t) + 1);
-      if (::RegQueryValueExW(hkey, L"Path", nullptr, &type, reinterpret_cast<LPBYTE>(buffer.data()), &size) == ERROR_SUCCESS) {
-        std::wstring current_path(buffer.data());
-        std::wstring lower_path = current_path;
-        std::wstring lower_dir = dir_to_add;
-        std::transform(lower_path.begin(), lower_path.end(), lower_path.begin(), ::towlower);
-        std::transform(lower_dir.begin(), lower_dir.end(), lower_dir.begin(), ::towlower);
-        if (lower_path.find(lower_dir) == std::wstring::npos) {
-          std::wstring new_path = current_path;
-          if (!new_path.empty() && new_path.back() != L';') {
-            new_path += L';';
-          }
-          new_path += dir_to_add;
-          ::RegSetValueExW(hkey, L"Path", 0, type ? type : REG_EXPAND_SZ,
-                           reinterpret_cast<const BYTE*>(new_path.c_str()),
-                           static_cast<DWORD>((new_path.size() + 1) * sizeof(wchar_t)));
-          DWORD_PTR result;
-          ::SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
-                                reinterpret_cast<LPARAM>(L"Environment"),
-                                SMTO_ABORTIFHUNG, 3000, &result);
-        }
-      }
-    } else {
-      ::RegSetValueExW(hkey, L"Path", 0, REG_EXPAND_SZ,
-                       reinterpret_cast<const BYTE*>(dir_to_add.c_str()),
-                       static_cast<DWORD>((dir_to_add.size() + 1) * sizeof(wchar_t)));
-      DWORD_PTR result;
-      ::SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
-                            reinterpret_cast<LPARAM>(L"Environment"),
-                            SMTO_ABORTIFHUNG, 3000, &result);
+std::vector<std::wstring> GetPathSegments(const std::wstring& path_str) {
+  std::vector<std::wstring> segments;
+  size_t start = 0;
+  while (start < path_str.size()) {
+    size_t end = path_str.find(L';', start);
+    if (end == std::wstring::npos) end = path_str.size();
+    std::wstring segment = path_str.substr(start, end - start);
+    if (!segment.empty()) {
+      segments.push_back(segment);
     }
+    start = end + 1;
+  }
+  return segments;
+}
+
+bool AreDirsEqual(const std::wstring& a, const std::wstring& b) {
+  std::wstring sa = a;
+  std::wstring sb = b;
+  while (!sa.empty() && (sa.back() == L'\\' || sa.back() == L'/')) sa.pop_back();
+  while (!sb.empty() && (sb.back() == L'\\' || sb.back() == L'/')) sb.pop_back();
+  std::transform(sa.begin(), sa.end(), sa.begin(), ::towlower);
+  std::transform(sb.begin(), sb.end(), sb.begin(), ::towlower);
+  return sa == sb;
+}
+
+bool ReadUserPath(std::wstring& out_path, DWORD& out_type) {
+  HKEY hkey;
+  if (::RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_READ, &hkey) != ERROR_SUCCESS) {
+    return false;
+  }
+  DWORD size = 0;
+  DWORD type = 0;
+  LONG status = ::RegQueryValueExW(hkey, L"Path", nullptr, &type, nullptr, &size);
+  if (status == ERROR_SUCCESS && size > 0) {
+    std::vector<wchar_t> buffer(size / sizeof(wchar_t) + 1, 0);
+    if (::RegQueryValueExW(hkey, L"Path", nullptr, &type, reinterpret_cast<LPBYTE>(buffer.data()), &size) == ERROR_SUCCESS) {
+      out_path = buffer.data();
+      out_type = type;
+      ::RegCloseKey(hkey);
+      return true;
+    }
+  }
+  ::RegCloseKey(hkey);
+  out_path.clear();
+  out_type = REG_EXPAND_SZ;
+  return (status == ERROR_FILE_NOT_FOUND || status == ERROR_SUCCESS);
+}
+
+void WriteUserPathAndBroadcast(const std::wstring& new_path, DWORD type) {
+  HKEY hkey;
+  if (::RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_WRITE, &hkey) == ERROR_SUCCESS) {
+    ::RegSetValueExW(hkey, L"Path", 0, type ? type : REG_EXPAND_SZ,
+                     reinterpret_cast<const BYTE*>(new_path.c_str()),
+                     static_cast<DWORD>((new_path.size() + 1) * sizeof(wchar_t)));
     ::RegCloseKey(hkey);
+    DWORD_PTR result;
+    ::SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
+                          reinterpret_cast<LPARAM>(L"Environment"),
+                          SMTO_ABORTIFHUNG, 3000, &result);
   }
 }
 
-void RemoveFromUserPathIfPresent(const std::wstring& dir_to_remove) {
-  HKEY hkey;
-  if (::RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_READ | KEY_WRITE, &hkey) == ERROR_SUCCESS) {
-    DWORD type = 0;
-    DWORD size = 0;
-    if (::RegQueryValueExW(hkey, L"Path", nullptr, &type, nullptr, &size) == ERROR_SUCCESS && size > 0) {
-      std::vector<wchar_t> buffer(size / sizeof(wchar_t) + 1);
-      if (::RegQueryValueExW(hkey, L"Path", nullptr, &type, reinterpret_cast<LPBYTE>(buffer.data()), &size) == ERROR_SUCCESS) {
-        std::wstring current_path(buffer.data());
-        std::wstring lower_dir = dir_to_remove;
-        std::transform(lower_dir.begin(), lower_dir.end(), lower_dir.begin(), ::towlower);
-        std::wstring new_path;
-        size_t start = 0;
-        bool changed = false;
-        while (start < current_path.size()) {
-          size_t end = current_path.find(L';', start);
-          if (end == std::wstring::npos) end = current_path.size();
-          std::wstring segment = current_path.substr(start, end - start);
-          std::wstring lower_segment = segment;
-          std::transform(lower_segment.begin(), lower_segment.end(), lower_segment.begin(), ::towlower);
-          if (lower_segment != lower_dir && !segment.empty()) {
-            if (!new_path.empty()) new_path += L';';
-            new_path += segment;
-          } else if (lower_segment == lower_dir) {
-            changed = true;
-          }
-          start = end + 1;
-        }
-        if (changed) {
-          ::RegSetValueExW(hkey, L"Path", 0, type ? type : REG_EXPAND_SZ,
-                           reinterpret_cast<const BYTE*>(new_path.c_str()),
-                           static_cast<DWORD>((new_path.size() + 1) * sizeof(wchar_t)));
-          DWORD_PTR result;
-          ::SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
-                                reinterpret_cast<LPARAM>(L"Environment"),
-                                SMTO_ABORTIFHUNG, 3000, &result);
-        }
-      }
+void AddToUserPathIfMissing(const std::wstring& dir_to_add) {
+  if (dir_to_add.empty()) return;
+  std::wstring current_path;
+  DWORD type = REG_EXPAND_SZ;
+  if (!ReadUserPath(current_path, type)) return;
+
+  std::vector<std::wstring> segments = GetPathSegments(current_path);
+  for (const auto& seg : segments) {
+    if (AreDirsEqual(seg, dir_to_add)) {
+      return;
     }
-    ::RegCloseKey(hkey);
+  }
+
+  // Prepend to User PATH so this entry takes precedence over fallback locations (e.g. WindowsApps)
+  std::wstring new_path = dir_to_add;
+  if (!current_path.empty()) {
+    if (new_path.back() != L';') {
+      new_path += L';';
+    }
+    new_path += current_path;
+  }
+  WriteUserPathAndBroadcast(new_path, type);
+}
+
+void RemoveFromUserPathIfPresent(const std::wstring& dir_to_remove) {
+  if (dir_to_remove.empty()) return;
+  std::wstring current_path;
+  DWORD type = REG_EXPAND_SZ;
+  if (!ReadUserPath(current_path, type) || current_path.empty()) return;
+
+  std::vector<std::wstring> segments = GetPathSegments(current_path);
+  std::wstring new_path;
+  bool changed = false;
+  for (const auto& seg : segments) {
+    if (AreDirsEqual(seg, dir_to_remove)) {
+      changed = true;
+    } else {
+      if (!new_path.empty()) new_path += L';';
+      new_path += seg;
+    }
+  }
+
+  if (changed) {
+    WriteUserPathAndBroadcast(new_path, type);
   }
 }
 
@@ -327,12 +352,11 @@ std::wstring FlutterWindow::GetInstalledCliPath() {
       return winapps_cmd;
     }
 
-    // 2. Not yet installed: prefer WindowsApps only if writable, otherwise use SuperGoodViewer\\bin
+    // 2. Not yet installed: prefer WindowsApps only if writable, otherwise use SuperGoodViewer\\bin.
+    // Pure query function: do not create directories as a side effect (e.g. when called by CheckCliStatus).
     if (CanWriteToDir(winapps_dir)) {
       return winapps_cmd;
     }
-
-    std::filesystem::create_directories(custom_dir);
     return custom_cmd;
   }
   return L"";
@@ -355,7 +379,7 @@ flutter::EncodableMap FlutterWindow::CheckCliStatus() {
     if (file.is_open()) {
       std::string content((std::istreambuf_iterator<char>(file)),
                           std::istreambuf_iterator<char>());
-      // Point 2: Exact check against target executable path, no loose fallback substring
+      // Exact check against target executable path, no loose fallback substring
       if (content.find(target_utf8) != std::string::npos) {
         is_current_app = true;
       }
@@ -384,6 +408,7 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
   std::wstring exe_path(exe_buf);
   std::string exe_utf8 = Utf8FromUtf16(exe_path.c_str());
 
+  std::wstring initial_target = cli_path;
   std::filesystem::path parent_dir = std::filesystem::path(cli_path).parent_path();
   std::error_code ec;
   std::filesystem::create_directories(parent_dir, ec);
@@ -393,11 +418,16 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
     // If writing to selected path failed (e.g. WindowsApps ACL lock), fallback to SuperGoodViewer\\bin
     PWSTR local_app_data = nullptr;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local_app_data))) {
-      std::wstring fallback_dir = std::wstring(local_app_data) + L"\\SuperGoodViewer\\bin";
+      std::wstring base_path(local_app_data);
       CoTaskMemFree(local_app_data);
-      std::filesystem::create_directories(fallback_dir, ec);
+      std::wstring fallback_dir = base_path + L"\\SuperGoodViewer\\bin";
       cli_path = fallback_dir + L"\\sgv.cmd";
+      std::filesystem::create_directories(fallback_dir, ec);
       file.open(cli_path, std::ios::trunc);
+      if (file.is_open()) {
+        // Clean up stale script left at the old failed location
+        RemoveCliFiles(initial_target);
+      }
     }
   }
 
@@ -467,10 +497,21 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
     ps1_file.close();
   }
 
-  // If installed to custom directory (not WindowsApps), add to User PATH so it's globally available
+  // Cross-location cleanup & PATH synchronization
   std::wstring parent_dir_str = std::filesystem::path(cli_path).parent_path().wstring();
-  if (parent_dir_str.find(L"WindowsApps") == std::wstring::npos) {
-    AddToUserPathIfMissing(parent_dir_str);
+  PWSTR local_app_data = nullptr;
+  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local_app_data))) {
+    std::wstring base_path(local_app_data);
+    CoTaskMemFree(local_app_data);
+    if (AreDirsEqual(parent_dir_str, base_path + L"\\SuperGoodViewer\\bin")) {
+      // Installed to custom SuperGoodViewer\bin: register to PATH, clean any conflicting script in WindowsApps
+      AddToUserPathIfMissing(parent_dir_str);
+      RemoveCliFiles(base_path + L"\\Microsoft\\WindowsApps\\sgv.cmd");
+    } else {
+      // Installed to WindowsApps: clean any old script in SuperGoodViewer\bin, unregister from PATH
+      RemoveCliFiles(base_path + L"\\SuperGoodViewer\\bin\\sgv.cmd");
+      RemoveFromUserPathIfPresent(base_path + L"\\SuperGoodViewer\\bin");
+    }
   }
 
   std::string cli_path_utf8 = Utf8FromUtf16(cli_path.c_str());
