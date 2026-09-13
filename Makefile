@@ -1,4 +1,4 @@
-.PHONY: all build build-core build-app test test-core test-app clean run-macos dmg
+.PHONY: all build build-core build-app test test-core test-app bench benchmark clean run-macos dmg
 
 all: build test
 
@@ -15,7 +15,7 @@ build: build-core build-app
 
 build-core:
 	@echo "==> Building Rust sogood_core (release)..."
-	@cd core && cargo build --release
+	@cd core && cargo build --release --lib
 
 build-app:
 	@echo "==> Building Flutter Desktop macOS app..."
@@ -27,12 +27,18 @@ test: test-core build-core test-app
 
 test-core:
 	@echo "==> Running Rust core unit & integration tests..."
-	@cd core && cargo test -- --nocapture
+	@cd core && cargo test --lib -- --nocapture
 
 test-app:
 	@echo "==> Running Flutter static analysis and tests..."
 	@cd ui && flutter analyze
 	@cd ui && flutter test
+
+# Run micro-benchmarks explicitly on demand
+benchmark: bench
+bench:
+	@echo "==> Running SuperGoodViewer Rust Core Micro-Benchmarks..."
+	@cd core && cargo run --release --bin benchmark
 
 run-macos: build-core
 	@echo "==> Launching SuperGoodViewer in dev mode..."
