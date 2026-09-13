@@ -432,9 +432,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
   String _getTabSubtitle(SettingsTab tab) {
     switch (tab) {
       case SettingsTab.general:
-        return '配置文档默认视图版式、阅读主题外观与自动重载';
+        return '配置文件外部修改自动重载与阅读历史记录';
       case SettingsTab.typography:
-        return '定制正文与代码等宽字体，保证 ASCII 字符画与表格严格 1:2 对齐';
+        return '定制正文与等宽字体，支持全角半角 1:2 等宽对齐与实时渲染预览';
       case SettingsTab.shortcuts:
         return '自定义各常用操作的键盘快捷键，点击键位直接录制';
       case SettingsTab.cli:
@@ -466,59 +466,21 @@ class _SettingsDialogState extends State<SettingsDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Default View Mode
-        _buildSectionHeader('默认排版模式 (Default View Mode)'),
-        const SizedBox(height: 6),
-        _buildRadioGroup<String>(
-          value: controller.renderOptions.mode,
-          options: const [
-            {'value': 'fluid', 'label': '自适应流式 (Fluid)', 'desc': '无缝长卷轴排版，适配任意窗口视口'},
-            {'value': 'paged', 'label': 'A4 出版模式 (Paged)', 'desc': '严格遵循标准 A4 页面分页与页码编排'},
-          ],
-          onChanged: (val) {
-            if (val != null && val != controller.renderOptions.mode) {
-              controller.toggleMode();
-            }
-          },
-          theme: theme,
-          isDark: isDark,
-        ),
-        const SizedBox(height: 18),
-
-        // Appearance Theme
-        _buildSectionHeader('阅读外观主题 (Appearance Theme)'),
-        const SizedBox(height: 6),
-        _buildRadioGroup<String>(
-          value: controller.renderOptions.theme,
-          options: const [
-            {'value': 'light', 'label': '明亮主题 (Light)', 'desc': '清新纸质白底，适合日间光线充足环境'},
-            {'value': 'dark', 'label': '暗黑主题 (Dark)', 'desc': '沉浸深邃暗夜，护眼高对比度配色'},
-          ],
-          onChanged: (val) {
-            if (val != null && val != controller.renderOptions.theme) {
-              controller.toggleTheme();
-            }
-          },
-          theme: theme,
-          isDark: isDark,
-        ),
-        const SizedBox(height: 18),
-
         // Auto Reload Switch
         _buildSectionHeader('文档自动重载 (Hot Reload)'),
         const SizedBox(height: 6),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
             color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF9F9F9),
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(10),
             border: Border.all(
               color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
             ),
           ),
           child: Row(
             children: [
-              Icon(Icons.sync_rounded, size: 20, color: theme.colorScheme.primary),
+              Icon(Icons.sync_rounded, size: 22, color: theme.colorScheme.primary),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -528,7 +490,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       '文件修改自动热重载 (Auto Reload)',
                       style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 3),
                     Text(
                       '外部编辑器（如 VS Code / Cursor / Obsidian）保存文档时立即无缝重绘',
                       style: TextStyle(
@@ -548,59 +510,105 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ),
         const SizedBox(height: 18),
 
-        // A4 Layout Preference
-        _buildSectionHeader('A4 页面展示偏好 (Spread Layout)'),
-        const SizedBox(height: 6),
-        _buildRadioGroup<bool>(
-          value: controller.isTwoPage,
-          options: const [
-            {'value': false, 'label': '单页纵向滚动', 'desc': '标准单张 A4 居中纵向连续浏览'},
-            {'value': true, 'label': '双页对开浏览 (Two-Page Spread)', 'desc': '模拟精装书籍左右跨页排版'},
-          ],
-          onChanged: (val) {
-            if (val != null && val != controller.isTwoPage) {
-              controller.toggleTwoPage();
-            }
-          },
-          theme: theme,
-          isDark: isDark,
-        ),
-        const SizedBox(height: 18),
-
-        // Recent Files Cache Clear
-        _buildSectionHeader('阅读历史记录 (Recent Documents)'),
+        // Session & History
+        _buildSectionHeader('会话与历史记录 (Session & History)'),
         const SizedBox(height: 6),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
             color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF9F9F9),
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(10),
             border: Border.all(
               color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
             ),
           ),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.history_rounded, size: 20, color: isDark ? Colors.white60 : Colors.black54),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  '最近打开历史：已记录 ${controller.recentFiles.length} 个文件',
-                  style: const TextStyle(fontSize: 12.5),
+              Row(
+                children: [
+                  Icon(Icons.history_rounded, size: 20, color: isDark ? Colors.white70 : Colors.black87),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          '最近打开文档记录',
+                          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '已记录 ${controller.recentFiles.length} 个历史文档',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.delete_sweep_outlined, size: 15),
+                    label: const Text('清空历史', style: TextStyle(fontSize: 12)),
+                    onPressed: controller.recentFiles.isEmpty
+                        ? null
+                        : () {
+                            controller.clearRecentFiles();
+                            setState(() {});
+                          },
+                    style: OutlinedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                ],
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Divider(
+                  height: 1,
+                  color: isDark ? const Color(0xFF333333) : const Color(0xFFEAEAEA),
                 ),
               ),
-              OutlinedButton.icon(
-                icon: const Icon(Icons.delete_sweep_outlined, size: 15),
-                label: const Text('清空历史', style: TextStyle(fontSize: 12)),
-                onPressed: controller.recentFiles.isEmpty
-                    ? null
-                    : () {
-                        controller.clearRecentFiles();
-                        setState(() {});
-                      },
-                style: OutlinedButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                ),
+              Row(
+                children: [
+                  Icon(Icons.restore_page_outlined, size: 20, color: isDark ? Colors.white70 : Colors.black87),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          '启动恢复上次会话',
+                          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '重新启动应用时自动还原上次浏览文档与阅读进度',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      '已启用',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -959,7 +967,184 @@ class _SettingsDialogState extends State<SettingsDialog> {
             ),
           ],
         ),
+        const SizedBox(height: 18),
+
+        // Live Typography Preview Card
+        _buildSectionHeader('排版实时渲染预览 (Live Typography Preview)'),
+        const SizedBox(height: 6),
+        _buildTypographyPreviewCard(theme, isDark),
       ],
+    );
+  }
+
+  Widget _buildTypographyPreviewCard(ThemeData theme, bool isDark) {
+    final controller = widget.controller;
+    final fontSize = controller.renderOptions.fontSize;
+    final bodyFont = _selectedBodyFont;
+    final codeFont = _selectedCodeFont ?? 'Maple Mono CN';
+
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF191919) : const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isDark ? const Color(0xFF383838) : const Color(0xFFCBD5E1),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Preview Top Status Bar
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF222222) : const Color(0xFFF1F5F9),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(9)),
+              border: Border(
+                bottom: BorderSide(
+                  color: isDark ? const Color(0xFF333333) : const Color(0xFFE2E8F0),
+                ),
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF22C55E),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  '实时排版预览 (Live Preview)',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    '正文: ${bodyFont ?? '系统默认'} · 代码: $codeFont · ${fontSize.toStringAsFixed(1)} pt',
+                    textAlign: TextAlign.right,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isDark ? Colors.white60 : Colors.black54,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 1. Body Typography Sample
+                Text(
+                  '现代出版级技术文档排版 (Publisher-Grade Typography)',
+                  style: TextStyle(
+                    fontFamily: bodyFont,
+                    fontFamilyFallback: const [
+                      'PingFang SC',
+                      'Microsoft YaHei',
+                      'Hiragino Sans GB',
+                      'sans-serif',
+                    ],
+                    fontSize: (fontSize * 1.15).clamp(11.0, 24.0),
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.2,
+                    color: isDark ? Colors.white : Colors.black87,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'SuperGoodViewer 专为高密度技术文档、工程规格说明书与论文设计。本段文字实时应用当前设置的正文字体与基础字号，展示精致的中西文混排字距、行高节奏与标点间隙。The quick brown fox jumps over the lazy dog.',
+                  style: TextStyle(
+                    fontFamily: bodyFont,
+                    fontFamilyFallback: const [
+                      'PingFang SC',
+                      'Microsoft YaHei',
+                      'Hiragino Sans GB',
+                      'sans-serif',
+                    ],
+                    fontSize: fontSize,
+                    height: 1.5,
+                    color: isDark ? const Color(0xFFCCCCCC) : const Color(0xFF333333),
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // 2. Monospace & ASCII Table 1:2 Alignment Sample
+                Row(
+                  children: [
+                    Icon(
+                      Icons.table_chart_outlined,
+                      size: 14,
+                      color: isDark ? Colors.white60 : Colors.black54,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'ASCII 表格全角/半角严格 1:2 等宽对齐校验',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                        color: isDark ? Colors.white70 : Colors.black87,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF141414) : const Color(0xFFF1F5F9),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFE2E8F0),
+                    ),
+                  ),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Text(
+                      '┌─────────────────────────────────────┬─────────────────────────────────────┐\n'
+                      '│ 1. 量子纠缠分发与纯化引擎 (QED)     │ 2. 相对论时空测地线同步网关 (STG)   │\n'
+                      '├─────────────────────────────────────┼─────────────────────────────────────┤\n'
+                      '│ · 贝尔态多粒子纯化与量子中继存储    │ · 史瓦西引力场时间膨胀动态频率修正  │\n'
+                      '│ · 拓扑容错量子表面码校验 (Surface)  │ · 任意子非阿贝尔统计相位标定        │\n'
+                      '│ · 兆赫兹纠缠对生成与自旋偏振锁定    │ · 零知识量子密钥分发与抗监听验证    │\n'
+                      '└─────────────────────────────────────┴─────────────────────────────────────┘',
+                      style: TextStyle(
+                        fontFamily: codeFont,
+                        fontFamilyFallback: const [
+                          'Maple Mono CN',
+                          'Maple Mono NF CN',
+                          'Maple Mono',
+                          'Sarasa Mono SC',
+                          'Menlo',
+                          'Monaco',
+                          'monospace',
+                        ],
+                        fontSize: (fontSize * 0.85).clamp(8.5, 16.0),
+                        height: 1.35,
+                        letterSpacing: 0.0,
+                        color: isDark ? const Color(0xFF67E8F9) : const Color(0xFF0369A1),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1545,7 +1730,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
     );
   }
 
-  // ==================== HELPERS ====================
   Widget _buildSectionHeader(String title) {
     return Text(
       title,
@@ -1554,55 +1738,5 @@ class _SettingsDialogState extends State<SettingsDialog> {
         fontWeight: FontWeight.bold,
       ),
     );
-  }
-
-  Widget _buildRadioGroup<T>({
-    required T value,
-    required List<Map<String, dynamic>> options,
-    required ValueChanged<T?> onChanged,
-    required ThemeData theme,
-    required bool isDark,
-  }) {
-    return Material(
-      color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF9F9F9),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: BorderSide(
-          color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
-        ),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: RadioGroup<T>(
-        groupValue: value,
-        onChanged: onChanged,
-        child: Column(
-          children: [
-            for (int i = 0; i < options.length; i++) ...[
-              RadioListTile<T>(
-                value: options[i]['value'] as T,
-                title: Text(
-                options[i]['label'] as String,
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-              ),
-              subtitle: Text(
-                options[i]['desc'] as String,
-                style: TextStyle(
-                  fontSize: 11,
-                  color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
-                ),
-              ),
-              dense: true,
-              visualDensity: VisualDensity.compact,
-            ),
-            if (i < options.length - 1)
-              Divider(
-                height: 1,
-                color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
-              ),
-          ],
-        ],
-      ),
-    ),
-  );
   }
 }

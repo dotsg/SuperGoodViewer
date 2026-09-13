@@ -64,12 +64,15 @@ void main() {
       expect(find.text('命令行 (sgv)'), findsOneWidget);
       expect(find.text('关于软件'), findsOneWidget);
 
-      // Verify General tab content
+      // Verify General tab content (toolbar duplicate options removed)
       expect(find.text('常规与阅读偏好'), findsOneWidget);
-      expect(find.text('默认排版模式 (Default View Mode)'), findsOneWidget);
-      expect(find.text('自适应流式 (Fluid)'), findsOneWidget);
-      expect(find.text('A4 出版模式 (Paged)'), findsOneWidget);
       expect(find.text('文件修改自动热重载 (Auto Reload)'), findsOneWidget);
+      expect(find.text('会话与历史记录 (Session & History)'), findsOneWidget);
+      expect(find.text('最近打开文档记录'), findsOneWidget);
+      expect(find.text('启动恢复上次会话'), findsOneWidget);
+      expect(find.text('默认排版模式 (Default View Mode)'), findsNothing);
+      expect(find.text('阅读外观主题 (Appearance Theme)'), findsNothing);
+      expect(find.text('A4 页面展示偏好 (Spread Layout)'), findsNothing);
 
       // Switch to Typography tab
       await tester.tap(find.text('排版与字体'));
@@ -79,6 +82,12 @@ void main() {
       expect(find.text('正文排版字体 (Body Typography)'), findsOneWidget);
       expect(find.text('排版基础字号 (Base Typesetting Font Size)'), findsOneWidget);
       expect(find.text('恢复默认字体'), findsOneWidget);
+
+      // Verify Live Typography Preview card is visible
+      expect(find.text('排版实时渲染预览 (Live Typography Preview)'), findsOneWidget);
+      expect(find.text('实时排版预览 (Live Preview)'), findsOneWidget);
+      expect(find.text('现代出版级技术文档排版 (Publisher-Grade Typography)'), findsOneWidget);
+      expect(find.text('ASCII 表格全角/半角严格 1:2 等宽对齐校验'), findsOneWidget);
 
       // Switch to Shortcuts tab
       await tester.tap(find.text('快捷键'));
@@ -180,11 +189,13 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(controller.renderOptions.fontSize, initialSize + 0.5);
+      expect(find.textContaining('${(initialSize + 0.5).toStringAsFixed(1)} pt'), findsWidgets);
 
       // Tap reset font size
       await tester.tap(find.text('恢复默认 (10.5 pt)'));
       await tester.pumpAndSettle();
       expect(controller.renderOptions.fontSize, 10.5);
+      expect(find.textContaining('10.5 pt'), findsWidgets);
     });
   });
 }
