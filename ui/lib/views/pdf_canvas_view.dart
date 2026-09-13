@@ -282,6 +282,7 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
         final maxScroll = math.max(0.0, layout.documentSize.height - state.viewSize.height);
         final targetY = readerController.calculateFluidTargetScrollY(
           layout.documentSize.height,
+          useOffset: !readerController.renderOptionsChanged,
           maxScroll: maxScroll,
         );
         if (targetY > ReaderController.topScrollThreshold) {
@@ -875,6 +876,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     _restoredGeneration = 0;
     _controllers[0].addListener(_onViewerChanged0);
     _controllers[1].addListener(_onViewerChanged1);
+    _startDirectReloadWatchdog();
   }
 
   void _onViewerChanged0() => _onPdfViewerChanged(0);
@@ -900,6 +902,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (mounted && _restoredGeneration < targetGen) {
         debugPrint('[PdfCanvasView] Direct reload watchdog: onViewerReady timed out for gen $targetGen, unlocking scroll');
         _restoredGeneration = targetGen;
+        widget.controller.renderOptionsChanged = false;
         widget.controller.finishReloading();
         setState(() {});
       }
@@ -926,7 +929,12 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           _slotDocHash[0] = fallbackBytes.hashCode;
           _slotBytes[1] = null;
           _slotDocHash[1] = 0;
+          _startDirectReloadWatchdog();
           setState(() {});
+        } else {
+          _restoredGeneration = _mountGeneration;
+          widget.controller.renderOptionsChanged = false;
+          widget.controller.finishReloading();
         }
       }
     });
@@ -1125,9 +1133,13 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     _directReloadWatchdogTimer?.cancel();
     final restoreGen = _mountGeneration;
 
+    // Capture whether options changed before resetting the flag at the top.
+    // This guarantees the flag is never leaked across reloads, early exits, or zero-height fallthroughs.
+    final optionsChanged = widget.controller.renderOptionsChanged;
+    widget.controller.renderOptionsChanged = false;
+
     if (!ctrl.isReady) {
       _restoredGeneration = restoreGen;
-      widget.controller.renderOptionsChanged = false;
       widget.controller.finishReloading();
       return;
     }
@@ -1140,9 +1152,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         final maxScroll = math.max(0.0, docSize.height - visibleHeight);
         final targetY = widget.controller.calculateFluidTargetScrollY(
           docSize.height,
+          useOffset: !optionsChanged,
           maxScroll: maxScroll,
         );
-        widget.controller.renderOptionsChanged = false;
 
         if (targetY > ReaderController.topScrollThreshold) {
           ctrl.goToPosition(documentOffset: Offset(0, targetY));
@@ -1733,7 +1745,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             final layouts = controller.layout.pageLayouts;
             if (layouts.isEmpty) return 1;
             final docHeight = controller.layout.documentSize.height;
-            final targetY = widget.controller.calculateFluidTargetScrollY(docHeight);
+            final targetY = widget.controller.calculateFluidTargetScrollY(
+              docHeight,
+              useOffset: !widget.controller.renderOptionsChanged,
+            );
 
             if (targetY <= ReaderController.topScrollThreshold) return 1;
 

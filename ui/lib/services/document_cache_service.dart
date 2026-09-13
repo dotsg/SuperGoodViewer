@@ -50,7 +50,10 @@ class DocumentCacheService {
   }
 
   static String _computeCacheFileName(String filePath, int mtime, int size, RenderOptions options) {
-    final raw = '$filePath#$mtime#$size#${options.mode}#${options.theme}#${options.fontSize}#${options.viewportWidth}#${options.bodyFont ?? ''}#${options.codeFont ?? ''}';
+    // Quantize viewportWidth to 20pt grid to maximize cache hit rates across minor window resize variations,
+    // which aligns with ReaderController's 40pt deadband threshold for fluid re-renders.
+    final quantizedWidth = (options.viewportWidth / 20.0).round() * 20;
+    final raw = '$filePath#$mtime#$size#${options.mode}#${options.theme}#${options.fontSize}#$quantizedWidth#${options.bodyFont ?? ''}#${options.codeFont ?? ''}';
     int hash = 0xcbf29ce484222325;
     for (final unit in utf8.encode(raw)) {
       hash ^= unit;
@@ -62,6 +65,12 @@ class DocumentCacheService {
 
   /// Fast synchronous lookup for pre-compiled PDF bytes.
   /// Returns null if not cached or if source file was modified.
+  ///
+  /// Note on synchronous design: This lookup runs synchronously during [ReaderController.openFile]
+  /// to satisfy the "instant 0ms document opening" user experience requirement, allowing the cached
+  /// PDF to be painted on the very first Flutter frame before any async compilation or disk reads start.
+  /// Disk cache hits only involve a fast existence check and single file read (typically < 1ms on SSD),
+  /// whereas cache writes, pruning, stats querying, and clearing are all performed asynchronously.
   static Uint8List? getCachedPdf(String filePath, RenderOptions options) {
     try {
       final file = File(filePath);
@@ -100,7 +109,7 @@ class DocumentCacheService {
       if (await tmpFile.exists()) {
         await tmpFile.rename(cacheFile.path);
       }
-      _pruneCacheIfNeeded(cacheDir);
+      await _pruneCacheIfNeeded(cacheDir);
     } catch (e) {
       debugPrint('[DocumentCacheService] saveCachedPdf error: $e');
     }
@@ -108,19 +117,26 @@ class DocumentCacheService {
 
   static DateTime _lastPrune = DateTime.fromMillisecondsSinceEpoch(0);
 
-  static void _pruneCacheIfNeeded(Directory cacheDir) {
+  static Future<void> _pruneCacheIfNeeded(Directory cacheDir) async {
     final now = DateTime.now();
     if (now.difference(_lastPrune).inMinutes < 10) return;
     _lastPrune = now;
 
     try {
-      final entities = cacheDir.listSync().whereType<File>().toList();
+      final entities = (await cacheDir.list().toList()).whereType<File>().toList();
       if (entities.length > 60) {
-        entities.sort((a, b) => a.lastModifiedSync().compareTo(b.lastModifiedSync()));
-        final toDelete = entities.take(entities.length - 40);
-        for (final f in toDelete) {
+        final withStats = <MapEntry<File, DateTime>>[];
+        for (final f in entities) {
           try {
-            f.deleteSync();
+            final stat = await f.stat();
+            withStats.add(MapEntry(f, stat.modified));
+          } catch (_) {}
+        }
+        withStats.sort((a, b) => a.value.compareTo(b.value));
+        final toDelete = withStats.take(withStats.length - 40);
+        for (final entry in toDelete) {
+          try {
+            await entry.key.delete();
           } catch (_) {}
         }
       }
@@ -200,32 +216,7 @@ class DocumentCacheService {
     }
   }
 
-  /// Synchronous clearing for tests or script operations.
-  static CacheClearResult clearCacheSync() {
-    try {
-      final dir = _getCacheDir();
-      if (!dir.existsSync()) {
-        return CacheClearResult(deletedCount: 0, freedBytes: 0, dirPath: dir.path);
-      }
-      final entities = dir.listSync();
-      int deletedCount = 0;
-      int freedBytes = 0;
-      for (final entity in entities) {
-        if (entity is File && (entity.path.endsWith('.pdf') || entity.path.endsWith('.tmp'))) {
-          try {
-            final len = entity.lengthSync();
-            entity.deleteSync();
-            deletedCount++;
-            freedBytes += len;
-          } catch (_) {}
-        }
-      }
-      return CacheClearResult(deletedCount: deletedCount, freedBytes: freedBytes, dirPath: dir.path);
-    } catch (e) {
-      debugPrint('[DocumentCacheService] clearCacheSync error: $e');
-      return CacheClearResult(deletedCount: 0, freedBytes: 0, dirPath: _getCacheDir().path);
-    }
-  }
+
 
   /// Opens the cache directory in the system file manager (Finder on macOS / Explorer on Windows).
   static Future<bool> openCacheDirectory() async {

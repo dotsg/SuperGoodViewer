@@ -644,6 +644,26 @@ void main() {
       controller.dispose();
     });
 
+    test('calculateFluidTargetScrollY honors useOffset and clamps properly', () {
+      final controller = ReaderController(autoRestorePreferences: false);
+      controller.updateScrollRatio(0.5, offset: 400.0);
+
+      // docHeight <= 0 returns 0.0
+      expect(controller.calculateFluidTargetScrollY(0.0, useOffset: true), 0.0);
+      expect(controller.calculateFluidTargetScrollY(-10.0, useOffset: false), 0.0);
+
+      // useOffset: true -> returns _lastScrollOffset (400.0)
+      expect(controller.calculateFluidTargetScrollY(2000.0, useOffset: true), 400.0);
+      // with maxScroll clamping
+      expect(controller.calculateFluidTargetScrollY(2000.0, useOffset: true, maxScroll: 300.0), 300.0);
+
+      // useOffset: false -> calculates ratio * docHeight (0.5 * 2000.0 = 1000.0)
+      expect(controller.calculateFluidTargetScrollY(2000.0, useOffset: false), 1000.0);
+      expect(controller.calculateFluidTargetScrollY(2000.0, useOffset: false, maxScroll: 800.0), 800.0);
+
+      controller.dispose();
+    });
+
     testWidgets('PdfCanvasView _isRestoringScroll is governed by generation gating', (tester) async {
       final key = GlobalKey<PdfCanvasViewState>();
       final controller = ReaderController(autoRestorePreferences: false);

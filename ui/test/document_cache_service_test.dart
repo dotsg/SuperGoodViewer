@@ -68,6 +68,7 @@ void main() {
 
     test('cache distinguishes different render options (mode, theme, fontSize, viewportWidth)', () async {
       const optionsFluidLight800 = RenderOptions(mode: 'fluid', theme: 'light', viewportWidth: 800.0);
+      const optionsFluidLight805 = RenderOptions(mode: 'fluid', theme: 'light', viewportWidth: 805.0); // Within 20pt bucket -> quantizes to 800
       const optionsFluidLight1200 = RenderOptions(mode: 'fluid', theme: 'light', viewportWidth: 1200.0);
       const optionsPagedDark = RenderOptions(mode: 'paged', theme: 'dark');
 
@@ -75,7 +76,9 @@ void main() {
 
       // Hit for exact match (viewportWidth 800)
       expect(DocumentCacheService.getCachedPdf(sampleMdFile.path, optionsFluidLight800), isNotNull);
-      // Miss for different viewportWidth (1200)
+      // Hit for minor resize jitter within 20pt quantization bucket (805 -> 800)
+      expect(DocumentCacheService.getCachedPdf(sampleMdFile.path, optionsFluidLight805), isNotNull);
+      // Miss for different viewportWidth bucket (1200)
       expect(DocumentCacheService.getCachedPdf(sampleMdFile.path, optionsFluidLight1200), isNull);
       // Miss for paged dark
       expect(DocumentCacheService.getCachedPdf(sampleMdFile.path, optionsPagedDark), isNull);

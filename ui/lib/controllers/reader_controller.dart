@@ -107,10 +107,16 @@ class ReaderController extends ChangeNotifier {
   bool get shouldUseOffsetForRestore => !renderOptionsChanged && _lastScrollOffset > 0.0;
 
   /// Calculates the effective target scroll offset Y in fluid mode based on document height.
+  /// When [useOffset] is true, uses absolute [_lastScrollOffset] (e.g. streaming append / live edit).
+  /// When [useOffset] is false, scales [_lastScrollRatio] with [docHeight] (e.g. option/theme/mode/zoom change).
   /// If [maxScroll] is provided, clamps the result to [0.0, maxScroll].
-  double calculateFluidTargetScrollY(double docHeight, {double? maxScroll}) {
+  double calculateFluidTargetScrollY(
+    double docHeight, {
+    required bool useOffset,
+    double? maxScroll,
+  }) {
     if (docHeight <= 0) return 0.0;
-    final raw = shouldUseOffsetForRestore
+    final raw = (useOffset && _lastScrollOffset > 0.0)
         ? _lastScrollOffset
         : (_lastScrollRatio > 0.0 ? _lastScrollRatio * docHeight : 0.0);
     return maxScroll != null ? raw.clamp(0.0, maxScroll) : raw;
