@@ -1394,7 +1394,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       }
       items.add(
         ContextMenuButtonItem(
-          label: '满窗口 (适应宽度) (Cmd+9)',
+          label: '满窗口 (适应宽度) (${widget.controller.shortcutService.getShortcutLabel('fitWidth')})',
           onPressed: () {
             params.dismissContextMenu();
             fitWidth();
@@ -1403,7 +1403,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       );
       items.add(
         ContextMenuButtonItem(
-          label: '满屏 (适应整页) (Cmd+1)',
+          label: '满屏 (适应整页) (${widget.controller.shortcutService.getShortcutLabel('fitPage')})',
           onPressed: () {
             params.dismissContextMenu();
             fitPage();
@@ -1412,7 +1412,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       );
       items.add(
         ContextMenuButtonItem(
-          label: '实际大小 100% (Cmd+0)',
+          label: '实际大小 100% (${widget.controller.shortcutService.getShortcutLabel('resetZoom')})',
           onPressed: () {
             params.dismissContextMenu();
             resetZoom();
@@ -1421,7 +1421,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       );
       items.add(
         ContextMenuButtonItem(
-          label: '放大 (Cmd+=)',
+          label: '放大 (${widget.controller.shortcutService.getShortcutLabel('zoomIn')})',
           onPressed: () {
             params.dismissContextMenu();
             zoomIn();
@@ -1430,7 +1430,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       );
       items.add(
         ContextMenuButtonItem(
-          label: '缩小 (Cmd+-)',
+          label: '缩小 (${widget.controller.shortcutService.getShortcutLabel('zoomOut')})',
           onPressed: () {
             params.dismissContextMenu();
             zoomOut();
@@ -1441,8 +1441,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         items.add(
           ContextMenuButtonItem(
             label: widget.controller.isTwoPage
-                ? '切换为单页纵向浏览 (Cmd+D)'
-                : '切换为双页对开浏览 (Cmd+D)',
+                ? '切换为单页纵向浏览 (${widget.controller.shortcutService.getShortcutLabel('toggleTwoPage')})'
+                : '切换为双页对开浏览 (${widget.controller.shortcutService.getShortcutLabel('toggleTwoPage')})',
             onPressed: () {
               params.dismissContextMenu();
               widget.controller.toggleTwoPage();
@@ -1453,8 +1453,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       items.add(
         ContextMenuButtonItem(
           label: widget.controller.renderOptions.isFluid
-              ? '切换为 A4 出版模式 (Cmd+P)'
-              : '切换为自适应流式 (Cmd+P)',
+              ? '切换为 A4 出版模式 (${widget.controller.shortcutService.getShortcutLabel('toggleMode')})'
+              : '切换为自适应流式 (${widget.controller.shortcutService.getShortcutLabel('toggleMode')})',
           onPressed: () {
             params.dismissContextMenu();
             widget.controller.toggleMode();
@@ -1464,8 +1464,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       items.add(
         ContextMenuButtonItem(
           label: widget.controller.renderOptions.isDark
-              ? '切换为明亮主题 (Cmd+T)'
-              : '切换为暗黑主题 (Cmd+T)',
+              ? '切换为明亮主题 (${widget.controller.shortcutService.getShortcutLabel('toggleTheme')})'
+              : '切换为暗黑主题 (${widget.controller.shortcutService.getShortcutLabel('toggleTheme')})',
           onPressed: () {
             params.dismissContextMenu();
             widget.controller.toggleTheme();
@@ -1475,7 +1475,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (widget.onToggleSidebar != null) {
         items.add(
           ContextMenuButtonItem(
-            label: '展开/收起侧边栏 (Cmd+B)',
+            label: '展开/收起侧边栏 (${widget.controller.shortcutService.getShortcutLabel('toggleSidebar')})',
             onPressed: () {
               params.dismissContextMenu();
               widget.onToggleSidebar!();
@@ -1486,7 +1486,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (widget.onExportPdf != null) {
         items.add(
           ContextMenuButtonItem(
-            label: '导出出版级 PDF... (Cmd+E)',
+            label: '导出出版级 PDF... (${widget.controller.shortcutService.getShortcutLabel('exportPdf')})',
             onPressed: () {
               params.dismissContextMenu();
               widget.onExportPdf!();

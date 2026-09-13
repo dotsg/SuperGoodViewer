@@ -49,14 +49,14 @@ fn main() {
     G --> H[120 FPS Native Canvas]
 "#;
     let start_cold = Instant::now();
-    let cold_res = render_mermaid(mermaid_code);
+    let cold_res = render_mermaid(mermaid_code, false);
     let cold_us = start_cold.elapsed().as_micros();
     println!("  * Cold render (generate SVG) : {:>7.2} ms (SVG size: {} bytes)", cold_us as f64 / 1000.0, cold_res.svg_bytes.len());
 
     let iterations = 50000;
     let start_warm = Instant::now();
     for _ in 0..iterations {
-        let _ = render_mermaid(mermaid_code);
+        let _ = render_mermaid(mermaid_code, false);
     }
     let warm_elapsed = start_warm.elapsed();
     let warm_ns = warm_elapsed.as_nanos() as f64 / iterations as f64;

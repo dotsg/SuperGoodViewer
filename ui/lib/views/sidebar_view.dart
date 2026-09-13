@@ -373,7 +373,7 @@ class _SidebarViewState extends State<SidebarView> {
                     width: 24,
                     height: 24,
                     child: IconButton(
-                      tooltip: '打开本地 Markdown 文件 (Cmd+O)',
+                      tooltip: '打开本地 Markdown 文件 (${widget.controller.shortcutService.getShortcutLabel('openFile')})',
                       icon: const Icon(Icons.folder_open_rounded, size: 16),
                       onPressed: () => _pickAndOpenFile(context),
                       style: IconButton.styleFrom(
@@ -389,7 +389,7 @@ class _SidebarViewState extends State<SidebarView> {
                       width: 24,
                       height: 24,
                       child: IconButton(
-                        tooltip: '收起侧边栏 (Cmd+B 或 Esc)',
+                        tooltip: '收起侧边栏 (${widget.controller.shortcutService.getShortcutLabel('toggleSidebar')} 或 Esc)',
                         icon: const Icon(Icons.close_rounded, size: 16),
                         onPressed: widget.onClose,
                         style: IconButton.styleFrom(
@@ -560,7 +560,7 @@ class _SidebarViewState extends State<SidebarView> {
                   // Typography & Reading Settings
                   Expanded(
                     child: Tooltip(
-                      message: '字体排版与中英文等宽对齐设置 (Cmd+Shift+F)',
+                      message: '字体排版与中英文等宽对齐设置 (${controller.shortcutService.getShortcutLabel('fontSettings')})',
                       child: InkWell(
                         borderRadius: BorderRadius.circular(6),
                         onTap: () => showFontSettingsDialog(context, controller),

@@ -104,25 +104,33 @@ void main() {
       controller.dispose();
     });
 
-    test('Dark theme: exports publication-grade dark PDF identical to in-memory bytes', () async {
-      final controller = ReaderController(autoRestorePreferences: false);
-      controller.toggleTheme(); // switch to dark
-      await waitCompile(controller);
+    test('Dark theme: strictly exports publication-grade LIGHT PDF even when viewing in dark mode', () async {
+      final lightController = ReaderController(autoRestorePreferences: false);
+      await waitCompile(lightController);
+      final lightBytes = lightController.currentPdfBytes!;
+      expect(lightBytes, isNotNull);
 
-      expect(controller.renderOptions.isDark, true);
-      final inMemoryBytes = controller.currentPdfBytes!;
+      final darkController = ReaderController(autoRestorePreferences: false);
+      darkController.toggleTheme(); // switch to dark
+      await waitCompile(darkController);
 
-      final exportPath = p.join(tempTestDir.path, 'dark_export.pdf');
-      final success = await controller.exportPdf(exportPath);
+      expect(darkController.renderOptions.isDark, true);
+      final darkInMemoryBytes = darkController.currentPdfBytes!;
+      expect(listEquals(darkInMemoryBytes, lightBytes), false);
+
+      final exportPath = p.join(tempTestDir.path, 'dark_export_always_light.pdf');
+      final success = await darkController.exportPdf(exportPath);
       expect(success, true);
 
       final exportedFile = File(exportPath);
       final fileBytes = await exportedFile.readAsBytes();
 
-      expect(listEquals(fileBytes, inMemoryBytes), true);
-      expect(computeChecksum(fileBytes), equals(computeChecksum(inMemoryBytes)));
+      expect(listEquals(fileBytes, darkInMemoryBytes), false);
+      expect(listEquals(fileBytes, lightBytes), true);
+      expect(computeChecksum(fileBytes), equals(computeChecksum(lightBytes)));
 
-      controller.dispose();
+      lightController.dispose();
+      darkController.dispose();
     });
 
     test('Export gracefully fails on invalid destination without throwing', () async {

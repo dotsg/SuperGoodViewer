@@ -9,6 +9,7 @@ import '../services/cli_ipc_service.dart';
 import '../services/native_cli_service.dart';
 import 'cli_tools_dialog.dart';
 import 'font_settings_dialog.dart';
+import 'keyboard_shortcuts_dialog.dart';
 import 'pdf_canvas_view.dart';
 import 'sidebar_view.dart';
 
@@ -445,91 +446,69 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       builder: (context, _) {
         return CallbackShortcuts(
           bindings: {
-        const SingleActivator(LogicalKeyboardKey.keyO, meta: true): _pickAndOpenFile,
-        const SingleActivator(LogicalKeyboardKey.keyO, control: true): _pickAndOpenFile,
-        const SingleActivator(LogicalKeyboardKey.keyB, meta: true): _toggleSidebar,
-        const SingleActivator(LogicalKeyboardKey.keyB, control: true): _toggleSidebar,
-        const SingleActivator(LogicalKeyboardKey.keyE, meta: true): _handleExportPdf,
-        const SingleActivator(LogicalKeyboardKey.keyE, control: true): _handleExportPdf,
-        const SingleActivator(LogicalKeyboardKey.keyR, meta: true):
-            controller.compileDocument,
-        const SingleActivator(LogicalKeyboardKey.keyR, control: true):
-            controller.compileDocument,
-        const SingleActivator(LogicalKeyboardKey.keyT, meta: true):
-            controller.toggleTheme,
-        const SingleActivator(LogicalKeyboardKey.keyT, control: true):
-            controller.toggleTheme,
-        const SingleActivator(LogicalKeyboardKey.keyP, meta: true):
-            controller.toggleMode,
-        const SingleActivator(LogicalKeyboardKey.keyP, control: true):
-            controller.toggleMode,
+            ...controller.shortcutService.buildBindings(
+              onToggleMode: controller.toggleMode,
+              onExportPdf: _handleExportPdf,
+              onOpenFile: _pickAndOpenFile,
+              onToggleSidebar: _toggleSidebar,
+              onCompileDocument: controller.compileDocument,
+              onToggleTheme: controller.toggleTheme,
+              onToggleTwoPage: _handleToggleTwoPage,
+              onZoomIn: _handleZoomIn,
+              onZoomOut: _handleZoomOut,
+              onResetZoom: _handleResetZoom,
+              onFitWidth: _handleFitWidth,
+              onFitPage: _handleFitPage,
+              onToggleToolbar: _toggleToolbar,
+              onFontSettings: () => showFontSettingsDialog(context, controller),
+              onKeyboardShortcuts: () => showKeyboardShortcutsDialog(context, controller),
+            ),
 
-        // Page Navigation & Book Mode (Arrow keys, Bracket keys, PageUp/PageDown, Space, Cmd+D)
-        const SingleActivator(LogicalKeyboardKey.arrowLeft): _handlePrevPage,
-        const SingleActivator(LogicalKeyboardKey.arrowRight): _handleNextPage,
-        const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
-            _pdfCanvasKey.currentState?.scrollByDelta(-120),
-        const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
-            _pdfCanvasKey.currentState?.scrollByDelta(120),
-        const SingleActivator(LogicalKeyboardKey.bracketLeft): _handlePrevPage,
-        const SingleActivator(LogicalKeyboardKey.bracketRight): _handleNextPage,
-        const SingleActivator(LogicalKeyboardKey.pageUp): _handlePrevPage,
-        const SingleActivator(LogicalKeyboardKey.pageDown): _handleNextPage,
-        const SingleActivator(LogicalKeyboardKey.space): _handleNextPage,
-        const SingleActivator(LogicalKeyboardKey.space, shift: true): _handlePrevPage,
-        const SingleActivator(LogicalKeyboardKey.home): _handleFirstPage,
-        const SingleActivator(LogicalKeyboardKey.end): _handleLastPage,
-        const SingleActivator(LogicalKeyboardKey.arrowUp, meta: true): _handleFirstPage,
-        const SingleActivator(LogicalKeyboardKey.arrowDown, meta: true): _handleLastPage,
-        const SingleActivator(LogicalKeyboardKey.keyD, meta: true): _handleToggleTwoPage,
-        const SingleActivator(LogicalKeyboardKey.keyD, control: true): _handleToggleTwoPage,
+            // Zoom Keypad Aliases (Numpad +)
+            const SingleActivator(LogicalKeyboardKey.add, meta: true): _handleZoomIn,
+            const SingleActivator(LogicalKeyboardKey.add, control: true): _handleZoomIn,
 
-        // Page Zoom Shortcuts (Replacing font size shortcuts)
-        const SingleActivator(LogicalKeyboardKey.equal, meta: true): _handleZoomIn,
-        const SingleActivator(LogicalKeyboardKey.add, meta: true): _handleZoomIn,
-        const SingleActivator(LogicalKeyboardKey.equal, control: true): _handleZoomIn,
-        const SingleActivator(LogicalKeyboardKey.add, control: true): _handleZoomIn,
+            // Page Navigation & Book Mode (Arrow keys, Bracket keys, PageUp/PageDown, Space)
+            const SingleActivator(LogicalKeyboardKey.arrowLeft): _handlePrevPage,
+            const SingleActivator(LogicalKeyboardKey.arrowRight): _handleNextPage,
+            const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
+                _pdfCanvasKey.currentState?.scrollByDelta(-120),
+            const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
+                _pdfCanvasKey.currentState?.scrollByDelta(120),
+            const SingleActivator(LogicalKeyboardKey.bracketLeft): _handlePrevPage,
+            const SingleActivator(LogicalKeyboardKey.bracketRight): _handleNextPage,
+            const SingleActivator(LogicalKeyboardKey.pageUp): _handlePrevPage,
+            const SingleActivator(LogicalKeyboardKey.pageDown): _handleNextPage,
+            const SingleActivator(LogicalKeyboardKey.space): _handleNextPage,
+            const SingleActivator(LogicalKeyboardKey.space, shift: true): _handlePrevPage,
+            const SingleActivator(LogicalKeyboardKey.home): _handleFirstPage,
+            const SingleActivator(LogicalKeyboardKey.end): _handleLastPage,
+            const SingleActivator(LogicalKeyboardKey.arrowUp, meta: true): _handleFirstPage,
+            const SingleActivator(LogicalKeyboardKey.arrowDown, meta: true): _handleLastPage,
 
-        const SingleActivator(LogicalKeyboardKey.minus, meta: true): _handleZoomOut,
-        const SingleActivator(LogicalKeyboardKey.minus, control: true): _handleZoomOut,
+            // Full Screen Toggle
+            const SingleActivator(LogicalKeyboardKey.keyF, meta: true, control: true):
+                _toggleFullScreen,
+            const SingleActivator(LogicalKeyboardKey.f11): _toggleFullScreen,
 
-        const SingleActivator(LogicalKeyboardKey.digit0, meta: true): _handleResetZoom,
-        const SingleActivator(LogicalKeyboardKey.digit0, control: true): _handleResetZoom,
-
-        const SingleActivator(LogicalKeyboardKey.digit9, meta: true): _handleFitWidth,
-        const SingleActivator(LogicalKeyboardKey.digit9, control: true): _handleFitWidth,
-
-        const SingleActivator(LogicalKeyboardKey.digit1, meta: true): _handleFitPage,
-        const SingleActivator(LogicalKeyboardKey.digit1, control: true): _handleFitPage,
-
-        // Full Screen Toggle
-        const SingleActivator(LogicalKeyboardKey.keyF, meta: true, control: true):
-            _toggleFullScreen,
-        const SingleActivator(LogicalKeyboardKey.f11): _toggleFullScreen,
-
-        const SingleActivator(LogicalKeyboardKey.backslash, meta: true): _toggleToolbar,
-        const SingleActivator(LogicalKeyboardKey.backslash, control: true): _toggleToolbar,
-        const SingleActivator(LogicalKeyboardKey.escape): () {
-          if (_isToolbarVisible) {
-            setState(() => _isToolbarVisible = false);
-          } else if (_isSidebarOpen) {
-            _setSidebarOpen(false);
-          }
-        },
-        const SingleActivator(LogicalKeyboardKey.keyC, meta: true):
-            _handleCopySelection,
-        const SingleActivator(LogicalKeyboardKey.keyC, control: true):
-            _handleCopySelection,
-        const SingleActivator(LogicalKeyboardKey.keyA, meta: true): () async {
-          await _pdfCanvasKey.currentState?.selectAllText();
-        },
-        const SingleActivator(LogicalKeyboardKey.keyA, control: true): () async {
-          await _pdfCanvasKey.currentState?.selectAllText();
-        },
-        const SingleActivator(LogicalKeyboardKey.keyF, meta: true, shift: true): () {
-          showFontSettingsDialog(context, controller);
-        },
-      },
+            const SingleActivator(LogicalKeyboardKey.escape): () {
+              if (_isToolbarVisible) {
+                setState(() => _isToolbarVisible = false);
+              } else if (_isSidebarOpen) {
+                _setSidebarOpen(false);
+              }
+            },
+            const SingleActivator(LogicalKeyboardKey.keyC, meta: true):
+                _handleCopySelection,
+            const SingleActivator(LogicalKeyboardKey.keyC, control: true):
+                _handleCopySelection,
+            const SingleActivator(LogicalKeyboardKey.keyA, meta: true): () async {
+              await _pdfCanvasKey.currentState?.selectAllText();
+            },
+            const SingleActivator(LogicalKeyboardKey.keyA, control: true): () async {
+              await _pdfCanvasKey.currentState?.selectAllText();
+            },
+          },
       child: Focus(
         autofocus: true,
         child: Scaffold(
@@ -841,7 +820,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                     if (!_isSidebarOpen) ...[
                       const SizedBox(width: 78),
                       Tooltip(
-                        message: '切换侧边栏 (Cmd+B)',
+                        message: '切换侧边栏 (${controller.shortcutService.getShortcutLabel('toggleSidebar')})',
                         child: InkWell(
                           onTap: () => _setSidebarOpen(true),
                           borderRadius: BorderRadius.circular(4),
@@ -948,7 +927,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               // Open Local File
               _PillIconButton(
                 icon: Icons.folder_open_rounded,
-                tooltip: '打开本地 Markdown (Cmd+O)',
+                tooltip: '打开本地 Markdown (${controller.shortcutService.getShortcutLabel('openFile')})',
                 onPressed: _pickAndOpenFile,
               ),
               _PillDivider(isDark: isDark),
@@ -958,7 +937,9 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 icon: _isSidebarOpen
                     ? Icons.view_sidebar_rounded
                     : Icons.view_sidebar_outlined,
-                tooltip: _isSidebarOpen ? '收起侧边栏 (Cmd+B)' : '展开侧边栏 (Cmd+B)',
+                tooltip: _isSidebarOpen
+                    ? '收起侧边栏 (${controller.shortcutService.getShortcutLabel('toggleSidebar')})'
+                    : '展开侧边栏 (${controller.shortcutService.getShortcutLabel('toggleSidebar')})',
                 isSelected: _isSidebarOpen,
                 onPressed: _toggleSidebar,
               ),
@@ -967,6 +948,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               // Mode switcher (Fluid vs A4 Paged)
               _ModePill(
                 mode: controller.renderOptions.mode,
+                shortcutLabel: controller.shortcutService.getShortcutLabel('toggleMode'),
                 onToggle: controller.toggleMode,
                 isDark: isDark,
               ),
@@ -979,8 +961,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                       ? Icons.auto_stories_rounded
                       : Icons.menu_book_outlined,
                   tooltip: controller.isTwoPage
-                      ? '当前为双页对开，点击切换单页 (Cmd+D)'
-                      : '当前为单页纵向，点击切换双页对开 (Cmd+D)',
+                      ? '当前为双页对开，点击切换单页 (${controller.shortcutService.getShortcutLabel('toggleTwoPage')})'
+                      : '当前为单页纵向，点击切换双页对开 (${controller.shortcutService.getShortcutLabel('toggleTwoPage')})',
                   isSelected: controller.isTwoPage,
                   iconSize: 17,
                   onPressed: _handleToggleTwoPage,
@@ -1001,7 +983,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               // Page Zoom Stepper & Preset Dropdown (- / % / +)
               _PillIconButton(
                 icon: Icons.remove_rounded,
-                tooltip: '缩小页面 (Cmd+-)',
+                tooltip: '缩小页面 (${controller.shortcutService.getShortcutLabel('zoomOut')})',
                 iconSize: 15,
                 onPressed: _handleZoomOut,
               ),
@@ -1023,7 +1005,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               ),
               _PillIconButton(
                 icon: Icons.add_rounded,
-                tooltip: '放大页面 (Cmd+=)',
+                tooltip: '放大页面 (${controller.shortcutService.getShortcutLabel('zoomIn')})',
                 iconSize: 15,
                 onPressed: _handleZoomIn,
               ),
@@ -1035,8 +1017,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                     ? Icons.light_mode_rounded
                     : Icons.dark_mode_rounded,
                 tooltip: controller.renderOptions.isDark
-                    ? '切换为亮色模式 (Cmd+T)'
-                    : '切换为暗黑模式 (Cmd+T)',
+                    ? '切换为亮色模式 (${controller.shortcutService.getShortcutLabel('toggleTheme')})'
+                    : '切换为暗黑模式 (${controller.shortcutService.getShortcutLabel('toggleTheme')})',
                 onPressed: controller.toggleTheme,
               ),
               _PillDivider(isDark: isDark),
@@ -1044,27 +1026,30 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               // Export PDF
               _PillIconButton(
                 icon: Icons.download_rounded,
-                tooltip: '导出出版级 PDF (Cmd+E)',
+                tooltip: '导出出版级 PDF (${controller.shortcutService.getShortcutLabel('exportPdf')})',
                 onPressed: _handleExportPdf,
               ),
               _PillDivider(isDark: isDark),
 
-              // More Options Menu (Font settings, Auto reload toggle, CLI tools, Sample doc, Hide toolbar)
+              // More Options Menu (Font settings, Shortcuts, Auto reload toggle, CLI tools, Sample doc, Hide toolbar)
               _MoreActionsPillMenu(
                 isDark: isDark,
                 autoReload: controller.autoReload,
                 onOpenFontSettings: () => showFontSettingsDialog(context, controller),
+                onOpenShortcuts: () => showKeyboardShortcutsDialog(context, controller),
                 onToggleAutoReload: () => controller.setAutoReload(!controller.autoReload),
                 onOpenCliTools: () => showCliToolsDialog(context),
                 onLoadSample: controller.loadSampleDocument,
                 onHideToolbar: () => setState(() => _isToolbarVisible = false),
+                fontShortcut: controller.shortcutService.getShortcutLabel('fontSettings'),
+                shortcutsShortcut: controller.shortcutService.getShortcutLabel('keyboardShortcuts'),
               ),
               _PillDivider(isDark: isDark),
 
               // Zen Mode Button (Hide Floating Toolbar)
               _PillIconButton(
                 icon: Icons.close_rounded,
-                tooltip: '隐藏工具栏 (Esc 或 Cmd+\\)',
+                tooltip: '隐藏工具栏 (Esc 或 ${controller.shortcutService.getShortcutLabel('toggleToolbar')})',
                 onPressed: () => setState(() => _isToolbarVisible = false),
               ),
             ],
@@ -1124,20 +1109,23 @@ class _ModePill extends StatelessWidget {
   final String mode;
   final VoidCallback onToggle;
   final bool isDark;
+  final String? shortcutLabel;
 
   const _ModePill({
     required this.mode,
     required this.onToggle,
     required this.isDark,
+    this.shortcutLabel,
   });
 
   @override
   Widget build(BuildContext context) {
     final isFluid = mode == 'fluid';
     final theme = Theme.of(context);
+    final shortcut = shortcutLabel ?? 'Cmd+F';
 
     return Tooltip(
-      message: isFluid ? '当前：自适应流式 (点击切换 A4 出版 Cmd+P)' : '当前：A4 出版 (点击切换流式 Cmd+P)',
+      message: isFluid ? '当前：自适应流式 (点击切换 A4 出版 $shortcut)' : '当前：A4 出版 (点击切换流式 $shortcut)',
       waitDuration: const Duration(milliseconds: 500),
       child: GestureDetector(
         onTap: onToggle,
@@ -1343,19 +1331,25 @@ class _MoreActionsPillMenu extends StatelessWidget {
   final bool isDark;
   final bool autoReload;
   final VoidCallback onOpenFontSettings;
+  final VoidCallback onOpenShortcuts;
   final VoidCallback onToggleAutoReload;
   final VoidCallback onOpenCliTools;
   final VoidCallback onLoadSample;
   final VoidCallback onHideToolbar;
+  final String fontShortcut;
+  final String shortcutsShortcut;
 
   const _MoreActionsPillMenu({
     required this.isDark,
     required this.autoReload,
     required this.onOpenFontSettings,
+    required this.onOpenShortcuts,
     required this.onToggleAutoReload,
     required this.onOpenCliTools,
     required this.onLoadSample,
     required this.onHideToolbar,
+    required this.fontShortcut,
+    required this.shortcutsShortcut,
   });
 
   @override
@@ -1370,6 +1364,9 @@ class _MoreActionsPillMenu extends StatelessWidget {
         switch (value) {
           case 'font':
             onOpenFontSettings();
+            break;
+          case 'shortcuts':
+            onOpenShortcuts();
             break;
           case 'reload':
             onToggleAutoReload();
@@ -1389,12 +1386,24 @@ class _MoreActionsPillMenu extends StatelessWidget {
         PopupMenuItem<String>(
           value: 'font',
           child: Row(
-            children: const [
-              Icon(Icons.font_download_outlined, size: 16),
-              SizedBox(width: 8),
-              Text('排版与字体设置', style: TextStyle(fontSize: 12.5)),
-              Spacer(),
-              Text('Cmd+Shift+F', style: TextStyle(fontSize: 11, color: Colors.grey)),
+            children: [
+              const Icon(Icons.font_download_outlined, size: 16),
+              const SizedBox(width: 8),
+              const Text('排版与字体设置', style: TextStyle(fontSize: 12.5)),
+              const Spacer(),
+              Text(fontShortcut, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'shortcuts',
+          child: Row(
+            children: [
+              const Icon(Icons.keyboard_outlined, size: 16),
+              const SizedBox(width: 8),
+              const Text('快捷键偏好设置', style: TextStyle(fontSize: 12.5)),
+              const Spacer(),
+              Text(shortcutsShortcut, style: const TextStyle(fontSize: 11, color: Colors.grey)),
             ],
           ),
         ),

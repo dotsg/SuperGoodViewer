@@ -354,15 +354,89 @@ pub fn preprocess_mermaid_code(code: &str) -> String {
     result
 }
 
+fn build_light_theme() -> mermaid_rs_renderer::Theme {
+    let mut theme = mermaid_rs_renderer::Theme::modern();
+    theme.font_family = "Inter, ui-sans-serif, system-ui, -apple-system, \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif".to_string();
+    theme.background = "#FFFFFF".to_string();
+    theme
+}
+
+fn build_dark_theme() -> mermaid_rs_renderer::Theme {
+    let primary_color = "#252830".to_string();
+    let secondary_color = "#1e293b".to_string();
+    let tertiary_color = "#0f172a".to_string();
+    mermaid_rs_renderer::Theme {
+        font_family: "Inter, ui-sans-serif, system-ui, -apple-system, \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif".to_string(),
+        font_size: 14.0,
+        primary_color: primary_color.clone(),
+        primary_text_color: "#e2e8f0".to_string(),
+        primary_border_color: "#475569".to_string(),
+        line_color: "#94a3b8".to_string(),
+        secondary_color: secondary_color.clone(),
+        tertiary_color,
+        edge_label_background: "#1e1e1e".to_string(),
+        cluster_background: "#16181d".to_string(),
+        cluster_border: "#374151".to_string(),
+        background: "#1e1e1e".to_string(),
+        sequence_actor_fill: primary_color.clone(),
+        sequence_actor_border: "#475569".to_string(),
+        sequence_actor_line: "#64748b".to_string(),
+        sequence_note_fill: "#2a2718".to_string(),
+        sequence_note_border: "#786221".to_string(),
+        sequence_activation_fill: secondary_color,
+        sequence_activation_border: "#60a5fa".to_string(),
+        text_color: "#e2e8f0".to_string(),
+        git_colors: [
+            "#60a5fa", "#34d399", "#f472b6", "#fbbf24", "#a78bfa", "#38bdf8", "#fb923c",
+            "#4ade80",
+        ]
+        .map(|s| s.to_string()),
+        git_inv_colors: [
+            "#93c5fd", "#6ee7b7", "#f9a8d4", "#fde68a", "#c4b5fd", "#7dd3fc", "#fdba74",
+            "#86efac",
+        ]
+        .map(|s| s.to_string()),
+        git_branch_label_colors: [
+            "#ffffff", "#ffffff", "#ffffff", "#ffffff", "#ffffff", "#ffffff", "#ffffff",
+            "#ffffff",
+        ]
+        .map(|s| s.to_string()),
+        git_commit_label_color: "#e2e8f0".to_string(),
+        git_commit_label_background: primary_color,
+        git_tag_label_color: "#e2e8f0".to_string(),
+        git_tag_label_background: "#1e293b".to_string(),
+        git_tag_label_border: "#475569".to_string(),
+        pie_colors: [
+            "#38bdf8", "#818cf8", "#c084fc", "#f472b6", "#fb7185", "#fb923c", "#facc15",
+            "#4ade80", "#2dd4bf", "#22d3ee", "#a78bfa", "#e879f9",
+        ]
+        .map(|s| s.to_string()),
+        pie_title_text_size: 25.0,
+        pie_title_text_color: "#f1f5f9".to_string(),
+        pie_section_text_size: 17.0,
+        pie_section_text_color: "#ffffff".to_string(),
+        pie_legend_text_size: 17.0,
+        pie_legend_text_color: "#cbd5e1".to_string(),
+        pie_stroke_color: "#1e1e1e".to_string(),
+        pie_stroke_width: 1.6,
+        pie_outer_stroke_width: 1.6,
+        pie_outer_stroke_color: "#374151".to_string(),
+        pie_opacity: 0.9,
+    }
+}
+
 /// Renders Mermaid diagram code into an SVG byte stream with SHA-256 caching.
 /// If rendering fails, returns a fallback rendered block.
-pub fn render_mermaid(code: &str) -> RenderedMermaid {
+pub fn render_mermaid(code: &str, is_dark: bool) -> RenderedMermaid {
     let processed_code = preprocess_mermaid_code(code);
+    let theme_tag = if is_dark { "dark" } else { "light" };
 
     let mut hasher = Sha256::new();
+    hasher.update(theme_tag.as_bytes());
+    hasher.update(b":");
     hasher.update(processed_code.trim().as_bytes());
     let hash = format!("{:x}", hasher.finalize());
-    let virtual_filename = format!("mermaid_{}.svg", &hash[..16]);
+    let virtual_filename = format!("mermaid_{}_{}.svg", theme_tag, &hash[..16]);
 
     // Check cache
     {
@@ -376,8 +450,18 @@ pub fn render_mermaid(code: &str) -> RenderedMermaid {
         }
     }
 
+    let theme = if is_dark {
+        build_dark_theme()
+    } else {
+        build_light_theme()
+    };
+    let render_opts = mermaid_rs_renderer::RenderOptions {
+        theme,
+        layout: mermaid_rs_renderer::LayoutConfig::default(),
+    };
+
     // Render using mermaid-rs-renderer
-    match mermaid_rs_renderer::render(&processed_code) {
+    match mermaid_rs_renderer::render_with_options(&processed_code, render_opts) {
         Ok(svg_string) => {
             let bytes = Bytes::new(svg_string.into_bytes());
             {
@@ -393,13 +477,18 @@ pub fn render_mermaid(code: &str) -> RenderedMermaid {
         Err(err) => {
             // Generate a clean fallback SVG indicating the error
             let err_msg = err.to_string().replace('<', "&lt;").replace('>', "&gt;");
+            let (bg, stroke, text_color) = if is_dark {
+                ("#2d1517", "#5c2227", "#f87171")
+            } else {
+                ("#f8d7da", "#f5c2c7", "#842029")
+            };
             let fallback_svg = format!(
                 r##"<svg xmlns="http://www.w3.org/2000/svg" width="600" height="100" viewBox="0 0 600 100">
-                    <rect width="600" height="100" rx="8" fill="#f8d7da" stroke="#f5c2c7" stroke-width="1.5"/>
-                    <text x="20" y="38" font-family="sans-serif" font-size="14" font-weight="bold" fill="#842029">
+                    <rect width="600" height="100" rx="8" fill="{bg}" stroke="{stroke}" stroke-width="1.5"/>
+                    <text x="20" y="38" font-family="sans-serif" font-size="14" font-weight="bold" fill="{text_color}">
                         [Mermaid Render Error]
                     </text>
-                    <text x="20" y="65" font-family="monospace" font-size="11" fill="#842029">
+                    <text x="20" y="65" font-family="monospace" font-size="11" fill="{text_color}">
                         {}
                     </text>
                 </svg>"##,
@@ -422,27 +511,48 @@ mod tests {
     #[test]
     fn test_render_flowchart() {
         let code = "graph TD;\n  A[Start] --> B[Finish];";
-        let res = render_mermaid(code);
-        assert!(!res.is_fallback);
-        assert!(res.virtual_filename.starts_with("mermaid_"));
-        assert!(res.svg_bytes.starts_with(b"<svg"));
+        let res_light = render_mermaid(code, false);
+        assert!(!res_light.is_fallback);
+        assert!(res_light.virtual_filename.starts_with("mermaid_light_"));
+        assert!(res_light.svg_bytes.starts_with(b"<svg"));
+
+        let res_dark = render_mermaid(code, true);
+        assert!(!res_dark.is_fallback);
+        assert!(res_dark.virtual_filename.starts_with("mermaid_dark_"));
+        assert!(res_dark.svg_bytes.starts_with(b"<svg"));
+        assert_ne!(res_light.virtual_filename, res_dark.virtual_filename);
+
+        // Verify dark theme colors are applied in SVG
+        let dark_svg = String::from_utf8_lossy(&res_dark.svg_bytes);
+        assert!(dark_svg.contains("#1e1e1e") || dark_svg.contains("#252830"));
     }
 
     #[test]
     fn test_render_cache_hit() {
         let code = "graph LR;\n  X --> Y;";
-        let res1 = render_mermaid(code);
-        let res2 = render_mermaid(code);
+        let res1 = render_mermaid(code, false);
+        let res2 = render_mermaid(code, false);
         assert_eq!(res1.virtual_filename, res2.virtual_filename);
         assert_eq!(res1.svg_bytes, res2.svg_bytes);
+
+        let res_dark1 = render_mermaid(code, true);
+        let res_dark2 = render_mermaid(code, true);
+        assert_eq!(res_dark1.virtual_filename, res_dark2.virtual_filename);
+        assert_eq!(res_dark1.svg_bytes, res_dark2.svg_bytes);
     }
 
     #[test]
     fn test_render_invalid_mermaid_fallback() {
         let code = "not a valid mermaid diagram at all %%%!!!";
-        let res = render_mermaid(code);
-        assert!(res.is_fallback);
-        assert!(res.svg_bytes.starts_with(b"<svg"));
+        let res_light = render_mermaid(code, false);
+        assert!(res_light.is_fallback);
+        assert!(res_light.svg_bytes.starts_with(b"<svg"));
+
+        let res_dark = render_mermaid(code, true);
+        assert!(res_dark.is_fallback);
+        assert!(res_dark.svg_bytes.starts_with(b"<svg"));
+        let dark_svg = String::from_utf8_lossy(&res_dark.svg_bytes);
+        assert!(dark_svg.contains("#2d1517"));
     }
 
     #[test]
@@ -477,11 +587,16 @@ mod tests {
     Earth->>Moon: 连续激光探测
     Moon-->>Earth: 返回时钟差 $\Delta \tau$ 信号
 "#;
-        let res = render_mermaid(code);
+        let res = render_mermaid(code, false);
         assert!(!res.is_fallback);
         let svg_str = String::from_utf8_lossy(&res.svg_bytes);
         assert!(svg_str.contains("Δτ"));
         assert!(!svg_str.contains(r"\Delta"));
+
+        let res_dark = render_mermaid(code, true);
+        assert!(!res_dark.is_fallback);
+        let svg_dark = String::from_utf8_lossy(&res_dark.svg_bytes);
+        assert!(svg_dark.contains("Δτ"));
     }
 
     #[test]
@@ -510,8 +625,8 @@ mod tests {
     Mars->>Mars: 拓扑量子存储单元锁定并执行态层析验证
     Mars-->>Earth: 量子层析保真度收敛确认 ($F = 99.42\%$)
 "#;
-        let res = render_mermaid(code);
-        assert!(!res.is_fallback, "Should render without fallback");
+        let res = render_mermaid(code, false);
+        assert!(!res.is_fallback, "Should render without fallback in light mode");
         let svg_str = String::from_utf8_lossy(&res.svg_bytes);
         assert!(svg_str.contains("Δτ"));
         assert!(svg_str.contains("|Ψ⁺⟩_BC"));
@@ -520,6 +635,12 @@ mod tests {
         assert!(!svg_str.contains(r"\Delta"));
         assert!(!svg_str.contains(r"\Psi"));
         assert!(!svg_str.contains(r"\Phi"));
+
+        let res_dark = render_mermaid(code, true);
+        assert!(!res_dark.is_fallback, "Should render without fallback in dark mode");
+        let svg_dark = String::from_utf8_lossy(&res_dark.svg_bytes);
+        assert!(svg_dark.contains("Δτ"));
+        assert!(svg_dark.contains("#1e1e1e") || svg_dark.contains("#252830"));
     }
 
     #[test]

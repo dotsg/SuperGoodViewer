@@ -108,15 +108,26 @@ pub fn convert_markdown_to_typst(
     let mut out = String::with_capacity(markdown.len() * 2);
 
     // 1. Inject Modern Typst Preamble Template
-    let bg_color = if options.theme == "dark" { "rgb(\"#1e1e1e\")" } else { "rgb(\"#ffffff\")" };
-    let text_color = if options.theme == "dark" { "rgb(\"#d4d4d4\")" } else { "rgb(\"#1a1a1a\")" };
-    let header_color = if options.theme == "dark" { "rgb(\"#808080\")" } else { "rgb(\"#666666\")" };
-    let heading_color = if options.theme == "dark" { "rgb(\"#ffffff\")" } else { "rgb(\"#111111\")" };
-    let code_bg = if options.theme == "dark" { "rgb(\"#282828\")" } else { "rgb(\"#f6f8fa\")" };
-    let table_stroke = if options.theme == "dark" { "rgb(\"#3e3e3e\")" } else { "rgb(\"#d0d7de\")" };
-    let table_header_bg = if options.theme == "dark" { "rgb(\"#2a2a2a\")" } else { "rgb(\"#f6f8fa\")" };
-    let link_color = if options.theme == "dark" { "rgb(\"#58a6ff\")" } else { "rgb(\"#0969da\")" };
-    let link_underline = if options.theme == "dark" { "rgb(\"#58a6ff\").transparentize(60%)" } else { "rgb(\"#0969da\").transparentize(65%)" };
+    let is_dark = options.theme == "dark";
+    let bg_color = if is_dark { "rgb(\"#1e1e1e\")" } else { "rgb(\"#ffffff\")" };
+    let text_color = if is_dark { "rgb(\"#d4d4d4\")" } else { "rgb(\"#1a1a1a\")" };
+    let header_color = if is_dark { "rgb(\"#808080\")" } else { "rgb(\"#666666\")" };
+    let heading_color = if is_dark { "rgb(\"#ffffff\")" } else { "rgb(\"#111111\")" };
+    let code_bg = if is_dark { "rgb(\"#252830\")" } else { "rgb(\"#f6f8fa\")" };
+    let code_border = if is_dark { "rgb(\"#383e4a\")" } else { "rgb(\"#e1e4e8\")" };
+    let table_stroke = if is_dark { "rgb(\"#333842\")" } else { "rgb(\"#d0d7de\")" };
+    let table_header_bg = if is_dark { "rgb(\"#252830\")" } else { "rgb(\"#f6f8fa\")" };
+    let link_color = if is_dark { "rgb(\"#58a6ff\")" } else { "rgb(\"#0969da\")" };
+    let link_underline = if is_dark { "rgb(\"#58a6ff\").transparentize(60%)" } else { "rgb(\"#0969da\").transparentize(65%)" };
+    let quote_bg = if is_dark { "rgb(\"#22252b\")" } else { "rgb(\"#f6f8fa\")" };
+    let quote_border = if is_dark { "rgb(\"#484f58\")" } else { "rgb(\"#d0d7de\")" };
+    let rule_color = if is_dark { "rgb(\"#333842\")" } else { "rgb(\"#d0d7de\")" };
+
+    let (badge_bg, badge_stroke, badge_fg) = if is_dark {
+        ("rgb(\"#262930\")", "rgb(\"#475569\")", "rgb(\"#e2e8f0\")")
+    } else {
+        ("rgb(\"#f1f5f9\")", "rgb(\"#cbd5e1\")", "rgb(\"#334155\")")
+    };
 
     let is_fluid = options.mode == "fluid";
     let page_width = if is_fluid {
@@ -216,6 +227,7 @@ pub fn convert_markdown_to_typst(
 
 #show raw.where(block: false): it => box(
   fill: {code_bg},
+  stroke: 0.5pt + {code_border},
   inset: (x: 4pt, y: 0pt),
   outset: (y: 3pt),
   radius: 3pt,
@@ -224,6 +236,7 @@ pub fn convert_markdown_to_typst(
 
 #show raw.where(block: true): it => block(
   fill: {code_bg},
+  stroke: 0.5pt + {code_border},
   inset: (x: 12pt, y: 10pt),
   radius: 6pt,
   width: 100%,
@@ -308,22 +321,13 @@ pub fn convert_markdown_to_typst(
         font_size = options.font_size,
         text_color = text_color,
         code_bg = code_bg,
+        code_border = code_border,
         heading_color = heading_color,
         table_stroke = table_stroke,
         table_header_bg = table_header_bg,
         body_font_str = body_font_str,
         code_font_str = code_font_str
     ));
-
-    let callout_bg_op = if options.theme == "dark" { "darken(70%)" } else { "lighten(90%)" };
-    let quote_bg = if options.theme == "dark" { "rgb(\"#252525\")" } else { "rgb(\"#f6f8fa\")" };
-    let quote_border = if options.theme == "dark" { "rgb(\"#555555\")" } else { "rgb(\"#d0d7de\")" };
-
-    let (badge_bg, badge_stroke, badge_fg) = if options.theme == "dark" {
-        ("rgb(\"#2d3748\")", "rgb(\"#4a5568\")", "rgb(\"#e2e8f0\")")
-    } else {
-        ("rgb(\"#f1f5f9\")", "rgb(\"#cbd5e1\")", "rgb(\"#334155\")")
-    };
 
     // 2. Parse Markdown AST with pulldown-cmark
     let mut parser_opts = Options::empty();
@@ -366,22 +370,51 @@ pub fn convert_markdown_to_typst(
                 }
                 Tag::BlockQuote(kind) => {
                     let callout_info = match kind {
-                        Some(pulldown_cmark::BlockQuoteKind::Note) => Some(("Note", "blue")),
-                        Some(pulldown_cmark::BlockQuoteKind::Tip) => Some(("Tip", "green")),
-                        Some(pulldown_cmark::BlockQuoteKind::Important) => Some(("Important", "purple")),
-                        Some(pulldown_cmark::BlockQuoteKind::Warning) => Some(("Warning", "orange")),
-                        Some(pulldown_cmark::BlockQuoteKind::Caution) => Some(("Caution", "red")),
+                        Some(pulldown_cmark::BlockQuoteKind::Note) => {
+                            if is_dark {
+                                Some(("Note", "rgb(\"#58a6ff\")", "rgb(\"#13233a\")", "rgb(\"#58a6ff\")"))
+                            } else {
+                                Some(("Note", "rgb(\"#0969da\")", "rgb(\"#f0f7ff\")", "rgb(\"#0969da\")"))
+                            }
+                        }
+                        Some(pulldown_cmark::BlockQuoteKind::Tip) => {
+                            if is_dark {
+                                Some(("Tip", "rgb(\"#3fb950\")", "rgb(\"#132d1e\")", "rgb(\"#3fb950\")"))
+                            } else {
+                                Some(("Tip", "rgb(\"#1a7f37\")", "rgb(\"#f0fdf4\")", "rgb(\"#1a7f37\")"))
+                            }
+                        }
+                        Some(pulldown_cmark::BlockQuoteKind::Important) => {
+                            if is_dark {
+                                Some(("Important", "rgb(\"#a371f7\")", "rgb(\"#251938\")", "rgb(\"#bc8cff\")"))
+                            } else {
+                                Some(("Important", "rgb(\"#8250df\")", "rgb(\"#fbf5ff\")", "rgb(\"#8250df\")"))
+                            }
+                        }
+                        Some(pulldown_cmark::BlockQuoteKind::Warning) => {
+                            if is_dark {
+                                Some(("Warning", "rgb(\"#d29922\")", "rgb(\"#342813\")", "rgb(\"#d29922\")"))
+                            } else {
+                                Some(("Warning", "rgb(\"#9a6700\")", "rgb(\"#fffbeb\")", "rgb(\"#9a6700\")"))
+                            }
+                        }
+                        Some(pulldown_cmark::BlockQuoteKind::Caution) => {
+                            if is_dark {
+                                Some(("Caution", "rgb(\"#f85149\")", "rgb(\"#38171c\")", "rgb(\"#ff7b72\")"))
+                            } else {
+                                Some(("Caution", "rgb(\"#cf222e\")", "rgb(\"#fff1f0\")", "rgb(\"#cf222e\")"))
+                            }
+                        }
                         _ => None,
                     };
 
-                    if let Some((label, color)) = callout_info {
+                    if let Some((label, border_c, bg_c, title_c)) = callout_info {
                         out.push_str(&format!(
-                            "\n#block(width: 100%, stroke: (left: 3.5pt + {color}), inset: (x: 10pt, y: 7pt), radius: (right: 4pt), fill: {color}.{callout_bg_op})[\n*{}*\n\n",
-                            label
+                            "\n#block(width: 100%, stroke: (left: 3.5pt + {border_c}), inset: (x: 12pt, y: 8pt), radius: (right: 4pt), fill: {bg_c})[\n#text(fill: {title_c}, weight: \"bold\")[{label}]\n\n"
                         ));
                     } else {
                         out.push_str(&format!(
-                            "\n#block(width: 100%, stroke: (left: 3.5pt + {quote_border}), inset: (x: 10pt, y: 7pt), radius: (right: 4pt), fill: {quote_bg})[\n"
+                            "\n#block(width: 100%, stroke: (left: 3.5pt + {quote_border}), inset: (x: 12pt, y: 8pt), radius: (right: 4pt), fill: {quote_bg})[\n"
                         ));
                     }
                 }
@@ -488,12 +521,17 @@ pub fn convert_markdown_to_typst(
                     in_code_block = false;
                     let lang = code_block_lang.trim().to_lowercase();
                     if lang == "mermaid" {
-                        // Render Mermaid diagram to SVG
-                        let rendered = render_mermaid(&code_block_content);
+                        // Render Mermaid diagram to SVG with theme awareness
+                        let rendered = render_mermaid(&code_block_content, is_dark);
                         let file_path = PathBuf::from(&rendered.virtual_filename);
                         virtual_files.insert(file_path, rendered.svg_bytes);
+                        let (diagram_fill, diagram_stroke) = if is_dark {
+                            ("rgb(\"#1e1e1e\")", "rgb(\"#333842\")")
+                        } else {
+                            ("rgb(\"#ffffff\")", "rgb(\"#e1e4e8\")")
+                        };
                         out.push_str(&format!(
-                            "\n#align(center)[#image(\"{}\", width: 90%)]\n\n",
+                            "\n#align(center)[#block(fill: {diagram_fill}, stroke: 0.5pt + {diagram_stroke}, radius: 6pt, inset: (x: 8pt, y: 6pt))[#image(\"{}\", width: 92%)]]\n\n",
                             rendered.virtual_filename
                         ));
                     } else {
@@ -540,7 +578,12 @@ pub fn convert_markdown_to_typst(
                             }
                         } else {
                             // Local file path (resolved by MemoryWorld against doc_dir)
-                            out.push_str(&format!("\n#align(center)[#image(\"{url}\")]\n\n"));
+                            let (img_stroke, img_radius) = if is_dark {
+                                ("0.5pt + rgb(\"#383e4a\")", "4pt")
+                            } else {
+                                ("none", "4pt")
+                            };
+                            out.push_str(&format!("\n#align(center)[#block(radius: {img_radius}, stroke: {img_stroke}, clip: true)[#image(\"{url}\")]]\n\n"));
                         }
                     }
                 }
@@ -595,7 +638,7 @@ pub fn convert_markdown_to_typst(
                 out.push_str(&transpile_latex_math(&latex, true));
             }
             Event::Rule => {
-                out.push_str("\n#line(length: 100%, stroke: 0.5pt + gray.lighten(50%))\n\n");
+                out.push_str(&format!("\n#line(length: 100%, stroke: 0.5pt + {rule_color})\n\n"));
             }
             Event::TaskListMarker(checked) => {
                 if checked {
@@ -706,5 +749,48 @@ graph TD;
         assert!(res.is_ok(), "Typst compilation failed: {:?}", res.err());
         let pdf = res.unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn test_convert_markdown_dark_mode() {
+        let md = r#"
+# Dark Mode Test Document
+
+> [!TIP]
+> This tip should be rendered with refined dark palette.
+
+> [!WARNING]
+> Warning callout in dark mode.
+
+```mermaid
+graph TD
+  A[Client] --> B[Server]
+```
+
+---
+
+Local image with dark border:
+![Test Image](docs/images/app_logo.png)
+"#;
+        let options = RenderOptions {
+            theme: "dark".to_string(),
+            ..Default::default()
+        };
+        let parsed = convert_markdown_to_typst(md, "Dark Doc", &options);
+
+        // Check dark mode colors in preamble
+        assert!(parsed.typst_source.contains("fill: rgb(\"#1e1e1e\")"));
+        assert!(parsed.typst_source.contains("stroke: 0.5pt + rgb(\"#383e4a\")"));
+
+        // Check dark callout styling
+        assert!(parsed.typst_source.contains("rgb(\"#3fb950\")")); // Tip border
+        assert!(parsed.typst_source.contains("rgb(\"#132d1e\")")); // Tip bg
+        assert!(parsed.typst_source.contains("rgb(\"#d29922\")")); // Warning border
+
+        // Check dark mermaid diagram
+        assert!(parsed.virtual_files.len() == 1);
+        for (name, _) in &parsed.virtual_files {
+            assert!(name.to_string_lossy().contains("mermaid_dark_"));
+        }
     }
 }

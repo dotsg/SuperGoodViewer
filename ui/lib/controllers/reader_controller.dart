@@ -9,6 +9,7 @@ import '../bridge/native_engine.dart';
 import '../models/render_options.dart';
 import '../services/document_cache_service.dart';
 import '../services/preferences_service.dart';
+import '../services/shortcut_service.dart';
 
 class OutlineItem {
   final String title;
@@ -59,6 +60,8 @@ class ReaderController extends ChangeNotifier {
 
   final List<String> _recentFiles = [];
   Map<String, dynamic> _fontReport = {};
+
+  final ShortcutService shortcutService = ShortcutService();
 
   bool _isTwoPage = false;
   List<OutlineItem> _outlineItems = [];
@@ -126,6 +129,8 @@ class ReaderController extends ChangeNotifier {
     } else {
       compileDocument();
     }
+    shortcutService.addListener(_persistDebounced);
+    shortcutService.addListener(notifyListeners);
   }
 
   void _initPreferencesOnly() {
@@ -156,6 +161,10 @@ class ReaderController extends ChangeNotifier {
           (m) => m.name == savedAutoFit,
           orElse: () => AutoFitMode.none,
         );
+      }
+      final savedShortcuts = prefs['shortcuts'] as Map<String, dynamic>?;
+      if (savedShortcuts != null) {
+        shortcutService.loadFromMap(savedShortcuts, notify: false);
       }
     } catch (e) {
       debugPrint('Error loading preferences: $e');
@@ -199,6 +208,7 @@ class ReaderController extends ChangeNotifier {
       'codeFont': _renderOptions.codeFont,
       'lastScrollRatio': _lastScrollRatio,
       'lastPageNumber': _lastPageNumber,
+      'shortcuts': shortcutService.toMap(),
     });
   }
 
@@ -511,8 +521,54 @@ class ReaderController extends ChangeNotifier {
   Future<bool> exportPdf(String destinationPath) async {
     if (_currentPdfBytes == null) return false;
     try {
+      Uint8List? bytesToExport;
+
+      if (_renderOptions.theme == 'light') {
+        // Already in light mode: use current in-memory PDF immediately (0ms fast path)
+        bytesToExport = _currentPdfBytes;
+      } else {
+        // When viewing in dark mode, strictly export publication-grade light mode document
+        final exportOptions = _renderOptions.copyWith(theme: 'light');
+
+        if (_currentFilePath != null) {
+          final cached = DocumentCacheService.getCachedPdf(_currentFilePath!, exportOptions);
+          if (cached != null && cached.isNotEmpty) {
+            bytesToExport = cached;
+          }
+        }
+
+        if (bytesToExport == null) {
+          if (!NativeEngine.instance.isAvailable) {
+            _errorMessage = NativeEngine.instance.initError ?? 'Native library not loaded';
+            notifyListeners();
+            return false;
+          }
+
+          final docDir = _currentFilePath != null
+              ? p.dirname(_currentFilePath!)
+              : Directory.current.path;
+
+          bytesToExport = await NativeEngine.instance.compileMarkdownAsync(
+            _currentMarkdown,
+            title: _documentTitle,
+            docDir: docDir,
+            options: exportOptions,
+          );
+
+          if (bytesToExport != null && bytesToExport.isNotEmpty && _currentFilePath != null) {
+            unawaited(DocumentCacheService.saveCachedPdf(_currentFilePath!, exportOptions, bytesToExport));
+          }
+        }
+      }
+
+      if (bytesToExport == null || bytesToExport.isEmpty) {
+        _errorMessage = 'Export failed: Unable to generate light-mode PDF';
+        notifyListeners();
+        return false;
+      }
+
       final file = File(destinationPath);
-      await file.writeAsBytes(_currentPdfBytes!);
+      await file.writeAsBytes(bytesToExport);
       return true;
     } catch (e) {
       _errorMessage = 'Export failed: $e';
@@ -692,6 +748,8 @@ graph LR
 
   @override
   void dispose() {
+    shortcutService.removeListener(_persistDebounced);
+    shortcutService.removeListener(notifyListeners);
     _persistDebounceTimer?.cancel();
     _persistPreferences();
     _viewportDebounceTimer?.cancel();

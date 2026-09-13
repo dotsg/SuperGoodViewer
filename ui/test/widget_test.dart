@@ -20,6 +20,13 @@ void main() {
     );
   });
 
+  setUp(() {
+    final testFile = File(p.join(tempTestDir.path, 'preferences.json'));
+    if (testFile.existsSync()) {
+      testFile.deleteSync();
+    }
+  });
+
   tearDownAll(() {
     PreferencesService.setConfigFileForTesting(null);
     if (tempTestDir.existsSync()) {
@@ -224,6 +231,7 @@ void main() {
   group('WorkspaceView Widget Tests', () {
     testWidgets('renders in Zen mode with sidebar closed by default', (tester) async {
       final controller = ReaderController();
+      addTearDown(controller.dispose);
       await tester.pumpWidget(
         MaterialApp(
           home: WorkspaceView(controller: controller),
@@ -237,14 +245,17 @@ void main() {
       expect(find.text('SuperGoodViewer Demo'), findsOneWidget);
 
       // Check floating pill action buttons
+      final exportShortcut = controller.shortcutService.getShortcutLabel('exportPdf');
+      expect(exportShortcut, 'Cmd+P');
       expect(find.byTooltip('打开本地 Markdown (Cmd+O)'), findsOneWidget);
       expect(find.byTooltip('展开侧边栏 (Cmd+B)'), findsOneWidget);
-      expect(find.byTooltip('导出出版级 PDF (Cmd+E)'), findsOneWidget);
+      expect(find.byTooltip('导出出版级 PDF ($exportShortcut)'), findsOneWidget);
       expect(find.byTooltip('隐藏工具栏 (Esc 或 Cmd+\\)'), findsOneWidget);
     });
 
     testWidgets('sidebar can be opened and closed interactively', (tester) async {
       final controller = ReaderController();
+      addTearDown(controller.dispose);
       await tester.pumpWidget(
         MaterialApp(
           home: WorkspaceView(controller: controller),
