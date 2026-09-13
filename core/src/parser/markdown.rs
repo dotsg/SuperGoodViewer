@@ -733,7 +733,7 @@ pub fn convert_markdown_to_typst(
                             out.push_str(&format!(" #label(\"{primary}\")"));
                             registered_slugs.insert(primary);
                             for sec in secondary {
-                                out.push_str(&format!(" [#metadata(none) #label(\"{sec}\")]"));
+                                out.push_str(&format!(" #metadata(none) #label(\"{sec}\")"));
                                 registered_slugs.insert(sec);
                             }
                         }
@@ -889,7 +889,7 @@ pub fn convert_markdown_to_typst(
     // This prevents Typst compilation errors if an external markdown contains broken or missing local anchors
     for anchor in &referenced_anchors {
         if !registered_slugs.contains(anchor) {
-            out.push_str(&format!("\n[#metadata(none) #label(\"{anchor}\")]\n"));
+            out.push_str(&format!("\n#metadata(none) #label(\"{anchor}\")\n"));
         }
     }
 
@@ -980,6 +980,15 @@ graph TD;
         assert!(res.is_ok(), "Typst compilation failed: {:?}", res.err());
         let pdf = res.unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
+
+        // Verify that headings with dots or emojis (like v1.0.0 or 📄 开源许可证) never emit stray brackets
+        let heading_md = "### v1.0.0\n\n## 📄 开源许可证\n";
+        let heading_parsed = convert_markdown_to_typst(heading_md, "Heading Test", &options);
+        assert!(!heading_parsed.typst_source.contains("[#metadata"), "Heading must not contain bracketed metadata");
+        assert!(!heading_parsed.typst_source.contains("[ ]"), "Heading must not contain stray brackets");
+
+        let heading_res = crate::compiler::engine::compile_typst_to_pdf(&heading_parsed.typst_source, ".", heading_parsed.virtual_files);
+        assert!(heading_res.is_ok());
     }
 
     #[test]
