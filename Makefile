@@ -80,6 +80,7 @@ build-windows-arm64:
 	@echo "==> Building Rust sogood_core for aarch64-pc-windows-msvc..."
 	@cd core && cargo build --release --lib --target aarch64-pc-windows-msvc
 	@echo "==> Configuring and building Flutter Windows ARM64 target..."
+	@cd ui && $(FLUTTER) build windows --config-only
 	@cmake -S ui/windows -B ui/build/windows_arm64 -G "Visual Studio 17 2022" -A ARM64 -DFLUTTER_TARGET_PLATFORM=windows-arm64
 	@cmake --build ui/build/windows_arm64 --config Release --target INSTALL
 	@echo "==> Injecting Rust ARM64 DLL & CLI scripts into Windows ARM64 bundle..."

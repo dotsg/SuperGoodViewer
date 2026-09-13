@@ -171,6 +171,14 @@ jobs:
       - name: Download Windows ARM64 Engine & PDFium Artifacts
         shell: pwsh
         run: |
+          # Pre-generate Flutter Windows configuration, ephemeral files, and plugin symlinks
+          cd ui
+          flutter build windows --config-only
+          cd ..
+
+          if (-not $env:FLUTTER_ROOT) {
+            $env:FLUTTER_ROOT = Split-Path (Split-Path (Get-Command flutter.bat).Source -Parent) -Parent
+          }
           $engineHash = (flutter --version | Select-String 'Engine • hash ([0-9a-f]+)').Matches.Groups[1].Value
           $engineDir = "$env:FLUTTER_ROOT\bin\cache\artifacts\engine"
           New-Item -ItemType Directory -Force -Path "$engineDir\windows-arm64-release"
@@ -199,7 +207,6 @@ jobs:
         shell: pwsh
         run: |
           cd ui
-          flutter pub get
           cmake -S windows -B build/windows_arm64 -G "Visual Studio 17 2022" -A ARM64 -DFLUTTER_TARGET_PLATFORM=windows-arm64
           cmake --build build/windows_arm64 --config Release --target INSTALL
 
