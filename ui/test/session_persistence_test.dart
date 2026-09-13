@@ -23,9 +23,11 @@ void main() {
 
   tearDownAll(() {
     PreferencesService.setConfigFileForTesting(null);
-    if (tempTestDir.existsSync()) {
-      tempTestDir.deleteSync(recursive: true);
-    }
+    try {
+      if (tempTestDir.existsSync()) {
+        tempTestDir.deleteSync(recursive: true);
+      }
+    } catch (_) {}
   });
 
   group('Session & Preferences Persistence Tests', () {

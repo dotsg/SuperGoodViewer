@@ -123,6 +123,10 @@ jobs:
           # Copy Rust core dll next to executable
           Copy-Item -Path $rustDll -Destination $buildDir
 
+          # Copy CLI launcher scripts into package
+          Copy-Item -Path "ui/bin/sgv.cmd" -Destination $buildDir
+          Copy-Item -Path "ui/bin/sgv.ps1" -Destination $buildDir
+
           # Compress to zip
           $zipName = "dist/SuperGoodViewer-${{ github.ref_name }}-windows-x64.zip"
           Compress-Archive -Path "$buildDir/*" -DestinationPath $zipName
@@ -186,5 +190,5 @@ jobs:
             #### 🪟 Windows 用户
             - **下载文件**：`SuperGoodViewer-${{ github.ref_name }}-windows-x64.zip`
             - **系统要求**：Windows 10 / 11 64位（原生支持 Intel/AMD 64位 PC；高通骁龙 X Elite / Surface 等 ARM64 设备解压后可通过 Windows 11 内置 Prism 仿真引擎免配置极速运行）
-            - **使用方式**：解压 zip 包至任意目录，双击 `sogoodviewer.exe` 即可即开即用（绿色免安装便携版）。
+            - **使用方式**：解压 zip 包至任意目录，双击 `SuperGoodViewer.exe` 即可即开即用（绿色免安装便携版）；亦可将解压目录加入系统环境变量或使用内置的 `sgv.cmd` / `sgv.ps1` 命令行工具快速预览文档。
             - **首次运行提示**：如遇 Windows SmartScreen 提示拦截，点击「更多信息」并选择「仍要运行」。

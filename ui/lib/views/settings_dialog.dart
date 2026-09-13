@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -528,7 +529,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       case SettingsTab.shortcuts:
         return '自定义各常用操作的键盘快捷键，点击键位直接录制';
       case SettingsTab.cli:
-        return '在 macOS 终端中随时通过 sgv 命令秒级预览任何 Markdown';
+        return '在终端中随时通过 sgv 命令秒级预览任何 Markdown';
       case SettingsTab.about:
         return '基于现代 Typst 0.13.1 编译器与无损矢量 PDFium 引擎构建';
     }
@@ -1856,7 +1857,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     const SizedBox(height: 2),
                     Text(
                       isInstalled
-                          ? '符号链接路径: ${_cliStatus.path}'
+                          ? (Platform.isWindows ? '脚本路径: ${_cliStatus.path}' : '符号链接路径: ${_cliStatus.path}')
                           : '安装后可直接在终端中输入 sgv README.md 极速预览任何文档',
                       style: TextStyle(
                         fontSize: 11.5,

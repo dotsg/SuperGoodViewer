@@ -41,9 +41,11 @@ void main() {
 
   tearDownAll(() {
     PreferencesService.setConfigFileForTesting(null);
-    if (tempTestDir.existsSync()) {
-      tempTestDir.deleteSync(recursive: true);
-    }
+    try {
+      if (tempTestDir.existsSync()) {
+        tempTestDir.deleteSync(recursive: true);
+      }
+    } catch (_) {}
   });
 
   Future<void> waitCompile(ReaderController controller) async {

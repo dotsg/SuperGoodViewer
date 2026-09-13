@@ -27,9 +27,11 @@ void main() {
   tearDown(() {
     DocumentCacheService.setCacheDirForTesting(null);
     PreferencesService.setConfigFileForTesting(null);
-    if (tempDir.existsSync()) {
-      tempDir.deleteSync(recursive: true);
-    }
+    try {
+      if (tempDir.existsSync()) {
+        tempDir.deleteSync(recursive: true);
+      }
+    } catch (_) {}
   });
 
   group('DocumentCacheService Tests', () {

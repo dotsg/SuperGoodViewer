@@ -152,8 +152,10 @@ class NativeEngine {
         // Local folders used by `flutter test` and `flutter run`
         p.join(currentDir, 'test', libName),
         p.join(currentDir, 'macos', libName),
+        p.join(currentDir, 'windows', libName),
         p.join(currentDir, 'ui', 'test', libName),
         p.join(currentDir, 'ui', 'macos', libName),
+        p.join(currentDir, 'ui', 'windows', libName),
         // When running from repo root or ui dir
         p.join(currentDir, '..', 'core', 'target', 'release', libName),
         p.join(currentDir, 'core', 'target', 'release', libName),

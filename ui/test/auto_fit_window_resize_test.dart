@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pdfrx/pdfrx.dart';
@@ -137,8 +138,9 @@ void main() {
       );
       await tester.pump();
 
+      final mod = Platform.isMacOS ? 'Cmd' : 'Ctrl';
       final zoomBadge = find.byTooltip('页面缩放比例与预设');
-      final zoomInBtn = find.byTooltip('放大页面 (Cmd+=)');
+      final zoomInBtn = find.byTooltip('放大页面 ($mod+=)');
 
       expect(zoomBadge, findsOneWidget);
       expect(controller.autoFitMode, equals(AutoFitMode.none));
