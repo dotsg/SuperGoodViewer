@@ -354,9 +354,10 @@ class _SidebarViewState extends State<SidebarView> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Sidebar Top Header
+            // Sidebar Top Header (Aligned with macOS Traffic Lights)
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              height: 38,
+              padding: const EdgeInsets.only(right: 10),
               decoration: BoxDecoration(
                 border: Border(
                   bottom: BorderSide(
@@ -367,12 +368,14 @@ class _SidebarViewState extends State<SidebarView> {
               ),
               child: Row(
                 children: [
+                  // Dedicated safe spacing for macOS traffic lights (Close/Miniaturize/Zoom)
+                  const SizedBox(width: 78),
                   Container(
-                    width: 28,
-                    height: 28,
+                    width: 22,
+                    height: 22,
                     decoration: BoxDecoration(
                       color: theme.colorScheme.primary,
-                      borderRadius: BorderRadius.circular(6),
+                      borderRadius: BorderRadius.circular(5),
                     ),
                     child: const Center(
                       child: Text(
@@ -380,40 +383,41 @@ class _SidebarViewState extends State<SidebarView> {
                         style: TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
-                          fontSize: 16,
+                          fontSize: 13,
                         ),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 8),
                   const Expanded(
                     child: Text(
                       '超好读',
                       style: TextStyle(
                         fontWeight: FontWeight.w700,
-                        fontSize: 15,
+                        fontSize: 14,
                         letterSpacing: -0.3,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   IconButton(
                     tooltip: '打开本地 Markdown 文件 (Cmd+O)',
-                    icon: const Icon(Icons.folder_open_rounded, size: 19),
+                    icon: const Icon(Icons.folder_open_rounded, size: 17),
                     onPressed: () => _pickAndOpenFile(context),
                     style: IconButton.styleFrom(
-                      padding: const EdgeInsets.all(5),
-                      minimumSize: const Size(28, 28),
+                      padding: const EdgeInsets.all(4),
+                      minimumSize: const Size(26, 26),
                     ),
                   ),
                   if (widget.onClose != null) ...[
-                    const SizedBox(width: 4),
+                    const SizedBox(width: 2),
                     IconButton(
                       tooltip: '收起侧边栏 (Cmd+B 或 Esc)',
-                      icon: const Icon(Icons.close_rounded, size: 19),
+                      icon: const Icon(Icons.close_rounded, size: 17),
                       onPressed: widget.onClose,
                       style: IconButton.styleFrom(
-                        padding: const EdgeInsets.all(5),
-                        minimumSize: const Size(28, 28),
+                        padding: const EdgeInsets.all(4),
+                        minimumSize: const Size(26, 26),
                       ),
                     ),
                   ],

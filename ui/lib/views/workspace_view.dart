@@ -37,11 +37,13 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   String _zoomHudText = '100%';
   Timer? _zoomHudTimer;
 
+  bool _isFullScreen = false;
   static const _windowChannel = MethodChannel('com.sogoodviewer.window');
 
   @override
   void initState() {
     super.initState();
+    _initWindowChannel();
     // Briefly display the toolbar on launch so the user discovers the controls
     _showToolbarTemporarily();
     widget.controller.addListener(_onControllerChanged);
@@ -52,6 +54,22 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         widget.controller.openFile(filePath);
       }
     });
+  }
+
+  void _initWindowChannel() {
+    _windowChannel.setMethodCallHandler((call) async {
+      if (call.method == 'onFullScreenChanged') {
+        final isFs = call.arguments as bool? ?? false;
+        if (mounted && _isFullScreen != isFs) {
+          setState(() => _isFullScreen = isFs);
+        }
+      }
+    });
+    _windowChannel.invokeMethod<bool>('isFullScreen').then((isFs) {
+      if (isFs != null && mounted && _isFullScreen != isFs) {
+        setState(() => _isFullScreen = isFs);
+      }
+    }).catchError((_) {});
   }
 
   Future<void> _handleNativeMethodCall(MethodCall call) async {
@@ -84,6 +102,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
   @override
   void dispose() {
+    _windowChannel.setMethodCallHandler(null);
     CliIpcService.stop();
     NativeCliService.channel.setMethodCallHandler(null);
     widget.controller.removeListener(_onControllerChanged);
@@ -244,7 +263,10 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
   Future<void> _toggleFullScreen() async {
     try {
-      await _windowChannel.invokeMethod('toggleFullScreen');
+      final res = await _windowChannel.invokeMethod('toggleFullScreen');
+      if (res is bool && mounted) {
+        setState(() => _isFullScreen = res);
+      }
     } catch (_) {}
   }
 
@@ -422,81 +444,89 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
               // Main Canvas + Zen Floating Toolbar Stack
               Expanded(
-                child: Stack(
+                child: Column(
                   children: [
-                    // Pure Edge-to-Edge PDF Canvas
-                    PdfCanvasView(
-                      key: _pdfCanvasKey,
-                      pdfBytes: controller.currentPdfBytes,
-                      documentTitle: controller.documentTitle,
-                      controller: controller,
-                      onUserScrolled: _hideToolbar,
-                      onCanvasTapped: _toggleToolbar,
-                      onOpenFile: _pickAndOpenFile,
-                      onToggleSidebar: () =>
-                          setState(() => _isSidebarOpen = !_isSidebarOpen),
-                      onExportPdf: _handleExportPdf,
-                      onZoomChanged: (zoom) {
-                        if (mounted && (zoom - _currentZoom).abs() > 0.005) {
-                          setState(() => _currentZoom = zoom);
-                        }
-                      },
-                      onPageChanged: (pageNumber, pageCount) {
-                        if (mounted && (_currentPage != pageNumber || _pageCount != pageCount)) {
-                          setState(() {
-                            _currentPage = pageNumber;
-                            _pageCount = pageCount;
-                          });
-                        }
-                      },
-                      onTextCopied: _showCopiedFeedback,
-                    ),
+                    // Top Unified Titlebar / Traffic Light Safe Strip
+                    if (!_isFullScreen)
+                      _buildTopTitleBar(context, isDark, controller),
 
-                    // Top Hover Zone: moving mouse to the very top edge gracefully brings up the floating controls
-                    Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      height: 18,
-                      child: MouseRegion(
-                        hitTestBehavior: HitTestBehavior.translucent,
-                        onEnter: (_) => _showToolbarTemporarily(),
-                      ),
-                    ),
+                    // Pure Edge-to-Edge PDF Canvas + Overlays
+                    Expanded(
+                      child: Stack(
+                        children: [
+                          // Pure Edge-to-Edge PDF Canvas
+                          PdfCanvasView(
+                            key: _pdfCanvasKey,
+                            pdfBytes: controller.currentPdfBytes,
+                            documentTitle: controller.documentTitle,
+                            controller: controller,
+                            onUserScrolled: _hideToolbar,
+                            onCanvasTapped: _toggleToolbar,
+                            onOpenFile: _pickAndOpenFile,
+                            onToggleSidebar: () =>
+                                setState(() => _isSidebarOpen = !_isSidebarOpen),
+                            onExportPdf: _handleExportPdf,
+                            onZoomChanged: (zoom) {
+                              if (mounted && (zoom - _currentZoom).abs() > 0.005) {
+                                setState(() => _currentZoom = zoom);
+                              }
+                            },
+                            onPageChanged: (pageNumber, pageCount) {
+                              if (mounted && (_currentPage != pageNumber || _pageCount != pageCount)) {
+                                setState(() {
+                                  _currentPage = pageNumber;
+                                  _pageCount = pageCount;
+                                });
+                              }
+                            },
+                            onTextCopied: _showCopiedFeedback,
+                          ),
 
-                    // Zen Floating Frosted Glass Pill Toolbar
-                    Positioned(
-                      top: 32,
-                      left: 0,
-                      right: 0,
-                      child: Center(
-                        child: IgnorePointer(
-                          ignoring: !_isToolbarVisible,
-                          child: MouseRegion(
-                            onEnter: (_) {
-                              _isHoveringToolbar = true;
-                              _toolbarTimer?.cancel();
-                            },
-                            onExit: (_) {
-                              _isHoveringToolbar = false;
-                              _startToolbarTimer();
-                            },
-                            child: AnimatedSlide(
-                              duration: const Duration(milliseconds: 220),
-                              curve: Curves.easeOutCubic,
-                              offset: _isToolbarVisible
-                                  ? Offset.zero
-                                  : const Offset(0, -1.2),
-                              child: AnimatedOpacity(
-                                duration: const Duration(milliseconds: 200),
-                                opacity: _isToolbarVisible ? 1.0 : 0.0,
-                                child: _buildFloatingPill(context, isDark, controller),
+                          // Top Hover Zone: moving mouse to the very top edge gracefully brings up the floating controls
+                          Positioned(
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            height: 24,
+                            child: MouseRegion(
+                              hitTestBehavior: HitTestBehavior.translucent,
+                              onEnter: (_) => _showToolbarTemporarily(),
+                            ),
+                          ),
+
+                          // Zen Floating Frosted Glass Pill Toolbar
+                          Positioned(
+                            top: 18,
+                            left: 0,
+                            right: 0,
+                            child: Center(
+                              child: IgnorePointer(
+                                ignoring: !_isToolbarVisible,
+                                child: MouseRegion(
+                                  onEnter: (_) {
+                                    _isHoveringToolbar = true;
+                                    _toolbarTimer?.cancel();
+                                  },
+                                  onExit: (_) {
+                                    _isHoveringToolbar = false;
+                                    _startToolbarTimer();
+                                  },
+                                  child: AnimatedSlide(
+                                    duration: const Duration(milliseconds: 220),
+                                    curve: Curves.easeOutCubic,
+                                    offset: _isToolbarVisible
+                                        ? Offset.zero
+                                        : const Offset(0, -1.2),
+                                    child: AnimatedOpacity(
+                                      duration: const Duration(milliseconds: 200),
+                                      opacity: _isToolbarVisible ? 1.0 : 0.0,
+                                      child: _buildFloatingPill(context, isDark, controller),
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ),
-                    ),
 
                     // Transient Zoom HUD Capsule
                     if (_isZoomHudVisible)
@@ -613,17 +643,94 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                           ),
                         ),
                       ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-          ),
-        ),
-      );
+        ],
+      ),
+    ),
+  ),
+);
     },
   );
 }
+
+  Widget _buildTopTitleBar(
+    BuildContext context,
+    bool isDark,
+    ReaderController controller,
+  ) {
+    return Container(
+      height: 38,
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F7F7),
+        border: Border(
+          bottom: BorderSide(
+            color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFE5E5E5),
+            width: 1,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          // When sidebar is closed, provide safe space for macOS traffic lights & sidebar button
+          if (!_isSidebarOpen) ...[
+            const SizedBox(width: 78),
+            IconButton(
+              tooltip: '切换侧边栏 (Cmd+B)',
+              icon: const Icon(Icons.view_sidebar_outlined, size: 17),
+              onPressed: () => setState(() => _isSidebarOpen = true),
+              style: IconButton.styleFrom(
+                padding: const EdgeInsets.all(4),
+                minimumSize: const Size(26, 26),
+                foregroundColor: isDark ? Colors.white70 : Colors.black54,
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
+
+          // Native window drag / caption area
+          Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onPanStart: (_) {
+                try {
+                  _windowChannel.invokeMethod('startDragging');
+                } catch (_) {}
+              },
+              onDoubleTap: () {
+                try {
+                  _windowChannel.invokeMethod('zoom');
+                } catch (_) {}
+              },
+              child: Container(
+                height: 38,
+                alignment: Alignment.center,
+                child: !_isToolbarVisible && controller.documentTitle.isNotEmpty
+                    ? Text(
+                        controller.documentTitle,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
+                          letterSpacing: -0.2,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      )
+                    : const SizedBox.shrink(),
+              ),
+            ),
+          ),
+
+          if (!_isSidebarOpen) const SizedBox(width: 78 + 34),
+        ],
+      ),
+    );
+  }
 
   Widget _buildFloatingPill(
     BuildContext context,

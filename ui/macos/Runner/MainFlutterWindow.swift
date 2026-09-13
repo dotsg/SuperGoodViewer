@@ -1,7 +1,17 @@
 import Cocoa
 import FlutterMacOS
 
-class MainFlutterWindow: NSWindow {
+class MainFlutterWindow: NSWindow, NSWindowDelegate {
+  private var windowChannel: FlutterMethodChannel?
+
+  func windowDidEnterFullScreen(_ notification: Notification) {
+    windowChannel?.invokeMethod("onFullScreenChanged", arguments: true)
+  }
+
+  func windowDidExitFullScreen(_ notification: Notification) {
+    windowChannel?.invokeMethod("onFullScreenChanged", arguments: false)
+  }
+
   override func awakeFromNib() {
     let project = FlutterDartProject()
     project.dartEntrypointArguments = Array(ProcessInfo.processInfo.arguments.dropFirst())
@@ -15,6 +25,7 @@ class MainFlutterWindow: NSWindow {
     self.titleVisibility = .hidden
     self.titlebarAppearsTransparent = true
     self.styleMask.insert(.fullSizeContentView)
+    self.delegate = self
 
     RegisterGeneratedPlugins(registry: flutterViewController)
     AppDelegate.shared?.registerMessenger(flutterViewController.engine.binaryMessenger)
@@ -23,12 +34,21 @@ class MainFlutterWindow: NSWindow {
       name: "com.sogoodviewer.window",
       binaryMessenger: flutterViewController.engine.binaryMessenger
     )
+    self.windowChannel = windowChannel
     windowChannel.setMethodCallHandler { [weak self] (call, result) in
       if call.method == "toggleFullScreen" {
         self?.toggleFullScreen(nil)
         result(self?.styleMask.contains(.fullScreen) ?? false)
       } else if call.method == "isFullScreen" {
         result(self?.styleMask.contains(.fullScreen) ?? false)
+      } else if call.method == "startDragging" {
+        if let currentEvent = NSApp.currentEvent {
+          self?.performDrag(with: currentEvent)
+        }
+        result(nil)
+      } else if call.method == "zoom" {
+        self?.zoom(nil)
+        result(nil)
       } else {
         result(FlutterMethodNotImplemented)
       }
