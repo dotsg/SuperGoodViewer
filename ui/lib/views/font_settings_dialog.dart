@@ -2,12 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../controllers/reader_controller.dart';
+import 'settings_dialog.dart';
 
 void showFontSettingsDialog(BuildContext context, ReaderController controller) {
-  showDialog(
-    context: context,
-    builder: (ctx) => _FontSettingsDialog(controller: controller),
-  );
+  showSettingsDialog(context, controller, initialTab: SettingsTab.typography);
 }
 
 class _FontSettingsDialog extends StatefulWidget {

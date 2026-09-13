@@ -7,10 +7,8 @@ import 'package:flutter/services.dart';
 import '../controllers/reader_controller.dart';
 import '../services/cli_ipc_service.dart';
 import '../services/native_cli_service.dart';
-import 'cli_tools_dialog.dart';
-import 'font_settings_dialog.dart';
-import 'keyboard_shortcuts_dialog.dart';
 import 'pdf_canvas_view.dart';
+import 'settings_dialog.dart';
 import 'sidebar_view.dart';
 
 class WorkspaceView extends StatefulWidget {
@@ -106,7 +104,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       }
     } else if (call.method == 'showCliDialog') {
       if (mounted) {
-        showCliToolsDialog(context);
+        showSettingsDialog(context, widget.controller, initialTab: SettingsTab.cli);
       }
     }
   }
@@ -460,8 +458,9 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               onFitWidth: _handleFitWidth,
               onFitPage: _handleFitPage,
               onToggleToolbar: _toggleToolbar,
-              onFontSettings: () => showFontSettingsDialog(context, controller),
-              onKeyboardShortcuts: () => showKeyboardShortcutsDialog(context, controller),
+              onFontSettings: () => showSettingsDialog(context, controller, initialTab: SettingsTab.typography),
+              onPreferences: () => showSettingsDialog(context, controller, initialTab: SettingsTab.general),
+              onKeyboardShortcuts: () => showSettingsDialog(context, controller, initialTab: SettingsTab.shortcuts),
             ),
 
             // Zoom Keypad Aliases (Numpad +)
@@ -1031,18 +1030,11 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               ),
               _PillDivider(isDark: isDark),
 
-              // More Options Menu (Font settings, Shortcuts, Auto reload toggle, CLI tools, Sample doc, Hide toolbar)
-              _MoreActionsPillMenu(
-                isDark: isDark,
-                autoReload: controller.autoReload,
-                onOpenFontSettings: () => showFontSettingsDialog(context, controller),
-                onOpenShortcuts: () => showKeyboardShortcutsDialog(context, controller),
-                onToggleAutoReload: () => controller.setAutoReload(!controller.autoReload),
-                onOpenCliTools: () => showCliToolsDialog(context),
-                onLoadSample: controller.loadSampleDocument,
-                onHideToolbar: () => setState(() => _isToolbarVisible = false),
-                fontShortcut: controller.shortcutService.getShortcutLabel('fontSettings'),
-                shortcutsShortcut: controller.shortcutService.getShortcutLabel('keyboardShortcuts'),
+              // Settings (Preferences)
+              _PillIconButton(
+                icon: Icons.settings_outlined,
+                tooltip: '偏好设置 (${controller.shortcutService.getShortcutLabel('preferences')})',
+                onPressed: () => showSettingsDialog(context, controller),
               ),
               _PillDivider(isDark: isDark),
 
@@ -1327,148 +1319,7 @@ class _ZoomDropdownBadge extends StatelessWidget {
   }
 }
 
-class _MoreActionsPillMenu extends StatelessWidget {
-  final bool isDark;
-  final bool autoReload;
-  final VoidCallback onOpenFontSettings;
-  final VoidCallback onOpenShortcuts;
-  final VoidCallback onToggleAutoReload;
-  final VoidCallback onOpenCliTools;
-  final VoidCallback onLoadSample;
-  final VoidCallback onHideToolbar;
-  final String fontShortcut;
-  final String shortcutsShortcut;
 
-  const _MoreActionsPillMenu({
-    required this.isDark,
-    required this.autoReload,
-    required this.onOpenFontSettings,
-    required this.onOpenShortcuts,
-    required this.onToggleAutoReload,
-    required this.onOpenCliTools,
-    required this.onLoadSample,
-    required this.onHideToolbar,
-    required this.fontShortcut,
-    required this.shortcutsShortcut,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return PopupMenuButton<String>(
-      tooltip: '更多选项',
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      color: isDark ? const Color(0xFF262626) : Colors.white,
-      onSelected: (value) {
-        switch (value) {
-          case 'font':
-            onOpenFontSettings();
-            break;
-          case 'shortcuts':
-            onOpenShortcuts();
-            break;
-          case 'reload':
-            onToggleAutoReload();
-            break;
-          case 'cli':
-            onOpenCliTools();
-            break;
-          case 'sample':
-            onLoadSample();
-            break;
-          case 'hide':
-            onHideToolbar();
-            break;
-        }
-      },
-      itemBuilder: (context) => [
-        PopupMenuItem<String>(
-          value: 'font',
-          child: Row(
-            children: [
-              const Icon(Icons.font_download_outlined, size: 16),
-              const SizedBox(width: 8),
-              const Text('排版与字体设置', style: TextStyle(fontSize: 12.5)),
-              const Spacer(),
-              Text(fontShortcut, style: const TextStyle(fontSize: 11, color: Colors.grey)),
-            ],
-          ),
-        ),
-        PopupMenuItem<String>(
-          value: 'shortcuts',
-          child: Row(
-            children: [
-              const Icon(Icons.keyboard_outlined, size: 16),
-              const SizedBox(width: 8),
-              const Text('快捷键偏好设置', style: TextStyle(fontSize: 12.5)),
-              const Spacer(),
-              Text(shortcutsShortcut, style: const TextStyle(fontSize: 11, color: Colors.grey)),
-            ],
-          ),
-        ),
-        PopupMenuItem<String>(
-          value: 'reload',
-          child: Row(
-            children: [
-              Icon(
-                autoReload ? Icons.check_rounded : Icons.radio_button_unchecked,
-                size: 14,
-                color: autoReload ? const Color(0xFF22C55E) : Colors.grey,
-              ),
-              const SizedBox(width: 8),
-              const Text('修改自动热重载', style: TextStyle(fontSize: 12.5)),
-              const Spacer(),
-              if (autoReload)
-                const Text('已开启', style: TextStyle(fontSize: 11, color: Color(0xFF22C55E))),
-            ],
-          ),
-        ),
-        PopupMenuItem<String>(
-          value: 'cli',
-          child: Row(
-            children: const [
-              Icon(Icons.terminal_rounded, size: 16),
-              SizedBox(width: 8),
-              Text('命令行工具 (sgv)', style: TextStyle(fontSize: 12.5)),
-            ],
-          ),
-        ),
-        PopupMenuItem<String>(
-          value: 'sample',
-          child: Row(
-            children: const [
-              Icon(Icons.auto_awesome, size: 16),
-              SizedBox(width: 8),
-              Text('载入精选样例', style: TextStyle(fontSize: 12.5)),
-            ],
-          ),
-        ),
-        const PopupMenuDivider(),
-        PopupMenuItem<String>(
-          value: 'hide',
-          child: Row(
-            children: const [
-              Icon(Icons.visibility_off_outlined, size: 16),
-              SizedBox(width: 8),
-              Text('隐藏底部工具栏', style: TextStyle(fontSize: 12.5)),
-              Spacer(),
-              Text('Esc', style: TextStyle(fontSize: 11, color: Colors.grey)),
-            ],
-          ),
-        ),
-      ],
-      child: Container(
-        padding: const EdgeInsets.all(7),
-        child: Icon(
-          Icons.more_horiz_rounded,
-          size: 18,
-          color: theme.colorScheme.onSurface.withValues(alpha: 0.75),
-        ),
-      ),
-    );
-  }
-}
 
 class _PageNavPill extends StatelessWidget {
   final int currentPage;

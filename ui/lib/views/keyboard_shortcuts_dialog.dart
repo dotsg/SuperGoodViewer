@@ -2,13 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../controllers/reader_controller.dart';
 import '../services/shortcut_service.dart';
+import 'settings_dialog.dart';
 
 /// Opens the customizable keyboard shortcuts configuration dialog.
 void showKeyboardShortcutsDialog(BuildContext context, ReaderController controller) {
-  showDialog(
-    context: context,
-    builder: (ctx) => KeyboardShortcutsDialog(controller: controller),
-  );
+  showSettingsDialog(context, controller, initialTab: SettingsTab.shortcuts);
 }
 
 class KeyboardShortcutsDialog extends StatefulWidget {

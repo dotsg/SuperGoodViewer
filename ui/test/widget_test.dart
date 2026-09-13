@@ -274,9 +274,8 @@ void main() {
       expect(find.byType(SidebarView), findsOneWidget);
       expect(find.text('大纲目录'), findsOneWidget);
 
-      // Verify compact macOS-style 38px footer bar items
-      expect(find.text('排版与设置'), findsOneWidget);
-      expect(find.byTooltip('更多操作'), findsOneWidget);
+      // Verify compact macOS-style footer bar items
+      expect(find.text('偏好设置'), findsOneWidget);
 
       // Switch to Recents tab
       await tester.tap(find.text('最近文件'));
@@ -365,25 +364,24 @@ void main() {
         ),
       );
 
-      // Open font settings via "更多选项" menu in bottom floating pill
-      final moreBtn = find.byTooltip('更多选项');
-      expect(moreBtn, findsOneWidget);
-      await tester.tap(moreBtn);
+      // Open unified settings dialog via "偏好设置" button in bottom floating pill
+      final prefShortcut = controller.shortcutService.getShortcutLabel('preferences');
+      final settingsBtn = find.byTooltip('偏好设置 ($prefShortcut)');
+      expect(settingsBtn, findsOneWidget);
+      await tester.tap(settingsBtn);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
 
-      final fontMenuItem = find.text('排版与字体设置');
-      expect(fontMenuItem, findsOneWidget);
-      expect(find.text('修改自动热重载'), findsOneWidget);
-      expect(find.text('命令行工具 (sgv)'), findsOneWidget);
-      await tester.tap(fontMenuItem);
+      // Switch to typography tab
+      final typoTab = find.text('排版与字体');
+      expect(typoTab, findsOneWidget);
+      await tester.tap(typoTab);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
 
       expect(find.text('字体排版与中英文等宽对齐'), findsOneWidget);
       expect(find.text('正文排版字体 (Body Typography)'), findsOneWidget);
       expect(find.text('排版基础字号 (Base Typesetting Font Size)'), findsOneWidget);
-      expect(find.text('文件修改自动热重载 (Auto Reload)'), findsOneWidget);
       expect(find.text('恢复默认 (10.5 pt)'), findsOneWidget);
       expect(find.text('恢复默认字体'), findsOneWidget);
 

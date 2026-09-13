@@ -126,6 +126,13 @@ class ShortcutService extends ChangeNotifier {
 
     // 排版与设置
     AppShortcutAction(
+      id: 'preferences',
+      name: '偏好设置',
+      category: '排版与设置',
+      description: '打开全局统一偏好设置面板（常规、字体、快捷键、CLI）',
+      defaultKey: LogicalKeyboardKey.comma,
+    ),
+    AppShortcutAction(
       id: 'fontSettings',
       name: '排版与字体设置',
       category: '排版与设置',
@@ -137,7 +144,7 @@ class ShortcutService extends ChangeNotifier {
       id: 'keyboardShortcuts',
       name: '自定义快捷键面板',
       category: '排版与设置',
-      description: '打开全局快捷键偏好设置面板，可随心修改按键',
+      description: '打开快捷键设置面板，可随心修改按键',
       defaultKey: LogicalKeyboardKey.comma,
     ),
   ];
@@ -356,6 +363,7 @@ class ShortcutService extends ChangeNotifier {
     required VoidCallback onFitPage,
     required VoidCallback onToggleToolbar,
     required VoidCallback onFontSettings,
+    VoidCallback? onPreferences,
     VoidCallback? onKeyboardShortcuts,
   }) {
     final Map<ShortcutActivator, VoidCallback> map = {};
@@ -388,7 +396,8 @@ class ShortcutService extends ChangeNotifier {
     addAction('fitPage', onFitPage);
     addAction('toggleToolbar', onToggleToolbar);
     addAction('fontSettings', onFontSettings);
-    addAction('keyboardShortcuts', onKeyboardShortcuts);
+    addAction('preferences', onPreferences ?? onKeyboardShortcuts);
+    addAction('keyboardShortcuts', onKeyboardShortcuts ?? onPreferences);
 
     return map;
   }

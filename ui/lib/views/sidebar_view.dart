@@ -3,8 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import '../controllers/reader_controller.dart';
-import 'cli_tools_dialog.dart';
-import 'font_settings_dialog.dart';
+import 'settings_dialog.dart';
 
 class SidebarView extends StatefulWidget {
   final ReaderController controller;
@@ -557,26 +556,26 @@ class _SidebarViewState extends State<SidebarView> {
               ),
               child: Row(
                 children: [
-                  // Typography & Reading Settings
+                  // Unified Settings Entry
                   Expanded(
                     child: Tooltip(
-                      message: '字体排版与中英文等宽对齐设置 (${controller.shortcutService.getShortcutLabel('fontSettings')})',
+                      message: '偏好设置 (${controller.shortcutService.getShortcutLabel('preferences')})',
                       child: InkWell(
                         borderRadius: BorderRadius.circular(6),
-                        onTap: () => showFontSettingsDialog(context, controller),
+                        onTap: () => showSettingsDialog(context, controller),
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Icon(
-                                Icons.font_download_outlined,
+                                Icons.settings_outlined,
                                 size: 14,
                                 color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
                               ),
-                              const SizedBox(width: 5),
+                              const SizedBox(width: 6),
                               Text(
-                                '排版与设置',
+                                '偏好设置',
                                 style: TextStyle(
                                   fontSize: 11.5,
                                   color: theme.colorScheme.onSurface.withValues(alpha: 0.85),
@@ -588,85 +587,28 @@ class _SidebarViewState extends State<SidebarView> {
                       ),
                     ),
                   ),
-                  Container(
-                    width: 1,
-                    height: 14,
-                    color: isDark ? const Color(0x22FFFFFF) : const Color(0x18000000),
-                  ),
-                  // More Actions Popup (Sample document, Auto Reload toggle, CLI, Clear history)
-                  PopupMenuButton<String>(
-                    tooltip: '更多操作',
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    color: isDark ? const Color(0xFF262626) : Colors.white,
-                    onSelected: (val) {
-                      if (val == 'sample') {
-                        controller.loadSampleDocument();
-                      } else if (val == 'toggle_reload') {
-                        controller.setAutoReload(!controller.autoReload);
-                      } else if (val == 'cli') {
-                        showCliToolsDialog(context);
-                      } else if (val == 'clear_recent') {
-                        controller.clearRecentFiles();
-                      }
-                    },
-                    itemBuilder: (context) => [
-                      PopupMenuItem<String>(
-                        value: 'sample',
-                        child: Row(
-                          children: const [
-                            Icon(Icons.auto_awesome, size: 15),
-                            SizedBox(width: 8),
-                            Text('载入精选样例', style: TextStyle(fontSize: 12)),
-                          ],
-                        ),
-                      ),
-                      PopupMenuItem<String>(
-                        value: 'toggle_reload',
-                        child: Row(
-                          children: [
-                            Icon(
-                              controller.autoReload ? Icons.check_rounded : Icons.radio_button_unchecked,
-                              size: 14,
-                              color: controller.autoReload ? const Color(0xFF22C55E) : Colors.grey,
-                            ),
-                            const SizedBox(width: 8),
-                            const Text('修改自动热重载', style: TextStyle(fontSize: 12)),
-                          ],
-                        ),
-                      ),
-                      PopupMenuItem<String>(
-                        value: 'cli',
-                        child: Row(
-                          children: const [
-                            Icon(Icons.terminal_rounded, size: 15),
-                            SizedBox(width: 8),
-                            Text('命令行工具 (sgv)', style: TextStyle(fontSize: 12)),
-                          ],
-                        ),
-                      ),
-                      if (controller.recentFiles.isNotEmpty) ...[
-                        const PopupMenuDivider(),
-                        PopupMenuItem<String>(
-                          value: 'clear_recent',
-                          child: Row(
-                            children: const [
-                              Icon(Icons.delete_outline_rounded, size: 15, color: Colors.redAccent),
-                              SizedBox(width: 8),
-                              Text('清空最近记录', style: TextStyle(fontSize: 12, color: Colors.redAccent)),
-                            ],
+                  if (controller.recentFiles.isNotEmpty) ...[
+                    Container(
+                      width: 1,
+                      height: 14,
+                      color: isDark ? const Color(0x22FFFFFF) : const Color(0x18000000),
+                    ),
+                    Tooltip(
+                      message: '清空最近打开历史',
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(6),
+                        onTap: controller.clearRecentFiles,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                          child: Icon(
+                            Icons.delete_sweep_outlined,
+                            size: 15,
+                            color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
                           ),
                         ),
-                      ],
-                    ],
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-                      child: Icon(
-                        Icons.more_horiz_rounded,
-                        size: 16,
-                        color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
                       ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
