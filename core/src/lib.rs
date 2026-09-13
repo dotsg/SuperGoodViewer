@@ -341,5 +341,21 @@ graph LR
             assert!(res.is_ok(), "Equation {} failed: {:?}\nLaTeX: {}", i + 1, res.err(), eq);
         }
     }
+
+    #[test]
+    fn test_heading_with_quotes_compilation() {
+        let md = r#"
+# heading with "quotes" inside
+
+## "Quote at start" and "Quote at end"
+
+Paragraph mentioning "quotes" in body.
+"#;
+        let options = RenderOptions::default();
+        let res = compile_markdown_to_pdf(md, "Doc with \"quotes\"", ".", &options);
+        assert!(res.is_ok(), "Markdown with quotes failed to compile: {:?}", res.err());
+        let pdf = res.unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
+    }
 }
 

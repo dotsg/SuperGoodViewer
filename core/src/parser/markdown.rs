@@ -26,6 +26,22 @@ fn escape_typst_text(text: &str) -> String {
     out
 }
 
+/// Escapes characters for embedding inside a Typst string literal ("...")
+pub(crate) fn escape_typst_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 fn decode_percent(s: &str) -> String {
     let mut bytes = Vec::new();
     let mut chars = s.chars().peekable();
@@ -128,19 +144,29 @@ fn extract_html_attr(tag: &str, attr: &str) -> Option<String> {
     }
 }
 
-fn parse_dimension(val: &str) -> String {
+fn parse_dimension(val: &str) -> Option<String> {
     let s = val.trim();
-    if s.ends_with('%') {
-        s.to_string()
+    if let Some(num) = s.strip_suffix('%') {
+        let n: f64 = num.trim().parse().ok()?;
+        if n.is_finite() && n > 0.0 {
+            return Some(format!("{}%", n));
+        }
     } else if let Some(num) = s.strip_suffix("px") {
-        format!("{}pt", num.trim())
+        let n: f64 = num.trim().parse().ok()?;
+        if n.is_finite() && n > 0.0 {
+            return Some(format!("{}pt", n));
+        }
     } else if let Some(num) = s.strip_suffix("pt") {
-        format!("{}pt", num.trim())
-    } else if s.chars().all(|c| c.is_ascii_digit() || c == '.') {
-        format!("{}pt", s)
-    } else {
-        format!("{}pt", s)
+        let n: f64 = num.trim().parse().ok()?;
+        if n.is_finite() && n > 0.0 {
+            return Some(format!("{}pt", n));
+        }
+    } else if let Ok(n) = s.parse::<f64>() {
+        if n.is_finite() && n > 0.0 {
+            return Some(format!("{}pt", n));
+        }
     }
+    None
 }
 
 pub fn sanitize_image_url(url: &str) -> &str {
@@ -246,8 +272,9 @@ fn render_html_image(
             cached_filename
         } else {
             let escaped_alt = escape_typst_text(&alt);
+            let escaped_src = escape_typst_string(&src);
             return format!(
-                "#link(\"{src}\")[#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 5pt, y: 2.5pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🖼️ {escaped_alt}]]]"
+                "#link(\"{escaped_src}\")[#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 5pt, y: 2.5pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🖼️ {escaped_alt}]]]"
             );
         }
     } else {
@@ -256,10 +283,14 @@ fn render_html_image(
 
     let mut args = Vec::new();
     if let Some(w) = width {
-        args.push(format!("width: {}", parse_dimension(&w)));
+        if let Some(dim) = parse_dimension(&w) {
+            args.push(format!("width: {}", dim));
+        }
     }
     if let Some(h) = height {
-        args.push(format!("height: {}", parse_dimension(&h)));
+        if let Some(dim) = parse_dimension(&h) {
+            args.push(format!("height: {}", dim));
+        }
     }
     let args_str = if args.is_empty() {
         String::new()
@@ -273,7 +304,8 @@ fn render_html_image(
         ("none", "4pt")
     };
 
-    let block_str = format!("#block(radius: {img_radius}, stroke: {img_stroke}, clip: true)[#image(\"{resolved_src}\"{args_str})]");
+    let escaped_resolved_src = escape_typst_string(&resolved_src);
+    let block_str = format!("#block(radius: {img_radius}, stroke: {img_stroke}, clip: true)[#image(\"{escaped_resolved_src}\"{args_str})]");
     if in_center {
         format!("\n{}\n", block_str)
     } else {
@@ -391,7 +423,8 @@ impl<'a> HtmlTranspiler<'a> {
             out.push_str("\\ \n");
         } else if trimmed_lower.starts_with("<a ") {
             if let Some(href) = extract_html_attr(tag, "href") {
-                out.push_str(&format!("#link(\"{}\")[", href));
+                let escaped_href = escape_typst_string(&href);
+                out.push_str(&format!("#link(\"{escaped_href}\")["));
             } else {
                 out.push('[');
             }
@@ -492,7 +525,8 @@ pub fn convert_markdown_to_typst(
     ];
     let custom_body = options.body_font.as_deref().unwrap_or("").trim();
     let body_font_str = if !custom_body.is_empty() {
-        format!("(\"{}\", {})", custom_body, body_fonts_default.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
+        let escaped_custom = escape_typst_string(custom_body);
+        format!("(\"{}\", {})", escaped_custom, body_fonts_default.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
     } else {
         format!("({})", body_fonts_default.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
     };
@@ -519,7 +553,8 @@ pub fn convert_markdown_to_typst(
     ];
     let custom_code = options.code_font.as_deref().unwrap_or("").trim();
     let code_font_str = if !custom_code.is_empty() {
-        format!("(\"{}\", {})", custom_code, code_fonts_default.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
+        let escaped_custom = escape_typst_string(custom_code);
+        format!("(\"{}\", {})", escaped_custom, code_fonts_default.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
     } else {
         format!("({})", code_fonts_default.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
     };
@@ -773,14 +808,14 @@ pub fn convert_markdown_to_typst(
                         link_stack.push(true);
                         let anchor = dest[1..].trim();
                         let decoded = decode_percent(anchor);
-                        referenced_anchors.insert(anchor.to_string());
-                        if decoded != anchor {
-                            referenced_anchors.insert(decoded);
-                        }
-                        out.push_str(&format!("#link(label(\"{anchor}\"))["));
+                        let target = if decoded != anchor { decoded } else { anchor.to_string() };
+                        referenced_anchors.insert(target.clone());
+                        let escaped_target = escape_typst_string(&target);
+                        out.push_str(&format!("#link(label(\"{escaped_target}\"))["));
                     } else {
                         link_stack.push(true);
-                        out.push_str(&format!("#link(\"{dest}\")["));
+                        let escaped_dest = escape_typst_string(dest);
+                        out.push_str(&format!("#link(\"{escaped_dest}\")["));
                     }
                 }
                 Tag::Image { dest_url, .. } => {
@@ -827,10 +862,12 @@ pub fn convert_markdown_to_typst(
                     if let Some((_, h_text)) = current_heading.take() {
                         let (primary, secondary) = slugify_heading(&h_text);
                         if !primary.is_empty() {
-                            out.push_str(&format!(" #label(\"{primary}\")"));
+                            let escaped_primary = escape_typst_string(&primary);
+                            out.push_str(&format!(" #label(\"{escaped_primary}\")"));
                             registered_slugs.insert(primary);
                             for sec in secondary {
-                                out.push_str(&format!(" #metadata(none) #label(\"{sec}\")"));
+                                let escaped_sec = escape_typst_string(&sec);
+                                out.push_str(&format!(" #metadata(none) #label(\"{escaped_sec}\")"));
                                 registered_slugs.insert(sec);
                             }
                         }
@@ -898,7 +935,8 @@ pub fn convert_markdown_to_typst(
                             } else {
                                 ("none", "4pt")
                             };
-                            out.push_str(&format!("\n#align(center)[#block(radius: {img_radius}, stroke: {img_stroke}, clip: true)[#image(\"{target_path}\")]]\n\n"));
+                            let escaped_target_path = escape_typst_string(&target_path);
+                            out.push_str(&format!("\n#align(center)[#block(radius: {img_radius}, stroke: {img_stroke}, clip: true)[#image(\"{escaped_target_path}\")]]\n\n"));
                         } else {
                             // Remote image not yet cached: render elegant clickable placeholder badge
                             if in_link {
@@ -907,8 +945,9 @@ pub fn convert_markdown_to_typst(
                                     escaped_alt
                                 ));
                             } else {
+                                let escaped_url = escape_typst_string(&url);
                                 out.push_str(&format!(
-                                    "#link(\"{url}\")[#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 5pt, y: 2.5pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🖼️ {}]]]",
+                                    "#link(\"{escaped_url}\")[#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 5pt, y: 2.5pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🖼️ {}]]]",
                                     escaped_alt
                                 ));
                             }
@@ -991,7 +1030,8 @@ pub fn convert_markdown_to_typst(
     // This prevents Typst compilation errors if an external markdown contains broken or missing local anchors
     for anchor in &referenced_anchors {
         if !registered_slugs.contains(anchor) {
-            out.push_str(&format!("\n#metadata(none) #label(\"{anchor}\")\n"));
+            let escaped_anchor = escape_typst_string(anchor);
+            out.push_str(&format!("\n#metadata(none) #label(\"{escaped_anchor}\")\n"));
         }
     }
 
@@ -1046,6 +1086,76 @@ graph TD;
             println!("Virtual file: {:?}, bytes: {}", name, bytes.len());
             assert!(bytes.len() > 100);
         }
+    }
+
+    #[test]
+    fn test_heading_with_quotes() {
+        let md = r#"
+# heading with "quotes" inside
+
+## "Fully Quoted Heading"
+
+### Heading with mixed 'single' and "double" quotes and \ backslash
+
+- [Link 1](#heading-with-quotes-inside)
+- [Link 2](#fully-quoted-heading)
+- [Link 3](#heading with "quotes" inside)
+- [Broken Link](#missing "quotes" here)
+
+Some body text with "quotes" inside.
+"#;
+        let options = RenderOptions::default();
+        let parsed = convert_markdown_to_typst(md, "Test Doc", &options);
+        println!("Generated Typst:\n{}", parsed.typst_source);
+
+        // Verify that quotes inside label(...) strings are properly escaped as \"
+        assert!(parsed.typst_source.contains(r#"#label("heading with \"quotes\" inside")"#));
+        assert!(parsed.typst_source.contains(r#"#label("\"Fully Quoted Heading\"")"#));
+        // Verify that backslashes and mixed quotes inside label(...) strings are properly escaped
+        assert!(parsed.typst_source.contains(r#"#label("Heading with mixed 'single' and \"double\" quotes and \\ backslash")"#));
+
+        let res = crate::compiler::engine::compile_typst_to_pdf(&parsed.typst_source, ".", parsed.virtual_files);
+        assert!(res.is_ok(), "Typst compilation failed: {:?}", res.err());
+        let pdf = res.unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn test_parse_dimension() {
+        assert_eq!(parse_dimension("128"), Some("128pt".to_string()));
+        assert_eq!(parse_dimension("128px"), Some("128pt".to_string()));
+        assert_eq!(parse_dimension("128pt"), Some("128pt".to_string()));
+        assert_eq!(parse_dimension("50%"), Some("50%".to_string()));
+        assert_eq!(parse_dimension("12.5px"), Some("12.5pt".to_string()));
+
+        // Edge cases where Rust's f64 parsing accepts trailing dot / scientific notation / signs
+        assert_eq!(parse_dimension("5."), Some("5pt".to_string()));
+        assert_eq!(parse_dimension("5.px"), Some("5pt".to_string()));
+        assert_eq!(parse_dimension(".5"), Some("0.5pt".to_string()));
+        assert_eq!(parse_dimension(".5px"), Some("0.5pt".to_string()));
+        assert_eq!(parse_dimension("1e5"), Some("100000pt".to_string()));
+        assert_eq!(parse_dimension("1e5px"), Some("100000pt".to_string()));
+        assert_eq!(parse_dimension("+5"), Some("5pt".to_string()));
+        assert_eq!(parse_dimension("+5px"), Some("5pt".to_string()));
+        assert_eq!(parse_dimension("50.%"), Some("50%".to_string()));
+        assert_eq!(parse_dimension(".5%"), Some("0.5%".to_string()));
+
+        // Invalid / malicious inputs should be discarded (None)
+        assert_eq!(parse_dimension("auto"), None);
+        assert_eq!(parse_dimension("1) ; #import ..."), None);
+        assert_eq!(parse_dimension("-10px"), None);
+        assert_eq!(parse_dimension("0"), None);
+        assert_eq!(parse_dimension("0px"), None);
+        assert_eq!(parse_dimension(""), None);
+        assert_eq!(parse_dimension("   "), None);
+
+        // Verify HTML img with trailing dot dimension compiles through Typst without error
+        let html_img_md = r#"<img src="docs/images/app_logo.png" width="5.px" height="5." />"#;
+        let parsed = convert_markdown_to_typst(html_img_md, "Trailing Dot", &RenderOptions::default());
+        assert!(parsed.typst_source.contains("width: 5pt"));
+        assert!(parsed.typst_source.contains("height: 5pt"));
+        let res = crate::compiler::engine::compile_typst_to_pdf(&parsed.typst_source, "..", parsed.virtual_files);
+        assert!(res.is_ok(), "Trailing dot dimension failed to compile: {:?}", res.err());
     }
 
     #[test]

@@ -1,3 +1,5 @@
+use super::markdown::escape_typst_string;
+
 /// LaTeX math to Typst math transpiler using `mitex`.
 
 /// Converts a LaTeX math string to Typst math syntax.
@@ -29,8 +31,9 @@ pub fn transpile_latex_math(latex: &str, is_block: bool) -> String {
         }
 
         Err(_err) => {
-            // Graceful fallback: escape special Typst symbols so it doesn't crash the document
-            let safe_fallback = trimmed.replace('$', "\\$");
+            // Graceful fallback: escape special Typst string symbols (quotes and backslashes)
+            // so it doesn't crash the document with unexpected tokens or unknown variable errors
+            let safe_fallback = escape_typst_string(trimmed);
             if is_block {
                 format!("$ \"{}\" $\n", safe_fallback)
             } else {
@@ -78,9 +81,15 @@ mod tests {
 
     #[test]
     fn test_transpile_invalid_latex_graceful_fallback() {
-        let invalid = r"\invalidcommand{{{broken";
+        let invalid = r#"\invalidcommand{{{broken "quoted""#;
         let res = transpile_latex_math(invalid, false);
-        // Should not panic, returns a safe string
+        // Should not panic, returns a safe string with quotes and backslashes escaped
         assert!(res.starts_with('$') && res.ends_with('$'));
+        assert!(res.contains(r#"\"quoted\""#));
+
+        // Verify compilation with Typst engine succeeds without syntax error
+        let source = format!("#set page(width: 400pt, height: auto)\n{}", res);
+        let compiled = crate::compiler::engine::compile_typst_to_pdf(&source, ".", std::collections::HashMap::new());
+        assert!(compiled.is_ok(), "Typst compilation failed: {:?}", compiled.err());
     }
 }
