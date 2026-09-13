@@ -135,7 +135,7 @@ pub fn convert_markdown_to_typst(
     } else {
         "595.28pt".to_string()
     };
-    let page_height = if is_fluid { "6000pt".to_string() } else { "841.89pt".to_string() };
+    let page_height = if is_fluid { "auto".to_string() } else { "841.89pt".to_string() };
     let page_margin = if is_fluid {
         "(x: 24pt, top: 0pt, bottom: 0pt)"
     } else {

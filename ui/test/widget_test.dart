@@ -468,7 +468,7 @@ void main() {
     });
 
     testWidgets('titlebar auto-hides on scroll down and shows at page top', (tester) async {
-      final controller = ReaderController();
+      final controller = ReaderController(autoRestorePreferences: false);
       await tester.pumpWidget(
         MaterialApp(
           home: WorkspaceView(controller: controller),
@@ -680,6 +680,38 @@ void main() {
       expect(state.isRestoringScroll, false);
 
       controller.dispose();
+    });
+
+    testWidgets('WorkspaceView initializes titlebar as visible when at top in fluid mode and hidden when scrolled past top', (tester) async {
+      // 1. Controller at top (offset: 0.0) -> titlebar visible
+      final controllerTop = ReaderController(autoRestorePreferences: false);
+      controllerTop.updateScrollRatio(0.0, offset: 0.0);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WorkspaceView(key: const ValueKey('top'), controller: controllerTop),
+        ),
+      );
+
+      final titleBarVisible = find.byWidgetPredicate(
+        (widget) => widget is AnimatedContainer && widget.constraints?.maxHeight == 32.0,
+      );
+      expect(titleBarVisible, findsOneWidget);
+      controllerTop.dispose();
+
+      // 2. Controller scrolled down in fluid mode (offset: 150.0) -> titlebar initialized hidden
+      final controllerScrolled = ReaderController(autoRestorePreferences: false);
+      controllerScrolled.updateScrollRatio(0.1, offset: 150.0);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WorkspaceView(key: const ValueKey('scrolled'), controller: controllerScrolled),
+        ),
+      );
+
+      final titleBarHidden = find.byWidgetPredicate(
+        (widget) => widget is AnimatedContainer && widget.constraints?.maxHeight == 0.0,
+      );
+      expect(titleBarHidden, findsOneWidget);
+      controllerScrolled.dispose();
     });
   });
 }

@@ -285,8 +285,13 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
         final targetY = useOffset
             ? targetOffset.clamp(0.0, maxScroll)
             : (readerController.lastScrollRatio * layout.documentSize.height).clamp(0.0, maxScroll);
-        controller.setZoom(Offset(docWidth / 2, targetY), initialZoom, duration: Duration.zero);
-        controller.goToPosition(documentOffset: Offset(0, targetY));
+        if (targetY > 20.0) {
+          controller.setZoom(Offset(docWidth / 2, targetY), initialZoom, duration: Duration.zero);
+          controller.goToPosition(documentOffset: Offset(0, targetY));
+        } else {
+          final center = Offset(docWidth / 2, 0);
+          controller.setZoom(center, initialZoom, duration: Duration.zero);
+        }
       } else {
         final targetPage = readerController.lastPageNumber.clamp(1, layout.pageLayouts.length);
         final page = layout.pageLayouts[targetPage - 1];
@@ -1073,17 +1078,22 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
       final docSize = ctrl.documentSize;
       final currentTop = ctrl.visibleRect.top;
-      if (docSize.height > 0) {
-        final ratio = (currentTop / docSize.height).clamp(0.0, 1.0);
-        widget.controller.updateScrollRatio(ratio, offset: currentTop);
-      }
-      final deltaY = currentTop - _lastVisibleTop;
       final isFluid = widget.renderOptions.isFluid;
       final isTwoPage = widget.isTwoPage && !isFluid;
       final isAtTop = isFluid
           ? (currentTop <= 20.0)
           : (pageNum <= (isTwoPage ? 2 : 1) && currentTop <= 20.0);
+      final deltaY = currentTop - _lastVisibleTop;
       final effectiveAtTop = isAtTop && deltaY <= 0.5;
+
+      if (docSize.height > 0) {
+        if (isAtTop) {
+          widget.controller.updateScrollRatio(0.0, offset: 0.0);
+        } else {
+          final ratio = (currentTop / docSize.height).clamp(0.0, 1.0);
+          widget.controller.updateScrollRatio(ratio, offset: currentTop);
+        }
+      }
 
       if (deltaY.abs() > 0.5 || effectiveAtTop != _lastReportedAtTop) {
         _lastVisibleTop = currentTop;
@@ -1122,20 +1132,21 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             ? targetOffset.clamp(0.0, maxScroll)
             : (targetRatio > 0.0 ? (targetRatio * docSize.height).clamp(0.0, maxScroll) : 0.0);
 
-        if (targetY > 0.0) {
+        if (targetY > 20.0) {
           ctrl.goToPosition(documentOffset: Offset(0, targetY));
 
           Future.delayed(const Duration(milliseconds: 250), () {
             if (mounted && _mountGeneration == restoreGen) {
               _restoredGeneration = restoreGen;
               _lastVisibleTop = targetY;
-              final isAtTop = targetY <= 20.0;
-              _lastReportedAtTop = isAtTop;
-              widget.onScrollChanged?.call(deltaY: 0, isAtTop: isAtTop);
+              _lastReportedAtTop = false;
+              widget.onScrollChanged?.call(deltaY: 0, isAtTop: false);
             }
             widget.controller.finishReloading();
           });
           return;
+        } else {
+          ctrl.goToPage(pageNumber: 1, duration: Duration.zero);
         }
       }
     } else {
@@ -1693,12 +1704,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     Color canvasBg,
   ) {
     final ctrl = _controllers[slotIndex];
-    final estimatedFluidPage = widget.controller.lastScrollOffset > 0
-        ? (widget.controller.lastScrollOffset / 6000.0).floor() + 1
-        : 1;
     return PdfViewer.data(
       bytes,
-      initialPageNumber: isFluid ? estimatedFluidPage : widget.controller.lastPageNumber.clamp(1, 999999),
+      initialPageNumber: isFluid ? 1 : widget.controller.lastPageNumber.clamp(1, 999999),
       key: ValueKey(
         'slot_${slotIndex}_${_slotDocHash[slotIndex]}_${widget.renderOptions.mode}_${widget.isTwoPage}',
       ),
@@ -1718,6 +1726,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             final targetY = useOffset
                 ? targetOffset
                 : (targetRatio > 0.0 && docHeight > 0.0 ? targetRatio * docHeight : 0.0);
+
+            if (targetY <= 20.0) return 1;
 
             for (var i = 0; i < layouts.length; i++) {
               final rect = layouts[i];
