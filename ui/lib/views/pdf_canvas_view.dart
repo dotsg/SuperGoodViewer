@@ -1751,10 +1751,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             ? const EdgeInsets.only(top: 36, bottom: 24, left: 0, right: 0)
             : const EdgeInsets.only(top: 36, bottom: 16, left: 8, right: 8),
         maxImageBytesCachedOnMemory: isFluid ? 256 * 1024 * 1024 : 64 * 1024 * 1024,
-        onePassRenderingSizeThreshold: isFluid ? 10000.0 : 2000.0,
+        onePassRenderingSizeThreshold: isFluid ? 4000.0 : 2000.0,
         getPageRenderingScale: isFluid
             ? (context, page, controller, estimatedScale) {
-                const maxDimension = 10000.0;
+                const maxDimension = 4000.0;
                 if (page.width > maxDimension || page.height > maxDimension) {
                   return math.min(maxDimension / page.width, maxDimension / page.height);
                 }

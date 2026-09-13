@@ -114,6 +114,33 @@ fn main() {
     }
 
     #[test]
+    fn test_long_document_fluid_auto() {
+        let mut long_md = String::new();
+        for i in 0..300 {
+            long_md.push_str(&format!(
+                "## Section {}\n\nParagraph 1 for section {}. This contains detailed engineering explanations.\n\nParagraph 2 for section {}. Testing long document continuous rendering in fluid mode.\n\n",
+                i, i, i
+            ));
+        }
+
+        let options = RenderOptions {
+            mode: "fluid".to_string(),
+            theme: "light".to_string(),
+            viewport_width: 850.0,
+            font_size: 10.5,
+            ..Default::default()
+        };
+
+        let start = std::time::Instant::now();
+        let result = compile_markdown_to_pdf(&long_md, "Long Fluid Doc", ".", &options);
+        let elapsed = start.elapsed();
+        assert!(result.is_ok(), "Long fluid compilation failed: {:?}", result.err());
+        let pdf = result.unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
+        println!("Compiled 300 sections ({} chars) in {:?}, generated PDF bytes: {}", long_md.len(), elapsed, pdf.len());
+    }
+
+    #[test]
     fn test_compile_real_world_prd_document() {
 
         let test_md_path = std::path::Path::new("../test.md");

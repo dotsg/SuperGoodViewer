@@ -200,17 +200,7 @@ pub fn convert_markdown_to_typst(
     } else {
         "595.28pt".to_string()
     };
-    let estimated_height = estimate_markdown_rendered_height(markdown, options.font_size);
-    let is_short_document = estimated_height <= 3000.0;
-    let page_height = if is_fluid {
-        if is_short_document {
-            "auto".to_string()
-        } else {
-            "2500pt".to_string()
-        }
-    } else {
-        "841.89pt".to_string()
-    };
+    let page_height = if is_fluid { "auto".to_string() } else { "841.89pt".to_string() };
     let page_margin = if is_fluid {
         "(x: 24pt, top: 0pt, bottom: 0pt)"
     } else {
@@ -874,32 +864,23 @@ Local image with dark border:
     }
 
     #[test]
-    fn test_adaptive_fluid_page_height_short_and_long() {
-        // 1. Short document should use auto height to avoid trailing blank void
-        let short_md = r#"
-# Quick Note
-Here is a brief memo with just two paragraphs.
-Everything should fit neatly on one continuous page without blank trailing space.
-"#;
-        let short_height = estimate_markdown_rendered_height(short_md, 10.5);
-        assert!(short_height < 500.0);
-
+    fn test_fluid_mode_uses_auto_height_for_zero_blank_space() {
         let fluid_opts = RenderOptions {
             mode: "fluid".to_string(),
             ..Default::default()
         };
+
+        // 1. Short document uses auto height
+        let short_md = "# Quick Note\n\nShort content.";
         let short_parsed = convert_markdown_to_typst(short_md, "Short", &fluid_opts);
         assert!(short_parsed.typst_source.contains("height: auto"));
 
-        // 2. Long document should use bounded 2500pt page height for virtualization & GPU texture safety
+        // 2. Medium/Long document also uses auto height so that the final page never has blank void
         let mut long_md = String::new();
         for i in 0..100 {
-            long_md.push_str(&format!("## Section {}\n\nThis is paragraph content for section {} to simulate a comprehensive multi-chapter document with plenty of text.\n\n", i, i));
+            long_md.push_str(&format!("## Section {}\n\nThis is paragraph content for section {}.\n\n", i, i));
         }
-        let long_height = estimate_markdown_rendered_height(&long_md, 10.5);
-        assert!(long_height > 3000.0);
-
         let long_parsed = convert_markdown_to_typst(&long_md, "Long", &fluid_opts);
-        assert!(long_parsed.typst_source.contains("height: 2500pt"));
+        assert!(long_parsed.typst_source.contains("height: auto"));
     }
 }
