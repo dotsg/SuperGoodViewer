@@ -183,23 +183,48 @@ void main() {
       expect(find.text('sample_doc.pdf'), findsOneWidget);
     });
 
-    test('ReaderController.isValidPdfBytes checks magic bytes and trailing EOF correctly', () {
+    test('ReaderController.isValidPdfBytes and hasPdfHeader check magic bytes and trailing EOF with tolerance', () {
       expect(ReaderController.isValidPdfBytes(Uint8List(0)), isFalse);
       expect(ReaderController.isValidPdfBytes(Uint8List.fromList('short'.codeUnits)), isFalse);
       expect(ReaderController.isValidPdfBytes(Uint8List.fromList('Not a PDF at all'.codeUnits)), isFalse);
+      
+      // Truncated document without %%EOF marker
       expect(
         ReaderController.isValidPdfBytes(Uint8List.fromList('%PDF-1.4 truncated document without eof marker'.codeUnits)),
         isFalse,
       );
+
+      // Standard %PDF at offset 0 and %%EOF at end
       expect(
         ReaderController.isValidPdfBytes(Uint8List.fromList('%PDF-1.7 ... content ... %%EOF\n'.codeUnits)),
         isTrue,
       );
+
+      // %PDF preceded by 48 bytes of headers/BOM/comments within first 1024 bytes
+      final leadingBytes = List.filled(48, 0x20); // 48 spaces
+      final prefixedPdf = Uint8List.fromList([...leadingBytes, ...'%PDF-1.5 ... content ... %%EOF\n'.codeUnits]);
+      expect(ReaderController.hasPdfHeader(prefixedPdf), isTrue);
+      expect(ReaderController.isValidPdfBytes(prefixedPdf), isTrue);
+
+      // %%EOF followed by 2048 bytes of trailing metadata/padding
+      final trailingPadding = List.filled(2048, 0x20);
+      final paddedPdf = Uint8List.fromList([...'%PDF-1.6 content %%EOF'.codeUnits, ...trailingPadding]);
+      expect(ReaderController.isValidPdfBytes(paddedPdf), isTrue);
+
+      // %PDF beyond 1024 bytes is rejected
+      final tooMuchLeading = List.filled(1030, 0x20);
+      final invalidPrefix = Uint8List.fromList([...tooMuchLeading, ...'%PDF-1.4 content %%EOF'.codeUnits]);
+      expect(ReaderController.hasPdfHeader(invalidPrefix), isFalse);
+      expect(ReaderController.isValidPdfBytes(invalidPrefix), isFalse);
     });
 
-    test('Detects PDF file via magic bytes even with non-.pdf extension', () async {
+    test('Detects PDF file via magic bytes even with non-.pdf extension and leading bytes', () async {
       final sampleTxtFile = File(p.join(tempTestDir.path, 'pdf_disguised_as.txt'));
-      sampleTxtFile.writeAsBytesSync(Uint8List.fromList(samplePdfContent.codeUnits));
+      final contentWithPrefix = Uint8List.fromList([
+        ...List.filled(32, 0x20), // 32 bytes of leading spaces
+        ...samplePdfContent.codeUnits,
+      ]);
+      sampleTxtFile.writeAsBytesSync(contentWithPrefix);
 
       final controller = ReaderController(autoRestorePreferences: false);
       addTearDown(controller.dispose);
@@ -213,23 +238,27 @@ void main() {
       expect(controller.errorMessage, isNull);
     });
 
-    test('Gracefully handles corrupted or truncated PDF without %%EOF', () async {
-      final truncatedFile = File(p.join(tempTestDir.path, 'truncated.pdf'));
-      truncatedFile.writeAsStringSync('%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n// truncated write');
+    test('Initial open hands bytes directly to PDFium and sets up watcher for live recovery', () async {
+      final truncatedFile = File(p.join(tempTestDir.path, 'in_flight.pdf'));
+      truncatedFile.writeAsStringSync('%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n// in-flight download');
 
       final controller = ReaderController(autoRestorePreferences: false);
       addTearDown(controller.dispose);
 
+      // Initial open gives bytes to PDFium and installs watcher (no hard rejection)
       await controller.openFile(truncatedFile.path);
 
       expect(controller.isPdfDocument, isTrue);
-      expect(controller.currentPdfBytes, isNull);
-      expect(controller.errorMessage, contains('缺少 %%EOF'));
+      expect(controller.currentPdfBytes, isNotNull);
+      expect(controller.recentFiles.contains(truncatedFile.path), isTrue);
 
-      // refreshDocument on corrupted PDF also safely fails
+      // Manual refresh also attempts reload safely
       await controller.refreshDocument();
-      expect(controller.currentPdfBytes, isNull);
-      expect(controller.errorMessage, contains('缺少 %%EOF'));
+      expect(controller.currentPdfBytes, isNotNull);
+
+      // Test error setter (English error message)
+      controller.setErrorMessage('Failed to load PDF document');
+      expect(controller.errorMessage, 'Failed to load PDF document');
     });
 
     test('TOC outline race condition guard prevents stale or cross-document outline pollution', () async {

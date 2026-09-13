@@ -131,20 +131,32 @@ class ReaderController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Validates whether [bytes] is structurally a complete PDF document.
-  /// Must begin with '%PDF' and contain '%%EOF' within the trailing 1024 bytes.
+  /// Searches for the '%PDF' magic header within the first 1024 bytes of [bytes],
+  /// conforming to ISO 32000-1 §7.5.2 tolerance for leading bytes.
+  static bool hasPdfHeader(Uint8List bytes) {
+    if (bytes.length < 4) return false;
+    final searchLimit = math.min(1024, bytes.length - 4);
+    for (int i = 0; i <= searchLimit; i++) {
+      if (bytes[i] == 0x25 && // '%'
+          bytes[i + 1] == 0x50 && // 'P'
+          bytes[i + 2] == 0x44 && // 'D'
+          bytes[i + 3] == 0x46) { // 'F'
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Validates whether [bytes] is structurally a completed PDF document (used for hot reload safety).
+  /// Checks that '%PDF' appears within the first 1024 bytes, and '%%EOF' is present
+  /// when scanning backwards from the end (up to 64KB to tolerate appended metadata/padding).
   static bool isValidPdfBytes(Uint8List bytes) {
     if (bytes.length < 16) return false;
-    // Magic header check: %PDF
-    if (bytes[0] != 0x25 ||
-        bytes[1] != 0x50 ||
-        bytes[2] != 0x44 ||
-        bytes[3] != 0x46) {
-      return false;
-    }
-    // Search for %%EOF within the trailing 1024 bytes
-    final searchStart = math.max(0, bytes.length - 1024);
-    for (int i = searchStart; i <= bytes.length - 5; i++) {
+    if (!hasPdfHeader(bytes)) return false;
+
+    // Search backwards for '%%EOF' across up to 64KB of trailing data
+    final searchLimit = math.max(0, bytes.length - 65536);
+    for (int i = bytes.length - 5; i >= searchLimit; i--) {
       if (bytes[i] == 0x25 &&
           bytes[i + 1] == 0x25 &&
           bytes[i + 2] == 0x45 &&
@@ -154,6 +166,11 @@ class ReaderController extends ChangeNotifier {
       }
     }
     return false;
+  }
+
+  void setErrorMessage(String? message) {
+    _errorMessage = message;
+    notifyListeners();
   }
 
   void setPdfOutlines(List<OutlineItem> items, {String? targetFilePath}) {
@@ -402,12 +419,7 @@ class ReaderController extends ChangeNotifier {
 
     try {
       final bytes = file.readAsBytesSync();
-      final isPdf = filePath.toLowerCase().endsWith('.pdf') ||
-          (bytes.length >= 4 &&
-              bytes[0] == 0x25 && // '%'
-              bytes[1] == 0x50 && // 'P'
-              bytes[2] == 0x44 && // 'D'
-              bytes[3] == 0x46); // 'F'
+      final isPdf = filePath.toLowerCase().endsWith('.pdf') || hasPdfHeader(bytes);
 
       _currentFilePath = filePath;
       _documentTitle = p.basenameWithoutExtension(filePath);
@@ -418,14 +430,6 @@ class ReaderController extends ChangeNotifier {
         _isRawPdf = true;
         _currentMarkdown = '';
         _outlineItems = [];
-
-        if (!isValidPdfBytes(bytes)) {
-          _currentPdfBytes = null;
-          _errorMessage = 'PDF 文件不完整或已损坏 (缺少 %%EOF 结尾标识)';
-          notifyListeners();
-          return;
-        }
-
         _currentPdfBytes = bytes;
         _errorMessage = null;
 
@@ -514,10 +518,10 @@ class ReaderController extends ChangeNotifier {
       compileDocument();
     } catch (e) {
       final msg = 'Failed to read file: $e';
-      if (_currentPdfBytes == null) {
-        compileDocument();
-      }
+      _currentPdfBytes = null;
+      _outlineItems = [];
       _errorMessage = msg;
+      finishReloading();
       notifyListeners();
     }
   }
@@ -629,18 +633,13 @@ class ReaderController extends ChangeNotifier {
         try {
           if (await file.exists()) {
             final bytes = await file.readAsBytes();
-            if (!isValidPdfBytes(bytes)) {
-              _errorMessage = 'PDF 文件不完整或已损坏 (缺少 %%EOF 结尾标识)';
-              notifyListeners();
-              return;
-            }
             _currentPdfBytes = bytes;
             _errorMessage = null;
             startReloading();
             notifyListeners();
           }
         } catch (e) {
-          _errorMessage = '刷新 PDF 失败: $e';
+          _errorMessage = 'Failed to refresh PDF: $e';
           finishReloading();
           notifyListeners();
         }
