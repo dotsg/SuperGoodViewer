@@ -1,7 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:sogoodviewer/controllers/reader_controller.dart';
+import 'package:sogoodviewer/services/document_cache_service.dart';
 import 'package:sogoodviewer/views/settings_dialog.dart';
 
 void main() {
@@ -207,6 +210,45 @@ void main() {
       await tester.pumpAndSettle();
       expect(controller.renderOptions.fontSize, 10.5);
       expect(find.textContaining('10.5 pt'), findsWidgets);
+    });
+
+    testWidgets('General tab displays compiled cache info and clears cache on button press', (tester) async {
+      final tempDir = Directory.systemTemp.createTempSync('sgv_settings_cache_test_');
+      DocumentCacheService.setCacheDirForTesting(tempDir);
+      final dummyFile = File(p.join(tempDir.path, 'test_123.pdf'));
+      dummyFile.writeAsStringSync('%PDF-1.7\n12345');
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SettingsDialog(
+              controller: controller,
+              initialTab: SettingsTab.general,
+            ),
+          ),
+        ),
+      );
+
+      // Verify cache section elements
+      expect(find.text('预编译 PDF 缓存 (Compiled Cache)'), findsOneWidget);
+      expect(find.text('本地磁盘缓存'), findsOneWidget);
+      expect(find.textContaining('已缓存 1 个文档'), findsOneWidget);
+      expect(find.text('打开目录'), findsOneWidget);
+      expect(find.text('清理缓存'), findsOneWidget);
+
+      // Click clear cache
+      await tester.tap(find.text('清理缓存'));
+      await tester.pump();
+      await tester.pump();
+
+      // Verify cache cleared
+      expect(find.text('暂无缓存文件 (0 B)'), findsOneWidget);
+      expect(dummyFile.existsSync(), isFalse);
+
+      DocumentCacheService.setCacheDirForTesting(null);
+      tempDir.deleteSync(recursive: true);
+      controller.dispose();
     });
   });
 }

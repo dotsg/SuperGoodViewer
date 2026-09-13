@@ -77,6 +77,42 @@ void main() {
       // Miss for paged dark
       expect(DocumentCacheService.getCachedPdf(sampleMdFile.path, optionsPagedDark), isNull);
     });
+
+    test('getCacheStats and clearCache calculate and purge cache files accurately', () async {
+      const options = RenderOptions();
+      // Initially 0 files in temp dir
+      var stats = DocumentCacheService.getCacheStats();
+      expect(stats.fileCount, 0);
+      expect(stats.totalBytes, 0);
+      expect(stats.formattedSize, '0 B');
+
+      // Save a file
+      await DocumentCacheService.saveCachedPdf(sampleMdFile.path, options, dummyPdfHeader);
+
+      stats = DocumentCacheService.getCacheStats();
+      expect(stats.fileCount, 1);
+      expect(stats.totalBytes, dummyPdfHeader.length);
+      expect(stats.formattedSize, contains('B'));
+
+      // Clear cache
+      final cleared = await DocumentCacheService.clearCache();
+      expect(cleared.fileCount, 1);
+      expect(cleared.totalBytes, dummyPdfHeader.length);
+
+      // Verify empty after clear
+      stats = DocumentCacheService.getCacheStats();
+      expect(stats.fileCount, 0);
+      expect(stats.totalBytes, 0);
+      expect(DocumentCacheService.getCachedPdf(sampleMdFile.path, options), isNull);
+    });
+
+    test('formatBytes formats various sizes properly', () {
+      expect(DocumentCacheService.formatBytes(0), '0 B');
+      expect(DocumentCacheService.formatBytes(512), '512 B');
+      expect(DocumentCacheService.formatBytes(2048), '2.0 KB');
+      expect(DocumentCacheService.formatBytes(15 * 1024 * 1024), '15.0 MB');
+      expect(DocumentCacheService.formatBytes(3 * 1024 * 1024 * 1024), '3.00 GB');
+    });
   });
 
   group('PreferencesService Synchronous Loading Tests', () {

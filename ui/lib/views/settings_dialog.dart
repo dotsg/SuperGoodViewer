@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../controllers/reader_controller.dart';
+import '../services/document_cache_service.dart';
 import '../services/native_cli_service.dart';
 import '../services/shortcut_service.dart';
 
@@ -99,6 +100,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
   bool _isOperatingCli = false;
   CliStatus _cliStatus = CliStatus.empty();
 
+  // Cache state
+  late CacheStats _cacheStats;
+  bool _isClearingCache = false;
+
   @override
   void initState() {
     super.initState();
@@ -106,7 +111,31 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _selectedBodyFont = widget.controller.renderOptions.bodyFont;
     _selectedCodeFont = widget.controller.renderOptions.codeFont;
     _selectedFontSize = widget.controller.renderOptions.fontSize;
+    _cacheStats = DocumentCacheService.getCacheStats();
     _loadCliStatus();
+  }
+
+  Future<void> _handleClearCache() async {
+    setState(() => _isClearingCache = true);
+    final cleared = await DocumentCacheService.clearCache();
+    if (mounted) {
+      setState(() {
+        _isClearingCache = false;
+        _cacheStats = DocumentCacheService.getCacheStats();
+      });
+      try {
+        final messenger = ScaffoldMessenger.maybeOf(context);
+        if (messenger != null) {
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text('已清理 ${cleared.fileCount} 个编译缓存文件 (${cleared.formattedSize})'),
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      } catch (_) {}
+    }
   }
 
   Future<void> _loadCliStatus() async {
@@ -650,6 +679,96 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         fontSize: 11.5,
                         fontWeight: FontWeight.w600,
                         color: theme.colorScheme.primary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+
+        // Compiled Document Cache Section
+        _buildSectionHeader('预编译 PDF 缓存 (Compiled Cache)'),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF9F9F9),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.inventory_2_outlined, size: 20, color: isDark ? Colors.white70 : Colors.black87),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          '本地磁盘缓存',
+                          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _cacheStats.fileCount > 0
+                              ? '已缓存 ${_cacheStats.fileCount} 个文档 (${_cacheStats.formattedSize})'
+                              : '暂无缓存文件 (0 B)',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.folder_open_outlined, size: 15),
+                    label: const Text('打开目录', style: TextStyle(fontSize: 12)),
+                    onPressed: () => DocumentCacheService.openCacheDirectory(),
+                    style: OutlinedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    icon: _isClearingCache
+                        ? const SizedBox(width: 13, height: 13, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.cleaning_services_outlined, size: 15),
+                    label: const Text('清理缓存', style: TextStyle(fontSize: 12)),
+                    onPressed: _cacheStats.fileCount == 0 || _isClearingCache
+                        ? null
+                        : _handleClearCache,
+                    style: OutlinedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                ],
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Divider(
+                  height: 1,
+                  color: isDark ? const Color(0xFF333333) : const Color(0xFFEAEAEA),
+                ),
+              ),
+              Row(
+                children: [
+                  Icon(Icons.info_outline, size: 15, color: isDark ? const Color(0xFF666666) : const Color(0xFF999999)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '编译生成的矢量 PDF 会缓存到本地磁盘，用于实现秒级极速冷启动与历史切换。源文件编辑保存时会自动失效重编。',
+                      style: TextStyle(
+                        fontSize: 11.0,
+                        color: isDark ? const Color(0xFF666666) : const Color(0xFF888888),
                       ),
                     ),
                   ),

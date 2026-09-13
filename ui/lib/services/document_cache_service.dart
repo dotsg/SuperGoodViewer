@@ -126,4 +126,102 @@ class DocumentCacheService {
       }
     } catch (_) {}
   }
+
+  /// Returns the current cache directory path.
+  static String get cacheDirectoryPath => _getCacheDir().path;
+
+  /// Returns current statistics on the compiled PDF disk cache.
+  static CacheStats getCacheStats() {
+    try {
+      final dir = _getCacheDir();
+      if (!dir.existsSync()) {
+        return CacheStats(fileCount: 0, totalBytes: 0, dirPath: dir.path);
+      }
+      final files = dir.listSync().whereType<File>().where((f) => f.path.endsWith('.pdf')).toList();
+      var total = 0;
+      for (final f in files) {
+        try {
+          total += f.lengthSync();
+        } catch (_) {}
+      }
+      return CacheStats(fileCount: files.length, totalBytes: total, dirPath: dir.path);
+    } catch (_) {
+      return CacheStats(fileCount: 0, totalBytes: 0, dirPath: _getCacheDir().path);
+    }
+  }
+
+  /// Clears all cached PDF files from disk.
+  /// Returns the number of files deleted and total bytes freed.
+  static Future<CacheStats> clearCache() async {
+    try {
+      final dir = _getCacheDir();
+      if (!dir.existsSync()) {
+        return CacheStats(fileCount: 0, totalBytes: 0, dirPath: dir.path);
+      }
+      final entities = dir.listSync();
+      int deletedCount = 0;
+      int freedBytes = 0;
+      for (final entity in entities) {
+        if (entity is File && (entity.path.endsWith('.pdf') || entity.path.endsWith('.tmp'))) {
+          try {
+            final len = entity.lengthSync();
+            entity.deleteSync();
+            deletedCount++;
+            freedBytes += len;
+          } catch (_) {}
+        }
+      }
+      return CacheStats(fileCount: deletedCount, totalBytes: freedBytes, dirPath: dir.path);
+    } catch (e) {
+      debugPrint('[DocumentCacheService] clearCache error: $e');
+      return CacheStats(fileCount: 0, totalBytes: 0, dirPath: _getCacheDir().path);
+    }
+  }
+
+  /// Opens the cache directory in the system file manager (Finder on macOS / Explorer on Windows).
+  static Future<bool> openCacheDirectory() async {
+    try {
+      final dir = _getCacheDir();
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+      if (Platform.isMacOS) {
+        final res = await Process.run('open', [dir.path]);
+        return res.exitCode == 0;
+      } else if (Platform.isWindows) {
+        final res = await Process.run('explorer.exe', [dir.path]);
+        return res.exitCode == 0;
+      } else if (Platform.isLinux) {
+        final res = await Process.run('xdg-open', [dir.path]);
+        return res.exitCode == 0;
+      }
+    } catch (e) {
+      debugPrint('[DocumentCacheService] openCacheDirectory error: $e');
+    }
+    return false;
+  }
+
+  /// Human-readable formatting for bytes.
+  static String formatBytes(int bytes) {
+    if (bytes <= 0) return '0 B';
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+  }
+}
+
+/// Represents statistics about the compiled document disk cache.
+class CacheStats {
+  final int fileCount;
+  final int totalBytes;
+  final String dirPath;
+
+  const CacheStats({
+    required this.fileCount,
+    required this.totalBytes,
+    required this.dirPath,
+  });
+
+  String get formattedSize => DocumentCacheService.formatBytes(totalBytes);
 }
