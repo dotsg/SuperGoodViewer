@@ -604,6 +604,51 @@ void main() {
       // Pure streaming append must NOT trigger renderOptionsChanged (uses absolute offset)!
       expect(key.currentState?.renderOptionsChanged, false);
     });
+
+    test('ReaderController flags renderOptionsChanged and guards transient scroll resets during reload', () {
+      final controller = ReaderController();
+      expect(controller.renderOptionsChanged, false);
+
+      // 1. Changing options sets renderOptionsChanged flag
+      controller.setFontSize(16.0);
+      expect(controller.renderOptionsChanged, true);
+      controller.renderOptionsChanged = false;
+
+      controller.toggleTheme();
+      expect(controller.renderOptionsChanged, true);
+      controller.renderOptionsChanged = false;
+
+      controller.toggleMode();
+      expect(controller.renderOptionsChanged, true);
+      controller.renderOptionsChanged = false;
+
+      // 2. Scroll guard during reload:
+      // Establish established scroll position
+      controller.updateScrollRatio(0.45, offset: 500.0);
+      expect(controller.lastScrollRatio, 0.45);
+      expect(controller.lastScrollOffset, 500.0);
+
+      // Start reloading
+      controller.startReloading();
+      expect(controller.isReloading, true);
+
+      // A transient reset to offset 0.0 or ratio 0.0 must be ignored while reloading
+      controller.updateScrollRatio(0.0, offset: 0.0);
+      expect(controller.lastScrollRatio, 0.45);
+      expect(controller.lastScrollOffset, 500.0);
+
+      controller.updateScrollRatio(0.01, offset: 15.0);
+      expect(controller.lastScrollRatio, 0.45);
+      expect(controller.lastScrollOffset, 500.0);
+
+      // Legitimate user scrolling to new position should still work if far from top or after finishing reload
+      controller.finishReloading();
+      controller.updateScrollRatio(0.1, offset: 100.0);
+      expect(controller.lastScrollRatio, 0.1);
+      expect(controller.lastScrollOffset, 100.0);
+
+      controller.dispose();
+    });
   });
 }
 

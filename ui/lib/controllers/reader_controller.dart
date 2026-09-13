@@ -76,6 +76,7 @@ class ReaderController extends ChangeNotifier {
   bool _isTwoPage = false;
   List<OutlineItem> _outlineItems = [];
   OutlineItem? _requestedJumpItem;
+  bool renderOptionsChanged = false;
 
   // Getters
   String? get currentFilePath => _currentFilePath;
@@ -297,8 +298,10 @@ class ReaderController extends ChangeNotifier {
   }
 
   void updateScrollRatio(double ratio, {double? offset}) {
-    // While reloading, ignore transient reset to 0.0 before position is restored
-    if (_isReloading && ratio == 0.0 && _lastScrollRatio > 0.0) return;
+    // While reloading, ignore transient resets near top before scroll position is restored
+    if (_isReloading && (offset != null ? offset <= 20.0 : ratio <= 0.02) && _lastScrollRatio > 0.05) {
+      return;
+    }
     if (ratio >= 0.0 && ratio <= 1.0) {
       _lastScrollRatio = ratio;
       if (offset != null && offset >= 0.0) {
@@ -469,7 +472,11 @@ class ReaderController extends ChangeNotifier {
       if (await file.exists()) {
         try {
           final bytes = await file.readAsBytes();
-          _currentMarkdown = utf8.decode(bytes, allowMalformed: true);
+          final text = utf8.decode(bytes, allowMalformed: true);
+          if (text == _currentMarkdown) {
+            return; // Content unchanged, skip redundant compilation & remount
+          }
+          _currentMarkdown = text;
           _extractOutline(_currentMarkdown);
           startReloading();
           await compileDocument();
@@ -543,6 +550,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void toggleMode() {
+    renderOptionsChanged = true;
     startReloading();
     final nextMode = _renderOptions.mode == 'fluid' ? 'paged' : 'fluid';
     _renderOptions = _renderOptions.copyWith(mode: nextMode);
@@ -562,6 +570,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void toggleTheme() {
+    renderOptionsChanged = true;
     startReloading();
     final nextTheme = _renderOptions.theme == 'light' ? 'dark' : 'light';
     _renderOptions = _renderOptions.copyWith(theme: nextTheme);
@@ -585,6 +594,7 @@ class ReaderController extends ChangeNotifier {
     if ((width - _renderOptions.viewportWidth).abs() > 40) {
       _viewportDebounceTimer?.cancel();
       _viewportDebounceTimer = Timer(const Duration(milliseconds: 300), () {
+        renderOptionsChanged = true;
         _renderOptions = _renderOptions.copyWith(viewportWidth: width);
         if (_renderOptions.isFluid) {
           startReloading();
@@ -595,6 +605,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void setFontSize(double size) {
+    renderOptionsChanged = true;
     startReloading();
     _renderOptions = _renderOptions.copyWith(fontSize: size.clamp(8.0, 24.0));
     _persistPreferences();
@@ -612,6 +623,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void setBodyFont(String? font) {
+    renderOptionsChanged = true;
     startReloading();
     _renderOptions = _renderOptions.copyWith(bodyFont: font);
     _persistPreferences();
@@ -619,6 +631,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void setCodeFont(String? font) {
+    renderOptionsChanged = true;
     startReloading();
     _renderOptions = _renderOptions.copyWith(codeFont: font);
     _persistPreferences();
@@ -626,6 +639,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void setTypography({String? bodyFont, String? codeFont, double? fontSize}) {
+    renderOptionsChanged = true;
     startReloading();
     _renderOptions = _renderOptions.copyWith(
       bodyFont: bodyFont,
