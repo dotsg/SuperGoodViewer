@@ -2,8 +2,8 @@ pub mod c_api;
 pub mod compiler;
 pub mod parser;
 
-use std::path::Path;
-use compiler::engine::{compile_typst_to_pdf, CompileError, RenderOptions};
+use std::path::{Path, PathBuf};
+use compiler::engine::{compile_typst_to_pdf_with_options, CompileError, RenderOptions};
 use parser::markdown::convert_markdown_to_typst;
 
 /// High-level function: Compiles Markdown directly into a PDF byte stream.
@@ -17,7 +17,8 @@ pub fn compile_markdown_to_pdf(
     options: &RenderOptions,
 ) -> Result<Vec<u8>, CompileError> {
     let parsed = convert_markdown_to_typst(markdown, title, options);
-    compile_typst_to_pdf(&parsed.typst_source, doc_dir, parsed.virtual_files)
+    let cache_dir = options.image_cache_dir.as_ref().map(PathBuf::from);
+    compile_typst_to_pdf_with_options(&parsed.typst_source, doc_dir, parsed.virtual_files, cache_dir)
 }
 
 #[cfg(test)]
@@ -81,6 +82,17 @@ graph LR
         assert!(pdf.starts_with(b"%PDF-"), "Invalid PDF header");
         assert!(pdf.len() > 1000, "PDF size is unexpectedly small: {} bytes", pdf.len());
         println!("Successfully generated E2E Fluid PDF ({} bytes)", pdf.len());
+    }
+
+    #[test]
+    fn test_emoji_compilation() {
+        let md = "🚀 ✨ 🎯 📐 📊 🖥 🪟 ⚙️ ⌨️ ⚡ 💾 🎨 📦 👉";
+        let options = RenderOptions::default();
+        let result = compile_markdown_to_pdf(md, "Emoji Test", ".", &options);
+        assert!(result.is_ok());
+        let pdf = result.unwrap();
+        println!("Emoji PDF bytes: {}", pdf.len());
+        assert!(pdf.len() > 50_000, "Emoji PDF should contain embedded font glyph data");
     }
 
     #[test]

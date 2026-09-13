@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 import 'package:pdfrx/pdfrx.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vector_math/vector_math_64.dart' as vec;
@@ -1879,8 +1881,57 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
               await ctrl.goToDest(link.dest);
             } else if (link.url != null) {
               final uri = link.url!;
-              if (await canLaunchUrl(uri)) {
-                await launchUrl(uri);
+
+              // 1. 外部网络协议：浏览器或外部客户端打开
+              final scheme = uri.scheme.toLowerCase();
+              if (scheme == 'http' || scheme == 'https' || scheme == 'mailto') {
+                if (await canLaunchUrl(uri)) {
+                  await launchUrl(uri);
+                }
+                return;
+              }
+
+              // 2. 本地相对路径或文件链接 (scheme 为 file，或无 scheme)
+              String rawPath = uri.path;
+              if (Platform.isWindows && rawPath.startsWith('/') && rawPath.length > 2 && rawPath[2] == ':') {
+                rawPath = rawPath.substring(1);
+              }
+              rawPath = Uri.decodeFull(rawPath);
+
+              final currentDoc = widget.controller.currentFilePath;
+              String resolvedPath = rawPath;
+              if (!p.isAbsolute(resolvedPath) && currentDoc != null) {
+                resolvedPath = p.normalize(p.join(p.dirname(currentDoc), rawPath));
+              }
+
+              final file = File(resolvedPath);
+              if (await file.exists()) {
+                final ext = p.extension(resolvedPath).toLowerCase();
+                const mdExtensions = {'.md', '.markdown', '.mdown', '.mkd', '.mkdn'};
+                if (mdExtensions.contains(ext) || ext.isEmpty) {
+                  // Markdown 文档：直接在当前视窗中平滑切换打开
+                  await widget.controller.openFile(resolvedPath);
+                } else {
+                  // 其他本地文件（如 PDF、图片、Office 文档等）：唤起系统关联程序打开
+                  await launchUrl(Uri.file(resolvedPath));
+                }
+              } else {
+                // 若直接路径不存在，尝试去掉或补齐 .md 扩展名匹配
+                final altMdPath = resolvedPath.endsWith('.md') ? resolvedPath : '$resolvedPath.md';
+                if (await File(altMdPath).exists()) {
+                  await widget.controller.openFile(altMdPath);
+                  return;
+                }
+
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('目标文档不存在: ${p.basename(resolvedPath)}'),
+                      duration: const Duration(seconds: 2),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
               }
             }
           },

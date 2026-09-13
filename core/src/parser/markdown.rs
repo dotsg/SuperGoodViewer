@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use pulldown_cmark::{Alignment, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use typst::foundations::Bytes;
 
@@ -99,6 +99,315 @@ fn slugify_heading(text: &str) -> (String, Vec<String>) {
     (gfm, secondary)
 }
 
+fn decode_html_entities(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&nbsp;", " ")
+}
+
+fn extract_html_attr(tag: &str, attr: &str) -> Option<String> {
+    let lower_tag = tag.to_lowercase();
+    let needle_double = format!("{}=\"", attr);
+    let needle_single = format!("{}='", attr);
+    let (start_idx, quote_char) = if let Some(pos) = lower_tag.find(&needle_double) {
+        (pos + needle_double.len(), '"')
+    } else if let Some(pos) = lower_tag.find(&needle_single) {
+        (pos + needle_single.len(), '\'')
+    } else {
+        return None;
+    };
+    let rest = &tag[start_idx..];
+    if let Some(end_idx) = rest.find(quote_char) {
+        Some(rest[..end_idx].to_string())
+    } else {
+        None
+    }
+}
+
+fn parse_dimension(val: &str) -> String {
+    let s = val.trim();
+    if s.ends_with('%') {
+        s.to_string()
+    } else if let Some(num) = s.strip_suffix("px") {
+        format!("{}pt", num.trim())
+    } else if let Some(num) = s.strip_suffix("pt") {
+        format!("{}pt", num.trim())
+    } else if s.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        format!("{}pt", s)
+    } else {
+        format!("{}pt", s)
+    }
+}
+
+pub fn sanitize_image_url(url: &str) -> &str {
+    if let Some(pos) = url.find('#') {
+        &url[..pos]
+    } else {
+        url
+    }
+}
+
+pub fn extract_url_extension(clean_url: &str) -> &'static str {
+    let (url_path, query) = match clean_url.find('?') {
+        Some(idx) => (&clean_url[..idx], Some(&clean_url[idx + 1..])),
+        None => (clean_url, None),
+    };
+
+    if let Some(last_segment) = url_path.split('/').last() {
+        if let Some(dot_idx) = last_segment.rfind('.') {
+            let ext = &last_segment[dot_idx + 1..];
+            let ext_lower = ext.to_ascii_lowercase();
+            match ext_lower.as_str() {
+                "png" => return "png",
+                "jpg" | "jpeg" => return "jpg",
+                "webp" => return "webp",
+                "gif" => return "gif",
+                "svg" => return "svg",
+                _ => {}
+            }
+        }
+    }
+
+    if let Some(q) = query {
+        let q_lower = q.to_ascii_lowercase();
+        for param in q_lower.split('&') {
+            if let Some((k, v)) = param.split_once('=') {
+                if k == "wx_fmt" || k == "format" {
+                    match v {
+                        "png" => return "png",
+                        "jpg" | "jpeg" => return "jpg",
+                        "webp" => return "webp",
+                        "gif" => return "gif",
+                        "svg" => return "svg",
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    "png"
+}
+
+pub fn url_to_cache_filename(url: &str) -> String {
+    let clean_url = sanitize_image_url(url);
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(clean_url.as_bytes());
+    let hash = format!("{:x}", hasher.finalize());
+    let ext = extract_url_extension(clean_url);
+    format!("{}.{}", &hash[..32], ext)
+}
+
+pub fn find_cached_image_file(custom_cache: Option<&Path>, url: &str) -> Option<String> {
+    let clean_url = sanitize_image_url(url);
+    let predicted = url_to_cache_filename(clean_url);
+
+    // 1. Check custom cache dir first if provided (O(1) stat call)
+    if let Some(dir) = custom_cache {
+        if dir.join(&predicted).is_file() {
+            return Some(predicted);
+        }
+    }
+
+    // 2. Fall back to default system cache dir (O(1) stat call)
+    let default_cache = crate::compiler::world::get_default_image_cache_dir();
+    if default_cache.join(&predicted).is_file() {
+        return Some(predicted);
+    }
+
+    None
+}
+
+fn render_html_image(
+    tag: &str,
+    in_center: bool,
+    is_dark: bool,
+    badge_bg: &str,
+    badge_stroke: &str,
+    badge_fg: &str,
+    custom_cache: Option<&Path>,
+) -> String {
+    let src = extract_html_attr(tag, "src").unwrap_or_default();
+    if src.is_empty() {
+        return String::new();
+    }
+    let alt = extract_html_attr(tag, "alt").unwrap_or_else(|| "图片".to_string());
+    let width = extract_html_attr(tag, "width");
+    let height = extract_html_attr(tag, "height");
+
+    let is_url = src.starts_with("http://") || src.starts_with("https://");
+    let resolved_src = if is_url {
+        if let Some(cached_filename) = find_cached_image_file(custom_cache, &src) {
+            cached_filename
+        } else {
+            let escaped_alt = escape_typst_text(&alt);
+            return format!(
+                "#link(\"{src}\")[#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 5pt, y: 2.5pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🖼️ {escaped_alt}]]]"
+            );
+        }
+    } else {
+        src
+    };
+
+    let mut args = Vec::new();
+    if let Some(w) = width {
+        args.push(format!("width: {}", parse_dimension(&w)));
+    }
+    if let Some(h) = height {
+        args.push(format!("height: {}", parse_dimension(&h)));
+    }
+    let args_str = if args.is_empty() {
+        String::new()
+    } else {
+        format!(", {}", args.join(", "))
+    };
+
+    let (img_stroke, img_radius) = if is_dark {
+        ("0.5pt + rgb(\"#383e4a\")", "4pt")
+    } else {
+        ("none", "4pt")
+    };
+
+    let block_str = format!("#block(radius: {img_radius}, stroke: {img_stroke}, clip: true)[#image(\"{resolved_src}\"{args_str})]");
+    if in_center {
+        format!("\n{}\n", block_str)
+    } else {
+        format!("\n#align(center)[{}]\n\n", block_str)
+    }
+}
+
+struct HtmlTranspiler<'a> {
+    center_depth: usize,
+    is_dark: bool,
+    badge_bg: &'a str,
+    badge_stroke: &'a str,
+    badge_fg: &'a str,
+    custom_cache: Option<&'a Path>,
+}
+
+impl<'a> HtmlTranspiler<'a> {
+    fn new(
+        is_dark: bool,
+        badge_bg: &'a str,
+        badge_stroke: &'a str,
+        badge_fg: &'a str,
+        custom_cache: Option<&'a Path>,
+    ) -> Self {
+        Self {
+            center_depth: 0,
+            is_dark,
+            badge_bg,
+            badge_stroke,
+            badge_fg,
+            custom_cache,
+        }
+    }
+
+    fn transpile_chunk(&mut self, chunk: &str, out: &mut String) {
+        let mut rest = chunk;
+        while !rest.is_empty() {
+            if let Some(start) = rest.find('<') {
+                let (before, tag_start) = rest.split_at(start);
+                if !before.is_empty() {
+                    out.push_str(&escape_typst_text(&decode_html_entities(before)));
+                }
+                if let Some(end) = tag_start.find('>') {
+                    let tag = &tag_start[..=end];
+                    rest = &tag_start[end + 1..];
+                    self.handle_tag(tag, out);
+                } else {
+                    out.push_str(&escape_typst_text(&decode_html_entities(tag_start)));
+                    break;
+                }
+            } else {
+                out.push_str(&escape_typst_text(&decode_html_entities(rest)));
+                break;
+            }
+        }
+    }
+
+    fn handle_tag(&mut self, tag: &str, out: &mut String) {
+        let lower = tag.to_lowercase();
+        let trimmed_lower = lower.trim();
+        if trimmed_lower.starts_with("<!--") {
+            return;
+        }
+        if trimmed_lower.starts_with("<img") {
+            let rendered = render_html_image(
+                tag,
+                self.center_depth > 0,
+                self.is_dark,
+                self.badge_bg,
+                self.badge_stroke,
+                self.badge_fg,
+                self.custom_cache,
+            );
+            out.push_str(&rendered);
+        } else if (trimmed_lower.starts_with("<div")
+            && (lower.contains("center") || lower.contains("align=\"center\"") || lower.contains("align='center'")))
+            || trimmed_lower == "<center>"
+        {
+            self.center_depth += 1;
+            out.push_str("\n#align(center)[\n");
+        } else if trimmed_lower == "</div>" || trimmed_lower == "</center>" {
+            if self.center_depth > 0 {
+                self.center_depth -= 1;
+                out.push_str("]\n\n");
+            }
+        } else if trimmed_lower.starts_with("<h1") {
+            out.push_str("\n= ");
+        } else if trimmed_lower == "</h1>" {
+            out.push_str("\n\n");
+        } else if trimmed_lower.starts_with("<h2") {
+            out.push_str("\n== ");
+        } else if trimmed_lower == "</h2>" {
+            out.push_str("\n\n");
+        } else if trimmed_lower.starts_with("<h3") {
+            out.push_str("\n=== ");
+        } else if trimmed_lower == "</h3>" {
+            out.push_str("\n\n");
+        } else if trimmed_lower.starts_with("<h4") {
+            out.push_str("\n==== ");
+        } else if trimmed_lower == "</h4>" {
+            out.push_str("\n\n");
+        } else if trimmed_lower.starts_with("<p") {
+            out.push('\n');
+        } else if trimmed_lower == "</p>" {
+            out.push_str("\n\n");
+        } else if trimmed_lower == "<strong>" || trimmed_lower == "<b>" {
+            out.push('*');
+        } else if trimmed_lower == "</strong>" || trimmed_lower == "</b>" {
+            out.push('*');
+        } else if trimmed_lower == "<em>" || trimmed_lower == "<i>" {
+            out.push('_');
+        } else if trimmed_lower == "</em>" || trimmed_lower == "</i>" {
+            out.push('_');
+        } else if trimmed_lower == "<br>" || trimmed_lower == "<br/>" || trimmed_lower == "<br />" {
+            out.push_str("\\ \n");
+        } else if trimmed_lower.starts_with("<a ") {
+            if let Some(href) = extract_html_attr(tag, "href") {
+                out.push_str(&format!("#link(\"{}\")[", href));
+            } else {
+                out.push('[');
+            }
+        } else if trimmed_lower == "</a>" {
+            out.push(']');
+        }
+    }
+
+    fn finish(&mut self, out: &mut String) {
+        while self.center_depth > 0 {
+            self.center_depth -= 1;
+            out.push_str("]\n\n");
+        }
+    }
+}
+
 pub fn convert_markdown_to_typst(
     markdown: &str,
     title: &str,
@@ -176,6 +485,10 @@ pub fn convert_markdown_to_typst(
         "Microsoft YaHei",
         "Noto Sans CJK SC",
         "STIX Two Text",
+        "Apple Color Emoji",
+        "Segoe UI Emoji",
+        "Noto Color Emoji",
+        "Twemoji Mozilla",
     ];
     let custom_body = options.body_font.as_deref().unwrap_or("").trim();
     let body_font_str = if !custom_body.is_empty() {
@@ -199,6 +512,10 @@ pub fn convert_markdown_to_typst(
         "Consolas",
         "PingFang SC",
         "DejaVu Sans Mono",
+        "Apple Color Emoji",
+        "Segoe UI Emoji",
+        "Noto Color Emoji",
+        "Twemoji Mozilla",
     ];
     let custom_code = options.code_font.as_deref().unwrap_or("").trim();
     let code_font_str = if !custom_code.is_empty() {
@@ -355,6 +672,8 @@ pub fn convert_markdown_to_typst(
     let mut current_heading: Option<(HeadingLevel, String)> = None;
     let mut registered_slugs: HashSet<String> = HashSet::new();
     let mut referenced_anchors: HashSet<String> = HashSet::new();
+    let custom_cache = options.image_cache_dir.as_deref().map(Path::new);
+    let mut html_transpiler = HtmlTranspiler::new(is_dark, badge_bg, badge_stroke, badge_fg, custom_cache);
 
     for event in parser {
         match event {
@@ -511,7 +830,7 @@ pub fn convert_markdown_to_typst(
                             out.push_str(&format!(" #label(\"{primary}\")"));
                             registered_slugs.insert(primary);
                             for sec in secondary {
-                                out.push_str(&format!(" [#metadata(none) #label(\"{sec}\")]"));
+                                out.push_str(&format!(" #metadata(none) #label(\"{sec}\")"));
                                 registered_slugs.insert(sec);
                             }
                         }
@@ -567,27 +886,32 @@ pub fn convert_markdown_to_typst(
                         let in_link = link_stack.iter().any(|&active| active);
 
                         let is_url = url.starts_with("http://") || url.starts_with("https://");
-                        if is_url {
-                            if in_link {
-                                // Inside an outer #link(...)[...], render clean inline badge without nesting #link
-                                out.push_str(&format!(
-                                    "#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 4pt, y: 2pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[{}]]",
-                                    escaped_alt
-                                ));
-                            } else {
-                                out.push_str(&format!(
-                                    "#link(\"{url}\")[#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 4pt, y: 2pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🔗 {}]]]",
-                                    escaped_alt
-                                ));
-                            }
+                        let resolved_image = if is_url {
+                            find_cached_image_file(custom_cache, &url)
                         } else {
-                            // Local file path (resolved by MemoryWorld against doc_dir)
+                            Some(url.clone())
+                        };
+
+                        if let Some(target_path) = resolved_image {
                             let (img_stroke, img_radius) = if is_dark {
                                 ("0.5pt + rgb(\"#383e4a\")", "4pt")
                             } else {
                                 ("none", "4pt")
                             };
-                            out.push_str(&format!("\n#align(center)[#block(radius: {img_radius}, stroke: {img_stroke}, clip: true)[#image(\"{url}\")]]\n\n"));
+                            out.push_str(&format!("\n#align(center)[#block(radius: {img_radius}, stroke: {img_stroke}, clip: true)[#image(\"{target_path}\")]]\n\n"));
+                        } else {
+                            // Remote image not yet cached: render elegant clickable placeholder badge
+                            if in_link {
+                                out.push_str(&format!(
+                                    "#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 5pt, y: 2.5pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🖼️ {}]]",
+                                    escaped_alt
+                                ));
+                            } else {
+                                out.push_str(&format!(
+                                    "#link(\"{url}\")[#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 5pt, y: 2.5pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🖼️ {}]]]",
+                                    escaped_alt
+                                ));
+                            }
                         }
                     }
                 }
@@ -654,15 +978,20 @@ pub fn convert_markdown_to_typst(
 
             Event::SoftBreak => out.push('\n'),
             Event::HardBreak => out.push_str("\\ \n"),
+            Event::Html(raw) | Event::InlineHtml(raw) => {
+                html_transpiler.transpile_chunk(&raw, &mut out);
+            }
             _ => {}
         }
     }
+
+    html_transpiler.finish(&mut out);
 
     // Safely emit metadata anchors for any referenced links that don't match a defined heading
     // This prevents Typst compilation errors if an external markdown contains broken or missing local anchors
     for anchor in &referenced_anchors {
         if !registered_slugs.contains(anchor) {
-            out.push_str(&format!("\n[#metadata(none) #label(\"{anchor}\")]\n"));
+            out.push_str(&format!("\n#metadata(none) #label(\"{anchor}\")\n"));
         }
     }
 
@@ -753,6 +1082,15 @@ graph TD;
         assert!(res.is_ok(), "Typst compilation failed: {:?}", res.err());
         let pdf = res.unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
+
+        // Verify that headings with dots or emojis (like v1.0.0 or 📄 开源许可证) never emit stray brackets
+        let heading_md = "### v1.0.0\n\n## 📄 开源许可证\n";
+        let heading_parsed = convert_markdown_to_typst(heading_md, "Heading Test", &options);
+        assert!(!heading_parsed.typst_source.contains("[#metadata"), "Heading must not contain bracketed metadata");
+        assert!(!heading_parsed.typst_source.contains("[ ]"), "Heading must not contain stray brackets");
+
+        let heading_res = crate::compiler::engine::compile_typst_to_pdf(&heading_parsed.typst_source, ".", heading_parsed.virtual_files);
+        assert!(heading_res.is_ok());
     }
 
     #[test]
@@ -819,5 +1157,70 @@ Local image with dark border:
         let long_parsed = convert_markdown_to_typst(&long_md, "Long", &fluid_opts);
         assert!(long_parsed.typst_source.contains("height: auto"));
         assert!(long_parsed.typst_source.contains("bottom: 56pt"));
+    }
+
+    #[test]
+    fn test_html_readme_header() {
+        let md = r#"<div align="center">
+  <img src="docs/images/app_logo.png" width="128" height="128" alt="超好读 Logo" />
+  <h1>超好读 (SuperGoodViewer) 🚀</h1>
+  <p><strong>只读 Markdown 矢量排版桌面阅读器</strong></p>
+  <p><em>Publication-Grade Typography, Pixel-Perfect Consistency, Zero-WebView Desktop Reader.</em></p>
+</div>"#;
+        let options = RenderOptions::default();
+        let parsed = convert_markdown_to_typst(md, "README", &options);
+        println!("Generated Typst:\n{}", parsed.typst_source);
+
+        assert!(parsed.typst_source.contains("#align(center)"));
+        assert!(parsed.typst_source.contains("#image(\"docs/images/app_logo.png\""));
+        assert!(parsed.typst_source.contains("width: 128pt"));
+        assert!(parsed.typst_source.contains("height: 128pt"));
+        assert!(parsed.typst_source.contains("超好读 (SuperGoodViewer) 🚀"));
+
+        // Test actual compilation with the real docs/images/app_logo.png from repo root
+        let res = crate::compiler::engine::compile_typst_to_pdf(&parsed.typst_source, "..", parsed.virtual_files);
+        assert!(res.is_ok(), "Typst compilation failed: {:?}", res.err());
+        let pdf = res.unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
+        println!("README header compiled PDF size: {} bytes", pdf.len());
+        assert!(pdf.len() > 10_000);
+    }
+
+    #[test]
+    fn test_extract_url_extension() {
+        assert_eq!(extract_url_extension("https://cdn.x/.png-assets/a.jpg"), "jpg");
+        assert_eq!(extract_url_extension("https://cdn.x/.png-assets/a.jpeg?token=123"), "jpg");
+        assert_eq!(extract_url_extension("https://cdn.x/vector.svg"), "svg");
+        assert_eq!(extract_url_extension("https://cdn.x/animation.gif"), "gif");
+        assert_eq!(extract_url_extension("https://cdn.x/photo.webp"), "webp");
+        assert_eq!(extract_url_extension("https://mmbiz.qpic.cn/sz_mmbiz_png/test/640?wx_fmt=png"), "png");
+        assert_eq!(extract_url_extension("https://mmbiz.qpic.cn/sz_mmbiz_jpeg/test/640?wx_fmt=jpeg"), "jpg");
+        assert_eq!(extract_url_extension("https://example.com/asset"), "png"); // default fallback
+    }
+
+    #[test]
+    fn test_remote_image_caching_and_rendering() {
+        let temp_dir = std::env::temp_dir().join(format!("sgv_test_cache_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let wechat_url = "https://mmbiz.qpic.cn/sz_mmbiz_png/isolated_test_uuid/640?wx_fmt=png";
+        let md = format!("![Architecture Diagram]({wechat_url})");
+        let mut options = RenderOptions::default();
+        options.image_cache_dir = Some(temp_dir.to_string_lossy().to_string());
+
+        // 1. When not cached in temp_dir, it renders an elegant placeholder badge
+        let parsed_uncached = convert_markdown_to_typst(&md, "Blog", &options);
+        assert!(parsed_uncached.typst_source.contains("🖼️ Architecture Diagram"));
+
+        // 2. Mock a cached file strictly inside temp_dir
+        let cache_filename = url_to_cache_filename(wechat_url);
+        let cache_file_path = temp_dir.join(&cache_filename);
+        let _ = std::fs::write(&cache_file_path, b"mock_cached_image_bytes");
+
+        let parsed_cached = convert_markdown_to_typst(&md, "Blog", &options);
+        assert!(parsed_cached.typst_source.contains(&format!("#image(\"{cache_filename}\")")));
+
+        // Clean up temp_dir
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

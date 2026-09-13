@@ -9,6 +9,7 @@ import '../bridge/native_engine.dart';
 import '../models/render_options.dart';
 import '../services/document_cache_service.dart';
 import '../services/preferences_service.dart';
+import '../services/remote_image_service.dart';
 import '../services/shortcut_service.dart';
 
 class OutlineItem {
@@ -39,11 +40,12 @@ class ReaderController extends ChangeNotifier {
   String _currentMarkdown = '';
   String _documentTitle = 'Welcome';
   Uint8List? _currentPdfBytes;
-  RenderOptions _renderOptions = const RenderOptions(
+  RenderOptions _renderOptions = RenderOptions(
     mode: 'fluid',
     theme: 'light',
     viewportWidth: 720.0,
     fontSize: 10.5,
+    imageCacheDir: RemoteImageService.instance.getCacheDirectory().path,
   );
   bool _isCompiling = false;
   int _compileGeneration = 0;
@@ -196,6 +198,7 @@ class ReaderController extends ChangeNotifier {
           fontSize: savedFontSize ?? _renderOptions.fontSize,
           bodyFont: savedBodyFont ?? _renderOptions.bodyFont,
           codeFont: savedCodeFont ?? _renderOptions.codeFont,
+          imageCacheDir: RemoteImageService.instance.getCacheDirectory().path,
         );
       }
       if (savedTwoPage != null) {
@@ -397,8 +400,10 @@ class ReaderController extends ChangeNotifier {
         _recentFiles.removeLast();
       }
 
+      RemoteImageService.instance.clearNegativeCache();
       _persistDebounced();
       _setupFileWatcher(filePath);
+      _triggerRemoteImageDownloads();
 
       // Check fast disk cache for pre-compiled PDF!
       final cachedPdf = DocumentCacheService.getCachedPdf(filePath, _renderOptions);
@@ -495,6 +500,7 @@ class ReaderController extends ChangeNotifier {
           }
           _currentMarkdown = text;
           _extractOutline(_currentMarkdown);
+          _triggerRemoteImageDownloads();
           startReloading();
           await compileDocument();
         } catch (e) {
@@ -502,6 +508,29 @@ class ReaderController extends ChangeNotifier {
         }
       }
     }
+  }
+
+  /// Manually refreshes the current document, clearing negative image cache and re-triggering downloads.
+  Future<void> refreshDocument() async {
+    RemoteImageService.instance.clearNegativeCache();
+    _triggerRemoteImageDownloads();
+    await compileDocument();
+  }
+
+  void _triggerRemoteImageDownloads() {
+    final markdownToScan = _currentMarkdown;
+    if (markdownToScan.isEmpty) return;
+
+    RemoteImageService.instance.fetchImagesInMarkdown(
+      markdownToScan,
+      onBatchReady: () {
+        if (_isDisposed) return;
+        if (_currentMarkdown != markdownToScan) return;
+        debugPrint('[ReaderController] Remote images batch downloaded, triggering progressive re-render');
+        startReloading();
+        compileDocument();
+      },
+    );
   }
 
   Future<void> compileDocument() async {

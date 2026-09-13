@@ -451,7 +451,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               onExportPdf: _handleExportPdf,
               onOpenFile: _pickAndOpenFile,
               onToggleSidebar: _toggleSidebar,
-              onCompileDocument: controller.compileDocument,
+              onCompileDocument: controller.refreshDocument,
               onToggleTheme: controller.toggleTheme,
               onToggleTwoPage: _handleToggleTwoPage,
               onZoomIn: _handleZoomIn,
@@ -744,7 +744,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                                 ),
                                 const SizedBox(width: 8),
                                 TextButton(
-                                  onPressed: controller.compileDocument,
+                                  onPressed: controller.refreshDocument,
                                   style: TextButton.styleFrom(
                                     foregroundColor: Colors.white,
                                     padding: const EdgeInsets.symmetric(horizontal: 10),

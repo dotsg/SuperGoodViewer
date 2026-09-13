@@ -35,6 +35,8 @@ pub struct RenderOptions {
     pub body_font: Option<String>,
     #[serde(default)]
     pub code_font: Option<String>,
+    #[serde(default)]
+    pub image_cache_dir: Option<String>,
 }
 
 impl Default for RenderOptions {
@@ -46,6 +48,7 @@ impl Default for RenderOptions {
             font_size: default_font_size(),
             body_font: None,
             code_font: None,
+            image_cache_dir: None,
         }
     }
 }
@@ -58,12 +61,13 @@ pub enum CompileError {
     Pdf(String),
 }
 
-pub fn compile_typst_to_pdf(
+pub fn compile_typst_to_pdf_with_options(
     typst_source: &str,
     doc_dir: impl AsRef<Path>,
     virtual_files: HashMap<PathBuf, Bytes>,
+    image_cache_dir: Option<PathBuf>,
 ) -> Result<Vec<u8>, CompileError> {
-    let world = MemoryWorld::new(typst_source, doc_dir, virtual_files);
+    let world = MemoryWorld::new_with_cache_dir(typst_source, doc_dir, virtual_files, image_cache_dir);
 
     let warned = typst::compile(&world);
     let document = warned.output.map_err(|errs| {
@@ -75,6 +79,14 @@ pub fn compile_typst_to_pdf(
         .map_err(|e| CompileError::Pdf(format!("{:?}", e)))?;
 
     Ok(pdf_bytes)
+}
+
+pub fn compile_typst_to_pdf(
+    typst_source: &str,
+    doc_dir: impl AsRef<Path>,
+    virtual_files: HashMap<PathBuf, Bytes>,
+) -> Result<Vec<u8>, CompileError> {
+    compile_typst_to_pdf_with_options(typst_source, doc_dir, virtual_files, None)
 }
 
 #[cfg(test)]
