@@ -525,6 +525,85 @@ void main() {
 
       controller.dispose();
     });
+
+    testWidgets('PdfCanvasView captures option changes across multi-frame async compile and distinguishes streaming updates', (tester) async {
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      final key = GlobalKey<PdfCanvasViewState>();
+      final bytesA = Uint8List.fromList([1, 2, 3, 4]);
+      final bytesB = Uint8List.fromList([5, 6, 7, 8]);
+      final bytesC = Uint8List.fromList([9, 10, 11, 12]);
+
+      const optInitial = RenderOptions(fontSize: 12.0);
+      const optModified = RenderOptions(fontSize: 14.0);
+
+      // Frame 0: Initial mount
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PdfCanvasView(
+            key: key,
+            pdfBytes: bytesA,
+            documentTitle: 'Doc',
+            renderOptions: optInitial,
+            isTwoPage: false,
+            controller: controller,
+          ),
+        ),
+      );
+      expect(key.currentState?.renderOptionsChanged, false);
+
+      // Frame A: User changes font size -> rebuilds with new options, but bytes are still bytesA (compiling in background)
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PdfCanvasView(
+            key: key,
+            pdfBytes: bytesA,
+            documentTitle: 'Doc',
+            renderOptions: optModified,
+            isTwoPage: false,
+            controller: controller,
+          ),
+        ),
+      );
+      // optionsChanged must be true even though bytes did not change in this frame!
+      expect(key.currentState?.renderOptionsChanged, true);
+
+      // Frame B: Background compile completes -> new bytes arrive with optModified
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PdfCanvasView(
+            key: key,
+            pdfBytes: bytesB,
+            documentTitle: 'Doc',
+            renderOptions: optModified,
+            isTwoPage: false,
+            controller: controller,
+          ),
+        ),
+      );
+      // _renderOptionsChanged must remain sticky so restoration uses ratio!
+      expect(key.currentState?.renderOptionsChanged, true);
+
+      // Simulate scroll restore having run on ready controller (clearing sticky flag)
+      key.currentState?.restoreScrollForTesting();
+
+      // Frame C: Streaming append -> new bytesC arrive with UNCHANGED options
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PdfCanvasView(
+            key: key,
+            pdfBytes: bytesC,
+            documentTitle: 'Doc',
+            renderOptions: optModified,
+            isTwoPage: false,
+            controller: controller,
+          ),
+        ),
+      );
+      // Pure streaming append must NOT trigger renderOptionsChanged (uses absolute offset)!
+      expect(key.currentState?.renderOptionsChanged, false);
+    });
   });
 }
 

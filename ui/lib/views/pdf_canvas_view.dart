@@ -823,6 +823,15 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   double _lastVisibleTop = 0.0;
   bool _lastReportedAtTop = true;
   bool _renderOptionsChanged = false;
+  bool _modeOrDocChanged = false;
+
+  @visibleForTesting
+  bool get renderOptionsChanged => _renderOptionsChanged;
+
+  @visibleForTesting
+  void restoreScrollForTesting() {
+    _renderOptionsChanged = false;
+  }
 
   PdfViewerController get _pdfController => _controllers[_activeSlot];
   double get currentZoom => _pdfController.isReady ? _pdfController.currentZoom : _currentZoom;
@@ -855,27 +864,40 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   @override
   void didUpdateWidget(PdfCanvasView oldWidget) {
     super.didUpdateWidget(oldWidget);
+
+    // Options and bytes arrive across distinct frames:
+    // Frame A: User changes font/size/theme/mode -> notifyListeners() rebuilds with new options but old bytes.
+    // Frame B: Async compilation finishes -> notifyListeners() rebuilds with new bytes.
+    // Therefore, option/mode change detection MUST run unconditionally outside the byte hash guard.
+    final optionsChanged = widget.renderOptions != oldWidget.renderOptions ||
+        widget.isTwoPage != oldWidget.isTwoPage ||
+        widget.documentTitle != oldWidget.documentTitle;
+    if (optionsChanged) {
+      _renderOptionsChanged = true;
+    }
+
+    if (widget.renderOptions.mode != oldWidget.renderOptions.mode ||
+        widget.isTwoPage != oldWidget.isTwoPage ||
+        widget.documentTitle != oldWidget.documentTitle) {
+      _modeOrDocChanged = true;
+    }
+
     final newBytes = widget.pdfBytes;
     if (newBytes == null || newBytes.isEmpty) return;
 
     if (_slotBytes[_activeSlot] == null) {
       _slotBytes[_activeSlot] = newBytes;
       _slotDocHash[_activeSlot] = newBytes.hashCode;
+      _modeOrDocChanged = false;
       setState(() {});
       return;
     }
 
     if (newBytes.hashCode != _slotDocHash[_activeSlot]) {
-      final optionsChanged = widget.renderOptions != oldWidget.renderOptions ||
-          widget.isTwoPage != oldWidget.isTwoPage ||
-          widget.documentTitle != oldWidget.documentTitle;
-      if (optionsChanged) {
-        _renderOptionsChanged = true;
-      }
+      final isDirectReload = _modeOrDocChanged;
+      _modeOrDocChanged = false;
 
-      if (widget.renderOptions.mode != oldWidget.renderOptions.mode ||
-          widget.isTwoPage != oldWidget.isTwoPage ||
-          widget.documentTitle != oldWidget.documentTitle) {
+      if (isDirectReload) {
         // Mode change or different document opened: direct reload
         _cleanupTimer?.cancel();
         _activeSlot = 0;
