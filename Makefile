@@ -4,7 +4,7 @@ else
   FLUTTER ?= flutter
 endif
 
-.PHONY: all build build-core build-app build-windows test test-core test-app bench benchmark clean run-macos run-windows dmg package-windows
+.PHONY: all build build-core build-app build-windows build-windows-arm64 test test-core test-app bench benchmark clean run-macos run-windows dmg package-windows package-windows-arm64
 
 all: build test
 
@@ -75,6 +75,23 @@ package-windows: build-windows
 	@echo "==> Packaging Windows portable release..."
 	@powershell -Command "New-Item -ItemType Directory -Force -Path dist; Compress-Archive -Force -Path 'ui/build/windows/x64/runner/Release/*' -DestinationPath 'dist/SuperGoodViewer-windows-x64.zip'"
 	@echo "==> Package created: dist/SuperGoodViewer-windows-x64.zip"
+
+build-windows-arm64:
+	@echo "==> Building Rust sogood_core for aarch64-pc-windows-msvc..."
+	@cd core && cargo build --release --lib --target aarch64-pc-windows-msvc
+	@echo "==> Configuring and building Flutter Windows ARM64 target..."
+	@cmake -S ui/windows -B ui/build/windows_arm64 -G "Visual Studio 17 2022" -A ARM64 -DFLUTTER_TARGET_PLATFORM=windows-arm64
+	@cmake --build ui/build/windows_arm64 --config Release --target INSTALL
+	@echo "==> Injecting Rust ARM64 DLL & CLI scripts into Windows ARM64 bundle..."
+	@cp core/target/aarch64-pc-windows-msvc/release/sogood_core.dll ui/build/windows_arm64/runner/Release/
+	@cp ui/bin/sgv.cmd ui/build/windows_arm64/runner/Release/
+	@cp ui/bin/sgv.ps1 ui/build/windows_arm64/runner/Release/
+	@echo "==> Windows ARM64 build complete! Output: ui/build/windows_arm64/runner/Release/"
+
+package-windows-arm64: build-windows-arm64
+	@echo "==> Packaging Windows ARM64 portable release..."
+	@powershell -Command "New-Item -ItemType Directory -Force -Path dist; Compress-Archive -Force -Path 'ui/build/windows_arm64/runner/Release/*' -DestinationPath 'dist/SuperGoodViewer-windows-arm64.zip'"
+	@echo "==> Package created: dist/SuperGoodViewer-windows-arm64.zip"
 
 dmg: build
 	@echo "==> Preparing macOS DMG staging folder..."
