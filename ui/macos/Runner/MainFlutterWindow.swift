@@ -3,7 +3,9 @@ import FlutterMacOS
 
 class MainFlutterWindow: NSWindow {
   override func awakeFromNib() {
-    let flutterViewController = FlutterViewController()
+    let project = FlutterDartProject()
+    project.dartEntrypointArguments = Array(ProcessInfo.processInfo.arguments.dropFirst())
+    let flutterViewController = FlutterViewController(project: project)
     var windowFrame = self.frame
     windowFrame.size = NSSize(width: 1080, height: 750)
     self.contentViewController = flutterViewController

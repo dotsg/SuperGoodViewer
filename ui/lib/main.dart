@@ -6,7 +6,14 @@ import 'services/startup_metrics.dart';
 void main(List<String> args) {
   StartupMetrics.begin();
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(SuperGoodViewerApp(initialFile: args.isNotEmpty ? args.first : null));
+  String? targetFile;
+  for (final arg in args) {
+    if (arg != '--args' && !arg.startsWith('-')) {
+      targetFile = arg;
+      break;
+    }
+  }
+  runApp(SuperGoodViewerApp(initialFile: targetFile));
 }
 
 class SuperGoodViewerApp extends StatefulWidget {

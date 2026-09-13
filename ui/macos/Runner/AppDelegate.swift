@@ -31,14 +31,51 @@ class AppDelegate: FlutterAppDelegate {
     }
   }
 
-  override func application(_ sender: NSApplication, openFiles filenames: [String]) {
-    guard let file = filenames.first else { return }
-    if let channel = appChannel {
-      channel.invokeMethod("onOpenFile", arguments: file)
-    } else {
-      pendingFileToOpen = file
-    }
+  override func application(_ sender: NSApplication, openFile filename: String) -> Bool {
+    NSLog("[SuperGoodViewer] application openFile: %@", filename)
+    handleOpenFile(filename)
     sender.activate(ignoringOtherApps: true)
+    return true
+  }
+
+  override func application(_ sender: NSApplication, openFiles filenames: [String]) {
+    NSLog("[SuperGoodViewer] application openFiles count: %d", filenames.count)
+    for file in filenames {
+      handleOpenFile(file)
+    }
+    sender.reply(toOpenOrPrint: .success)
+    sender.activate(ignoringOtherApps: true)
+  }
+
+  override func application(_ application: NSApplication, open urls: [URL]) {
+    NSLog("[SuperGoodViewer] application open urls: %@", urls)
+    for url in urls {
+      if url.scheme == "sgv" || url.scheme == "supergoodviewer" {
+        if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           let path = components.queryItems?.first(where: { $0.name == "path" })?.value {
+          handleOpenFile(path)
+          continue
+        }
+        if !url.path.isEmpty {
+          handleOpenFile(url.path)
+          continue
+        }
+      }
+      if url.isFileURL {
+        handleOpenFile(url.path)
+      }
+    }
+    application.activate(ignoringOtherApps: true)
+  }
+
+  private func handleOpenFile(_ path: String) {
+    let cleanPath = (path as NSString).standardizingPath
+    NSLog("[SuperGoodViewer] handleOpenFile target: %@", cleanPath)
+    if let channel = appChannel {
+      channel.invokeMethod("onOpenFile", arguments: cleanPath)
+    } else {
+      pendingFileToOpen = cleanPath
+    }
   }
 
   func registerMessenger(_ messenger: FlutterBinaryMessenger) {
@@ -259,13 +296,20 @@ class AppDelegate: FlutterAppDelegate {
     exit 0
   fi
 
+  SOCK_FILE="/tmp/sgv_${USER:-user}.sock"
+
   if [ $# -eq 0 ]; then
     open -a "$APP_DIR"
   else
     for f in "$@"; do
       if [ -e "$f" ]; then
         ABS_PATH="$(cd "$(dirname "$f")" && pwd)/$(basename "$f")"
-        open -a "$APP_DIR" "$ABS_PATH"
+        if [ -S "$SOCK_FILE" ]; then
+          echo "$ABS_PATH" | nc -U -w 1 "$SOCK_FILE" >/dev/null 2>&1
+          open -a "$APP_DIR"
+        else
+          open -a "$APP_DIR" "$ABS_PATH" --args "$ABS_PATH"
+        fi
       else
         echo "sgv: error: file not found: $f" >&2
         exit 1

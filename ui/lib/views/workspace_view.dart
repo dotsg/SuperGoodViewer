@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../controllers/reader_controller.dart';
+import '../services/cli_ipc_service.dart';
 import '../services/native_cli_service.dart';
 import 'cli_tools_dialog.dart';
 import 'font_settings_dialog.dart';
@@ -46,6 +47,11 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     widget.controller.addListener(_onControllerChanged);
     NativeCliService.channel.setMethodCallHandler(_handleNativeMethodCall);
     _checkInitialFileFromSystem();
+    CliIpcService.start((filePath) {
+      if (mounted) {
+        widget.controller.openFile(filePath);
+      }
+    });
   }
 
   Future<void> _handleNativeMethodCall(MethodCall call) async {
@@ -78,6 +84,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
   @override
   void dispose() {
+    CliIpcService.stop();
     NativeCliService.channel.setMethodCallHandler(null);
     widget.controller.removeListener(_onControllerChanged);
     _toolbarTimer?.cancel();

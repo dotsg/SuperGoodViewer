@@ -3,7 +3,7 @@
 # sgv - SuperGoodViewer (超好读) Command Line Launcher
 # ==============================================================================
 
-# 1. Resolve symlink chain to locate the physical script directory
+# 1. Resolve symlink chain to locate physical script directory
 SOURCE="${BASH_SOURCE[0]}"
 while [ -L "$SOURCE" ]; do
   DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
@@ -13,7 +13,6 @@ done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
 
 # 2. Locate the SuperGoodViewer.app bundle
-# Standard location: SuperGoodViewer.app/Contents/Resources/bin/sgv
 APP_DIR="$(cd "$SCRIPT_DIR/../../.." >/dev/null 2>&1 && pwd)"
 
 if [ ! -d "$APP_DIR" ] || [[ "$APP_DIR" != *".app" ]]; then
@@ -39,6 +38,8 @@ if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
   exit 0
 fi
 
+SOCK_FILE="/tmp/sgv_${USER:-user}.sock"
+
 # 4. Open application or files
 if [ $# -eq 0 ]; then
   open -a "$APP_DIR"
@@ -46,7 +47,15 @@ else
   for f in "$@"; do
     if [ -e "$f" ]; then
       ABS_PATH="$(cd "$(dirname "$f")" && pwd)/$(basename "$f")"
-      open -a "$APP_DIR" "$ABS_PATH"
+
+      # If SuperGoodViewer is already running, send file via local IPC socket for instant loading
+      if [ -S "$SOCK_FILE" ]; then
+        echo "$ABS_PATH" | nc -U -w 1 "$SOCK_FILE" >/dev/null 2>&1
+        open -a "$APP_DIR"
+      else
+        # Cold start: launch app passing both document argument and --args
+        open -a "$APP_DIR" "$ABS_PATH" --args "$ABS_PATH"
+      fi
     else
       echo "sgv: error: file not found: $f" >&2
       exit 1
