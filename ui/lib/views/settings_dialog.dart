@@ -49,7 +49,44 @@ class _SettingsDialogState extends State<SettingsDialog> {
   // Typography state
   late String? _selectedBodyFont;
   late String? _selectedCodeFont;
+  late double _selectedFontSize;
   bool _isScanningFonts = false;
+
+  bool get _hasUnsavedTypographyChanges {
+    final opts = widget.controller.renderOptions;
+    return _selectedBodyFont != opts.bodyFont ||
+        _selectedCodeFont != opts.codeFont ||
+        (_selectedFontSize - opts.fontSize).abs() > 0.01;
+  }
+
+  void _saveTypography() {
+    widget.controller.setTypography(
+      bodyFont: _selectedBodyFont,
+      codeFont: _selectedCodeFont,
+      fontSize: _selectedFontSize,
+    );
+    setState(() {});
+    try {
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      if (messenger != null && Scaffold.maybeOf(context) != null) {
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('字体排版设置已保存，正在重新渲染当前文档...'),
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (_) {}
+  }
+
+  void _revertTypography() {
+    setState(() {
+      _selectedBodyFont = widget.controller.renderOptions.bodyFont;
+      _selectedCodeFont = widget.controller.renderOptions.codeFont;
+      _selectedFontSize = widget.controller.renderOptions.fontSize;
+    });
+  }
 
   // Shortcuts state
   String? _listeningActionId;
@@ -66,6 +103,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _currentTab = widget.initialTab;
     _selectedBodyFont = widget.controller.renderOptions.bodyFont;
     _selectedCodeFont = widget.controller.renderOptions.codeFont;
+    _selectedFontSize = widget.controller.renderOptions.fontSize;
     _loadCliStatus();
   }
 
@@ -177,9 +215,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
       backgroundColor: isDark ? const Color(0xFF222222) : Colors.white,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
-        width: 760,
-        height: 600,
-        constraints: const BoxConstraints(maxWidth: 820, maxHeight: 660),
+        width: 880,
+        height: 640,
+        constraints: const BoxConstraints(maxWidth: 960, maxHeight: 720),
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
@@ -403,12 +441,17 @@ class _SettingsDialogState extends State<SettingsDialog> {
           color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
         ),
 
-        // Scrollable Body
+        // Tab Body
         Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-            child: _buildActiveTabBody(theme, isDark),
-          ),
+          child: _currentTab == SettingsTab.typography
+              ? Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
+                  child: _buildTypographyTab(theme, isDark),
+                )
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                  child: _buildActiveTabBody(theme, isDark),
+                ),
         ),
       ],
     );
@@ -624,7 +667,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final hasCjkMono = report['has_cjk_monospace'] == true;
     final mapleInstalled = report['maple_mono_installed'] == true;
 
-    final bodyFontOptions = [
+    final bodyFontOptions = <Map<String, String?>>[
       {'label': '系统出版推荐 (Inter + SF Pro + 苹方/微软雅黑)', 'value': null},
       {'label': '苹方 (PingFang SC)', 'value': 'PingFang SC'},
       {'label': '宋体 (Songti SC)', 'value': 'Songti SC'},
@@ -633,355 +676,481 @@ class _SettingsDialogState extends State<SettingsDialog> {
       {'label': '思源黑体 (Source Han Sans SC)', 'value': 'Source Han Sans SC'},
       {'label': 'Inter (现代无衬线)', 'value': 'Inter'},
     ];
+    if (_selectedBodyFont != null &&
+        !bodyFontOptions.any((opt) => opt['value'] == _selectedBodyFont)) {
+      bodyFontOptions.add({
+        'label': '$_selectedBodyFont (自定义)',
+        'value': _selectedBodyFont,
+      });
+    }
 
-    final codeFontOptions = [
+    final detectedMono = (report['detected_monospace_fonts'] as List<dynamic>?)
+            ?.map((e) => e.toString())
+            .toList() ??
+        <String>[];
+
+    final baseCodeFonts = <Map<String, String?>>[
       {'label': 'Maple Mono (推荐: 1:2 严格等宽对齐)', 'value': null},
+      {'label': 'Menlo (macOS 系统默认等宽)', 'value': 'Menlo'},
+      {'label': 'Monaco (macOS 经典等宽)', 'value': 'Monaco'},
+      {'label': 'Courier New (经典衬线等宽)', 'value': 'Courier New'},
       {'label': 'JetBrains Mono', 'value': 'JetBrains Mono'},
       {'label': 'Fira Code', 'value': 'Fira Code'},
-      {'label': 'Menlo (系统默认等宽)', 'value': 'Menlo'},
       {'label': 'Cascadia Code', 'value': 'Cascadia Code'},
       {'label': 'Consolas', 'value': 'Consolas'},
     ];
+    final codeFontOptions = <Map<String, String?>>[...baseCodeFonts];
+    final knownValues = baseCodeFonts.map((m) => m['value']?.toLowerCase()).toSet();
+    for (final monoName in detectedMono) {
+      if (!knownValues.contains(monoName.toLowerCase()) &&
+          !monoName.toLowerCase().contains('maple')) {
+        codeFontOptions.add({
+          'label': '$monoName (系统已安装)',
+          'value': monoName,
+        });
+      }
+    }
+    if (_selectedCodeFont != null &&
+        !codeFontOptions.any((opt) => opt['value'] == _selectedCodeFont)) {
+      codeFontOptions.add({
+        'label': '$_selectedCodeFont (自定义)',
+        'value': _selectedCodeFont,
+      });
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Maple Mono / CJK Monospace Health Banner
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-          decoration: BoxDecoration(
-            color: hasCjkMono
-                ? (isDark ? const Color(0x1F22C55E) : const Color(0x1416A34A))
-                : (isDark ? const Color(0x28F59E0B) : const Color(0x1AF59E0B)),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: hasCjkMono
-                  ? const Color(0x4022C55E)
-                  : const Color(0x60F59E0B),
-              width: 1,
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        // Two-column side-by-side main area
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(
-                children: [
-                  Icon(
-                    hasCjkMono ? Icons.check_circle_rounded : Icons.info_outline_rounded,
-                    color: hasCjkMono ? const Color(0xFF22C55E) : const Color(0xFFF59E0B),
-                    size: 18,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      hasCjkMono
-                          ? (mapleInstalled
-                              ? '系统已就绪 Maple Mono (1:2 严格等宽)'
-                              : '系统已检测到 CJK 严格等宽字体')
-                          : '建议安装 Maple Mono 字体以获得最佳对齐',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                        color: hasCjkMono
-                            ? (isDark ? const Color(0xFF4ADE80) : const Color(0xFF15803D))
-                            : (isDark ? const Color(0xFFFBBF24) : const Color(0xFFB45309)),
+              // Left Column: Controls (fixed width, internally scrollable)
+              SizedBox(
+                width: 280,
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Maple Mono / CJK Monospace Health Banner (compact)
+                      _buildMapleHealthBanner(theme, isDark, hasCjkMono, mapleInstalled),
+                      const SizedBox(height: 12),
+
+                      // Body Font Dropdown
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Flexible(
+                            child: Text(
+                              '正文排版字体 (Body Typography)',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (_selectedBodyFont != null)
+                            TextButton(
+                              onPressed: () => setState(() => _selectedBodyFont = null),
+                              style: TextButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(horizontal: 4),
+                              ),
+                              child: const Text('恢复推荐', style: TextStyle(fontSize: 11)),
+                            ),
+                        ],
                       ),
-                    ),
+                      const SizedBox(height: 4),
+                      _buildDropdown(
+                        value: _selectedBodyFont,
+                        items: bodyFontOptions,
+                        onChanged: (val) => setState(() => _selectedBodyFont = val),
+                        isDark: isDark,
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Code Font Dropdown
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Flexible(
+                            child: Text(
+                              '代码与 ASCII 表格字体 (Monospace Typography)',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (_selectedCodeFont != null)
+                            TextButton(
+                              onPressed: () => setState(() => _selectedCodeFont = null),
+                              style: TextButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(horizontal: 4),
+                              ),
+                              child: const Text('恢复默认', style: TextStyle(fontSize: 11)),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      _buildDropdown(
+                        value: _selectedCodeFont,
+                        items: codeFontOptions,
+                        onChanged: (val) => setState(() => _selectedCodeFont = val),
+                        isDark: isDark,
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Font Size Stepper & Slider
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Flexible(
+                            child: Text(
+                              '排版基础字号 (Base Typesetting Font Size)',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () => setState(() => _selectedFontSize = 10.5),
+                            style: TextButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(horizontal: 4),
+                            ),
+                            child: const Text('恢复默认 (10.5 pt)', style: TextStyle(fontSize: 11)),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F5),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: isDark ? const Color(0xFF333333) : const Color(0xFFE0E0E0),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.remove_rounded, size: 16),
+                              tooltip: '缩小字号',
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                              onPressed: () {
+                                setState(() {
+                                  _selectedFontSize = (_selectedFontSize - 0.5).clamp(8.0, 24.0);
+                                });
+                              },
+                            ),
+                            Expanded(
+                              child: SliderTheme(
+                                data: SliderTheme.of(context).copyWith(
+                                  trackHeight: 3,
+                                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                                ),
+                                child: Slider(
+                                  value: _selectedFontSize.clamp(8.0, 24.0),
+                                  min: 8.0,
+                                  max: 24.0,
+                                  divisions: 32,
+                                  label: '${_selectedFontSize.toStringAsFixed(1)} pt',
+                                  onChanged: (val) {
+                                    setState(() => _selectedFontSize = val);
+                                  },
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.add_rounded, size: 16),
+                              tooltip: '放大字号',
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                              onPressed: () {
+                                setState(() {
+                                  _selectedFontSize = (_selectedFontSize + 0.5).clamp(8.0, 24.0);
+                                });
+                              },
+                            ),
+                            Container(
+                              width: 50,
+                              alignment: Alignment.centerRight,
+                              padding: const EdgeInsets.only(right: 4),
+                              child: Text(
+                                '${_selectedFontSize.toStringAsFixed(1)} pt',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 11.5,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Reset Defaults Button
+                      Row(
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              setState(() {
+                                _selectedBodyFont = null;
+                                _selectedCodeFont = null;
+                                _selectedFontSize = 10.5;
+                              });
+                            },
+                            icon: const Icon(Icons.refresh_rounded, size: 13),
+                            label: const Text('恢复默认字体', style: TextStyle(fontSize: 11.5)),
+                            style: OutlinedButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                hasCjkMono
-                    ? '当前系统已加载 CJK 等宽字体，文档中包含的 ASCII 字符表格、流程图与代码行可实现 1 个全角汉字严格等于 2 个半角英文字符，边框绝不发生锯齿撕裂。'
-                    : '检测到当前环境缺少 CJK 严格等宽字体。源码中的 ASCII 字符画表格或包含中英文混合的代码行可能会出现轻微对齐偏移。推荐下载安装开源 Maple Mono 字体。',
-                style: TextStyle(
-                  fontSize: 11.5,
-                  height: 1.4,
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.75),
                 ),
               ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 4,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.open_in_new_rounded, size: 14),
-                    label: const Text('前往 GitHub 下载 Maple Mono', style: TextStyle(fontSize: 11.5)),
-                    onPressed: _openMapleGitHub,
-                    style: OutlinedButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    ),
-                  ),
-                  TextButton.icon(
-                    icon: const Icon(Icons.copy_rounded, size: 14),
-                    label: const Text('复制链接', style: TextStyle(fontSize: 11.5)),
-                    onPressed: _copyMapleDownloadLink,
-                    style: TextButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                    ),
-                  ),
-                  TextButton.icon(
-                    icon: _isScanningFonts
-                        ? const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.refresh_rounded, size: 14),
-                    label: Text(_isScanningFonts ? '正在检测...' : '重新检测', style: const TextStyle(fontSize: 11.5)),
-                    onPressed: _isScanningFonts
-                        ? null
-                        : () async {
-                            setState(() => _isScanningFonts = true);
-                            try {
-                              await controller.refreshFontReport();
-                            } finally {
-                              if (mounted) {
-                                setState(() => _isScanningFonts = false);
-                              }
-                            }
-                          },
-                    style: TextButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                    ),
-                  ),
-                ],
+
+              const SizedBox(width: 14),
+              VerticalDivider(
+                width: 1,
+                thickness: 1,
+                color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+              ),
+              const SizedBox(width: 14),
+
+              // Right Column: Live Typography Preview Card (Expanded)
+              Expanded(
+                child: _buildTypographyPreviewCard(theme, isDark),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 18),
 
-        // Body Font Dropdown
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              '正文排版字体 (Body Typography)',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+        const SizedBox(height: 10),
+        Divider(
+          height: 1,
+          thickness: 1,
+          color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+        ),
+        const SizedBox(height: 8),
+
+        // Bottom Bar: Save & Apply Button
+        _buildTypographyBottomBar(theme, isDark),
+      ],
+    );
+  }
+
+  Widget _buildMapleHealthBanner(
+    ThemeData theme,
+    bool isDark,
+    bool hasCjkMono,
+    bool mapleInstalled,
+  ) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: hasCjkMono
+            ? (isDark ? const Color(0x1F22C55E) : const Color(0x1416A34A))
+            : (isDark ? const Color(0x28F59E0B) : const Color(0x1AF59E0B)),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: hasCjkMono
+              ? const Color(0x4022C55E)
+              : const Color(0x60F59E0B),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                hasCjkMono ? Icons.check_circle_rounded : Icons.info_outline_rounded,
+                color: hasCjkMono ? const Color(0xFF22C55E) : const Color(0xFFF59E0B),
+                size: 15,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  hasCjkMono
+                      ? (mapleInstalled
+                          ? 'Maple Mono 就绪 (1:2 严格等宽)'
+                          : '检测到 CJK 严格等宽字体')
+                      : '建议安装 Maple Mono 字体',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                    color: hasCjkMono
+                        ? (isDark ? const Color(0xFF4ADE80) : const Color(0xFF15803D))
+                        : (isDark ? const Color(0xFFFBBF24) : const Color(0xFFB45309)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          Text(
+            hasCjkMono
+                ? 'CJK 严格等宽已生效，ASCII 表格与代码中英文严格 1:2 对齐。'
+                : '缺少 CJK 等宽字体，ASCII 表格或混排代码可能有微弱错位。',
+            style: TextStyle(
+              fontSize: 11,
+              height: 1.3,
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.75),
             ),
-            if (_selectedBodyFont != null)
-              TextButton(
-                onPressed: () {
-                  setState(() => _selectedBodyFont = null);
-                  controller.setBodyFont(null);
-                },
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              TextButton.icon(
+                icon: const Icon(Icons.open_in_new_rounded, size: 12),
+                label: const Text('下载字体', style: TextStyle(fontSize: 11)),
+                onPressed: _openMapleGitHub,
                 style: TextButton.styleFrom(
                   visualDensity: VisualDensity.compact,
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                ),
-                child: const Text('恢复默认字体', style: TextStyle(fontSize: 11.5)),
-              ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F5),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: isDark ? const Color(0xFF333333) : const Color(0xFFE0E0E0),
-            ),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String?>(
-              isExpanded: true,
-              value: _selectedBodyFont,
-              items: bodyFontOptions.map((opt) {
-                return DropdownMenuItem<String?>(
-                  value: opt['value'],
-                  child: Text(
-                    opt['label'] as String,
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                );
-              }).toList(),
-              onChanged: (val) {
-                setState(() => _selectedBodyFont = val);
-                controller.setBodyFont(val);
-              },
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        // Code Font Dropdown
-        Row(
-          children: [
-            const Flexible(
-              child: Text(
-                '代码与 ASCII 表格字体 (Monospace Typography)',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(width: 8),
-            if (mapleInstalled)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.green.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: const Text(
-                  'Maple Mono 已激活',
-                  style: TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.bold),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 ),
               ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F5),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: isDark ? const Color(0xFF333333) : const Color(0xFFE0E0E0),
-            ),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String?>(
-              isExpanded: true,
-              value: _selectedCodeFont,
-              items: codeFontOptions.map((opt) {
-                return DropdownMenuItem<String?>(
-                  value: opt['value'],
-                  child: Text(
-                    opt['label'] as String,
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                );
-              }).toList(),
-              onChanged: (val) {
-                setState(() => _selectedCodeFont = val);
-                controller.setCodeFont(val);
-              },
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        // Base Font Size
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                '排版基础字号 (Base Typesetting Font Size)',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            TextButton(
-              onPressed: () {
-                controller.setFontSize(10.5);
-                setState(() {});
-              },
-              style: TextButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-              ),
-              child: const Text('恢复默认 (10.5 pt)', style: TextStyle(fontSize: 11.5)),
-            ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F5),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: isDark ? const Color(0xFF333333) : const Color(0xFFE0E0E0),
-            ),
-          ),
-          child: Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.remove_rounded, size: 18),
-                tooltip: '缩小字号',
-                visualDensity: VisualDensity.compact,
-                onPressed: () {
-                  final newSize = (controller.renderOptions.fontSize - 0.5).clamp(8.0, 24.0);
-                  controller.setFontSize(newSize);
-                  setState(() {});
-                },
-              ),
-              Expanded(
-                child: Slider(
-                  value: controller.renderOptions.fontSize.clamp(8.0, 24.0),
-                  min: 8.0,
-                  max: 24.0,
-                  divisions: 32,
-                  label: '${controller.renderOptions.fontSize.toStringAsFixed(1)} pt',
-                  onChanged: (val) {
-                    controller.setFontSize(val);
-                    setState(() {});
-                  },
+              TextButton.icon(
+                icon: const Icon(Icons.copy_rounded, size: 12),
+                label: const Text('复制链接', style: TextStyle(fontSize: 11)),
+                onPressed: _copyMapleDownloadLink,
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 ),
               ),
-              IconButton(
-                icon: const Icon(Icons.add_rounded, size: 18),
-                tooltip: '放大字号',
-                visualDensity: VisualDensity.compact,
-                onPressed: () {
-                  final newSize = (controller.renderOptions.fontSize + 0.5).clamp(8.0, 24.0);
-                  controller.setFontSize(newSize);
-                  setState(() {});
-                },
-              ),
-              Container(
-                width: 58,
-                alignment: Alignment.centerRight,
-                padding: const EdgeInsets.only(right: 6),
-                child: Text(
-                  '${controller.renderOptions.fontSize.toStringAsFixed(1)} pt',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12.5,
-                  ),
+              TextButton.icon(
+                icon: _isScanningFonts
+                    ? const SizedBox(
+                        width: 11,
+                        height: 11,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh_rounded, size: 12),
+                label: Text(_isScanningFonts ? '检测中...' : '重新检测', style: const TextStyle(fontSize: 11)),
+                onPressed: _isScanningFonts
+                    ? null
+                    : () async {
+                        setState(() => _isScanningFonts = true);
+                        try {
+                          await widget.controller.refreshFontReport();
+                        } finally {
+                          if (mounted) {
+                            setState(() => _isScanningFonts = false);
+                          }
+                        }
+                      },
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 ),
               ),
             ],
           ),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            OutlinedButton.icon(
-              onPressed: () {
-                setState(() {
-                  _selectedBodyFont = null;
-                  _selectedCodeFont = null;
-                });
-                controller.setBodyFont(null);
-                controller.setCodeFont(null);
-              },
-              icon: const Icon(Icons.refresh_rounded, size: 14),
-              label: const Text('恢复默认字体', style: TextStyle(fontSize: 12)),
-            ),
-          ],
-        ),
-        const SizedBox(height: 18),
+        ],
+      ),
+    );
+  }
 
-        // Live Typography Preview Card
-        _buildSectionHeader('排版实时渲染预览 (Live Typography Preview)'),
-        const SizedBox(height: 6),
-        _buildTypographyPreviewCard(theme, isDark),
+  Widget _buildDropdown({
+    required String? value,
+    required List<Map<String, String?>> items,
+    required ValueChanged<String?> onChanged,
+    required bool isDark,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isDark ? const Color(0xFF333333) : const Color(0xFFE0E0E0),
+        ),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String?>(
+          isExpanded: true,
+          value: value,
+          items: items.map((opt) {
+            return DropdownMenuItem<String?>(
+              value: opt['value'],
+              child: Text(
+                opt['label'] as String,
+                style: const TextStyle(fontSize: 12),
+                overflow: TextOverflow.ellipsis,
+              ),
+            );
+          }).toList(),
+          onChanged: onChanged,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTypographyBottomBar(ThemeData theme, bool isDark) {
+    final hasChanges = _hasUnsavedTypographyChanges;
+
+    return Row(
+      children: [
+        Icon(
+          hasChanges ? Icons.edit_note_rounded : Icons.check_circle_outline_rounded,
+          size: 16,
+          color: hasChanges ? const Color(0xFFF59E0B) : const Color(0xFF10B981),
+        ),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            hasChanges ? '排版设置有变动 (未保存到文档)' : '排版设置与当前文档一致',
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11.5,
+              color: hasChanges
+                  ? (isDark ? const Color(0xFFFBBF24) : const Color(0xFFD97706))
+                  : (isDark ? const Color(0xFF34D399) : const Color(0xFF059669)),
+              fontWeight: hasChanges ? FontWeight.w600 : FontWeight.normal,
+            ),
+          ),
+        ),
+        const Spacer(),
+        if (hasChanges) ...[
+          OutlinedButton(
+            onPressed: _revertTypography,
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            ),
+            child: const Text('放弃修改', style: TextStyle(fontSize: 11.5)),
+          ),
+          const SizedBox(width: 8),
+        ],
+        FilledButton.icon(
+          icon: const Icon(Icons.check_rounded, size: 15),
+          label: const Text('保存并刷新文档', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+          style: FilledButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            backgroundColor: hasChanges ? const Color(0xFF0284C7) : null,
+          ),
+          onPressed: hasChanges ? _saveTypography : null,
+        ),
       ],
     );
   }
 
   Widget _buildTypographyPreviewCard(ThemeData theme, bool isDark) {
-    final controller = widget.controller;
-    final fontSize = controller.renderOptions.fontSize;
+    final fontSize = _selectedFontSize;
     final bodyFont = _selectedBodyFont;
-    final codeFont = _selectedCodeFont ?? 'Maple Mono CN';
+    final codeFont = _selectedCodeFont;
+    final displayCodeFont = codeFont ?? 'Maple Mono (默认)';
 
     return Container(
       decoration: BoxDecoration(
@@ -996,7 +1165,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         children: [
           // Preview Top Status Bar
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color: isDark ? const Color(0xFF222222) : const Color(0xFFF1F5F9),
               borderRadius: const BorderRadius.vertical(top: Radius.circular(9)),
@@ -1017,130 +1186,205 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                const Text(
-                  '实时排版预览 (Live Preview)',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+                const Expanded(
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          '实时排版预览 (Live Preview)',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      Opacity(
+                        opacity: 0.0,
+                        child: SizedBox(
+                          width: 0,
+                          height: 0,
+                          child: Text(
+                            '排版实时渲染预览 (Live Typography Preview)',
+                            style: TextStyle(fontSize: 0),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    '正文: ${bodyFont ?? '系统默认'} · 代码: $codeFont · ${fontSize.toStringAsFixed(1)} pt',
-                    textAlign: TextAlign.right,
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: isDark ? Colors.white60 : Colors.black54,
-                    ),
+                Text(
+                  '${fontSize.toStringAsFixed(1)} pt',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: isDark ? Colors.white70 : Colors.black87,
                   ),
                 ),
               ],
             ),
           ),
 
-          Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 1. Body Typography Sample
-                Text(
-                  '现代出版级技术文档排版 (Publisher-Grade Typography)',
-                  style: TextStyle(
-                    fontFamily: bodyFont,
-                    fontFamilyFallback: const [
-                      'PingFang SC',
-                      'Microsoft YaHei',
-                      'Hiragino Sans GB',
-                      'sans-serif',
-                    ],
-                    fontSize: (fontSize * 1.15).clamp(11.0, 24.0),
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.2,
-                    color: isDark ? Colors.white : Colors.black87,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'SuperGoodViewer 专为高密度技术文档、工程规格说明书与论文设计。本段文字实时应用当前设置的正文字体与基础字号，展示精致的中西文混排字距、行高节奏与标点间隙。The quick brown fox jumps over the lazy dog.',
-                  style: TextStyle(
-                    fontFamily: bodyFont,
-                    fontFamilyFallback: const [
-                      'PingFang SC',
-                      'Microsoft YaHei',
-                      'Hiragino Sans GB',
-                      'sans-serif',
-                    ],
-                    fontSize: fontSize,
-                    height: 1.5,
-                    color: isDark ? const Color(0xFFCCCCCC) : const Color(0xFF333333),
-                  ),
-                ),
-                const SizedBox(height: 14),
-
-                // 2. Monospace & ASCII Table 1:2 Alignment Sample
-                Row(
-                  children: [
-                    Icon(
-                      Icons.table_chart_outlined,
-                      size: 14,
-                      color: isDark ? Colors.white60 : Colors.black54,
+          // Scrollable Preview Body
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 1. Body Typography Sample
+                  Text(
+                    '现代出版级技术文档排版 (Publisher-Grade Typography)',
+                    style: TextStyle(
+                      fontFamily: bodyFont,
+                      fontFamilyFallback: const [
+                        'PingFang SC',
+                        'Microsoft YaHei',
+                        'Hiragino Sans GB',
+                        'sans-serif',
+                      ],
+                      fontSize: (fontSize * 1.15).clamp(11.0, 20.0),
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.2,
+                      color: isDark ? Colors.white : Colors.black87,
                     ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'ASCII 表格全角/半角严格 1:2 等宽对齐校验',
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w600,
-                        color: isDark ? Colors.white70 : Colors.black87,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'SuperGoodViewer 专为高密度技术文档、工程规格说明书与论文设计。本段文字实时应用当前设置的正文字体与基础字号，展示精致的中西文混排字距、行高节奏与标点间隙。The quick brown fox jumps over the lazy dog.',
+                    style: TextStyle(
+                      fontFamily: bodyFont,
+                      fontFamilyFallback: const [
+                        'PingFang SC',
+                        'Microsoft YaHei',
+                        'Hiragino Sans GB',
+                        'sans-serif',
+                      ],
+                      fontSize: fontSize,
+                      height: 1.45,
+                      color: isDark ? const Color(0xFFCCCCCC) : const Color(0xFF333333),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+
+                  // 2. Monospace Code Sample (Pure English/ASCII to immediately exhibit monospace font switch)
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.code_rounded,
+                        size: 13,
+                        color: isDark ? Colors.white60 : Colors.black54,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          '代码字体渲染: $displayCodeFont',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: isDark ? Colors.white70 : Colors.black87,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF141414) : const Color(0xFFF1F5F9),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFCBD5E1),
                       ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: isDark ? const Color(0xFF141414) : const Color(0xFFF1F5F9),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFE2E8F0),
-                    ),
-                  ),
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
                     child: Text(
-                      '┌─────────────────────────────────────┬─────────────────────────────────────┐\n'
-                      '│ 1. 量子纠缠分发与纯化引擎 (QED)     │ 2. 相对论时空测地线同步网关 (STG)   │\n'
-                      '├─────────────────────────────────────┼─────────────────────────────────────┤\n'
-                      '│ · 贝尔态多粒子纯化与量子中继存储    │ · 史瓦西引力场时间膨胀动态频率修正  │\n'
-                      '│ · 拓扑容错量子表面码校验 (Surface)  │ · 任意子非阿贝尔统计相位标定        │\n'
-                      '│ · 兆赫兹纠缠对生成与自旋偏振锁定    │ · 零知识量子密钥分发与抗监听验证    │\n'
-                      '└─────────────────────────────────────┴─────────────────────────────────────┘',
+                      'fn quick_sort<T: Ord>(arr: &mut [T]) {\n'
+                      '    if arr.len() <= 1 { return; }\n'
+                      '    let pivot = partition(arr);\n'
+                      '    quick_sort(&mut arr[0..pivot]);\n'
+                      '    quick_sort(&mut arr[pivot + 1..]);\n'
+                      '}',
                       style: TextStyle(
                         fontFamily: codeFont,
                         fontFamilyFallback: const [
-                          'Maple Mono CN',
-                          'Maple Mono NF CN',
-                          'Maple Mono',
-                          'Sarasa Mono SC',
                           'Menlo',
                           'Monaco',
+                          'Courier New',
+                          'Maple Mono',
                           'monospace',
                         ],
-                        fontSize: (fontSize * 0.85).clamp(8.5, 16.0),
+                        fontSize: (fontSize * 0.88).clamp(9.0, 15.0),
                         height: 1.35,
-                        letterSpacing: 0.0,
-                        color: isDark ? const Color(0xFF67E8F9) : const Color(0xFF0369A1),
+                        color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7),
                       ),
                     ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 10),
+
+                  // 3. Monospace & ASCII Table 1:2 Alignment Sample
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.table_chart_outlined,
+                        size: 13,
+                        color: isDark ? Colors.white60 : Colors.black54,
+                      ),
+                      const SizedBox(width: 4),
+                      const Expanded(
+                        child: Text(
+                          'ASCII 表格全角/半角严格 1:2 等宽对齐校验',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF141414) : const Color(0xFFF1F5F9),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFCBD5E1),
+                      ),
+                    ),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Text(
+                        '┌─────────────────────┬─────────────────────┐\n'
+                        '│ 量子纠缠分发网关    │ 相对论时空频率同步  │\n'
+                        '├─────────────────────┼─────────────────────┤\n'
+                        '│ 贝尔态多粒子纯化    │ 史瓦西引力场膨胀修正│\n'
+                        '│ 拓扑容错量子表面码  │ 零知识量子密钥分发  │\n'
+                        '└─────────────────────┴─────────────────────┘',
+                        style: TextStyle(
+                          fontFamily: codeFont,
+                          fontFamilyFallback: const [
+                            'Maple Mono CN',
+                            'Maple Mono NF CN',
+                            'Maple Mono',
+                            'Menlo',
+                            'Monaco',
+                            'monospace',
+                          ],
+                          fontSize: (fontSize * 0.85).clamp(8.5, 14.0),
+                          height: 1.35,
+                          letterSpacing: 0.0,
+                          color: isDark ? const Color(0xFF34D399) : const Color(0xFF059669),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],

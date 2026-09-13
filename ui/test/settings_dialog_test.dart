@@ -188,11 +188,22 @@ void main() {
       await tester.tap(addBtn);
       await tester.pumpAndSettle();
 
-      expect(controller.renderOptions.fontSize, initialSize + 0.5);
+      // Controller should NOT update until Save is clicked
+      expect(controller.renderOptions.fontSize, initialSize);
       expect(find.textContaining('${(initialSize + 0.5).toStringAsFixed(1)} pt'), findsWidgets);
 
-      // Tap reset font size
+      // Save button should apply changes to controller
+      final saveBtn = find.text('保存并刷新文档');
+      expect(saveBtn, findsOneWidget);
+      await tester.tap(saveBtn);
+      await tester.pumpAndSettle();
+
+      expect(controller.renderOptions.fontSize, initialSize + 0.5);
+
+      // Tap reset font size and save
       await tester.tap(find.text('恢复默认 (10.5 pt)'));
+      await tester.pumpAndSettle();
+      await tester.tap(saveBtn);
       await tester.pumpAndSettle();
       expect(controller.renderOptions.fontSize, 10.5);
       expect(find.textContaining('10.5 pt'), findsWidgets);

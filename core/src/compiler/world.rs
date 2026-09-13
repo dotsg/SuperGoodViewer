@@ -194,7 +194,7 @@ impl GlobalFontStore {
                 // Track detected font families
                 for (f, _) in &face.families {
                     let l = f.to_lowercase();
-                    if l.contains("mono") || l.contains("code") || l.contains("menlo") || l.contains("consolas") || l.contains("courier") || face.monospaced {
+                    if l.contains("mono") || l.contains("code") || l.contains("menlo") || l.contains("monaco") || l.contains("consolas") || l.contains("courier") || face.monospaced {
                         detected_mono.insert(f.clone());
                     } else {
                         detected_body.insert(f.clone());

@@ -392,6 +392,12 @@ void main() {
       await tester.tap(addFontSizeBtn);
       await tester.pump(const Duration(milliseconds: 300));
 
+      // Tap save button to apply changes to controller
+      final saveBtn = find.text('保存并刷新文档');
+      expect(saveBtn, findsOneWidget);
+      await tester.tap(saveBtn);
+      await tester.pump(const Duration(milliseconds: 300));
+
       expect(controller.renderOptions.fontSize, initialFontSize + 0.5);
 
       // Close dialog via top close button

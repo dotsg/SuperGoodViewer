@@ -508,6 +508,17 @@ class ReaderController extends ChangeNotifier {
     compileDocument();
   }
 
+  void setTypography({String? bodyFont, String? codeFont, double? fontSize}) {
+    _isReloading = true;
+    _renderOptions = _renderOptions.copyWith(
+      bodyFont: bodyFont,
+      codeFont: codeFont,
+      fontSize: fontSize?.clamp(8.0, 24.0),
+    );
+    _persistPreferences();
+    compileDocument();
+  }
+
   void setAutoReload(bool enabled) {
     _autoReload = enabled;
     if (enabled && _currentFilePath != null) {
