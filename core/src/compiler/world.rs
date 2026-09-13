@@ -301,15 +301,26 @@ impl MemoryWorld {
 }
 
 pub fn get_default_image_cache_dir() -> PathBuf {
-    if let Ok(home) = std::env::var("HOME") {
-        let home = PathBuf::from(home);
-        #[cfg(target_os = "macos")]
-        return home.join("Library/Caches/com.sogood.sogoodviewer/remote_images");
-        #[cfg(not(target_os = "macos"))]
-        return home.join(".cache/sogoodviewer/remote_images");
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            return PathBuf::from(local).join("SuperGoodViewer/Cache/remote_images");
+        }
+        if let Ok(userprofile) = std::env::var("USERPROFILE") {
+            return PathBuf::from(userprofile).join("AppData/Local/SuperGoodViewer/Cache/remote_images");
+        }
     }
-    if let Ok(local) = std::env::var("LOCALAPPDATA") {
-        return PathBuf::from(local).join("SuperGoodViewer/Cache/remote_images");
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join("Library/Caches/com.sogood.sogoodviewer/remote_images");
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(".cache/sogoodviewer/remote_images");
+        }
     }
     PathBuf::from(".cache/remote_images")
 }
@@ -367,7 +378,7 @@ impl World for MemoryWorld {
             }
         }
 
-        // 2. Fall back to local file system in doc_dir
+        // 2. Fall back to local file system in doc_dir (sandboxed to document directory)
         let full_path = self.doc_dir.join(rel_path);
         if let Ok(data) = fs::read(&full_path) {
             return Ok(Bytes::new(data));
@@ -388,22 +399,7 @@ impl World for MemoryWorld {
             }
         }
 
-        // 4. Fall back to absolute path
-        #[cfg(unix)]
-        {
-            let abs_path = Path::new("/").join(rel_path);
-            if let Ok(data) = fs::read(&abs_path) {
-                return Ok(Bytes::new(data));
-            }
-        }
-        #[cfg(windows)]
-        {
-            if let Ok(data) = fs::read(rel_path) {
-                return Ok(Bytes::new(data));
-            }
-        }
-
-        // 5. Graceful fallback for missing assets:
+        // 4. Graceful fallback for missing assets:
         // Provide a 1x1 transparent PNG so compilation never aborts with a fatal crash.
         const TRANSPARENT_PNG: &[u8] = &[
             0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,

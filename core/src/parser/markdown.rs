@@ -151,67 +151,73 @@ pub fn sanitize_image_url(url: &str) -> &str {
     }
 }
 
+pub fn extract_url_extension(clean_url: &str) -> &'static str {
+    let (url_path, query) = match clean_url.find('?') {
+        Some(idx) => (&clean_url[..idx], Some(&clean_url[idx + 1..])),
+        None => (clean_url, None),
+    };
+
+    if let Some(last_segment) = url_path.split('/').last() {
+        if let Some(dot_idx) = last_segment.rfind('.') {
+            let ext = &last_segment[dot_idx + 1..];
+            let ext_lower = ext.to_ascii_lowercase();
+            match ext_lower.as_str() {
+                "png" => return "png",
+                "jpg" | "jpeg" => return "jpg",
+                "webp" => return "webp",
+                "gif" => return "gif",
+                "svg" => return "svg",
+                _ => {}
+            }
+        }
+    }
+
+    if let Some(q) = query {
+        let q_lower = q.to_ascii_lowercase();
+        for param in q_lower.split('&') {
+            if let Some((k, v)) = param.split_once('=') {
+                if k == "wx_fmt" || k == "format" {
+                    match v {
+                        "png" => return "png",
+                        "jpg" | "jpeg" => return "jpg",
+                        "webp" => return "webp",
+                        "gif" => return "gif",
+                        "svg" => return "svg",
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    "png"
+}
+
 pub fn url_to_cache_filename(url: &str) -> String {
     let clean_url = sanitize_image_url(url);
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(clean_url.as_bytes());
     let hash = format!("{:x}", hasher.finalize());
-    let lower = clean_url.to_lowercase();
-    let ext = if lower.contains(".png") || lower.contains("wx_fmt=png") {
-        "png"
-    } else if lower.contains(".jpg") || lower.contains(".jpeg") || lower.contains("wx_fmt=jpeg") || lower.contains("wx_fmt=jpg") {
-        "jpg"
-    } else if lower.contains(".webp") || lower.contains("wx_fmt=webp") {
-        "webp"
-    } else if lower.contains(".gif") || lower.contains("wx_fmt=gif") {
-        "gif"
-    } else if lower.contains(".svg") || lower.contains("wx_fmt=svg") {
-        "svg"
-    } else {
-        "png"
-    };
+    let ext = extract_url_extension(clean_url);
     format!("{}.{}", &hash[..32], ext)
 }
 
 pub fn find_cached_image_file(custom_cache: Option<&Path>, url: &str) -> Option<String> {
     let clean_url = sanitize_image_url(url);
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(clean_url.as_bytes());
-    let hash = format!("{:x}", hasher.finalize());
-    let prefix = &hash[..32];
     let predicted = url_to_cache_filename(clean_url);
 
-    // 1. Check custom cache dir first if provided
+    // 1. Check custom cache dir first if provided (O(1) stat call)
     if let Some(dir) = custom_cache {
         if dir.join(&predicted).is_file() {
             return Some(predicted);
         }
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
-                if name_str.starts_with(prefix) && entry.path().is_file() {
-                    return Some(name_str.to_string());
-                }
-            }
-        }
     }
 
-    // 2. Fall back to default system cache dir
+    // 2. Fall back to default system cache dir (O(1) stat call)
     let default_cache = crate::compiler::world::get_default_image_cache_dir();
     if default_cache.join(&predicted).is_file() {
         return Some(predicted);
-    }
-    if let Ok(entries) = std::fs::read_dir(&default_cache) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if name_str.starts_with(prefix) && entry.path().is_file() {
-                return Some(name_str.to_string());
-            }
-        }
     }
 
     None
@@ -1181,31 +1187,40 @@ Local image with dark border:
     }
 
     #[test]
-    fn test_remote_image_caching_and_rendering() {
-        let wechat_url = "https://mmbiz.qpic.cn/sz_mmbiz_png/yVwYcibHCQbUhbtEib78gzlSRsHicerMcIao6Kvxeib6EtnWkS8KypicuPrSdJteTt5VxQgpPs7k9Bhgr6GdymmPvrxVnD3Q7Jdp98nhnvNmDfHY/640?wx_fmt=png&from=appmsg";
-        let md = format!("![Architecture Diagram]({wechat_url})");
-        let options = RenderOptions::default();
+    fn test_extract_url_extension() {
+        assert_eq!(extract_url_extension("https://cdn.x/.png-assets/a.jpg"), "jpg");
+        assert_eq!(extract_url_extension("https://cdn.x/.png-assets/a.jpeg?token=123"), "jpg");
+        assert_eq!(extract_url_extension("https://cdn.x/vector.svg"), "svg");
+        assert_eq!(extract_url_extension("https://cdn.x/animation.gif"), "gif");
+        assert_eq!(extract_url_extension("https://cdn.x/photo.webp"), "webp");
+        assert_eq!(extract_url_extension("https://mmbiz.qpic.cn/sz_mmbiz_png/test/640?wx_fmt=png"), "png");
+        assert_eq!(extract_url_extension("https://mmbiz.qpic.cn/sz_mmbiz_jpeg/test/640?wx_fmt=jpeg"), "jpg");
+        assert_eq!(extract_url_extension("https://example.com/asset"), "png"); // default fallback
+    }
 
-        // 1. When not cached, it renders an elegant placeholder badge
+    #[test]
+    fn test_remote_image_caching_and_rendering() {
+        let temp_dir = std::env::temp_dir().join(format!("sgv_test_cache_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let wechat_url = "https://mmbiz.qpic.cn/sz_mmbiz_png/isolated_test_uuid/640?wx_fmt=png";
+        let md = format!("![Architecture Diagram]({wechat_url})");
+        let mut options = RenderOptions::default();
+        options.image_cache_dir = Some(temp_dir.to_string_lossy().to_string());
+
+        // 1. When not cached in temp_dir, it renders an elegant placeholder badge
         let parsed_uncached = convert_markdown_to_typst(&md, "Blog", &options);
         assert!(parsed_uncached.typst_source.contains("🖼️ Architecture Diagram"));
 
-        // 2. Mock a cached file in the cache directory
-        let cache_dir = crate::compiler::world::get_default_image_cache_dir();
-        let _ = std::fs::create_dir_all(&cache_dir);
+        // 2. Mock a cached file strictly inside temp_dir
         let cache_filename = url_to_cache_filename(wechat_url);
-        let cache_file_path = cache_dir.join(&cache_filename);
+        let cache_file_path = temp_dir.join(&cache_filename);
+        let _ = std::fs::write(&cache_file_path, b"mock_cached_image_bytes");
 
-        // Copy a real 1x1 png or existing app_logo to the cache file path
-        let real_logo = std::path::Path::new("../docs/images/app_logo.png");
-        if real_logo.is_file() {
-            let _ = std::fs::copy(real_logo, &cache_file_path);
+        let parsed_cached = convert_markdown_to_typst(&md, "Blog", &options);
+        assert!(parsed_cached.typst_source.contains(&format!("#image(\"{cache_filename}\")")));
 
-            let parsed_cached = convert_markdown_to_typst(&md, "Blog", &options);
-            assert!(parsed_cached.typst_source.contains(&format!("#image(\"{cache_filename}\")")));
-
-            // Clean up mock cache file
-            let _ = std::fs::remove_file(cache_file_path);
-        }
+        // Clean up temp_dir
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
