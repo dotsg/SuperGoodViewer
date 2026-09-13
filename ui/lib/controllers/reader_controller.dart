@@ -54,11 +54,20 @@ class ReaderController extends ChangeNotifier {
   double _lastZoom = 1.0;
   AutoFitMode _autoFitMode = AutoFitMode.none;
   bool _isReloading = false;
+  Timer? _reloadingSafetyTimer;
   bool _autoReload = true;
   StreamSubscription<FileSystemEvent>? _watcherSubscription;
   Timer? _persistDebounceTimer;
+  bool _isDisposed = false;
+
+  @override
+  void notifyListeners() {
+    if (_isDisposed) return;
+    super.notifyListeners();
+  }
 
   final List<String> _recentFiles = [];
+  final Map<String, Map<String, dynamic>> _fileHistory = {};
   Map<String, dynamic> _fontReport = {};
 
   final ShortcutService shortcutService = ShortcutService();
@@ -121,7 +130,7 @@ class ReaderController extends ChangeNotifier {
   ReaderController({String? initialFilePath, bool autoRestorePreferences = true}) {
     unawaited(refreshFontReport());
     _setSampleDocumentContent();
-    if (initialFilePath != null && initialFilePath.isNotEmpty) {
+    if (initialFilePath != null && initialFilePath.isNotEmpty && File(initialFilePath).existsSync()) {
       _initPreferencesOnly();
       _openFileInternal(initialFilePath, preservePosition: false);
     } else if (autoRestorePreferences) {
@@ -141,16 +150,28 @@ class ReaderController extends ChangeNotifier {
       final savedTwoPage = prefs['isTwoPage'] as bool?;
       final savedAutoFit = prefs['autoFitMode'] as String?;
       final recent = (prefs['recentFiles'] as List<dynamic>?)?.cast<String>();
+      final savedFontSize = (prefs['fontSize'] as num?)?.toDouble();
+      final savedBodyFont = prefs['bodyFont'] as String?;
+      final savedCodeFont = prefs['codeFont'] as String?;
+      final savedZoom = (prefs['lastZoom'] as num?)?.toDouble();
+      final savedHistory = prefs['fileHistory'] as Map<String, dynamic>?;
 
       if (recent != null && recent.isNotEmpty) {
         _recentFiles.clear();
         _recentFiles.addAll(recent);
       }
 
-      if (savedTheme != null || savedMode != null) {
+      if (savedTheme != null ||
+          savedMode != null ||
+          savedFontSize != null ||
+          savedBodyFont != null ||
+          savedCodeFont != null) {
         _renderOptions = _renderOptions.copyWith(
           theme: savedTheme ?? _renderOptions.theme,
           mode: savedMode ?? _renderOptions.mode,
+          fontSize: savedFontSize ?? _renderOptions.fontSize,
+          bodyFont: savedBodyFont ?? _renderOptions.bodyFont,
+          codeFont: savedCodeFont ?? _renderOptions.codeFont,
         );
       }
       if (savedTwoPage != null) {
@@ -161,6 +182,17 @@ class ReaderController extends ChangeNotifier {
           (m) => m.name == savedAutoFit,
           orElse: () => AutoFitMode.none,
         );
+      }
+      if (savedZoom != null && savedZoom > 0.1) {
+        _lastZoom = savedZoom;
+      }
+      if (savedHistory != null) {
+        _fileHistory.clear();
+        for (final entry in savedHistory.entries) {
+          if (entry.value is Map) {
+            _fileHistory[entry.key] = Map<String, dynamic>.from(entry.value as Map);
+          }
+        }
       }
       final savedShortcuts = prefs['shortcuts'] as Map<String, dynamic>?;
       if (savedShortcuts != null) {
@@ -180,10 +212,20 @@ class ReaderController extends ChangeNotifier {
       if (lastFile != null && lastFile.isNotEmpty) {
         final file = File(lastFile);
         if (file.existsSync()) {
-          final savedScroll = (prefs['lastScrollRatio'] as num?)?.toDouble() ?? 0.0;
-          final savedPage = (prefs['lastPageNumber'] as num?)?.toInt() ?? 1;
+          final history = _fileHistory[lastFile];
+          final savedScroll = (history?['scrollRatio'] as num?)?.toDouble() ??
+              (prefs['lastScrollRatio'] as num?)?.toDouble() ??
+              0.0;
+          final savedPage = (history?['pageNumber'] as num?)?.toInt() ??
+              (prefs['lastPageNumber'] as num?)?.toInt() ??
+              1;
+          final savedZoom = (history?['zoom'] as num?)?.toDouble() ??
+              (prefs['lastZoom'] as num?)?.toDouble() ??
+              _lastZoom;
+
           _lastScrollRatio = savedScroll;
           _lastPageNumber = savedPage;
+          _lastZoom = savedZoom;
           _openFileInternal(lastFile, preservePosition: true);
           return;
         }
@@ -196,6 +238,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void _persistPreferences() {
+    _updateCurrentFileHistory();
     PreferencesService.save({
       'lastOpenedFile': _currentFilePath,
       'recentFiles': List<String>.from(_recentFiles),
@@ -208,6 +251,8 @@ class ReaderController extends ChangeNotifier {
       'codeFont': _renderOptions.codeFont,
       'lastScrollRatio': _lastScrollRatio,
       'lastPageNumber': _lastPageNumber,
+      'lastZoom': _lastZoom,
+      'fileHistory': _fileHistory,
       'shortcuts': shortcutService.toMap(),
     });
   }
@@ -219,14 +264,35 @@ class ReaderController extends ChangeNotifier {
     });
   }
 
+  void startReloading() {
+    _isReloading = true;
+    _reloadingSafetyTimer?.cancel();
+    _reloadingSafetyTimer = Timer(const Duration(milliseconds: 800), () {
+      _isReloading = false;
+    });
+  }
+
   void finishReloading() {
+    _reloadingSafetyTimer?.cancel();
+    _reloadingSafetyTimer = null;
     _isReloading = false;
+  }
+
+  void _updateCurrentFileHistory() {
+    if (_currentFilePath != null) {
+      _fileHistory[_currentFilePath!] = {
+        'scrollRatio': _lastScrollRatio,
+        'pageNumber': _lastPageNumber,
+        'zoom': _lastZoom,
+      };
+    }
   }
 
   void updateScrollRatio(double ratio) {
     if (_isReloading) return;
     if (ratio >= 0.0 && ratio <= 1.0) {
       _lastScrollRatio = ratio;
+      _updateCurrentFileHistory();
       _persistDebounced();
     }
   }
@@ -235,6 +301,7 @@ class ReaderController extends ChangeNotifier {
     if (_isReloading) return;
     if (pageNumber >= 1) {
       _lastPageNumber = pageNumber;
+      _updateCurrentFileHistory();
       _persistDebounced();
     }
   }
@@ -243,6 +310,8 @@ class ReaderController extends ChangeNotifier {
     if (_isReloading) return;
     if (zoom > 0.1) {
       _lastZoom = zoom;
+      _updateCurrentFileHistory();
+      _persistDebounced();
     }
   }
 
@@ -272,11 +341,19 @@ class ReaderController extends ChangeNotifier {
       _documentTitle = p.basenameWithoutExtension(filePath);
 
       if (!preservePosition) {
-        _lastScrollRatio = 0.0;
-        _lastPageNumber = 1;
-        _isReloading = false;
+        final history = _fileHistory[filePath];
+        if (history != null) {
+          _lastScrollRatio = (history['scrollRatio'] as num?)?.toDouble() ?? 0.0;
+          _lastPageNumber = (history['pageNumber'] as num?)?.toInt() ?? 1;
+          _lastZoom = (history['zoom'] as num?)?.toDouble() ?? _lastZoom;
+          startReloading();
+        } else {
+          _lastScrollRatio = 0.0;
+          _lastPageNumber = 1;
+          finishReloading();
+        }
       } else {
-        _isReloading = true;
+        startReloading();
       }
 
       // Add to recent files
@@ -353,7 +430,7 @@ class ReaderController extends ChangeNotifier {
             final bytes = await file.readAsBytes();
             _currentMarkdown = utf8.decode(bytes, allowMalformed: true);
             _extractOutline(_currentMarkdown);
-            _isReloading = true;
+            startReloading();
             await compileDocument();
           } catch (e) {
             debugPrint('Failed to reload modified file: $e');
@@ -426,7 +503,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void toggleMode() {
-    _isReloading = true;
+    startReloading();
     final nextMode = _renderOptions.mode == 'fluid' ? 'paged' : 'fluid';
     _renderOptions = _renderOptions.copyWith(mode: nextMode);
     _persistDebounced();
@@ -445,7 +522,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void toggleTheme() {
-    _isReloading = true;
+    startReloading();
     final nextTheme = _renderOptions.theme == 'light' ? 'dark' : 'light';
     _renderOptions = _renderOptions.copyWith(theme: nextTheme);
     _persistDebounced();
@@ -470,7 +547,7 @@ class ReaderController extends ChangeNotifier {
       _viewportDebounceTimer = Timer(const Duration(milliseconds: 300), () {
         _renderOptions = _renderOptions.copyWith(viewportWidth: width);
         if (_renderOptions.isFluid) {
-          _isReloading = true;
+          startReloading();
           compileDocument();
         }
       });
@@ -478,7 +555,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void setFontSize(double size) {
-    _isReloading = true;
+    startReloading();
     _renderOptions = _renderOptions.copyWith(fontSize: size.clamp(8.0, 24.0));
     _persistPreferences();
     compileDocument();
@@ -495,21 +572,21 @@ class ReaderController extends ChangeNotifier {
   }
 
   void setBodyFont(String? font) {
-    _isReloading = true;
+    startReloading();
     _renderOptions = _renderOptions.copyWith(bodyFont: font);
     _persistPreferences();
     compileDocument();
   }
 
   void setCodeFont(String? font) {
-    _isReloading = true;
+    startReloading();
     _renderOptions = _renderOptions.copyWith(codeFont: font);
     _persistPreferences();
     compileDocument();
   }
 
   void setTypography({String? bodyFont, String? codeFont, double? fontSize}) {
-    _isReloading = true;
+    startReloading();
     _renderOptions = _renderOptions.copyWith(
       bodyFont: bodyFont,
       codeFont: codeFont,
@@ -759,8 +836,10 @@ graph LR
 
   @override
   void dispose() {
+    _isDisposed = true;
     shortcutService.removeListener(_persistDebounced);
     shortcutService.removeListener(notifyListeners);
+    _reloadingSafetyTimer?.cancel();
     _persistDebounceTimer?.cancel();
     _persistPreferences();
     _viewportDebounceTimer?.cancel();

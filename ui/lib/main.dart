@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'controllers/reader_controller.dart';
 import 'views/workspace_view.dart';
@@ -9,8 +10,10 @@ void main(List<String> args) {
   String? targetFile;
   for (final arg in args) {
     if (arg != '--args' && !arg.startsWith('-')) {
-      targetFile = arg;
-      break;
+      if (File(arg).existsSync() || Directory(arg).existsSync()) {
+        targetFile = arg;
+        break;
+      }
     }
   }
   runApp(SuperGoodViewerApp(initialFile: targetFile));

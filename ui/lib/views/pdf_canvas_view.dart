@@ -263,27 +263,18 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
       initialZoom = coverScale.clamp(minScale, maxScale);
     } else if (fitMode == AutoFitMode.fitPage) {
       initialZoom = (alternativeFitScale ?? coverScale).clamp(minScale, maxScale);
-    } else if (readerController.isReloading) {
-      if (isFluid) {
-        final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
-        final rawFitWidth = state.viewSize.width / docWidth;
-        initialZoom = (rawFitWidth > 1.35 ? 1.25 : rawFitWidth).clamp(minScale, maxScale);
-      } else {
-        initialZoom = (alternativeFitScale ?? 1.0).clamp(0.2, maxScale);
-      }
+    } else if (readerController.lastZoom > 0.1) {
+      initialZoom = readerController.lastZoom.clamp(minScale, maxScale);
+    } else if (isFluid) {
+      final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
+      final rawFitWidth = state.viewSize.width / docWidth;
+      initialZoom = (rawFitWidth > 1.35 ? 1.25 : rawFitWidth).clamp(minScale, maxScale);
     } else {
-      // Fresh document load
-      if (isFluid) {
-        final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
-        final rawFitWidth = state.viewSize.width / docWidth;
-        initialZoom = (rawFitWidth > 1.35 ? 1.25 : rawFitWidth).clamp(minScale, maxScale);
-      } else {
-        initialZoom = (alternativeFitScale ?? 1.0).clamp(0.2, maxScale);
-      }
+      initialZoom = (alternativeFitScale ?? 1.0).clamp(0.2, maxScale);
     }
 
     if (readerController.isReloading) {
-      // Restoring reading position after reload/theme/edit
+      // Restoring reading position after reload/theme/edit/session restore
       if (isFluid) {
         final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
         final targetY = readerController.lastScrollRatio * layout.documentSize.height;
@@ -295,6 +286,9 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
         controller.setZoom(page.center, initialZoom, duration: Duration.zero);
         controller.goToPage(pageNumber: targetPage, duration: Duration.zero);
       }
+      Future.delayed(const Duration(milliseconds: 200), () {
+        readerController.finishReloading();
+      });
     } else {
       // Fresh document load
       if (isFluid) {
@@ -948,7 +942,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   }
 
   void _restoreScrollFor(PdfViewerController ctrl) {
-    if (!ctrl.isReady) return;
+    if (!ctrl.isReady) {
+      widget.controller.finishReloading();
+      return;
+    }
     final docSize = ctrl.documentSize;
     final isFluid = widget.controller.renderOptions.isFluid;
 
@@ -962,8 +959,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         Future.delayed(const Duration(milliseconds: 250), () {
           if (mounted) {
             _isRestoringScroll = false;
-            widget.controller.finishReloading();
           }
+          widget.controller.finishReloading();
         });
         return;
       }
@@ -976,8 +973,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         Future.delayed(const Duration(milliseconds: 250), () {
           if (mounted) {
             _isRestoringScroll = false;
-            widget.controller.finishReloading();
           }
+          widget.controller.finishReloading();
         });
         return;
       }

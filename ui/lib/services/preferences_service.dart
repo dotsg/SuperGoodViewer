@@ -15,6 +15,9 @@ class PreferencesService {
   static File? testConfigFileOverride;
 
   @visibleForTesting
+  static Future<void>? get pendingSave => _pendingSave;
+
+  @visibleForTesting
   static void setConfigFileForTesting(File? file) {
     testConfigFileOverride = file;
     _cachedConfigFile = file;

@@ -16,11 +16,16 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     let project = FlutterDartProject()
     project.dartEntrypointArguments = Array(ProcessInfo.processInfo.arguments.dropFirst())
     let flutterViewController = FlutterViewController(project: project)
-    var windowFrame = self.frame
-    windowFrame.size = NSSize(width: 1080, height: 750)
     self.contentViewController = flutterViewController
-    self.setFrame(windowFrame, display: true)
-    self.center()
+
+    let windowAutosaveName = "SuperGoodViewerMainWindow"
+    if !self.setFrameUsingName(windowAutosaveName) {
+      var windowFrame = self.frame
+      windowFrame.size = NSSize(width: 1080, height: 750)
+      self.setFrame(windowFrame, display: true)
+      self.center()
+    }
+    self.setFrameAutosaveName(windowAutosaveName)
 
     self.titleVisibility = .hidden
     self.titlebarAppearsTransparent = true
