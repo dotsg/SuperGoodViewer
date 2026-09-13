@@ -528,6 +528,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                       key: _pdfCanvasKey,
                       pdfBytes: controller.currentPdfBytes,
                       documentTitle: controller.documentTitle,
+                      renderOptions: controller.renderOptions,
+                      isTwoPage: controller.isTwoPage,
                       controller: controller,
                       onUserScrolled: _hideToolbar,
                       onScrollChanged: _handleScrollChanged,

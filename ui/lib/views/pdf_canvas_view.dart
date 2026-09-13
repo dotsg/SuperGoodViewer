@@ -8,6 +8,7 @@ import 'package:pdfrx/pdfrx.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vector_math/vector_math_64.dart' as vec;
 import '../controllers/reader_controller.dart';
+import '../models/render_options.dart';
 import '../services/startup_metrics.dart';
 
 const List<double> kZoomLadder = [
@@ -23,7 +24,8 @@ PdfPageLayout _layoutFluidPages(List<PdfPage> pages, PdfViewerParams params) {
   var y = 0.0;
   for (var i = 0; i < pages.length; i++) {
     final page = pages[i];
-    final rect = Rect.fromLTWH(0, y, width, page.height + 0.5);
+    final isLast = i == pages.length - 1;
+    final rect = Rect.fromLTWH(0, y, width, page.height + (isLast ? 0.0 : 0.5));
     pageLayout.add(rect);
     y += page.height;
   }
@@ -277,7 +279,11 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
       // Restoring reading position after reload/theme/edit/session restore
       if (isFluid) {
         final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
-        final targetY = readerController.lastScrollRatio * layout.documentSize.height;
+        final targetOffset = readerController.lastScrollOffset;
+        final maxScroll = math.max(0.0, layout.documentSize.height - state.viewSize.height);
+        final targetY = (targetOffset > 0.0)
+            ? targetOffset.clamp(0.0, maxScroll)
+            : (readerController.lastScrollRatio * layout.documentSize.height).clamp(0.0, maxScroll);
         controller.setZoom(Offset(docWidth / 2, targetY), initialZoom, duration: Duration.zero);
         controller.goToPosition(documentOffset: Offset(0, targetY));
       } else {
@@ -762,6 +768,8 @@ class SuperGoodScrollInteractionDelegate implements PdfViewerScrollInteractionDe
 class PdfCanvasView extends StatefulWidget {
   final Uint8List? pdfBytes;
   final String documentTitle;
+  final RenderOptions renderOptions;
+  final bool isTwoPage;
   final ReaderController controller;
   final VoidCallback? onUserScrolled;
   final VoidCallback? onCanvasTapped;
@@ -777,6 +785,8 @@ class PdfCanvasView extends StatefulWidget {
     super.key,
     required this.pdfBytes,
     required this.documentTitle,
+    required this.renderOptions,
+    required this.isTwoPage,
     required this.controller,
     this.onUserScrolled,
     this.onCanvasTapped,
@@ -796,6 +806,7 @@ class PdfCanvasView extends StatefulWidget {
 class PdfCanvasViewState extends State<PdfCanvasView> {
   int _activeSlot = 0;
   int? _pendingSlot;
+  Uint8List? _queuedBytes;
   Timer? _cleanupTimer;
   final List<PdfViewerController> _controllers = [
     PdfViewerController(),
@@ -855,41 +866,48 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     }
 
     if (newBytes.hashCode != _slotDocHash[_activeSlot]) {
-      final optionsChanged = widget.controller.renderOptions != oldWidget.controller.renderOptions ||
-          widget.controller.isTwoPage != oldWidget.controller.isTwoPage ||
+      final optionsChanged = widget.renderOptions != oldWidget.renderOptions ||
+          widget.isTwoPage != oldWidget.isTwoPage ||
           widget.documentTitle != oldWidget.documentTitle;
       if (optionsChanged) {
         _renderOptionsChanged = true;
       }
 
-      if (widget.controller.renderOptions.mode != oldWidget.controller.renderOptions.mode ||
-          widget.controller.isTwoPage != oldWidget.controller.isTwoPage ||
+      if (widget.renderOptions.mode != oldWidget.renderOptions.mode ||
+          widget.isTwoPage != oldWidget.isTwoPage ||
           widget.documentTitle != oldWidget.documentTitle) {
         // Mode change or different document opened: direct reload
         _cleanupTimer?.cancel();
         _activeSlot = 0;
         _pendingSlot = null;
+        _queuedBytes = null;
         _slotBytes[0] = newBytes;
         _slotDocHash[0] = newBytes.hashCode;
         _slotBytes[1] = null;
         _slotDocHash[1] = 0;
         setState(() {});
       } else {
-        // Same document updated (hot reload / edit / theme / mode):
-        // Mount into background slot for seamless double buffering
-        _cleanupTimer?.cancel();
-        final nextSlot = 1 - _activeSlot;
-        _pendingSlot = nextSlot;
-        _slotBytes[nextSlot] = newBytes;
-        _slotDocHash[nextSlot] = newBytes.hashCode;
-        setState(() {});
+        // Same document updated (hot reload / edit / theme / stream):
+        if (_pendingSlot != null) {
+          // A background slot is already mounting. Queue the newest bytes
+          // instead of destroying the in-flight viewer, avoiding frozen updates.
+          _queuedBytes = newBytes;
+        } else {
+          // Mount into background slot for seamless double buffering
+          _cleanupTimer?.cancel();
+          final nextSlot = 1 - _activeSlot;
+          _pendingSlot = nextSlot;
+          _slotBytes[nextSlot] = newBytes;
+          _slotDocHash[nextSlot] = newBytes.hashCode;
+          setState(() {});
+        }
       }
     }
   }
 
   void _onPdfViewerChanged(int slot) {
     if (slot != _activeSlot) return;
-    if (_isRestoringScroll || widget.controller.isReloading) return;
+    if (_isRestoringScroll) return;
     final ctrl = _controllers[slot];
     if (ctrl.isReady) {
       final zoom = ctrl.currentZoom;
@@ -930,8 +948,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         widget.controller.updateScrollRatio(ratio, offset: currentTop);
       }
       final deltaY = currentTop - _lastVisibleTop;
-      final isFluid = widget.controller.renderOptions.isFluid;
-      final isTwoPage = widget.controller.isTwoPage && !isFluid;
+      final isFluid = widget.renderOptions.isFluid;
+      final isTwoPage = widget.isTwoPage && !isFluid;
       final isAtTop = isFluid
           ? (currentTop <= 20.0)
           : (pageNum <= (isTwoPage ? 2 : 1) && currentTop <= 20.0);
@@ -946,12 +964,15 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   }
 
   void _restoreScrollFor(PdfViewerController ctrl) {
+    final renderOptionsChanged = _renderOptionsChanged;
+    _renderOptionsChanged = false;
+
     if (!ctrl.isReady) {
       widget.controller.finishReloading();
       return;
     }
     final docSize = ctrl.documentSize;
-    final isFluid = widget.controller.renderOptions.isFluid;
+    final isFluid = widget.renderOptions.isFluid;
 
     if (isFluid) {
       final targetOffset = widget.controller.lastScrollOffset;
@@ -964,12 +985,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         // total document height changed, so ratio is the accurate anchor.
         // When options are identical (streaming content append / external edit),
         // use absolute offset to prevent reading position from jumping.
-        final useOffset = !_renderOptionsChanged && targetOffset > 0.0;
+        final useOffset = !renderOptionsChanged && targetOffset > 0.0;
         final targetY = useOffset
             ? targetOffset.clamp(0.0, maxScroll)
             : (targetRatio > 0.0 ? (targetRatio * docSize.height).clamp(0.0, maxScroll) : 0.0);
-
-        _renderOptionsChanged = false;
 
         if (targetY > 0.0) {
           _isRestoringScroll = true;
@@ -989,7 +1008,6 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         }
       }
     } else {
-      _renderOptionsChanged = false;
       final targetPage = widget.controller.lastPageNumber;
       if (targetPage > 1 && targetPage <= ctrl.pageCount) {
         _isRestoringScroll = true;
@@ -1548,7 +1566,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       bytes,
       initialPageNumber: isFluid ? 1 : widget.controller.lastPageNumber.clamp(1, 999999),
       key: ValueKey(
-        'slot_${slotIndex}_${_slotDocHash[slotIndex]}_${widget.controller.renderOptions.mode}_${widget.controller.isTwoPage}',
+        'slot_${slotIndex}_${_slotDocHash[slotIndex]}_${widget.renderOptions.mode}_${widget.isTwoPage}',
       ),
       sourceName: '${widget.documentTitle}_slot_${slotIndex}_${_slotDocHash[slotIndex]}',
       controller: ctrl,
@@ -1562,16 +1580,33 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         boundaryMargin: isFluid
             ? const EdgeInsets.only(top: 36, bottom: 24, left: 0, right: 0)
             : const EdgeInsets.only(top: 36, bottom: 16, left: 8, right: 8),
-        maxImageBytesCachedOnMemory: 256 * 1024 * 1024,
+        maxImageBytesCachedOnMemory: isFluid ? 256 * 1024 * 1024 : 64 * 1024 * 1024,
+        onePassRenderingSizeThreshold: isFluid ? 10000.0 : 2000.0,
+        getPageRenderingScale: (context, page, controller, estimatedScale) {
+          if (isFluid) {
+            const maxDimension = 10000.0;
+            if (page.width > maxDimension || page.height > maxDimension) {
+              return math.min(maxDimension / page.width, maxDimension / page.height);
+            }
+            return estimatedScale;
+          }
+          const max = 2000.0;
+          if (page.width > max || page.height > max) {
+            return math.min(max / page.width, max / page.height);
+          }
+          return estimatedScale;
+        },
         verticalCacheExtent: 1.5,
-        pageBackgroundPaintCallbacks: [
-          (canvas, rect, page) {
-            canvas.drawRect(
-              rect,
-              Paint()..color = canvasBg,
-            );
-          },
-        ],
+        pageBackgroundPaintCallbacks: isFluid
+            ? null
+            : [
+                (canvas, rect, page) {
+                  canvas.drawRect(
+                    rect,
+                    Paint()..color = canvasBg,
+                  );
+                },
+              ],
         pageAnchor: PdfPageAnchor.top,
         underflowAnchor: PdfPageAnchor.top,
         pageDropShadow: isFluid
@@ -1593,17 +1628,17 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             : (pages, params) => _layoutA4Pages(
                   pages,
                   params,
-                  isTwoPage: widget.controller.isTwoPage,
+                  isTwoPage: widget.isTwoPage,
                 ),
         sizeDelegateProvider: SuperGoodSizeDelegateProvider(
           readerController: widget.controller,
           isFluid: isFluid,
-          isTwoPage: widget.controller.isTwoPage,
+          isTwoPage: widget.isTwoPage,
           minScale: isFluid ? 0.35 : 0.2,
           maxScale: 5.0,
         ),
         zoomStepsDelegateProvider: SuperGoodZoomStepsDelegateProvider(
-          isFluid: widget.controller.renderOptions.isFluid,
+          isFluid: widget.renderOptions.isFluid,
         ),
         textSelectionParams: const PdfTextSelectionParams(
           enabled: true,
@@ -1613,7 +1648,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           StartupMetrics.markFirstDocument();
           if (slotIndex == _pendingSlot) {
             _restoreScrollFor(controller);
-            WidgetsBinding.instance.addPostFrameCallback((_) {
+            // Allow the pending viewer underneath to rasterize its preview frame
+            // before swapping slots to the front, completely preventing white flash.
+            Future.delayed(const Duration(milliseconds: 60), () {
               if (mounted && _pendingSlot == slotIndex) {
                 setState(() {
                   _activeSlot = slotIndex;
@@ -1628,6 +1665,16 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
                     });
                   }
                 });
+
+                if (_queuedBytes != null && _queuedBytes!.hashCode != _slotDocHash[_activeSlot]) {
+                  final nextBytes = _queuedBytes!;
+                  _queuedBytes = null;
+                  final nextSlot = 1 - _activeSlot;
+                  _pendingSlot = nextSlot;
+                  _slotBytes[nextSlot] = nextBytes;
+                  _slotDocHash[nextSlot] = nextBytes.hashCode;
+                  setState(() {});
+                }
               }
             });
           } else if (slotIndex == _activeSlot) {
@@ -1703,8 +1750,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       );
     }
 
-    final isDark = widget.controller.renderOptions.isDark;
-    final isFluid = widget.controller.renderOptions.isFluid;
+    final isDark = widget.renderOptions.isDark;
+    final isFluid = widget.renderOptions.isFluid;
     final canvasBg = isDark ? const Color(0xFF141414) : const Color(0xFFEBEBEB);
 
     final children = <Widget>[];
@@ -1753,7 +1800,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       body: Listener(
         behavior: HitTestBehavior.translucent,
         onPointerSignal: (event) {
-          if (_isRestoringScroll || widget.controller.isReloading) return;
+          if (_isRestoringScroll) return;
           if (event is PointerScrollEvent) {
             if (event.scrollDelta.dy > 1.0) {
               widget.onScrollChanged?.call(deltaY: event.scrollDelta.dy, isAtTop: false);
@@ -1762,7 +1809,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           widget.onUserScrolled?.call();
         },
         onPointerPanZoomUpdate: (event) {
-          if (_isRestoringScroll || widget.controller.isReloading) return;
+          if (_isRestoringScroll) return;
           if (event.panDelta.dy < -1.0) {
             widget.onScrollChanged?.call(deltaY: -event.panDelta.dy, isAtTop: false);
           }

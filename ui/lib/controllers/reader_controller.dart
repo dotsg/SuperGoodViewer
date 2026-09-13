@@ -297,7 +297,8 @@ class ReaderController extends ChangeNotifier {
   }
 
   void updateScrollRatio(double ratio, {double? offset}) {
-    if (_isReloading) return;
+    // While reloading, ignore transient reset to 0.0 before position is restored
+    if (_isReloading && ratio == 0.0 && _lastScrollRatio > 0.0) return;
     if (ratio >= 0.0 && ratio <= 1.0) {
       _lastScrollRatio = ratio;
       if (offset != null && offset >= 0.0) {
@@ -309,7 +310,8 @@ class ReaderController extends ChangeNotifier {
   }
 
   void updatePageNumber(int pageNumber) {
-    if (_isReloading) return;
+    // While reloading, ignore transient reset to page 1 before page is restored
+    if (_isReloading && pageNumber == 1 && _lastPageNumber > 1) return;
     if (pageNumber >= 1) {
       _lastPageNumber = pageNumber;
       _updateCurrentFileHistory();
@@ -318,7 +320,6 @@ class ReaderController extends ChangeNotifier {
   }
 
   void updateZoom(double zoom) {
-    if (_isReloading) return;
     if (zoom > 0.1) {
       _lastZoom = zoom;
       _updateCurrentFileHistory();
@@ -437,6 +438,9 @@ class ReaderController extends ChangeNotifier {
   static const _debounceDelay = Duration(milliseconds: 150);
   static const _maxWaitDelay = Duration(milliseconds: 500);
 
+  /// Debounced file reloader with max-wait throttle:
+  /// - Waits 150ms after the latest write event to avoid reading partially flushed files.
+  /// - Flushes at least every 500ms during continuous streaming writes.
   void _onExternalFileModified() {
     final now = DateTime.now();
     _firstStreamEventTime ??= now;
