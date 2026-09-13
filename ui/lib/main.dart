@@ -47,6 +47,21 @@ class _SuperGoodViewerAppState extends State<SuperGoodViewerApp> {
     super.dispose();
   }
 
+  static String? get _defaultFontFamily {
+    if (Platform.isWindows) return 'Segoe UI';
+    if (Platform.isMacOS) return '-apple-system';
+    return null;
+  }
+
+  static const List<String> _fontFamilyFallback = [
+    'Segoe UI',
+    'Microsoft YaHei UI',
+    'Microsoft YaHei',
+    'PingFang SC',
+    '-apple-system',
+    'sans-serif',
+  ];
+
   static final ThemeData _lightTheme = ThemeData(
     useMaterial3: true,
     brightness: Brightness.light,
@@ -55,7 +70,8 @@ class _SuperGoodViewerAppState extends State<SuperGoodViewerApp> {
       brightness: Brightness.light,
     ),
     scaffoldBackgroundColor: const Color(0xFFF9F9F9),
-    fontFamily: '-apple-system',
+    fontFamily: _defaultFontFamily,
+    fontFamilyFallback: _fontFamilyFallback,
     dividerTheme: const DividerThemeData(
       color: Color(0xFFE5E5E5),
       thickness: 1,
@@ -71,7 +87,8 @@ class _SuperGoodViewerAppState extends State<SuperGoodViewerApp> {
       surface: const Color(0xFF1E1E1E),
     ),
     scaffoldBackgroundColor: const Color(0xFF141414),
-    fontFamily: '-apple-system',
+    fontFamily: _defaultFontFamily,
+    fontFamilyFallback: _fontFamilyFallback,
     dividerTheme: const DividerThemeData(
       color: Color(0xFF2E2E2E),
       thickness: 1,

@@ -93,3 +93,34 @@ When a document references `./images/chart.png`:
    - `page(width: 595.28pt, height: 841.89pt, margin: ...)`
    - Full A4 paginated layout with dynamic headers, footers (`counter(page)`), and orphan/widow line control.
    - Provides 100% WYSIWYG match between screen and physical paper export.
+
+---
+
+## 5. Desktop Runner & Platform Integration
+
+### 5.1 Native Window Management (`com.sogoodviewer.window`)
+Desktop platforms require distinct native window management strategies to maintain fluid desktop integration:
+- **macOS**: AppKit native toolbar styling, seamless full-screen zoom, and a 78px traffic-light button safe zone.
+- **Windows**: Win32 native methods implemented in C++:
+  - `startDragging`: Intercepts custom title bar drag events using `ReleaseCapture()` and `SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0)`.
+  - `toggleFullScreen`: Toggles borderless immersion fullscreen mode (with F11 shortcut support) by saving and restoring `WINDOWPLACEMENT` and window styles.
+  - `zoom`: Toggles between `SW_MAXIMIZE` and `SW_RESTORE`.
+
+### 5.2 Single-Instance Enforcement & IPC Document Forwarding
+To avoid opening multiple instances when clicking markdown files or executing CLI commands:
+- **Windows**:
+  - `CreateMutex(nullptr, TRUE, L"SuperGoodViewer_SingleInstance_Mutex")` guards against multiple process spawns.
+  - When a secondary process is invoked with target files, it locates the running window via `FindWindow` and forwards the target path using Win32 `WM_COPYDATA` (magic identifier `0x53475631`).
+  - The primary instance brings its window to the foreground (`SetForegroundWindow`, `SW_RESTORE`) and triggers `onOpenFile` inside Flutter via method channels.
+  - Initial startup arguments are resolved via `getInitialFile`.
+
+### 5.3 Command Line Integration (`sgv` CLI)
+SuperGoodViewer ships with unified `sgv` CLI tooling across platforms:
+- **macOS**: Generates a launcher shell script and establishes a symlink in `/usr/local/bin/sgv` via AppleScript privilege escalation if required.
+- **Windows**: Deploys lightweight wrappers `sgv.cmd` and `sgv.ps1` to `%LOCALAPPDATA%\Microsoft\WindowsApps`. Because this directory is part of the default user `PATH` in modern Windows, installation requires zero UAC elevation and is immediately active in CMD, PowerShell, and Windows Terminal.
+
+### 5.4 Dual-Architecture Support (x64 & ARM64)
+SuperGoodViewer targets both primary architectures on Windows:
+- **x64**: Optimized for standard Intel and AMD 64-bit systems.
+- **ARM64**: Cross-compiled natively using `aarch64-pc-windows-msvc` (Rust Core) and `windows-arm64` (Flutter Engine & Google PDFium), providing 100% native execution on Qualcomm Snapdragon X Elite/Plus and Microsoft Surface Pro devices with zero emulation overhead.
+

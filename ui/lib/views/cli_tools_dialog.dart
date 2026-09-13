@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/native_cli_service.dart';
@@ -167,7 +168,9 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          '在 macOS 终端中随时通过 sgv 命令打开 Markdown',
+                          Platform.isWindows
+                              ? '在终端 (CMD / PowerShell) 中随时通过 sgv 命令打开 Markdown'
+                              : '在 macOS 终端中随时通过 sgv 命令打开 Markdown',
                           style: TextStyle(
                             fontSize: 12,
                             color: theme.textTheme.bodySmall?.color,
@@ -328,9 +331,9 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
               ),
               const SizedBox(height: 6),
               _CommandRow(
-                command: 'sgv ~/notes/todo.md',
+                command: Platform.isWindows ? 'sgv .\\notes\\todo.md' : 'sgv ~/notes/todo.md',
                 description: '支持绝对路径与相对路径',
-                onCopy: () => _copyCommand('sgv ~/notes/todo.md'),
+                onCopy: () => _copyCommand(Platform.isWindows ? 'sgv .\\notes\\todo.md' : 'sgv ~/notes/todo.md'),
                 isDark: isDark,
               ),
               const SizedBox(height: 6),
@@ -343,7 +346,9 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
               const SizedBox(height: 16),
 
               Text(
-                '提示：点击安装若系统需要权限，macOS 会自动弹出指纹或管理员密码授权窗口，无需您手动打开终端输入任何命令。',
+                Platform.isWindows
+                    ? '提示：安装后可在命令提示符、PowerShell 或 Windows Terminal 中直接运行 sgv 命令。'
+                    : '提示：点击安装若系统需要权限，macOS 会自动弹出指纹或管理员密码授权窗口，无需您手动打开终端输入任何命令。',
                 style: TextStyle(
                   fontSize: 11,
                   color: Colors.grey.shade500,

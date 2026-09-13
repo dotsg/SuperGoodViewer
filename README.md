@@ -78,57 +78,14 @@ Markdown Document (.md)
 
 ---
 
-## 💻 命令行启动器 (`sgv` CLI)
-
-SuperGoodViewer 提供专用的快速启动工具 `sgv`，方便开发者在终端即开即读：
-
-### 安装与卸载方式（免终端指令）
-- **方式一**：在 macOS 顶部应用菜单点击 **「SuperGoodViewer」 $\to$ 「安装命令行工具 sgv...」**；
-- **方式二**：在应用内快捷键 `Cmd + ,` 打开 **偏好设置** $\to$ 选择 **「命令行工具」** 选项卡点击安装。
-*(安装程序会自动在 `/usr/local/bin/sgv` 建立符号链接)*
-
-### 终端使用示例
-```bash
-# 打开指定 Markdown 文档
-sgv README.md
-
-# 打开绝对路径文档
-sgv /Users/username/Documents/research.md
-
-# 查看版本与使用帮助
-sgv --help
-```
-*如果应用已处于运行状态，`sgv` 会通过本地 IPC 瞬时唤起主窗口并将阅读文档切换到目标文件。*
-
----
-
-## ⌨️ 快捷键指南
-
-| 快捷键 | 功能 | 说明 |
-| :--------------------------- | :--------------------------- | :--------------------------------- |
-| `Cmd + O` / `Ctrl + O`       | 打开本地 Markdown 文件       | 调用系统原生文件拾取器             |
-| `Cmd + R` / `Ctrl + R`       | 立即重新编译排版             | 热刷新并重排当前文件               |
-| `Cmd + F` / `Cmd + M`        | 切换自适应流式 / A4 出版视图 | 720pt 黄金宽度卷轴 $\leftrightarrow$ A4 标准页 |
-| `Cmd + T` / `Ctrl + T`       | 切换明亮 / 暗黑阅读主题      | 纯编译期注入高品质配色基准         |
-| `Cmd + D` / `Ctrl + D`       | 切换单页纵向 / 双页对开      | A4 出版视图下生效                  |
-| `Cmd + P` / `Cmd + E`        | 导出为出版级矢量 PDF         | 0 毫秒即时保存无损 PDF (明亮版面)  |
-| `Cmd + B` / `Ctrl + B`       | 展开 / 收起侧边栏            | 快速查看大纲目录与历史文档         |
-| `Cmd + ,` / `Ctrl + ,`       | 打开偏好设置                 | 分屏字体排版、CLI工具与全局选项    |
-| `Cmd + K` / `Ctrl + K`       | 打开快捷键自定义面板         | 自定义按键映射，支持一键复位       |
-| `Cmd + +` / `Cmd + =`        | 放大页面视口比例             | 逐级放大渲染视口                   |
-| `Cmd + -`                    | 缩小页面视口比例             | 逐级缩小渲染视口                   |
-| `Cmd + 0`                    | 重置页面缩放为 100%          | 快速复位原始比例                   |
-| `Cmd + 9`                    | 自适应当前窗口宽度           | 铺满当前可视宽度                   |
-| `Cmd + 1`                    | 自适应整页全貌               | 完整呈现整页版面                   |
-| `Cmd + \`                    | 显示 / 隐藏底部浮动栏        | 极简 Zen 专注阅读模式              |
-
----
-
 ## 🚀 快速上手与本地开发
 
 ### 1. 开发前置准备
 - **Rust Toolchain**: `rustup` (1.80+)
-- **Flutter SDK**: 3.22+ (支持 Desktop)
+- **Flutter SDK**: 3.22+ (支持 Desktop 平台)
+- **C++ 编译器**:
+  - macOS: Xcode Command Line Tools
+  - Windows: Visual Studio 2022 C++ 生成工具（若需编译原生 ARM64，需额外勾选 *MSVC v143 ARM64/ARM64EC* 工具集与 `rustup target add aarch64-pc-windows-msvc`）
 
 ### 2. 运行自动化测试套件
 ```bash
@@ -136,22 +93,74 @@ make test
 ```
 将自动执行 Rust 核心单元与集成测试 (`cargo test`)、Flutter 静态分析 (`flutter analyze`) 及 Flutter 单元测试 (`flutter test`)。
 
-### 3. 本地调试运行 (macOS)
+### 3. 本地调试运行
+- **macOS**:
+  ```bash
+  make run-macos
+  ```
+- **Windows**:
+  ```bash
+  make run-windows
+  ```
+
+### 4. 编译发布与打包
+- **macOS (App Bundle & DMG)**:
+  ```bash
+  make build          # 生成 ui/build/macos/Build/Products/Release/SuperGoodViewer.app
+  make dmg            # 生成安装镜像 SuperGoodViewer-macos.dmg
+  ```
+- **Windows x64 便携包 (Intel / AMD 架构及通用)**:
+  ```bash
+  make package-windows       # 生成 dist/SuperGoodViewer-windows-x64.zip
+  ```
+- **Windows ARM64 原生便携包 (高通骁龙 X Elite / Surface 等 WoA 设备)**:
+  ```bash
+  make package-windows-arm64 # 生成 dist/SuperGoodViewer-windows-arm64.zip
+  ```
+
+---
+
+## 🛠 命令行集成工具 (`sgv` CLI)
+
+SuperGoodViewer 提供跨平台的终端命令行启动工具 `sgv`，支持直接在终端中毫秒级预览 Markdown 文档。
+
+### 1. 一键安装
+- **图形化安装**：打开应用 $\to$ 偏好设置 (`Cmd/Ctrl + ,`) $\to$ **命令行工具** $\to$ 点击 **「一键安装 sgv 工具」**。
+  - macOS：自动创建符号链接至 `/usr/local/bin/sgv`（免手动终端配置，支持授权弹窗）。
+  - Windows：自动安装至用户环境变量目录 `%LOCALAPPDATA%\Microsoft\WindowsApps\sgv.cmd` 与 `sgv.ps1`（免管理员 UAC 提权，CMD / PowerShell / Windows Terminal 即装即用）。
+
+### 2. 常用终端用法
 ```bash
-make run-macos
+# 打开单个文档（支持绝对路径与相对路径）
+sgv README.md
+
+# 一次性打开多个 Markdown 文档
+sgv chapter1.md chapter2.md
+
+# 唤醒或置顶当前已在运行的 SuperGoodViewer 窗口
+sgv
+
+# 查看帮助信息
+sgv -h
 ```
 
-### 4. 编译发布打包 (macOS Release Bundle & DMG)
-```bash
-# 编译 Release Bundle
-make build
+---
 
-# 一键制作 macOS DMG 安装镜像 (带 /Applications 快捷拖拽)
-make dmg
-```
-编译生成的独立应用与安装镜像位于：
-- `ui/build/macos/Build/Products/Release/SuperGoodViewer.app`
-- `SuperGoodViewer-macos.dmg`
+## ⌨️ 常用快捷键指南
+
+| macOS 快捷键 | Windows 快捷键 | 功能描述 |
+| :--- | :--- | :--- |
+| `Cmd + O` | `Ctrl + O` | 打开本地 Markdown 文件 |
+| `Cmd + R` | `Ctrl + R` | 立即重新编译与排版当前文档 |
+| `Cmd + M` | `Ctrl + M` | 切换自适应流式 (Fluid) / A4 出版视图 (Paged) |
+| `Cmd + T` | `Ctrl + T` | 切换浅色 (Light) / 暗黑 (Dark) 主题 |
+| `Cmd + E` | `Ctrl + E` | 0 毫秒即时导出高精度无损 PDF |
+| `Cmd + B` | `Ctrl + B` | 展开 / 折叠左侧目录与管理侧边栏 |
+| `Cmd + ,` | `Ctrl + ,` | 打开系统偏好设置面板（排版字体/自动重载/CLI管理） |
+| `Cmd + K` | `Ctrl + K` | 查看并自定义全部键盘快捷键 |
+| `Cmd + Ctrl + F` | `F11` | 进入 / 退出全屏无边框沉浸阅读模式 |
+| `Cmd + +` / `-` | `Ctrl + +` / `-` | 放大 / 缩小阅读视口渲染比例 (100% ~ 300%) |
+| `Cmd + 0` | `Ctrl + 0` | 恢复 100% 原始视口缩放比例 |
 
 ---
 

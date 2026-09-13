@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
 import 'package:file_picker/file_picker.dart';
@@ -820,7 +821,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                   children: [
                     // When sidebar is closed, provide safe space for macOS traffic lights & sidebar button
                     if (!_isSidebarOpen) ...[
-                      const SizedBox(width: 78),
+                      if (Platform.isMacOS) const SizedBox(width: 78),
                       Tooltip(
                         message: '切换侧边栏 (${controller.shortcutService.getShortcutLabel('toggleSidebar')})',
                         child: InkWell(

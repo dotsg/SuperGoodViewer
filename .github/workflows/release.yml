@@ -123,6 +123,10 @@ jobs:
           # Copy Rust core dll next to executable
           Copy-Item -Path $rustDll -Destination $buildDir
 
+          # Copy CLI launcher scripts into package
+          Copy-Item -Path "ui/bin/sgv.cmd" -Destination $buildDir
+          Copy-Item -Path "ui/bin/sgv.ps1" -Destination $buildDir
+
           # Compress to zip
           $zipName = "dist/SuperGoodViewer-${{ github.ref_name }}-windows-x64.zip"
           Compress-Archive -Path "$buildDir/*" -DestinationPath $zipName
@@ -136,11 +140,94 @@ jobs:
           if-no-files-found: error
 
   # =============================================================
+  # Windows ARM64 Build & Package (Native WoA / Snapdragon X)
+  # =============================================================
+  build-windows-arm64:
+    name: Build Windows ARM64
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: aarch64-pc-windows-msvc
+
+      - name: Setup Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build Rust sogood_core (ARM64 Release)
+        shell: bash
+        run: |
+          cd core
+          cargo build --release --target aarch64-pc-windows-msvc
+
+      - name: Download Windows ARM64 Engine & PDFium Artifacts
+        shell: pwsh
+        run: |
+          $engineHash = (flutter --version | Select-String 'Engine • hash ([0-9a-f]+)').Matches.Groups[1].Value
+          $engineDir = "$env:FLUTTER_ROOT\bin\cache\artifacts\engine"
+          New-Item -ItemType Directory -Force -Path "$engineDir\windows-arm64-release"
+          New-Item -ItemType Directory -Force -Path "$engineDir\windows-arm64"
+          
+          # Download ARM64 Flutter engine
+          curl.exe -L -o "$env:TEMP\engine_arm64.zip" "https://storage.googleapis.com/flutter_infra_release/flutter/$engineHash/windows-arm64-release/windows-arm64-flutter.zip"
+          Expand-Archive -Force -Path "$env:TEMP\engine_arm64.zip" -DestinationPath "$engineDir\windows-arm64-release"
+          
+          # Download ARM64 CPP client wrapper
+          curl.exe -L -o "$env:TEMP\wrapper_arm64.zip" "https://storage.googleapis.com/flutter_infra_release/flutter/$engineHash/windows-arm64/flutter-cpp-client-wrapper.zip"
+          Expand-Archive -Force -Path "$env:TEMP\wrapper_arm64.zip" -DestinationPath "$engineDir\windows-arm64"
+          
+          # Copy icudtl.dat
+          Copy-Item "$engineDir\windows-x64\icudtl.dat" "$engineDir\windows-arm64\icudtl.dat" -Force
+          
+          # Download ARM64 PDFium
+          $pdfiumDir = "ui/.dart_tool/hooks_runner/shared/pdfium_dart/build/chromium_7811/win-arm64"
+          New-Item -ItemType Directory -Force -Path $pdfiumDir
+          curl.exe -L -o "$env:TEMP\pdfium_arm64.tgz" "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7811/pdfium-win-arm64.tgz"
+          tar.exe -zxvf "$env:TEMP\pdfium_arm64.tgz" -C $pdfiumDir bin/pdfium.dll
+          Move-Item "$pdfiumDir/bin/pdfium.dll" "$pdfiumDir/pdfium.dll" -Force
+          Remove-Item "$pdfiumDir/bin" -Recurse -Force
+
+      - name: Build Flutter Windows ARM64 via CMake
+        shell: pwsh
+        run: |
+          cd ui
+          flutter pub get
+          cmake -S windows -B build/windows_arm64 -G "Visual Studio 17 2022" -A ARM64 -DFLUTTER_TARGET_PLATFORM=windows-arm64
+          cmake --build build/windows_arm64 --config Release --target INSTALL
+
+      - name: Package Windows ARM64 Portable ZIP
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          $buildDir = "ui/build/windows_arm64/runner/Release"
+          Copy-Item -Path "core/target/aarch64-pc-windows-msvc/release/sogood_core.dll" -Destination $buildDir -Force
+          Copy-Item -Path "ui/bin/sgv.cmd" -Destination $buildDir -Force
+          Copy-Item -Path "ui/bin/sgv.ps1" -Destination $buildDir -Force
+          $zipName = "dist/SuperGoodViewer-${{ github.ref_name }}-windows-arm64.zip"
+          Compress-Archive -Path "$buildDir/*" -DestinationPath $zipName
+          Write-Host "Created Windows ARM64 package: $zipName"
+
+      - name: Upload Windows ARM64 Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm64-binaries
+          path: dist/*
+          if-no-files-found: error
+
+  # =============================================================
   # Publish Release
   # =============================================================
   publish-release:
     name: Publish GitHub Release
-    needs: [build-macos, build-windows-x64]
+    needs: [build-macos, build-windows-x64, build-windows-arm64]
     runs-on: ubuntu-latest
 
     steps:
@@ -184,7 +271,7 @@ jobs:
               ```
 
             #### 🪟 Windows 用户
-            - **下载文件**：`SuperGoodViewer-${{ github.ref_name }}-windows-x64.zip`
-            - **系统要求**：Windows 10 / 11 64位（原生支持 Intel/AMD 64位 PC；高通骁龙 X Elite / Surface 等 ARM64 设备解压后可通过 Windows 11 内置 Prism 仿真引擎免配置极速运行）
-            - **使用方式**：解压 zip 包至任意目录，双击 `sogoodviewer.exe` 即可即开即用（绿色免安装便携版）。
+            - **Intel / AMD 64位 PC**：下载 `SuperGoodViewer-${{ github.ref_name }}-windows-x64.zip`
+            - **高通骁龙 X / Surface 等 ARM64 设备**：下载 `SuperGoodViewer-${{ github.ref_name }}-windows-arm64.zip`（100% 纯原生 Native ARM64 架构，零转译开销与超高能效）
+            - **使用方式**：解压 zip 包至任意目录，双击 `SuperGoodViewer.exe` 即可即开即用（绿色免安装便携版）；亦可将解压目录加入系统环境变量或使用内置的 `sgv.cmd` / `sgv.ps1` 命令行工具快速预览文档。
             - **首次运行提示**：如遇 Windows SmartScreen 提示拦截，点击「更多信息」并选择「仍要运行」。

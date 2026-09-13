@@ -29,9 +29,11 @@ void main() {
 
   tearDownAll(() {
     PreferencesService.setConfigFileForTesting(null);
-    if (tempTestDir.existsSync()) {
-      tempTestDir.deleteSync(recursive: true);
-    }
+    try {
+      if (tempTestDir.existsSync()) {
+        tempTestDir.deleteSync(recursive: true);
+      }
+    } catch (_) {}
   });
 
   group('RenderOptions Tests', () {
@@ -241,13 +243,13 @@ void main() {
       // Document title should be displayed in the floating pill
       expect(find.text('SuperGoodViewer Demo'), findsOneWidget);
 
-      // Check floating pill action buttons
+      final mod = Platform.isMacOS ? 'Cmd' : 'Ctrl';
       final exportShortcut = controller.shortcutService.getShortcutLabel('exportPdf');
-      expect(exportShortcut, 'Cmd+P');
-      expect(find.byTooltip('打开本地 Markdown (Cmd+O)'), findsOneWidget);
-      expect(find.byTooltip('展开侧边栏 (Cmd+B)'), findsOneWidget);
+      expect(exportShortcut, '$mod+P');
+      expect(find.byTooltip('打开本地 Markdown ($mod+O)'), findsOneWidget);
+      expect(find.byTooltip('展开侧边栏 ($mod+B)'), findsOneWidget);
       expect(find.byTooltip('导出出版级 PDF ($exportShortcut)'), findsOneWidget);
-      expect(find.byTooltip('隐藏工具栏 (Esc 或 Cmd+\\)'), findsOneWidget);
+      expect(find.byTooltip('隐藏工具栏 (Esc 或 $mod+\\)'), findsOneWidget);
     });
 
     testWidgets('sidebar can be opened and closed interactively', (tester) async {
@@ -261,8 +263,9 @@ void main() {
 
       expect(find.byType(SidebarView), findsNothing);
 
+      final mod = Platform.isMacOS ? 'Cmd' : 'Ctrl';
       // Tap sidebar button in the floating pill toolbar
-      final sidebarBtn = find.byTooltip('展开侧边栏 (Cmd+B)');
+      final sidebarBtn = find.byTooltip('展开侧边栏 ($mod+B)');
       expect(sidebarBtn, findsOneWidget);
       await tester.tap(sidebarBtn);
       await tester.pump();
@@ -280,7 +283,7 @@ void main() {
       expect(find.text('暂无历史文件'), findsOneWidget);
 
       // Close sidebar via header close button
-      final closeBtn = find.byTooltip('收起侧边栏 (Cmd+B 或 Esc)');
+      final closeBtn = find.byTooltip('收起侧边栏 ($mod+B 或 Esc)');
       expect(closeBtn, findsOneWidget);
       await tester.tap(closeBtn);
       await tester.pump();
@@ -314,8 +317,9 @@ void main() {
       expect(find.text('A4'), findsOneWidget);
 
       // Page zoom buttons & badge exist
-      final zoomOutBtn = find.byTooltip('缩小页面 (Cmd+-)');
-      final zoomInBtn = find.byTooltip('放大页面 (Cmd+=)');
+      final mod = Platform.isMacOS ? 'Cmd' : 'Ctrl';
+      final zoomOutBtn = find.byTooltip('缩小页面 ($mod+-)');
+      final zoomInBtn = find.byTooltip('放大页面 ($mod+=)');
       final zoomBadge = find.byTooltip('页面缩放比例与预设');
 
       expect(zoomOutBtn, findsOneWidget);
@@ -423,8 +427,9 @@ void main() {
         ),
       );
 
+      final mod = Platform.isMacOS ? 'Cmd' : 'Ctrl';
       // In fluid mode by default: two-page toggle and page nav pill should NOT be shown
-      expect(find.byTooltip('当前为单页纵向，点击切换双页对开 (Cmd+D)'), findsNothing);
+      expect(find.byTooltip('当前为单页纵向，点击切换双页对开 ($mod+D)'), findsNothing);
       expect(find.byTooltip('点击跳转页面'), findsNothing);
 
       // Switch to A4 mode
@@ -436,7 +441,7 @@ void main() {
       expect(controller.renderOptions.isFluid, false);
 
       // Now two-page toggle and page navigation are visible
-      final twoPageBtn = find.byTooltip('当前为单页纵向，点击切换双页对开 (Cmd+D)');
+      final twoPageBtn = find.byTooltip('当前为单页纵向，点击切换双页对开 ($mod+D)');
       expect(twoPageBtn, findsOneWidget);
       expect(find.byTooltip('上一页 (← 或 [)'), findsOneWidget);
       expect(find.byTooltip('下一页 (→ 或 ])'), findsOneWidget);
@@ -447,7 +452,7 @@ void main() {
       await tester.pump();
 
       expect(controller.isTwoPage, true);
-      expect(find.byTooltip('当前为双页对开，点击切换单页 (Cmd+D)'), findsOneWidget);
+      expect(find.byTooltip('当前为双页对开，点击切换单页 ($mod+D)'), findsOneWidget);
 
       // Tap jump page badge to open jump dialog
       final jumpBadge = find.byTooltip('点击跳转页面');
@@ -476,7 +481,8 @@ void main() {
       );
 
       // Initially at top of page, sidebar closed: titlebar is visible
-      expect(find.byTooltip('切换侧边栏 (Cmd+B)'), findsOneWidget);
+      final mod = Platform.isMacOS ? 'Cmd' : 'Ctrl';
+      expect(find.byTooltip('切换侧边栏 ($mod+B)'), findsOneWidget);
 
       final pdfCanvasFinder = find.byType(PdfCanvasView);
       expect(pdfCanvasFinder, findsOneWidget);

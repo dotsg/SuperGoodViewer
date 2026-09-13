@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -351,7 +352,7 @@ class _SidebarViewState extends State<SidebarView> {
               child: Row(
                 children: [
                   // Dedicated safe spacing for macOS traffic lights (Close/Miniaturize/Zoom)
-                  const SizedBox(width: 78),
+                  if (Platform.isMacOS) const SizedBox(width: 78),
                   Expanded(
                     child: GestureDetector(
                       behavior: HitTestBehavior.translucent,
