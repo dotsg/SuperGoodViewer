@@ -70,6 +70,7 @@ goto loop
 exit /b 0
 
 :help
+chcp 65001 >nul 2>&1
 echo SuperGoodViewer (超好读) CLI Launcher
 echo.
 echo Usage:

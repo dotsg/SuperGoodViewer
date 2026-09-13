@@ -32,20 +32,15 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       existing_hwnd = ::FindWindow(nullptr, L"超好读");
     }
     if (existing_hwnd) {
-      std::string target_file;
-      for (size_t i = 1; i < command_line_arguments.size(); ++i) {
+      for (size_t i = 0; i < command_line_arguments.size(); ++i) {
         const auto& arg = command_line_arguments[i];
         if (!arg.empty() && arg[0] != '-' && arg != "--args") {
-          target_file = arg;
-          break;
+          COPYDATASTRUCT cds;
+          cds.dwData = 0x53475631; // 'SGV1'
+          cds.cbData = static_cast<DWORD>(arg.size() + 1);
+          cds.lpData = const_cast<char*>(arg.c_str());
+          ::SendMessage(existing_hwnd, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds));
         }
-      }
-      if (!target_file.empty()) {
-        COPYDATASTRUCT cds;
-        cds.dwData = 0x53475631; // 'SGV1'
-        cds.cbData = static_cast<DWORD>(target_file.size() + 1);
-        cds.lpData = const_cast<char*>(target_file.c_str());
-        ::SendMessage(existing_hwnd, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds));
       }
       ::SetForegroundWindow(existing_hwnd);
       if (::IsIconic(existing_hwnd)) {
