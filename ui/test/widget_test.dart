@@ -210,9 +210,6 @@ void main() {
       // Toggle theme
       controller.toggleTheme();
       expect(controller.isReloading, true);
-      // While reloading, transient 0.0 updates are ignored
-      controller.updateScrollRatio(0.0);
-      controller.updatePageNumber(1);
       expect(controller.lastScrollRatio, 0.68);
       expect(controller.lastPageNumber, 4);
 
@@ -605,7 +602,7 @@ void main() {
       expect(key.currentState?.renderOptionsChanged, false);
     });
 
-    test('ReaderController flags renderOptionsChanged and guards transient scroll resets during reload', () {
+    test('ReaderController flags renderOptionsChanged across options including twoPage and preserves top scroll', () {
       final controller = ReaderController();
       expect(controller.renderOptionsChanged, false);
 
@@ -622,31 +619,62 @@ void main() {
       expect(controller.renderOptionsChanged, true);
       controller.renderOptionsChanged = false;
 
-      // 2. Scroll guard during reload:
-      // Establish established scroll position
+      controller.toggleTwoPage();
+      expect(controller.renderOptionsChanged, true);
+      controller.renderOptionsChanged = false;
+
+      controller.setTwoPage(false);
+      expect(controller.renderOptionsChanged, true);
+      controller.renderOptionsChanged = false;
+
+      // 2. User scroll to top during streaming (when reloading) is faithfully preserved
       controller.updateScrollRatio(0.45, offset: 500.0);
       expect(controller.lastScrollRatio, 0.45);
       expect(controller.lastScrollOffset, 500.0);
 
-      // Start reloading
       controller.startReloading();
       expect(controller.isReloading, true);
 
-      // A transient reset to offset 0.0 or ratio 0.0 must be ignored while reloading
+      // User scrolls back to top during streaming: must NOT be discarded
       controller.updateScrollRatio(0.0, offset: 0.0);
-      expect(controller.lastScrollRatio, 0.45);
-      expect(controller.lastScrollOffset, 500.0);
+      expect(controller.lastScrollRatio, 0.0);
+      expect(controller.lastScrollOffset, 0.0);
 
-      controller.updateScrollRatio(0.01, offset: 15.0);
-      expect(controller.lastScrollRatio, 0.45);
-      expect(controller.lastScrollOffset, 500.0);
-
-      // Legitimate user scrolling to new position should still work if far from top or after finishing reload
       controller.finishReloading();
-      controller.updateScrollRatio(0.1, offset: 100.0);
-      expect(controller.lastScrollRatio, 0.1);
-      expect(controller.lastScrollOffset, 100.0);
+      controller.dispose();
+    });
 
+    testWidgets('PdfCanvasView _isRestoringScroll auto-recovers via safety timeout', (tester) async {
+      final key = GlobalKey<PdfCanvasViewState>();
+      final controller = ReaderController();
+      final bytesA = Uint8List.fromList([1, 2, 3, 4]);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PdfCanvasView(
+            key: key,
+            pdfBytes: bytesA,
+            documentTitle: 'Doc',
+            renderOptions: const RenderOptions(),
+            isTwoPage: false,
+            controller: controller,
+          ),
+        ),
+      );
+
+      final state = key.currentState;
+      expect(state, isNotNull);
+      expect(state!.isRestoringScroll, false);
+
+      // Simulate a path where isRestoringScroll is set to true
+      state.setRestoringScrollForTesting(true, timeout: const Duration(milliseconds: 100));
+      expect(state.isRestoringScroll, true);
+
+      // Advance time beyond the safety timeout
+      await tester.pump(const Duration(milliseconds: 150));
+
+      // Must auto-recover to false even if no onViewerReady fired
+      expect(state.isRestoringScroll, false);
       controller.dispose();
     });
   });

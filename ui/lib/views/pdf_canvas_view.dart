@@ -823,19 +823,28 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   int _lastReportedCount = 1;
   double _lastVisibleTop = 0.0;
   bool _lastReportedAtTop = true;
-  bool _renderOptionsChanged = false;
   bool _modeOrDocChanged = false;
   Timer? _pendingWatchdogTimer;
   Timer? _swapFallbackTimer;
-  final List<int> _slotPaintCount = [0, 0];
+  Timer? _restoringScrollSafetyTimer;
   bool _pendingViewerReady = false;
+  bool _pendingImageLoaded = false;
 
   @visibleForTesting
-  bool get renderOptionsChanged => _renderOptionsChanged;
+  bool get renderOptionsChanged => widget.controller.renderOptionsChanged;
+
+  @visibleForTesting
+  bool get isRestoringScroll => _isRestoringScroll;
+
+  @visibleForTesting
+  void setRestoringScrollForTesting(bool value, {Duration timeout = const Duration(milliseconds: 600)}) {
+    _setRestoringScroll(value, timeout: timeout);
+  }
 
   @visibleForTesting
   void restoreScrollForTesting() {
-    _renderOptionsChanged = false;
+    widget.controller.renderOptionsChanged = false;
+    _setRestoringScroll(false);
   }
 
   PdfViewerController get _pdfController => _controllers[_activeSlot];
@@ -863,9 +872,22 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     _cleanupTimer?.cancel();
     _pendingWatchdogTimer?.cancel();
     _swapFallbackTimer?.cancel();
+    _restoringScrollSafetyTimer?.cancel();
     _controllers[0].removeListener(_onViewerChanged0);
     _controllers[1].removeListener(_onViewerChanged1);
     super.dispose();
+  }
+
+  void _setRestoringScroll(bool value, {Duration timeout = const Duration(milliseconds: 600)}) {
+    _restoringScrollSafetyTimer?.cancel();
+    _isRestoringScroll = value;
+    if (value) {
+      _restoringScrollSafetyTimer = Timer(timeout, () {
+        if (mounted && _isRestoringScroll) {
+          _isRestoringScroll = false;
+        }
+      });
+    }
   }
 
   void _startPendingWatchdog() {
@@ -879,8 +901,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         _pendingSlot = null;
         _queuedBytes = null;
         _swapFallbackTimer?.cancel();
+        _pendingViewerReady = false;
+        _pendingImageLoaded = false;
         if (fallbackBytes != null && fallbackBytes.isNotEmpty) {
-          _isRestoringScroll = true;
+          _setRestoringScroll(true); // Protected by 600ms safety timeout
           _activeSlot = 0;
           _slotBytes[0] = fallbackBytes;
           _slotDocHash[0] = fallbackBytes.hashCode;
@@ -892,11 +916,23 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     });
   }
 
+  void _checkAndTriggerPendingSwap(int slotIndex) {
+    if (!mounted || _pendingSlot != slotIndex) return;
+    if (!_pendingViewerReady) return;
+    _swapFallbackTimer?.cancel();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _pendingSlot == slotIndex && _pendingViewerReady) {
+        _triggerSlotSwap(slotIndex);
+      }
+    });
+  }
+
   void _triggerSlotSwap(int slotIndex) {
     if (!mounted || _pendingSlot != slotIndex) return;
     _swapFallbackTimer?.cancel();
     _pendingWatchdogTimer?.cancel();
     _pendingViewerReady = false;
+    _pendingImageLoaded = false;
     setState(() {
       _activeSlot = slotIndex;
       _pendingSlot = null;
@@ -917,10 +953,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     if (queued != null && queued.isNotEmpty && queued.hashCode != _slotDocHash[_activeSlot]) {
       final nextSlot = 1 - _activeSlot;
       _pendingSlot = nextSlot;
+      _pendingViewerReady = false;
+      _pendingImageLoaded = false;
       _slotBytes[nextSlot] = queued;
       _slotDocHash[nextSlot] = queued.hashCode;
-      _slotPaintCount[nextSlot] = 0;
-      _pendingViewerReady = false;
       _startPendingWatchdog();
       setState(() {});
     }
@@ -938,7 +974,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         widget.isTwoPage != oldWidget.isTwoPage ||
         widget.documentTitle != oldWidget.documentTitle;
     if (optionsChanged) {
-      _renderOptionsChanged = true;
+      widget.controller.renderOptionsChanged = true;
     }
 
     if (widget.renderOptions.mode != oldWidget.renderOptions.mode ||
@@ -954,8 +990,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       _slotBytes[_activeSlot] = newBytes;
       _slotDocHash[_activeSlot] = newBytes.hashCode;
       _modeOrDocChanged = false;
-      _slotPaintCount[_activeSlot] = 0;
       _pendingViewerReady = false;
+      _pendingImageLoaded = false;
       setState(() {});
       return;
     }
@@ -969,7 +1005,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         _cleanupTimer?.cancel();
         _pendingWatchdogTimer?.cancel();
         _swapFallbackTimer?.cancel();
-        _isRestoringScroll = true; // Shield until restoration finishes
+        _setRestoringScroll(true); // Protected by 600ms safety timeout
         _activeSlot = 0;
         _pendingSlot = null;
         _queuedBytes = null;
@@ -977,8 +1013,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         _slotDocHash[0] = newBytes.hashCode;
         _slotBytes[1] = null;
         _slotDocHash[1] = 0;
-        _slotPaintCount[0] = 0;
         _pendingViewerReady = false;
+        _pendingImageLoaded = false;
         setState(() {});
       } else {
         // Same document updated (hot reload / edit / theme / stream):
@@ -993,8 +1029,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           _pendingSlot = nextSlot;
           _slotBytes[nextSlot] = newBytes;
           _slotDocHash[nextSlot] = newBytes.hashCode;
-          _slotPaintCount[nextSlot] = 0;
           _pendingViewerReady = false;
+          _pendingImageLoaded = false;
           _startPendingWatchdog();
           setState(() {});
         }
@@ -1061,12 +1097,11 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   }
 
   void _restoreScrollFor(PdfViewerController ctrl) {
-    final renderOptionsChanged = _renderOptionsChanged || widget.controller.renderOptionsChanged;
-    _renderOptionsChanged = false;
+    final renderOptionsChanged = widget.controller.renderOptionsChanged;
     widget.controller.renderOptionsChanged = false;
 
     if (!ctrl.isReady) {
-      _isRestoringScroll = false;
+      _setRestoringScroll(false);
       widget.controller.finishReloading();
       return;
     }
@@ -1090,12 +1125,12 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             : (targetRatio > 0.0 ? (targetRatio * docSize.height).clamp(0.0, maxScroll) : 0.0);
 
         if (targetY > 0.0) {
-          _isRestoringScroll = true;
+          _setRestoringScroll(true, timeout: const Duration(milliseconds: 300));
           ctrl.goToPosition(documentOffset: Offset(0, targetY));
 
           Future.delayed(const Duration(milliseconds: 250), () {
             if (mounted) {
-              _isRestoringScroll = false;
+              _setRestoringScroll(false);
               _lastVisibleTop = targetY;
               final isAtTop = targetY <= 20.0;
               _lastReportedAtTop = isAtTop;
@@ -1109,12 +1144,12 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     } else {
       final targetPage = widget.controller.lastPageNumber;
       if (targetPage > 1 && targetPage <= ctrl.pageCount) {
-        _isRestoringScroll = true;
+        _setRestoringScroll(true, timeout: const Duration(milliseconds: 300));
         ctrl.goToPage(pageNumber: targetPage, duration: Duration.zero);
 
         Future.delayed(const Duration(milliseconds: 250), () {
           if (mounted) {
-            _isRestoringScroll = false;
+            _setRestoringScroll(false);
             _lastReportedAtTop = false;
             widget.onScrollChanged?.call(deltaY: 0, isAtTop: false);
           }
@@ -1123,7 +1158,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         return;
       }
     }
-    _isRestoringScroll = false;
+    _setRestoringScroll(false);
     _lastReportedAtTop = true;
     widget.onScrollChanged?.call(deltaY: 0, isAtTop: true);
     widget.controller.finishReloading();
@@ -1702,16 +1737,6 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
                 spreadRadius: 1,
                 offset: const Offset(0, 3),
               ),
-        pagePaintCallbacks: [
-          (canvas, rect, page) {
-            _slotPaintCount[slotIndex]++;
-            if (slotIndex == _pendingSlot && _pendingViewerReady) {
-              if (_slotPaintCount[slotIndex] >= (isFluid ? 2 : 1)) {
-                _triggerSlotSwap(slotIndex);
-              }
-            }
-          },
-        ],
         behaviorControlParams: const PdfViewerBehaviorControlParams(
           enableLowResolutionPagePreview: true,
           trailingPageLoadingDelay: Duration.zero,
@@ -1739,16 +1764,24 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           enabled: true,
           showContextMenuAutomatically: false,
         ),
+        onDocumentLoadFinished: (documentRef, succeeded) {
+          if (slotIndex == _pendingSlot) {
+            _pendingImageLoaded = true;
+            if (_pendingViewerReady) {
+              _checkAndTriggerPendingSwap(slotIndex);
+            }
+          }
+        },
         onViewerReady: (document, controller) {
           StartupMetrics.markFirstDocument();
           if (slotIndex == _pendingSlot) {
-            _restoreScrollFor(controller);
             _pendingViewerReady = true;
-            if (_slotPaintCount[slotIndex] >= (isFluid ? 2 : 1)) {
-              _triggerSlotSwap(slotIndex);
+            _restoreScrollFor(controller);
+            if (_pendingImageLoaded) {
+              _checkAndTriggerPendingSwap(slotIndex);
             } else {
               _swapFallbackTimer?.cancel();
-              _swapFallbackTimer = Timer(const Duration(milliseconds: 100), () {
+              _swapFallbackTimer = Timer(const Duration(milliseconds: 150), () {
                 if (mounted && _pendingSlot == slotIndex) {
                   _triggerSlotSwap(slotIndex);
                 }

@@ -109,6 +109,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void toggleTwoPage() {
+    renderOptionsChanged = true;
     _isTwoPage = !_isTwoPage;
     _persistPreferences();
     notifyListeners();
@@ -116,6 +117,7 @@ class ReaderController extends ChangeNotifier {
 
   void setTwoPage(bool value) {
     if (_isTwoPage != value) {
+      renderOptionsChanged = true;
       _isTwoPage = value;
       _persistPreferences();
       notifyListeners();
@@ -169,6 +171,7 @@ class ReaderController extends ChangeNotifier {
           savedFontSize != null ||
           savedBodyFont != null ||
           savedCodeFont != null) {
+        renderOptionsChanged = true;
         _renderOptions = _renderOptions.copyWith(
           theme: savedTheme ?? _renderOptions.theme,
           mode: savedMode ?? _renderOptions.mode,
@@ -178,6 +181,7 @@ class ReaderController extends ChangeNotifier {
         );
       }
       if (savedTwoPage != null) {
+        renderOptionsChanged = true;
         _isTwoPage = savedTwoPage;
       }
       if (savedAutoFit != null) {
@@ -298,10 +302,6 @@ class ReaderController extends ChangeNotifier {
   }
 
   void updateScrollRatio(double ratio, {double? offset}) {
-    // While reloading, ignore transient resets near top before scroll position is restored
-    if (_isReloading && (offset != null ? offset <= 20.0 : ratio <= 0.02) && _lastScrollRatio > 0.05) {
-      return;
-    }
     if (ratio >= 0.0 && ratio <= 1.0) {
       _lastScrollRatio = ratio;
       if (offset != null && offset >= 0.0) {
