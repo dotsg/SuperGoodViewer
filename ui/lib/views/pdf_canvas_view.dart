@@ -1851,8 +1851,15 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         onViewerReady: (document, controller) {
           StartupMetrics.markFirstDocument();
           if (widget.controller.isPdfDocument) {
+            final srcPath = widget.controller.currentFilePath;
             document.loadOutline().then((outlines) {
-              if (!mounted) return;
+              if (!mounted) {
+                return;
+              }
+              if (!widget.controller.isPdfDocument ||
+                  widget.controller.currentFilePath != srcPath) {
+                return;
+              }
               final items = <OutlineItem>[];
               void traverse(List<PdfOutlineNode> nodes, int level) {
                 for (final node in nodes) {
@@ -1869,7 +1876,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
                 }
               }
               traverse(outlines, 1);
-              widget.controller.setPdfOutlines(items);
+              widget.controller.setPdfOutlines(items, targetFilePath: srcPath);
             }).catchError((e) {
               debugPrint('[PdfCanvasView] Failed to load PDF outline: $e');
             });

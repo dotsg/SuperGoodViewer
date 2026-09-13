@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:pdfrx/pdfrx.dart';
 import 'package:sogoodviewer/controllers/reader_controller.dart';
 import 'package:sogoodviewer/services/preferences_service.dart';
+import 'package:sogoodviewer/views/settings_dialog.dart';
 import 'package:sogoodviewer/views/sidebar_view.dart';
 import 'package:sogoodviewer/views/workspace_view.dart';
 
@@ -180,6 +181,152 @@ void main() {
       // Recent file item should show PDF icon
       expect(find.byIcon(Icons.picture_as_pdf_outlined), findsOneWidget);
       expect(find.text('sample_doc.pdf'), findsOneWidget);
+    });
+
+    test('ReaderController.isValidPdfBytes checks magic bytes and trailing EOF correctly', () {
+      expect(ReaderController.isValidPdfBytes(Uint8List(0)), isFalse);
+      expect(ReaderController.isValidPdfBytes(Uint8List.fromList('short'.codeUnits)), isFalse);
+      expect(ReaderController.isValidPdfBytes(Uint8List.fromList('Not a PDF at all'.codeUnits)), isFalse);
+      expect(
+        ReaderController.isValidPdfBytes(Uint8List.fromList('%PDF-1.4 truncated document without eof marker'.codeUnits)),
+        isFalse,
+      );
+      expect(
+        ReaderController.isValidPdfBytes(Uint8List.fromList('%PDF-1.7 ... content ... %%EOF\n'.codeUnits)),
+        isTrue,
+      );
+    });
+
+    test('Detects PDF file via magic bytes even with non-.pdf extension', () async {
+      final sampleTxtFile = File(p.join(tempTestDir.path, 'pdf_disguised_as.txt'));
+      sampleTxtFile.writeAsBytesSync(Uint8List.fromList(samplePdfContent.codeUnits));
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await controller.openFile(sampleTxtFile.path);
+
+      expect(controller.isPdfDocument, isTrue);
+      expect(controller.currentFilePath, sampleTxtFile.path);
+      expect(controller.documentTitle, 'pdf_disguised_as');
+      expect(controller.currentPdfBytes, isNotNull);
+      expect(controller.errorMessage, isNull);
+    });
+
+    test('Gracefully handles corrupted or truncated PDF without %%EOF', () async {
+      final truncatedFile = File(p.join(tempTestDir.path, 'truncated.pdf'));
+      truncatedFile.writeAsStringSync('%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n// truncated write');
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await controller.openFile(truncatedFile.path);
+
+      expect(controller.isPdfDocument, isTrue);
+      expect(controller.currentPdfBytes, isNull);
+      expect(controller.errorMessage, contains('缺少 %%EOF'));
+
+      // refreshDocument on corrupted PDF also safely fails
+      await controller.refreshDocument();
+      expect(controller.currentPdfBytes, isNull);
+      expect(controller.errorMessage, contains('缺少 %%EOF'));
+    });
+
+    test('TOC outline race condition guard prevents stale or cross-document outline pollution', () async {
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await controller.openFile(samplePdfFile.path);
+      expect(controller.isPdfDocument, isTrue);
+
+      // Successfully sets outline for matching path
+      controller.setPdfOutlines([
+        const OutlineItem(title: 'PDF Header', level: 1, anchor: 'PDF Header', lineNumber: 0, pageNumber: 1),
+      ], targetFilePath: samplePdfFile.path);
+      expect(controller.outlineItems.length, 1);
+      expect(controller.outlineItems.first.title, 'PDF Header');
+
+      // Stale callback for a different path is rejected
+      controller.setPdfOutlines([
+        const OutlineItem(title: 'Stale Header', level: 1, anchor: 'Stale Header', lineNumber: 0, pageNumber: 1),
+      ], targetFilePath: '/path/to/another.pdf');
+      expect(controller.outlineItems.first.title, 'PDF Header');
+
+      // Switching to Markdown resets outlines to Markdown headings
+      await controller.openFile(sampleMdFile.path);
+      expect(controller.isPdfDocument, isFalse);
+      expect(controller.outlineItems.first.title, 'Heading 1');
+
+      // Late arriving PDF outline callback while in Markdown mode is rejected
+      controller.setPdfOutlines([
+        const OutlineItem(title: 'Late PDF Header', level: 1, anchor: 'Late PDF Header', lineNumber: 0, pageNumber: 1),
+      ], targetFilePath: samplePdfFile.path);
+      expect(controller.outlineItems.first.title, 'Heading 1');
+    });
+
+    test('Settings and theme modifications in PDF mode do not trigger reloads or pollute renderOptionsChanged', () async {
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await controller.openFile(samplePdfFile.path);
+      expect(controller.isPdfDocument, isTrue);
+      expect(controller.isReloading, isFalse);
+      expect(controller.renderOptionsChanged, isFalse);
+
+      // Typography setters
+      controller.setFontSize(18.0);
+      expect(controller.renderOptions.fontSize, 18.0);
+      expect(controller.isReloading, isFalse);
+      expect(controller.renderOptionsChanged, isFalse);
+
+      controller.setBodyFont('PingFang SC');
+      expect(controller.renderOptions.bodyFont, 'PingFang SC');
+      expect(controller.isReloading, isFalse);
+      expect(controller.renderOptionsChanged, isFalse);
+
+      controller.setCodeFont('JetBrains Mono');
+      expect(controller.renderOptions.codeFont, 'JetBrains Mono');
+      expect(controller.isReloading, isFalse);
+      expect(controller.renderOptionsChanged, isFalse);
+
+      controller.setTypography(bodyFont: 'Songti SC', fontSize: 15.0);
+      expect(controller.renderOptions.bodyFont, 'Songti SC');
+      expect(controller.renderOptions.fontSize, 15.0);
+      expect(controller.isReloading, isFalse);
+      expect(controller.renderOptionsChanged, isFalse);
+
+      // Viewport width change
+      controller.setViewportWidth(1200.0);
+      expect(controller.isReloading, isFalse);
+
+      // Theme toggle
+      final initialTheme = controller.renderOptions.theme;
+      controller.toggleTheme();
+      expect(controller.renderOptions.theme, isNot(initialTheme));
+      expect(controller.isReloading, isFalse);
+      expect(controller.renderOptionsChanged, isFalse);
+    });
+
+    testWidgets('SettingsDialog displays PDF information banner in Typography tab when viewing a PDF', (tester) async {
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await controller.openFile(samplePdfFile.path);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SettingsDialog(controller: controller),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Switch to typography tab
+      await tester.tap(find.text('排版与字体'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('当前正在阅读独立 PDF 文档'), findsOneWidget);
     });
   });
 }

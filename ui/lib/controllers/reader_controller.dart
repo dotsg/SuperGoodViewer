@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import 'package:path/path.dart' as p;
@@ -130,7 +131,34 @@ class ReaderController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setPdfOutlines(List<OutlineItem> items) {
+  /// Validates whether [bytes] is structurally a complete PDF document.
+  /// Must begin with '%PDF' and contain '%%EOF' within the trailing 1024 bytes.
+  static bool isValidPdfBytes(Uint8List bytes) {
+    if (bytes.length < 16) return false;
+    // Magic header check: %PDF
+    if (bytes[0] != 0x25 ||
+        bytes[1] != 0x50 ||
+        bytes[2] != 0x44 ||
+        bytes[3] != 0x46) {
+      return false;
+    }
+    // Search for %%EOF within the trailing 1024 bytes
+    final searchStart = math.max(0, bytes.length - 1024);
+    for (int i = searchStart; i <= bytes.length - 5; i++) {
+      if (bytes[i] == 0x25 &&
+          bytes[i + 1] == 0x25 &&
+          bytes[i + 2] == 0x45 &&
+          bytes[i + 3] == 0x4F &&
+          bytes[i + 4] == 0x46) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void setPdfOutlines(List<OutlineItem> items, {String? targetFilePath}) {
+    if (!isPdfDocument) return;
+    if (targetFilePath != null && _currentFilePath != targetFilePath) return;
     _outlineItems = List.unmodifiable(items);
     notifyListeners();
   }
@@ -385,9 +413,19 @@ class ReaderController extends ChangeNotifier {
       _documentTitle = p.basenameWithoutExtension(filePath);
 
       if (isPdf) {
+        _compileGeneration++;
+        _hasPendingCompile = false;
         _isRawPdf = true;
         _currentMarkdown = '';
         _outlineItems = [];
+
+        if (!isValidPdfBytes(bytes)) {
+          _currentPdfBytes = null;
+          _errorMessage = 'PDF 文件不完整或已损坏 (缺少 %%EOF 结尾标识)';
+          notifyListeners();
+          return;
+        }
+
         _currentPdfBytes = bytes;
         _errorMessage = null;
 
@@ -553,10 +591,15 @@ class ReaderController extends ChangeNotifier {
         try {
           if (isPdfDocument) {
             final bytes = await file.readAsBytes();
+            if (!isValidPdfBytes(bytes)) {
+              debugPrint('[ReaderController] PDF reload skipped: incomplete file (in-flight write)');
+              return;
+            }
             if (_currentPdfBytes != null && listEquals(bytes, _currentPdfBytes)) {
               return;
             }
             _currentPdfBytes = bytes;
+            _errorMessage = null;
             startReloading();
             notifyListeners();
             return;
@@ -583,9 +626,22 @@ class ReaderController extends ChangeNotifier {
     if (isPdfDocument) {
       if (_currentFilePath != null) {
         final file = File(_currentFilePath!);
-        if (await file.exists()) {
-          _currentPdfBytes = await file.readAsBytes();
-          startReloading();
+        try {
+          if (await file.exists()) {
+            final bytes = await file.readAsBytes();
+            if (!isValidPdfBytes(bytes)) {
+              _errorMessage = 'PDF 文件不完整或已损坏 (缺少 %%EOF 结尾标识)';
+              notifyListeners();
+              return;
+            }
+            _currentPdfBytes = bytes;
+            _errorMessage = null;
+            startReloading();
+            notifyListeners();
+          }
+        } catch (e) {
+          _errorMessage = '刷新 PDF 失败: $e';
+          finishReloading();
           notifyListeners();
         }
       }
@@ -646,7 +702,7 @@ class ReaderController extends ChangeNotifier {
         options: _renderOptions,
       );
 
-      if (generation == _compileGeneration) {
+      if (generation == _compileGeneration && !isPdfDocument) {
         if (pdfBytes != null && pdfBytes.isNotEmpty) {
           _currentPdfBytes = pdfBytes;
           _errorMessage = null;
@@ -660,13 +716,13 @@ class ReaderController extends ChangeNotifier {
         }
       }
     } catch (e, st) {
-      if (generation == _compileGeneration) {
+      if (generation == _compileGeneration && !isPdfDocument) {
         _errorMessage = 'Compilation error: $e';
         debugPrint('[ReaderController] compileDocument: EXCEPTION gen $generation ($e)\n$st');
       }
     } finally {
       _isCompiling = false;
-      if (_hasPendingCompile) {
+      if (_hasPendingCompile && !isPdfDocument) {
         _hasPendingCompile = false;
         compileDocument();
       } else {
@@ -697,16 +753,19 @@ class ReaderController extends ChangeNotifier {
   }
 
   void toggleTheme() {
+    if (isPdfDocument) {
+      final nextTheme = _renderOptions.theme == 'light' ? 'dark' : 'light';
+      _renderOptions = _renderOptions.copyWith(theme: nextTheme);
+      _persistDebounced();
+      notifyListeners();
+      return;
+    }
     renderOptionsChanged = true;
     startReloading();
     final nextTheme = _renderOptions.theme == 'light' ? 'dark' : 'light';
     _renderOptions = _renderOptions.copyWith(theme: nextTheme);
     _persistDebounced();
     notifyListeners();
-    if (isPdfDocument) {
-      finishReloading();
-      return;
-    }
     if (_currentFilePath != null) {
       final cached = DocumentCacheService.getCachedPdf(_currentFilePath!, _renderOptions);
       if (cached != null && cached.isNotEmpty) {
@@ -722,6 +781,7 @@ class ReaderController extends ChangeNotifier {
 
   Timer? _viewportDebounceTimer;
   void setViewportWidth(double width) {
+    if (isPdfDocument) return;
     if ((width - _renderOptions.viewportWidth).abs() > 40) {
       _viewportDebounceTimer?.cancel();
       _viewportDebounceTimer = Timer(const Duration(milliseconds: 300), () {
@@ -736,10 +796,14 @@ class ReaderController extends ChangeNotifier {
   }
 
   void setFontSize(double size) {
-    renderOptionsChanged = true;
-    startReloading();
     _renderOptions = _renderOptions.copyWith(fontSize: size.clamp(8.0, 24.0));
     _persistPreferences();
+    if (isPdfDocument) {
+      notifyListeners();
+      return;
+    }
+    renderOptionsChanged = true;
+    startReloading();
     compileDocument();
   }
 
@@ -754,30 +818,42 @@ class ReaderController extends ChangeNotifier {
   }
 
   void setBodyFont(String? font) {
-    renderOptionsChanged = true;
-    startReloading();
     _renderOptions = _renderOptions.copyWith(bodyFont: font);
     _persistPreferences();
+    if (isPdfDocument) {
+      notifyListeners();
+      return;
+    }
+    renderOptionsChanged = true;
+    startReloading();
     compileDocument();
   }
 
   void setCodeFont(String? font) {
-    renderOptionsChanged = true;
-    startReloading();
     _renderOptions = _renderOptions.copyWith(codeFont: font);
     _persistPreferences();
+    if (isPdfDocument) {
+      notifyListeners();
+      return;
+    }
+    renderOptionsChanged = true;
+    startReloading();
     compileDocument();
   }
 
   void setTypography({String? bodyFont, String? codeFont, double? fontSize}) {
-    renderOptionsChanged = true;
-    startReloading();
     _renderOptions = _renderOptions.copyWith(
       bodyFont: bodyFont,
       codeFont: codeFont,
       fontSize: fontSize?.clamp(8.0, 24.0),
     );
     _persistPreferences();
+    if (isPdfDocument) {
+      notifyListeners();
+      return;
+    }
+    renderOptionsChanged = true;
+    startReloading();
     compileDocument();
   }
 
