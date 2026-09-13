@@ -1019,6 +1019,11 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         _slotBytes[1] = null;
         _slotDocHash[0] = 0;
         _slotDocHash[1] = 0;
+        _pendingSlot = null;
+        _pendingViewerReady = false;
+        _pendingImageLoaded = false;
+        _pendingWatchdogTimer?.cancel();
+        _swapFallbackTimer?.cancel();
         setState(() {});
       }
       return;
@@ -1850,8 +1855,15 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           showContextMenuAutomatically: false,
         ),
         onDocumentLoadFinished: (documentRef, succeeded) {
-          if (!succeeded && widget.controller.isPdfDocument) {
-            widget.controller.setErrorMessage('Failed to load PDF document');
+          final srcPath = widget.controller.currentFilePath;
+          if (mounted &&
+              widget.controller.isPdfDocument &&
+              widget.controller.currentFilePath == srcPath) {
+            if (succeeded) {
+              widget.controller.setErrorMessage(null);
+            } else {
+              widget.controller.setErrorMessage('Failed to load PDF document');
+            }
           }
           if (slotIndex == _pendingSlot) {
             _pendingImageLoaded = true;

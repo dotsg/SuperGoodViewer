@@ -218,24 +218,60 @@ void main() {
       expect(ReaderController.isValidPdfBytes(invalidPrefix), isFalse);
     });
 
-    test('Detects PDF file via magic bytes even with non-.pdf extension and leading bytes', () async {
-      final sampleTxtFile = File(p.join(tempTestDir.path, 'pdf_disguised_as.txt'));
-      final contentWithPrefix = Uint8List.fromList([
-        ...List.filled(32, 0x20), // 32 bytes of leading spaces
-        ...samplePdfContent.codeUnits,
-      ]);
-      sampleTxtFile.writeAsBytesSync(contentWithPrefix);
+    test('Markdown containing literal %PDF in first 1KB is NOT misclassified as PDF', () async {
+      final mdWithPdfLiteral = File(p.join(tempTestDir.path, 'pdf-notes.md'));
+      mdWithPdfLiteral.writeAsStringSync(
+        '# PDF 格式笔记\n每个 PDF 文件都以 `%PDF-1.7` 开头。\n\n## 结构分析\n详见规范文档。',
+      );
 
       final controller = ReaderController(autoRestorePreferences: false);
       addTearDown(controller.dispose);
 
-      await controller.openFile(sampleTxtFile.path);
+      await controller.openFile(mdWithPdfLiteral.path);
 
-      expect(controller.isPdfDocument, isTrue);
-      expect(controller.currentFilePath, sampleTxtFile.path);
-      expect(controller.documentTitle, 'pdf_disguised_as');
-      expect(controller.currentPdfBytes, isNotNull);
+      expect(controller.isPdfDocument, isFalse);
+      expect(controller.currentMarkdown, contains('PDF 格式笔记'));
+      expect(controller.outlineItems.any((item) => item.title == 'PDF 格式笔记'), isTrue);
       expect(controller.errorMessage, isNull);
+    });
+
+    test('Strict format detection: non-.pdf file starting with %PDF or UTF-8 BOM is detected as PDF', () async {
+      final datFile = File(p.join(tempTestDir.path, 'raw_document.dat'));
+      datFile.writeAsBytesSync(Uint8List.fromList(samplePdfContent.codeUnits));
+
+      final bomDatFile = File(p.join(tempTestDir.path, 'bom_document.dat'));
+      bomDatFile.writeAsBytesSync(Uint8List.fromList([
+        0xEF, 0xBB, 0xBF, // UTF-8 BOM
+        ...samplePdfContent.codeUnits,
+      ]));
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await controller.openFile(datFile.path);
+      expect(controller.isPdfDocument, isTrue);
+      expect(controller.documentTitle, 'raw_document');
+
+      await controller.openFile(bomDatFile.path);
+      expect(controller.isPdfDocument, isTrue);
+      expect(controller.documentTitle, 'bom_document');
+    });
+
+    test('Opening non-existent file clears canvas state, resets loading, and sets error', () async {
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await controller.openFile(samplePdfFile.path);
+      expect(controller.isPdfDocument, isTrue);
+      expect(controller.currentPdfBytes, isNotNull);
+
+      await controller.openFile(p.join(tempTestDir.path, 'missing_document.md'));
+      expect(controller.currentFilePath, p.join(tempTestDir.path, 'missing_document.md'));
+      expect(controller.documentTitle, 'missing_document');
+      expect(controller.currentPdfBytes, isNull);
+      expect(controller.outlineItems, isEmpty);
+      expect(controller.isReloading, isFalse);
+      expect(controller.errorMessage, contains('File not found:'));
     });
 
     test('Initial open hands bytes directly to PDFium and sets up watcher for live recovery', () async {

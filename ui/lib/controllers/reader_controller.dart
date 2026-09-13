@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter/scheduler.dart';
 
 import 'package:path/path.dart' as p;
 import '../bridge/native_engine.dart';
@@ -131,6 +133,25 @@ class ReaderController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Strictly checks whether [bytes] begins with '%PDF' at offset 0 (or immediately after UTF-8 BOM).
+  /// Used for format detection when the file does not have a .pdf extension.
+  static bool startsWithPdfHeader(Uint8List bytes) {
+    if (bytes.length < 4) return false;
+    int offset = 0;
+    // Skip UTF-8 BOM [0xEF, 0xBB, 0xBF] if present
+    if (bytes.length >= 7 &&
+        bytes[0] == 0xEF &&
+        bytes[1] == 0xBB &&
+        bytes[2] == 0xBF) {
+      offset = 3;
+    }
+    return bytes.length >= offset + 4 &&
+        bytes[offset] == 0x25 && // '%'
+        bytes[offset + 1] == 0x50 && // 'P'
+        bytes[offset + 2] == 0x44 && // 'D'
+        bytes[offset + 3] == 0x46; // 'F'
+  }
+
   /// Searches for the '%PDF' magic header within the first 1024 bytes of [bytes],
   /// conforming to ISO 32000-1 §7.5.2 tolerance for leading bytes.
   static bool hasPdfHeader(Uint8List bytes) {
@@ -169,8 +190,22 @@ class ReaderController extends ChangeNotifier {
   }
 
   void setErrorMessage(String? message) {
+    if (_errorMessage == message) return;
     _errorMessage = message;
-    notifyListeners();
+    try {
+      final binding = WidgetsBinding.instance;
+      if (binding.schedulerPhase == SchedulerPhase.persistentCallbacks) {
+        binding.addPostFrameCallback((_) {
+          if (!_isDisposed) {
+            notifyListeners();
+          }
+        });
+      } else {
+        notifyListeners();
+      }
+    } catch (_) {
+      notifyListeners();
+    }
   }
 
   void setPdfOutlines(List<OutlineItem> items, {String? targetFilePath}) {
@@ -408,18 +443,21 @@ class ReaderController extends ChangeNotifier {
   void _openFileInternal(String filePath, {bool preservePosition = false}) {
     final file = File(filePath);
     if (!file.existsSync()) {
-      final msg = 'File not found: $filePath';
-      if (_currentPdfBytes == null) {
-        compileDocument();
-      }
-      _errorMessage = msg;
+      _currentFilePath = filePath;
+      _documentTitle = p.basenameWithoutExtension(filePath);
+      _currentPdfBytes = null;
+      _outlineItems = [];
+      _currentMarkdown = '';
+      _isRawPdf = false;
+      _errorMessage = 'File not found: $filePath';
+      finishReloading();
       notifyListeners();
       return;
     }
 
     try {
       final bytes = file.readAsBytesSync();
-      final isPdf = filePath.toLowerCase().endsWith('.pdf') || hasPdfHeader(bytes);
+      final isPdf = filePath.toLowerCase().endsWith('.pdf') || startsWithPdfHeader(bytes);
 
       _currentFilePath = filePath;
       _documentTitle = p.basenameWithoutExtension(filePath);
