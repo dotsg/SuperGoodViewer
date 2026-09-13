@@ -193,6 +193,20 @@ void FlutterWindow::HandleOpenFile(const std::string& path) {
 
 namespace {
 
+std::wstring GetEnvVar(const wchar_t* name) {
+  DWORD len = ::GetEnvironmentVariableW(name, nullptr, 0);
+  if (len == 0) {
+    return L"";
+  }
+  std::wstring val(len, L'\0');
+  DWORD written = ::GetEnvironmentVariableW(name, val.data(), len);
+  if (written > 0 && written < len) {
+    val.resize(written);
+    return val;
+  }
+  return L"";
+}
+
 std::wstring GetLocalAppDataPath() {
   PWSTR local_app_data = nullptr;
   if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local_app_data))) {
@@ -200,17 +214,17 @@ std::wstring GetLocalAppDataPath() {
     CoTaskMemFree(local_app_data);
     return path;
   }
-  // Robust fallback 1: read %LOCALAPPDATA% environment variable if Shell API fails
-  wchar_t env_buf[MAX_PATH];
-  DWORD len = ::GetEnvironmentVariableW(L"LOCALAPPDATA", env_buf, MAX_PATH);
-  if (len > 0 && len < MAX_PATH) {
-    return std::wstring(env_buf);
+  // Robust fallback 1: read %LOCALAPPDATA% dynamically without MAX_PATH buffer limitation
+  std::wstring env_local = GetEnvVar(L"LOCALAPPDATA");
+  if (!env_local.empty()) {
+    return env_local;
   }
-  // Robust fallback 2: check %USERPROFILE%\AppData\Local
-  len = ::GetEnvironmentVariableW(L"USERPROFILE", env_buf, MAX_PATH);
-  if (len > 0 && len < MAX_PATH) {
-    std::wstring p = std::wstring(env_buf) + L"\\AppData\\Local";
-    if (std::filesystem::exists(p)) {
+  // Robust fallback 2: check %USERPROFILE%\AppData\Local with non-throwing filesystem query
+  std::wstring env_profile = GetEnvVar(L"USERPROFILE");
+  if (!env_profile.empty()) {
+    std::wstring p = env_profile + L"\\AppData\\Local";
+    std::error_code ec;
+    if (std::filesystem::is_directory(p, ec)) {
       return p;
     }
   }
@@ -235,7 +249,8 @@ struct CliLocations {
 };
 
 bool CanWriteToDir(const std::wstring& dir) {
-  if (dir.empty() || !std::filesystem::exists(dir)) return false;
+  std::error_code ec;
+  if (dir.empty() || !std::filesystem::exists(dir, ec)) return false;
   std::wstring probe = dir + L"\\.sgv_probe_" + std::to_wstring(::GetCurrentProcessId());
   HANDLE h = ::CreateFileW(probe.c_str(), GENERIC_WRITE, 0, nullptr,
                            CREATE_ALWAYS,
@@ -249,11 +264,12 @@ bool CanWriteToDir(const std::wstring& dir) {
 }
 
 std::wstring ResolveCliPath(const CliLocations& loc) {
+  std::error_code ec;
   // 1. If already installed in either location, return the existing script path
-  if (std::filesystem::exists(loc.custom_cmd)) {
+  if (std::filesystem::exists(loc.custom_cmd, ec)) {
     return loc.custom_cmd;
   }
-  if (std::filesystem::exists(loc.winapps_cmd)) {
+  if (std::filesystem::exists(loc.winapps_cmd, ec)) {
     return loc.winapps_cmd;
   }
 
@@ -280,14 +296,15 @@ std::vector<std::wstring> GetPathSegments(const std::wstring& path_str) {
   return segments;
 }
 
+std::wstring NormalizeDirPath(const std::wstring& dir) {
+  std::wstring s = dir;
+  while (!s.empty() && (s.back() == L'\\' || s.back() == L'/')) s.pop_back();
+  std::transform(s.begin(), s.end(), s.begin(), ::towlower);
+  return s;
+}
+
 bool AreDirsEqual(const std::wstring& a, const std::wstring& b) {
-  std::wstring sa = a;
-  std::wstring sb = b;
-  while (!sa.empty() && (sa.back() == L'\\' || sa.back() == L'/')) sa.pop_back();
-  while (!sb.empty() && (sb.back() == L'\\' || sb.back() == L'/')) sb.pop_back();
-  std::transform(sa.begin(), sa.end(), sa.begin(), ::towlower);
-  std::transform(sb.begin(), sb.end(), sb.begin(), ::towlower);
-  return sa == sb;
+  return NormalizeDirPath(a) == NormalizeDirPath(b);
 }
 
 bool ReadUserPath(std::wstring& out_path, DWORD& out_type) {
@@ -378,6 +395,7 @@ void AddToUserPathIfMissing(const std::wstring& dir_to_add) {
 }
 
 void RemoveFromUserPathIfPresent(const std::wstring& dir_to_remove) {
+  if (dir_to_remove.empty()) return;
   std::wstring current_path;
   DWORD type = REG_EXPAND_SZ;
   if (!ReadUserPath(current_path, type) || current_path.empty()) {
@@ -388,19 +406,7 @@ void RemoveFromUserPathIfPresent(const std::wstring& dir_to_remove) {
   std::wstring new_path;
   bool changed = false;
   for (const auto& seg : segments) {
-    bool match = false;
-    if (!dir_to_remove.empty() && AreDirsEqual(seg, dir_to_remove)) {
-      match = true;
-    } else {
-      // Also match any segment ending in \SuperGoodViewer\bin
-      std::wstring s = seg;
-      while (!s.empty() && (s.back() == L'\\' || s.back() == L'/')) s.pop_back();
-      std::transform(s.begin(), s.end(), s.begin(), ::towlower);
-      if (s.size() >= 20 && s.substr(s.size() - 20) == L"\\supergoodviewer\\bin") {
-        match = true;
-      }
-    }
-    if (match) {
+    if (AreDirsEqual(seg, dir_to_remove)) {
       changed = true;
     } else {
       if (!new_path.empty()) new_path += L';';
@@ -438,7 +444,8 @@ std::wstring FlutterWindow::GetInstalledCliPath() {
 
 flutter::EncodableMap FlutterWindow::CheckCliStatus() {
   std::wstring cli_path = GetInstalledCliPath();
-  bool exists = !cli_path.empty() && std::filesystem::exists(cli_path);
+  std::error_code ec;
+  bool exists = !cli_path.empty() && std::filesystem::exists(cli_path, ec);
 
   wchar_t exe_buf[MAX_PATH] = {0};
   GetModuleFileNameW(nullptr, exe_buf, MAX_PATH);
@@ -591,9 +598,6 @@ flutter::EncodableMap FlutterWindow::UninstallCli() {
     RemoveCliFiles(loc.winapps_cmd);
     RemoveCliFiles(loc.custom_cmd);
     RemoveFromUserPathIfPresent(loc.custom_dir);
-  } else {
-    // Ultimate fallback if known-folder resolution failed: clean any SGV bin entry from User PATH
-    RemoveFromUserPathIfPresent(L"");
   }
 
   flutter::EncodableMap res;
