@@ -1,7 +1,9 @@
-# 超好读 (SuperGoodViewer) 🚀
-
-> **只读 Markdown 矢量排版桌面阅读器**  
-> *Publication-Grade Typography, Pixel-Perfect Consistency, Zero-WebView Desktop Reader.*
+<div align="center">
+  <img src="docs/images/app_logo.png" width="128" height="128" alt="超好读 Logo" />
+  <h1>超好读 (SuperGoodViewer) 🚀</h1>
+  <p><strong>只读 Markdown 矢量排版桌面阅读器</strong></p>
+  <p><em>Publication-Grade Typography, Pixel-Perfect Consistency, Zero-WebView Desktop Reader.</em></p>
+</div>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![CI Status](https://img.shields.io/badge/CI-Passing-brightgreen.svg)]()
