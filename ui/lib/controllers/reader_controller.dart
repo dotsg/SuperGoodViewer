@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 
 import 'package:path/path.dart' as p;
 import '../bridge/native_engine.dart';
@@ -17,16 +19,18 @@ class OutlineItem {
   final int level;
   final String anchor;
   final int lineNumber;
+  final int? pageNumber;
 
   const OutlineItem({
     required this.title,
     required this.level,
     required this.anchor,
     required this.lineNumber,
+    this.pageNumber,
   });
 
   @override
-  String toString() => 'OutlineItem(H$level: $title, line: $lineNumber)';
+  String toString() => 'OutlineItem(H$level: $title, line: $lineNumber, page: $pageNumber)';
 }
 
 enum AutoFitMode {
@@ -40,6 +44,7 @@ class ReaderController extends ChangeNotifier {
   String _currentMarkdown = '';
   String _documentTitle = 'Welcome';
   Uint8List? _currentPdfBytes;
+  bool _isRawPdf = false;
   RenderOptions _renderOptions = RenderOptions(
     mode: 'fluid',
     theme: 'light',
@@ -100,6 +105,8 @@ class ReaderController extends ChangeNotifier {
   bool get isTwoPage => _isTwoPage;
   List<OutlineItem> get outlineItems => _outlineItems;
   OutlineItem? get requestedJumpItem => _requestedJumpItem;
+  bool get isPdfDocument =>
+      _isRawPdf || (_currentFilePath?.toLowerCase().endsWith('.pdf') ?? false);
 
   /// Top scroll deadband threshold (in points). Offsets <= this value are treated as top of document.
   static const double topScrollThreshold = 20.0;
@@ -122,6 +129,88 @@ class ReaderController extends ChangeNotifier {
 
   void jumpToOutline(OutlineItem item) {
     _requestedJumpItem = item;
+    notifyListeners();
+  }
+
+  /// Strictly checks whether [bytes] begins with '%PDF' at offset 0 (or immediately after UTF-8 BOM).
+  /// Used for format detection when the file does not have a .pdf extension.
+  static bool startsWithPdfHeader(Uint8List bytes) {
+    if (bytes.length < 4) return false;
+    int offset = 0;
+    // Skip UTF-8 BOM [0xEF, 0xBB, 0xBF] if present
+    if (bytes.length >= 7 &&
+        bytes[0] == 0xEF &&
+        bytes[1] == 0xBB &&
+        bytes[2] == 0xBF) {
+      offset = 3;
+    }
+    return bytes.length >= offset + 4 &&
+        bytes[offset] == 0x25 && // '%'
+        bytes[offset + 1] == 0x50 && // 'P'
+        bytes[offset + 2] == 0x44 && // 'D'
+        bytes[offset + 3] == 0x46; // 'F'
+  }
+
+  /// Searches for the '%PDF' magic header within the first 1024 bytes of [bytes],
+  /// conforming to ISO 32000-1 §7.5.2 tolerance for leading bytes.
+  static bool hasPdfHeader(Uint8List bytes) {
+    if (bytes.length < 4) return false;
+    final searchLimit = math.min(1024, bytes.length - 4);
+    for (int i = 0; i <= searchLimit; i++) {
+      if (bytes[i] == 0x25 && // '%'
+          bytes[i + 1] == 0x50 && // 'P'
+          bytes[i + 2] == 0x44 && // 'D'
+          bytes[i + 3] == 0x46) { // 'F'
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Validates whether [bytes] is structurally a completed PDF document (used for hot reload safety).
+  /// Checks that '%PDF' appears within the first 1024 bytes, and '%%EOF' is present
+  /// when scanning backwards from the end (up to 64KB to tolerate appended metadata/padding).
+  static bool isValidPdfBytes(Uint8List bytes) {
+    if (bytes.length < 16) return false;
+    if (!hasPdfHeader(bytes)) return false;
+
+    // Search backwards for '%%EOF' across up to 64KB of trailing data
+    final searchLimit = math.max(0, bytes.length - 65536);
+    for (int i = bytes.length - 5; i >= searchLimit; i--) {
+      if (bytes[i] == 0x25 &&
+          bytes[i + 1] == 0x25 &&
+          bytes[i + 2] == 0x45 &&
+          bytes[i + 3] == 0x4F &&
+          bytes[i + 4] == 0x46) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void setErrorMessage(String? message) {
+    if (_errorMessage == message) return;
+    _errorMessage = message;
+    try {
+      final binding = SchedulerBinding.instance;
+      if (binding.schedulerPhase == SchedulerPhase.persistentCallbacks) {
+        binding.addPostFrameCallback((_) {
+          if (!_isDisposed) {
+            notifyListeners();
+          }
+        });
+      } else {
+        notifyListeners();
+      }
+    } catch (_) {
+      notifyListeners();
+    }
+  }
+
+  void setPdfOutlines(List<OutlineItem> items, {String? targetFilePath}) {
+    if (!isPdfDocument) return;
+    if (targetFilePath != null && _currentFilePath != targetFilePath) return;
+    _outlineItems = List.unmodifiable(items);
     notifyListeners();
   }
 
@@ -353,27 +442,76 @@ class ReaderController extends ChangeNotifier {
   void _openFileInternal(String filePath, {bool preservePosition = false}) {
     final file = File(filePath);
     if (!file.existsSync()) {
-      final msg = 'File not found: $filePath';
-      if (_currentPdfBytes == null) {
-        compileDocument();
-      }
-      _errorMessage = msg;
+      _watcherSubscription?.cancel();
+      _currentFilePath = filePath;
+      _documentTitle = p.basenameWithoutExtension(filePath);
+      _currentPdfBytes = null;
+      _outlineItems = [];
+      _currentMarkdown = '';
+      _isRawPdf = false;
+      _errorMessage = 'File not found: $filePath';
+      finishReloading();
       notifyListeners();
       return;
     }
 
     try {
       final bytes = file.readAsBytesSync();
+      final isPdf = filePath.toLowerCase().endsWith('.pdf') || startsWithPdfHeader(bytes);
+
+      _currentFilePath = filePath;
+      _documentTitle = p.basenameWithoutExtension(filePath);
+
+      if (isPdf) {
+        _compileGeneration++;
+        _hasPendingCompile = false;
+        _isRawPdf = true;
+        _currentMarkdown = '';
+        _outlineItems = [];
+        _currentPdfBytes = bytes;
+        _errorMessage = null;
+
+        if (!preservePosition) {
+          final history = _fileHistory[filePath];
+          if (history != null) {
+            _lastScrollRatio = (history['scrollRatio'] as num?)?.toDouble() ?? 0.0;
+            _lastScrollOffset = (history['scrollOffset'] as num?)?.toDouble() ?? 0.0;
+            _lastPageNumber = (history['pageNumber'] as num?)?.toInt() ?? 1;
+            _lastZoom = (history['zoom'] as num?)?.toDouble() ?? _lastZoom;
+            startReloading();
+          } else {
+            _lastScrollRatio = 0.0;
+            _lastScrollOffset = 0.0;
+            _lastPageNumber = 1;
+            finishReloading();
+          }
+        } else {
+          startReloading();
+        }
+
+        // Add to recent files
+        _recentFiles.remove(filePath);
+        _recentFiles.insert(0, filePath);
+        if (_recentFiles.length > 10) {
+          _recentFiles.removeLast();
+        }
+
+        RemoteImageService.instance.clearNegativeCache();
+        _persistDebounced();
+        _setupFileWatcher(filePath);
+        notifyListeners();
+        return;
+      }
+
+      _isRawPdf = false;
       String content;
       try {
         content = utf8.decode(bytes);
       } catch (_) {
         content = utf8.decode(bytes, allowMalformed: true);
       }
-      _currentFilePath = filePath;
       _currentMarkdown = content;
       _extractOutline(_currentMarkdown);
-      _documentTitle = p.basenameWithoutExtension(filePath);
 
       if (!preservePosition) {
         final history = _fileHistory[filePath];
@@ -418,10 +556,10 @@ class ReaderController extends ChangeNotifier {
       compileDocument();
     } catch (e) {
       final msg = 'Failed to read file: $e';
-      if (_currentPdfBytes == null) {
-        compileDocument();
-      }
+      _currentPdfBytes = null;
+      _outlineItems = [];
       _errorMessage = msg;
+      finishReloading();
       notifyListeners();
     }
   }
@@ -493,6 +631,21 @@ class ReaderController extends ChangeNotifier {
       final file = File(_currentFilePath!);
       if (await file.exists()) {
         try {
+          if (isPdfDocument) {
+            final bytes = await file.readAsBytes();
+            if (!isValidPdfBytes(bytes)) {
+              debugPrint('[ReaderController] PDF reload skipped: incomplete file (in-flight write)');
+              return;
+            }
+            if (_currentPdfBytes != null && listEquals(bytes, _currentPdfBytes)) {
+              return;
+            }
+            _currentPdfBytes = bytes;
+            _errorMessage = null;
+            startReloading();
+            notifyListeners();
+            return;
+          }
           final bytes = await file.readAsBytes();
           final text = utf8.decode(bytes, allowMalformed: true);
           if (text == _currentMarkdown) {
@@ -512,6 +665,25 @@ class ReaderController extends ChangeNotifier {
 
   /// Manually refreshes the current document, clearing negative image cache and re-triggering downloads.
   Future<void> refreshDocument() async {
+    if (isPdfDocument) {
+      if (_currentFilePath != null) {
+        final file = File(_currentFilePath!);
+        try {
+          if (await file.exists()) {
+            final bytes = await file.readAsBytes();
+            _currentPdfBytes = bytes;
+            _errorMessage = null;
+            startReloading();
+            notifyListeners();
+          }
+        } catch (e) {
+          _errorMessage = 'Failed to refresh PDF: $e';
+          finishReloading();
+          notifyListeners();
+        }
+      }
+      return;
+    }
     RemoteImageService.instance.clearNegativeCache();
     _triggerRemoteImageDownloads();
     await compileDocument();
@@ -534,6 +706,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   Future<void> compileDocument() async {
+    if (isPdfDocument) return;
     if (_currentMarkdown.isEmpty) return;
 
     final int generation = ++_compileGeneration;
@@ -566,7 +739,7 @@ class ReaderController extends ChangeNotifier {
         options: _renderOptions,
       );
 
-      if (generation == _compileGeneration) {
+      if (generation == _compileGeneration && !isPdfDocument) {
         if (pdfBytes != null && pdfBytes.isNotEmpty) {
           _currentPdfBytes = pdfBytes;
           _errorMessage = null;
@@ -580,13 +753,13 @@ class ReaderController extends ChangeNotifier {
         }
       }
     } catch (e, st) {
-      if (generation == _compileGeneration) {
+      if (generation == _compileGeneration && !isPdfDocument) {
         _errorMessage = 'Compilation error: $e';
         debugPrint('[ReaderController] compileDocument: EXCEPTION gen $generation ($e)\n$st');
       }
     } finally {
       _isCompiling = false;
-      if (_hasPendingCompile) {
+      if (_hasPendingCompile && !isPdfDocument) {
         _hasPendingCompile = false;
         compileDocument();
       } else {
@@ -596,6 +769,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void toggleMode() {
+    if (isPdfDocument) return;
     renderOptionsChanged = true;
     startReloading();
     final nextMode = _renderOptions.mode == 'fluid' ? 'paged' : 'fluid';
@@ -616,6 +790,13 @@ class ReaderController extends ChangeNotifier {
   }
 
   void toggleTheme() {
+    if (isPdfDocument) {
+      final nextTheme = _renderOptions.theme == 'light' ? 'dark' : 'light';
+      _renderOptions = _renderOptions.copyWith(theme: nextTheme);
+      _persistDebounced();
+      notifyListeners();
+      return;
+    }
     renderOptionsChanged = true;
     startReloading();
     final nextTheme = _renderOptions.theme == 'light' ? 'dark' : 'light';
@@ -637,6 +818,7 @@ class ReaderController extends ChangeNotifier {
 
   Timer? _viewportDebounceTimer;
   void setViewportWidth(double width) {
+    if (isPdfDocument) return;
     if ((width - _renderOptions.viewportWidth).abs() > 40) {
       _viewportDebounceTimer?.cancel();
       _viewportDebounceTimer = Timer(const Duration(milliseconds: 300), () {
@@ -651,10 +833,14 @@ class ReaderController extends ChangeNotifier {
   }
 
   void setFontSize(double size) {
-    renderOptionsChanged = true;
-    startReloading();
     _renderOptions = _renderOptions.copyWith(fontSize: size.clamp(8.0, 24.0));
     _persistPreferences();
+    if (isPdfDocument) {
+      notifyListeners();
+      return;
+    }
+    renderOptionsChanged = true;
+    startReloading();
     compileDocument();
   }
 
@@ -669,30 +855,42 @@ class ReaderController extends ChangeNotifier {
   }
 
   void setBodyFont(String? font) {
-    renderOptionsChanged = true;
-    startReloading();
     _renderOptions = _renderOptions.copyWith(bodyFont: font);
     _persistPreferences();
+    if (isPdfDocument) {
+      notifyListeners();
+      return;
+    }
+    renderOptionsChanged = true;
+    startReloading();
     compileDocument();
   }
 
   void setCodeFont(String? font) {
-    renderOptionsChanged = true;
-    startReloading();
     _renderOptions = _renderOptions.copyWith(codeFont: font);
     _persistPreferences();
+    if (isPdfDocument) {
+      notifyListeners();
+      return;
+    }
+    renderOptionsChanged = true;
+    startReloading();
     compileDocument();
   }
 
   void setTypography({String? bodyFont, String? codeFont, double? fontSize}) {
-    renderOptionsChanged = true;
-    startReloading();
     _renderOptions = _renderOptions.copyWith(
       bodyFont: bodyFont,
       codeFont: codeFont,
       fontSize: fontSize?.clamp(8.0, 24.0),
     );
     _persistPreferences();
+    if (isPdfDocument) {
+      notifyListeners();
+      return;
+    }
+    renderOptionsChanged = true;
+    startReloading();
     compileDocument();
   }
 
@@ -711,8 +909,8 @@ class ReaderController extends ChangeNotifier {
     try {
       Uint8List? bytesToExport;
 
-      if (_renderOptions.theme == 'light') {
-        // Already in light mode: use current in-memory PDF immediately (0ms fast path)
+      if (isPdfDocument || _renderOptions.theme == 'light') {
+        // Direct PDF or light mode: use current in-memory PDF immediately (0ms fast path)
         bytesToExport = _currentPdfBytes;
       } else {
         // When viewing in dark mode, strictly export publication-grade light mode document

@@ -873,6 +873,41 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      if (controller.isPdfDocument) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          margin: const EdgeInsets.only(bottom: 12),
+                          decoration: BoxDecoration(
+                            color: isDark ? const Color(0x2838BDF8) : const Color(0x1A0284C7),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: isDark ? const Color(0x6038BDF8) : const Color(0x400284C7),
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                Icons.info_outline_rounded,
+                                color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7),
+                                size: 16,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  '当前正在阅读独立 PDF 文档，此处的排版设置将在阅读 Markdown 文档时生效。',
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: isDark ? const Color(0xFFBAE6FD) : const Color(0xFF0369A1),
+                                    height: 1.35,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                       // Maple Mono / CJK Monospace Health Banner (compact)
                       _buildMapleHealthBanner(theme, isDark, hasCjkMono, mapleInstalled),
                       const SizedBox(height: 12),

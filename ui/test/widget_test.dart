@@ -246,7 +246,7 @@ void main() {
       final mod = Platform.isMacOS ? 'Cmd' : 'Ctrl';
       final exportShortcut = controller.shortcutService.getShortcutLabel('exportPdf');
       expect(exportShortcut, '$mod+P');
-      expect(find.byTooltip('打开本地 Markdown ($mod+O)'), findsOneWidget);
+      expect(find.byTooltip('打开本地文档 ($mod+O)'), findsOneWidget);
       expect(find.byTooltip('展开侧边栏 ($mod+B)'), findsOneWidget);
       expect(find.byTooltip('导出出版级 PDF ($exportShortcut)'), findsOneWidget);
       expect(find.byTooltip('隐藏工具栏 (Esc 或 $mod+\\)'), findsOneWidget);

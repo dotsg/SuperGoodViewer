@@ -1013,7 +1013,21 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     }
 
     final newBytes = widget.pdfBytes;
-    if (newBytes == null || newBytes.isEmpty) return;
+    if (newBytes == null || newBytes.isEmpty) {
+      if (_slotBytes[0] != null || _slotBytes[1] != null) {
+        _slotBytes[0] = null;
+        _slotBytes[1] = null;
+        _slotDocHash[0] = 0;
+        _slotDocHash[1] = 0;
+        _pendingSlot = null;
+        _pendingViewerReady = false;
+        _pendingImageLoaded = false;
+        _pendingWatchdogTimer?.cancel();
+        _swapFallbackTimer?.cancel();
+        setState(() {});
+      }
+      return;
+    }
 
     if (_slotBytes[_activeSlot] == null) {
       _slotBytes[_activeSlot] = newBytes;
@@ -1108,7 +1122,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
       final docSize = ctrl.documentSize;
       final currentTop = ctrl.visibleRect.top;
-      final isFluid = widget.renderOptions.isFluid;
+      final isFluid = widget.renderOptions.isFluid && !widget.controller.isPdfDocument;
       final isTwoPage = widget.isTwoPage && !isFluid;
       final isAtTop = isFluid
           ? (currentTop <= 20.0)
@@ -1204,6 +1218,16 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
   Future<void> jumpToOutline(OutlineItem item) async {
     if (!_pdfController.isReady) return;
+    if (item.pageNumber != null) {
+      final pageCount = _pdfController.pageCount;
+      final targetPage = item.pageNumber!.clamp(1, pageCount);
+      await _pdfController.goToPage(
+        pageNumber: targetPage,
+        anchor: PdfPageAnchor.top,
+        duration: const Duration(milliseconds: 200),
+      );
+      return;
+    }
     try {
       final outlines = await _pdfController.document.loadOutline();
       final targetNode = _findOutlineNode(outlines, item.title);
@@ -1652,7 +1676,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           },
         ),
       );
-      if (!widget.controller.renderOptions.isFluid) {
+      if (widget.controller.isPdfDocument || !widget.controller.renderOptions.isFluid) {
         items.add(
           ContextMenuButtonItem(
             label: widget.controller.isTwoPage
@@ -1665,17 +1689,19 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           ),
         );
       }
-      items.add(
-        ContextMenuButtonItem(
-          label: widget.controller.renderOptions.isFluid
-              ? '切换为 A4 出版模式 (${widget.controller.shortcutService.getShortcutLabel('toggleMode')})'
-              : '切换为自适应流式 (${widget.controller.shortcutService.getShortcutLabel('toggleMode')})',
-          onPressed: () {
-            params.dismissContextMenu();
-            widget.controller.toggleMode();
-          },
-        ),
-      );
+      if (!widget.controller.isPdfDocument) {
+        items.add(
+          ContextMenuButtonItem(
+            label: widget.controller.renderOptions.isFluid
+                ? '切换为 A4 出版模式 (${widget.controller.shortcutService.getShortcutLabel('toggleMode')})'
+                : '切换为自适应流式 (${widget.controller.shortcutService.getShortcutLabel('toggleMode')})',
+            onPressed: () {
+              params.dismissContextMenu();
+              widget.controller.toggleMode();
+            },
+          ),
+        );
+      }
       items.add(
         ContextMenuButtonItem(
           label: widget.controller.renderOptions.isDark
@@ -1733,11 +1759,14 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     Color canvasBg,
   ) {
     final ctrl = _controllers[slotIndex];
+    final isPdfDoc = widget.controller.isPdfDocument;
+    final builtForPath = widget.controller.currentFilePath;
+    final effectiveFluid = isFluid && !isPdfDoc;
     return PdfViewer.data(
       bytes,
-      initialPageNumber: isFluid ? 1 : widget.controller.lastPageNumber.clamp(1, 999999),
+      initialPageNumber: effectiveFluid ? 1 : widget.controller.lastPageNumber.clamp(1, 999999),
       key: ValueKey(
-        'slot_${slotIndex}_${_slotDocHash[slotIndex]}_${widget.renderOptions.mode}_${widget.isTwoPage}',
+        'slot_${slotIndex}_${_slotDocHash[slotIndex]}_${widget.renderOptions.mode}_${widget.isTwoPage}_$isPdfDoc',
       ),
       sourceName: '${widget.documentTitle}_slot_${slotIndex}_${_slotDocHash[slotIndex]}',
       controller: ctrl,
@@ -1745,7 +1774,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         backgroundColor: canvasBg,
         scrollByMouseWheel: 1.0,
         calculateInitialPageNumber: (document, controller) {
-          if (isFluid) {
+          if (effectiveFluid) {
             final layouts = controller.layout.pageLayouts;
             if (layouts.isEmpty) return 1;
             final docHeight = controller.layout.documentSize.height;
@@ -1773,13 +1802,13 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         interactionDelegateProvider: SuperGoodScrollInteractionDelegateProvider(
           onDelegateCreated: (delegate) => _scrollDelegates[slotIndex] = delegate,
         ),
-        margin: isFluid ? 0.0 : 10.0,
-        boundaryMargin: isFluid
+        margin: effectiveFluid ? 0.0 : 10.0,
+        boundaryMargin: effectiveFluid
             ? const EdgeInsets.only(top: 36, bottom: 24, left: 0, right: 0)
             : const EdgeInsets.only(top: 36, bottom: 16, left: 8, right: 8),
-        maxImageBytesCachedOnMemory: isFluid ? 256 * 1024 * 1024 : 64 * 1024 * 1024,
-        onePassRenderingSizeThreshold: isFluid ? 4000.0 : 2000.0,
-        getPageRenderingScale: isFluid
+        maxImageBytesCachedOnMemory: effectiveFluid ? 256 * 1024 * 1024 : 64 * 1024 * 1024,
+        onePassRenderingSizeThreshold: effectiveFluid ? 4000.0 : 2000.0,
+        getPageRenderingScale: effectiveFluid
             ? (context, page, controller, estimatedScale) {
                 const maxDimension = 4000.0;
                 if (page.width > maxDimension || page.height > maxDimension) {
@@ -1791,7 +1820,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         verticalCacheExtent: 1.5,
         pageAnchor: PdfPageAnchor.top,
         underflowAnchor: PdfPageAnchor.top,
-        pageDropShadow: isFluid
+        pageDropShadow: effectiveFluid
             ? null
             : BoxShadow(
                 color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.12),
@@ -1805,7 +1834,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           pageImageCachingDelay: Duration.zero,
           partialImageLoadingDelay: Duration.zero,
         ),
-        layoutPages: isFluid
+        layoutPages: effectiveFluid
             ? _layoutFluidPages
             : (pages, params) => _layoutA4Pages(
                   pages,
@@ -1814,19 +1843,30 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
                 ),
         sizeDelegateProvider: SuperGoodSizeDelegateProvider(
           readerController: widget.controller,
-          isFluid: isFluid,
+          isFluid: effectiveFluid,
           isTwoPage: widget.isTwoPage,
-          minScale: isFluid ? 0.35 : 0.2,
+          minScale: effectiveFluid ? 0.35 : 0.2,
           maxScale: 5.0,
         ),
         zoomStepsDelegateProvider: SuperGoodZoomStepsDelegateProvider(
-          isFluid: widget.renderOptions.isFluid,
+          isFluid: effectiveFluid,
         ),
         textSelectionParams: const PdfTextSelectionParams(
           enabled: true,
           showContextMenuAutomatically: false,
         ),
         onDocumentLoadFinished: (documentRef, succeeded) {
+          if (mounted &&
+              widget.controller.isPdfDocument &&
+              widget.controller.currentFilePath == builtForPath) {
+            if (succeeded) {
+              if (widget.controller.errorMessage == 'Failed to load PDF document') {
+                widget.controller.setErrorMessage(null);
+              }
+            } else {
+              widget.controller.setErrorMessage('Failed to load PDF document');
+            }
+          }
           if (slotIndex == _pendingSlot) {
             _pendingImageLoaded = true;
             if (_pendingViewerReady) {
@@ -1836,6 +1876,37 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         },
         onViewerReady: (document, controller) {
           StartupMetrics.markFirstDocument();
+          if (widget.controller.isPdfDocument) {
+            final srcPath = widget.controller.currentFilePath;
+            document.loadOutline().then((outlines) {
+              if (!mounted) {
+                return;
+              }
+              if (!widget.controller.isPdfDocument ||
+                  widget.controller.currentFilePath != srcPath) {
+                return;
+              }
+              final items = <OutlineItem>[];
+              void traverse(List<PdfOutlineNode> nodes, int level) {
+                for (final node in nodes) {
+                  items.add(OutlineItem(
+                    title: node.title,
+                    level: level,
+                    anchor: node.title,
+                    lineNumber: 0,
+                    pageNumber: node.dest?.pageNumber,
+                  ));
+                  if (node.children.isNotEmpty) {
+                    traverse(node.children, level + 1);
+                  }
+                }
+              }
+              traverse(outlines, 1);
+              widget.controller.setPdfOutlines(items, targetFilePath: srcPath);
+            }).catchError((e) {
+              debugPrint('[PdfCanvasView] Failed to load PDF outline: $e');
+            });
+          }
           if (slotIndex == _pendingSlot) {
             _pendingViewerReady = true;
             _restoreScrollFor(controller);
@@ -1907,12 +1978,12 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
               final file = File(resolvedPath);
               if (await file.exists()) {
                 final ext = p.extension(resolvedPath).toLowerCase();
-                const mdExtensions = {'.md', '.markdown', '.mdown', '.mkd', '.mkdn'};
-                if (mdExtensions.contains(ext) || ext.isEmpty) {
-                  // Markdown 文档：直接在当前视窗中平滑切换打开
+                const supportedExtensions = {'.md', '.markdown', '.mdown', '.mkd', '.mkdn', '.pdf'};
+                if (supportedExtensions.contains(ext) || ext.isEmpty) {
+                  // Markdown 与 PDF 文档：直接在当前视窗中平滑切换打开
                   await widget.controller.openFile(resolvedPath);
                 } else {
-                  // 其他本地文件（如 PDF、图片、Office 文档等）：唤起系统关联程序打开
+                  // 其他本地文件（如图片、Office 文档等）：唤起系统关联程序打开
                   await launchUrl(Uri.file(resolvedPath));
                 }
               } else {

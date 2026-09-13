@@ -67,9 +67,9 @@ class ShortcutService extends ChangeNotifier {
     ),
     AppShortcutAction(
       id: 'openFile',
-      name: '打开本地 Markdown',
+      name: '打开本地文档',
       category: '文档文件',
-      description: '通过系统文件选择器打开并阅读本地 Markdown 文件',
+      description: '通过系统文件选择器打开并阅读本地 Markdown 或 PDF 文件',
       defaultKey: LogicalKeyboardKey.keyO,
     ),
     AppShortcutAction(
