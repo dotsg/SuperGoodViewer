@@ -234,41 +234,6 @@ std::wstring GetCurrentExecutablePath() {
   }
 }
 
-std::wstring GetRegistryLocalAppData() {
-  HKEY hkey;
-  if (::RegOpenKeyExW(HKEY_CURRENT_USER,
-                      L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
-                      0, KEY_READ, &hkey) != ERROR_SUCCESS) {
-    return L"";
-  }
-  DWORD type = 0;
-  DWORD size = 0;
-  LONG status = ::RegQueryValueExW(hkey, L"Local AppData", nullptr, &type, nullptr, &size);
-  if (status != ERROR_SUCCESS || size == 0) {
-    ::RegCloseKey(hkey);
-    return L"";
-  }
-  std::vector<wchar_t> buf(size / sizeof(wchar_t) + 2, 0);
-  status = ::RegQueryValueExW(hkey, L"Local AppData", nullptr, &type,
-                              reinterpret_cast<LPBYTE>(buf.data()), &size);
-  ::RegCloseKey(hkey);
-  if (status != ERROR_SUCCESS) {
-    return L"";
-  }
-  // Expand %USERPROFILE% if REG_EXPAND_SZ
-  DWORD exp_len = ::ExpandEnvironmentStringsW(buf.data(), nullptr, 0);
-  if (exp_len == 0) {
-    return buf.data();
-  }
-  std::wstring exp_buf(exp_len, L'\0');
-  DWORD written = ::ExpandEnvironmentStringsW(buf.data(), exp_buf.data(), exp_len);
-  if (written > 0 && written < exp_len) {
-    exp_buf.resize(written);
-    return exp_buf;
-  }
-  return buf.data();
-}
-
 std::wstring GetLocalAppDataPath() {
   PWSTR local_app_data = nullptr;
   if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local_app_data))) {
@@ -281,28 +246,10 @@ std::wstring GetLocalAppDataPath() {
   if (!env_local.empty()) {
     return env_local;
   }
-  // Robust fallback 2: query User Shell Folders registry
-  std::wstring reg_local = GetRegistryLocalAppData();
-  if (!reg_local.empty()) {
-    std::error_code ec;
-    if (std::filesystem::is_directory(reg_local, ec)) {
-      return reg_local;
-    }
-  }
-  // Robust fallback 3: check %USERPROFILE%\AppData\Local with non-throwing filesystem query
+  // Robust fallback 2: check %USERPROFILE%\AppData\Local with non-throwing filesystem query
   std::wstring env_profile = GetEnvVar(L"USERPROFILE");
   if (!env_profile.empty()) {
     std::wstring p = env_profile + L"\\AppData\\Local";
-    std::error_code ec;
-    if (std::filesystem::is_directory(p, ec)) {
-      return p;
-    }
-  }
-  // Robust fallback 4: check %HOMEDRIVE%%HOMEPATH%\AppData\Local
-  std::wstring home_drive = GetEnvVar(L"HOMEDRIVE");
-  std::wstring home_path = GetEnvVar(L"HOMEPATH");
-  if (!home_drive.empty() && !home_path.empty()) {
-    std::wstring p = home_drive + home_path + L"\\AppData\\Local";
     std::error_code ec;
     if (std::filesystem::is_directory(p, ec)) {
       return p;
@@ -533,7 +480,7 @@ flutter::EncodableMap FlutterWindow::CheckCliStatus() {
   std::string target_utf8 = Utf8FromUtf16(exe_path.c_str());
 
   bool is_current_app = false;
-  if (exists) {
+  if (exists && !target_utf8.empty()) {
     std::ifstream file(cli_path);
     if (file.is_open()) {
       std::string content((std::istreambuf_iterator<char>(file)),
@@ -675,45 +622,16 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
 
 flutter::EncodableMap FlutterWindow::UninstallCli() {
   flutter::EncodableMap res;
-  bool cleaned = false;
-
   CliLocations loc;
-  if (CliLocations::TryGet(loc)) {
-    RemoveCliFiles(loc.winapps_cmd);
-    RemoveCliFiles(loc.custom_cmd);
-    RemoveFromUserPathIfPresent(loc.custom_dir);
-    cleaned = true;
-  } else {
-    // Ultimate fallback if LocalAppData is unresolvable:
-    // Search User PATH registry for any segment containing our sgv.cmd launcher
-    std::wstring current_path;
-    DWORD type = REG_EXPAND_SZ;
-    if (ReadUserPath(current_path, type) && !current_path.empty()) {
-      std::vector<std::wstring> segments = GetPathSegments(current_path);
-      for (const auto& seg : segments) {
-        std::wstring candidate_cmd = seg + L"\\sgv.cmd";
-        std::error_code ec;
-        if (std::filesystem::exists(candidate_cmd, ec)) {
-          std::ifstream f(candidate_cmd);
-          if (f.is_open()) {
-            std::string content((std::istreambuf_iterator<char>(f)),
-                                std::istreambuf_iterator<char>());
-            if (content.find("SuperGoodViewer") != std::string::npos) {
-              RemoveCliFiles(candidate_cmd);
-              RemoveFromUserPathIfPresent(seg);
-              cleaned = true;
-            }
-          }
-        }
-      }
-    }
-  }
-
-  if (!cleaned) {
+  if (!CliLocations::TryGet(loc)) {
     res[flutter::EncodableValue("status")] = flutter::EncodableValue("error");
-    res[flutter::EncodableValue("message")] = flutter::EncodableValue("无法定位安装目录以完成卸载");
+    res[flutter::EncodableValue("message")] = flutter::EncodableValue("无法定位本地应用数据目录");
     return res;
   }
+
+  RemoveCliFiles(loc.winapps_cmd);
+  RemoveCliFiles(loc.custom_cmd);
+  RemoveFromUserPathIfPresent(loc.custom_dir);
 
   res[flutter::EncodableValue("status")] = flutter::EncodableValue("success");
   return res;
