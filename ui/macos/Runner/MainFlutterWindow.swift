@@ -13,10 +13,17 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
   }
 
   override func awakeFromNib() {
+    super.awakeFromNib()
+
     let project = FlutterDartProject()
     project.dartEntrypointArguments = Array(ProcessInfo.processInfo.arguments.dropFirst())
     let flutterViewController = FlutterViewController(project: project)
     self.contentViewController = flutterViewController
+
+    self.titleVisibility = .hidden
+    self.titlebarAppearsTransparent = true
+    self.styleMask.insert(.fullSizeContentView)
+    self.delegate = self
 
     let windowAutosaveName = "SuperGoodViewerMainWindow"
     if !self.setFrameUsingName(windowAutosaveName) {
@@ -26,11 +33,6 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
       self.center()
     }
     self.setFrameAutosaveName(windowAutosaveName)
-
-    self.titleVisibility = .hidden
-    self.titlebarAppearsTransparent = true
-    self.styleMask.insert(.fullSizeContentView)
-    self.delegate = self
 
     RegisterGeneratedPlugins(registry: flutterViewController)
     AppDelegate.shared?.registerMessenger(flutterViewController.engine.binaryMessenger)
@@ -64,7 +66,5 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
         result(FlutterMethodNotImplemented)
       }
     }
-
-    super.awakeFromNib()
   }
 }
