@@ -15,6 +15,21 @@ const List<double> kZoomLadder = [
   1.10, 1.25, 1.50, 1.75, 2.00, 2.50, 3.00, 4.00, 5.00
 ];
 
+/// Seamless vertical layout for fluid documents:
+/// Stacks continuous slices with 0 margin, forming an uninterrupted flow.
+PdfPageLayout _layoutFluidPages(List<PdfPage> pages, PdfViewerParams params) {
+  final width = pages.fold(0.0, (w, p) => math.max(w, p.width));
+  final pageLayout = <Rect>[];
+  var y = 0.0;
+  for (var i = 0; i < pages.length; i++) {
+    final page = pages[i];
+    final rect = Rect.fromLTWH((width - page.width) / 2, y, page.width, page.height);
+    pageLayout.add(rect);
+    y += page.height;
+  }
+  return PdfPageLayout(pageLayouts: pageLayout, documentSize: Size(width, y));
+}
+
 /// Publication-grade layout for A4 documents:
 /// - In Single-page mode: Centers pages vertically stacked.
 /// - In Two-page spread mode: Pairs pages side-by-side (Row 0: Page 1 & 2, Row 1: Page 3 & 4)
@@ -1516,18 +1531,21 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         interactionDelegateProvider: SuperGoodScrollInteractionDelegateProvider(
           onDelegateCreated: (delegate) => _scrollDelegates[slotIndex] = delegate,
         ),
-        margin: isFluid ? 8.0 : 10.0,
+        margin: isFluid ? 0.0 : 10.0,
         boundaryMargin: isFluid
             ? const EdgeInsets.only(top: 36, bottom: 24, left: 0, right: 0)
             : const EdgeInsets.only(top: 36, bottom: 16, left: 8, right: 8),
+        verticalCacheExtent: 1.5,
         pageAnchor: PdfPageAnchor.top,
         underflowAnchor: PdfPageAnchor.top,
-        pageDropShadow: BoxShadow(
-          color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.12),
-          blurRadius: 10,
-          spreadRadius: 1,
-          offset: const Offset(0, 3),
-        ),
+        pageDropShadow: isFluid
+            ? null
+            : BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.12),
+                blurRadius: 10,
+                spreadRadius: 1,
+                offset: const Offset(0, 3),
+              ),
         behaviorControlParams: const PdfViewerBehaviorControlParams(
           enableLowResolutionPagePreview: false,
           trailingPageLoadingDelay: Duration.zero,
@@ -1535,7 +1553,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           partialImageLoadingDelay: Duration.zero,
         ),
         layoutPages: isFluid
-            ? null
+            ? _layoutFluidPages
             : (pages, params) => _layoutA4Pages(
                   pages,
                   params,
