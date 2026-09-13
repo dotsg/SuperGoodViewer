@@ -7,6 +7,11 @@ class AppDelegate: FlutterAppDelegate {
   var appChannel: FlutterMethodChannel?
   var pendingFileToOpen: String?
 
+  override init() {
+    super.init()
+    AppDelegate.shared = self
+  }
+
   override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
     return true
   }
@@ -17,13 +22,16 @@ class AppDelegate: FlutterAppDelegate {
 
   override func applicationDidFinishLaunching(_ notification: Notification) {
     AppDelegate.shared = self
-    super.applicationDidFinishLaunching(notification)
-    setupAppChannel()
     setupMenuBar()
+
+    // Backup registration if MainFlutterWindow hasn't called registerMessenger yet
+    if appChannel == nil,
+       let flutterVC = mainFlutterWindow?.contentViewController as? FlutterViewController {
+      registerMessenger(flutterVC.engine.binaryMessenger)
+    }
   }
 
   override func application(_ sender: NSApplication, openFiles filenames: [String]) {
-    super.application(sender, openFiles: filenames)
     guard let file = filenames.first else { return }
     if let channel = appChannel {
       channel.invokeMethod("onOpenFile", arguments: file)
@@ -33,13 +41,11 @@ class AppDelegate: FlutterAppDelegate {
     sender.activate(ignoringOtherApps: true)
   }
 
-  private func setupAppChannel() {
-    guard let flutterVC = mainFlutterWindow?.contentViewController as? FlutterViewController else {
-      return
-    }
+  func registerMessenger(_ messenger: FlutterBinaryMessenger) {
+    if appChannel != nil { return }
     let channel = FlutterMethodChannel(
       name: "com.sogoodviewer.app",
-      binaryMessenger: flutterVC.engine.binaryMessenger
+      binaryMessenger: messenger
     )
     self.appChannel = channel
 
@@ -68,10 +74,8 @@ class AppDelegate: FlutterAppDelegate {
   }
 
   private func setupMenuBar() {
-    // Add "安装 'sgv' 命令行工具..." under the primary App Menu
     guard let appMenu = NSApp.mainMenu?.items.first?.submenu else { return }
 
-    // Check if already added to avoid duplicates
     if appMenu.items.contains(where: { $0.action == #selector(menuInstallCliAction) }) {
       return
     }
@@ -94,7 +98,7 @@ class AppDelegate: FlutterAppDelegate {
     } else {
       let alert = NSAlert()
       alert.messageText = "安装 'sgv' 命令行工具"
-      alert.informativeText = "请在主窗口完全加载后重试。"
+      alert.informativeText = "主窗口正在加载中，请稍后重试。"
       alert.runModal()
     }
   }
@@ -109,11 +113,20 @@ class AppDelegate: FlutterAppDelegate {
     let scriptUrl = resourcesBin.appendingPathComponent("sgv")
 
     let fm = FileManager.default
-    if !fm.fileExists(atPath: scriptUrl.path) {
-      try? fm.createDirectory(at: resourcesBin, withIntermediateDirectories: true)
-      try? embeddedSgvScript.write(to: scriptUrl, atomically: true, encoding: .utf8)
-      try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptUrl.path)
+    if fm.fileExists(atPath: scriptUrl.path) {
+      return scriptUrl.path
     }
+
+    // Fallback: If running in dev mode or script not in bundle, write to Application Support
+    if let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+      let sgvDir = appSupport.appendingPathComponent("SuperGoodViewer/bin", isDirectory: true)
+      let targetFile = sgvDir.appendingPathComponent("sgv")
+      try? fm.createDirectory(at: sgvDir, withIntermediateDirectories: true)
+      try? embeddedSgvScript.write(to: targetFile, atomically: true, encoding: .utf8)
+      try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: targetFile.path)
+      return targetFile.path
+    }
+
     return scriptUrl.path
   }
 
@@ -145,7 +158,7 @@ class AppDelegate: FlutterAppDelegate {
 
     try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: sourcePath)
 
-    // Try standard non-root link creation first
+    // Try non-root symlink creation first
     do {
       if fm.fileExists(atPath: cliSymlinkPath) {
         try fm.removeItem(atPath: cliSymlinkPath)
@@ -154,7 +167,7 @@ class AppDelegate: FlutterAppDelegate {
       result(["status": "success", "path": cliSymlinkPath])
       return
     } catch {
-      // Standard creation failed, prompt for admin privileges
+      // Standard creation failed (needs admin permissions). Use AppleScript.
       let appleScriptSource = """
       do shell script "mkdir -p /usr/local/bin && ln -sf '\(sourcePath)' '\(cliSymlinkPath)'" with administrator privileges
       """

@@ -15,6 +15,7 @@ class MainFlutterWindow: NSWindow {
     self.styleMask.insert(.fullSizeContentView)
 
     RegisterGeneratedPlugins(registry: flutterViewController)
+    AppDelegate.shared?.registerMessenger(flutterViewController.engine.binaryMessenger)
 
     let windowChannel = FlutterMethodChannel(
       name: "com.sogoodviewer.window",
