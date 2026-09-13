@@ -4,18 +4,9 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag_name:
-        description: 'Release Tag Name (e.g. v1.0.0)'
-        required: false
-        default: 'v1.0.0'
 
 permissions:
   contents: write
-
-env:
-  RELEASE_TAG: ${{ github.event.inputs.tag_name || github.ref_name }}
 
 jobs:
   # =============================================================
@@ -60,7 +51,7 @@ jobs:
         run: |
           mkdir -p dist
           APP_PATH="ui/build/macos/Build/Products/Release/sogoodviewer.app"
-          DMG_FILE="dist/SuperGoodViewer-${RELEASE_TAG}-macos.dmg"
+          DMG_FILE="dist/SuperGoodViewer-${{ github.ref_name }}-macos.dmg"
 
           echo "==> Creating DMG: $DMG_FILE"
           hdiutil create -volname "超好读 SuperGoodViewer" \
@@ -76,7 +67,7 @@ jobs:
           if-no-files-found: error
 
   # =============================================================
-  # Windows Build & Package (x64 for Intel/AMD)
+  # Windows Build & Package (x64 for Intel/AMD & ARM64 Prism)
   # =============================================================
   build-windows-x64:
     name: Build Windows x64
@@ -121,7 +112,7 @@ jobs:
           Copy-Item -Path $rustDll -Destination $buildDir
 
           # Compress to zip
-          $zipName = "dist/SuperGoodViewer-${env:RELEASE_TAG}-windows-x64.zip"
+          $zipName = "dist/SuperGoodViewer-${{ github.ref_name }}-windows-x64.zip"
           Compress-Archive -Path "$buildDir/*" -DestinationPath $zipName
           Write-Host "Created Windows x64 package: $zipName"
 
@@ -133,83 +124,12 @@ jobs:
           if-no-files-found: error
 
   # =============================================================
-  # Windows Build & Package (Native ARM64 for Snapdragon X Elite / Surface)
-  # =============================================================
-  build-windows-arm64:
-    name: Build Windows ARM64 (Native)
-    runs-on: windows-latest
-    continue-on-error: true
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust Toolchain (ARM64)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: aarch64-pc-windows-msvc
-
-      - name: Setup Flutter SDK
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - name: Build Rust sogood_core (Native ARM64)
-        shell: bash
-        run: |
-          cd core
-          cargo build --release --target aarch64-pc-windows-msvc
-
-      - name: Configure Flutter Windows for ARM64 Cross-Compilation
-        shell: pwsh
-        run: |
-          cd ui
-          flutter pub get
-          flutter build windows --config-only
-
-          # Update ephemeral cmake configuration to target windows-arm64
-          $configPath = "windows/flutter/ephemeral/generated_config.cmake"
-          if (Test-Path $configPath) {
-            (Get-Content $configPath) -replace 'FLUTTER_TARGET_PLATFORM "windows-x64"', 'FLUTTER_TARGET_PLATFORM "windows-arm64"' | Set-Content $configPath
-          }
-
-      - name: Build Flutter Windows App with CMake (ARM64)
-        shell: pwsh
-        run: |
-          cd ui
-          cmake -S windows -B build/windows/arm64 -G "Visual Studio 17 2022" -A ARM64 -DFLUTTER_TARGET_PLATFORM=windows-arm64
-          cmake --build build/windows/arm64 --config Release --target INSTALL
-
-      - name: Package Windows ARM64 Portable ZIP
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist
-          $buildDir = "ui/build/windows/arm64/runner/Release"
-          $rustDll = "core/target/aarch64-pc-windows-msvc/release/sogood_core.dll"
-
-          Copy-Item -Path $rustDll -Destination $buildDir
-
-          $zipName = "dist/SuperGoodViewer-${env:RELEASE_TAG}-windows-arm64.zip"
-          Compress-Archive -Path "$buildDir/*" -DestinationPath $zipName
-          Write-Host "Created Windows ARM64 package: $zipName"
-
-      - name: Upload Windows ARM64 Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-arm64-binaries
-          path: dist/*
-          if-no-files-found: error
-
-  # =============================================================
   # Publish Release
   # =============================================================
   publish-release:
     name: Publish GitHub Release
-    needs: [build-macos, build-windows-x64, build-windows-arm64]
+    needs: [build-macos, build-windows-x64]
     runs-on: ubuntu-latest
-    if: always() && needs.build-macos.result == 'success' && needs.build-windows-x64.result == 'success'
 
     steps:
       - name: Download all built artifacts
@@ -226,14 +146,14 @@ jobs:
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          name: "超好读 (SuperGoodViewer) ${{ env.RELEASE_TAG }}"
+          tag_name: ${{ github.ref_name }}
+          name: "超好读 (SuperGoodViewer) ${{ github.ref_name }}"
           files: release-artifacts/*
           draft: false
           prerelease: false
           generate_release_notes: true
           body: |
-            ## 🚀 超好读 (SuperGoodViewer) ${{ env.RELEASE_TAG }} 正式发布！
+            ## 🚀 超好读 (SuperGoodViewer) ${{ github.ref_name }} 正式发布！
 
             **只读 Markdown 矢量排版桌面阅读器**
             *Publication-Grade Typography, Pixel-Perfect Consistency, Zero-WebView Desktop Reader.*
@@ -243,7 +163,7 @@ jobs:
             ### 📦 下载与安装指南
 
             #### 🍏 macOS 用户
-            - **下载文件**：`SuperGoodViewer-${{ env.RELEASE_TAG }}-macos.dmg`
+            - **下载文件**：`SuperGoodViewer-${{ github.ref_name }}-macos.dmg`
             - **系统要求**：macOS 11.0+ (原生支持 Apple Silicon M 系列芯片与 Intel Mac)
             - **首次打开提示处理**：
               若系统提示「*无法验证开发者*」或「*已损坏，无法打开*」，请打开终端（Terminal）执行以下命令解除隔离属性即可：
@@ -252,9 +172,7 @@ jobs:
               ```
 
             #### 🪟 Windows 用户
-            - **Intel / AMD 电脑推荐**：`SuperGoodViewer-${{ env.RELEASE_TAG }}-windows-x64.zip`
-              - 适用于所有 64 位 Windows 10 / 11 电脑。
-            - **高通骁龙 / Surface ARM 电脑推荐**：`SuperGoodViewer-${{ env.RELEASE_TAG }}-windows-arm64.zip`（原生纯净运行）
-              - 专为高通骁龙 X Elite / X Plus / Surface Pro 11 等 Windows on ARM 设备编译的原生版本，极低功耗与极致性能。
+            - **下载文件**：`SuperGoodViewer-${{ github.ref_name }}-windows-x64.zip`
+            - **系统要求**：Windows 10 / 11 64位（原生支持 Intel/AMD 64位 PC；高通骁龙 X Elite / Surface 等 ARM64 设备解压后可通过 Windows 11 内置 Prism 仿真引擎免配置极速运行）
             - **使用方式**：解压 zip 包至任意目录，双击 `sogoodviewer.exe` 即可即开即用（绿色免安装便携版）。
             - **首次运行提示**：如遇 Windows SmartScreen 提示拦截，点击「更多信息」并选择「仍要运行」。
