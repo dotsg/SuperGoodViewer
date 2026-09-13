@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use pulldown_cmark::{Alignment, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use typst::foundations::Bytes;
 
@@ -143,6 +143,80 @@ fn parse_dimension(val: &str) -> String {
     }
 }
 
+pub fn sanitize_image_url(url: &str) -> &str {
+    if let Some(pos) = url.find('#') {
+        &url[..pos]
+    } else {
+        url
+    }
+}
+
+pub fn url_to_cache_filename(url: &str) -> String {
+    let clean_url = sanitize_image_url(url);
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(clean_url.as_bytes());
+    let hash = format!("{:x}", hasher.finalize());
+    let lower = clean_url.to_lowercase();
+    let ext = if lower.contains(".png") || lower.contains("wx_fmt=png") {
+        "png"
+    } else if lower.contains(".jpg") || lower.contains(".jpeg") || lower.contains("wx_fmt=jpeg") || lower.contains("wx_fmt=jpg") {
+        "jpg"
+    } else if lower.contains(".webp") || lower.contains("wx_fmt=webp") {
+        "webp"
+    } else if lower.contains(".gif") || lower.contains("wx_fmt=gif") {
+        "gif"
+    } else if lower.contains(".svg") || lower.contains("wx_fmt=svg") {
+        "svg"
+    } else {
+        "png"
+    };
+    format!("{}.{}", &hash[..32], ext)
+}
+
+pub fn find_cached_image_file(custom_cache: Option<&Path>, url: &str) -> Option<String> {
+    let clean_url = sanitize_image_url(url);
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(clean_url.as_bytes());
+    let hash = format!("{:x}", hasher.finalize());
+    let prefix = &hash[..32];
+    let predicted = url_to_cache_filename(clean_url);
+
+    // 1. Check custom cache dir first if provided
+    if let Some(dir) = custom_cache {
+        if dir.join(&predicted).is_file() {
+            return Some(predicted);
+        }
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with(prefix) && entry.path().is_file() {
+                    return Some(name_str.to_string());
+                }
+            }
+        }
+    }
+
+    // 2. Fall back to default system cache dir
+    let default_cache = crate::compiler::world::get_default_image_cache_dir();
+    if default_cache.join(&predicted).is_file() {
+        return Some(predicted);
+    }
+    if let Ok(entries) = std::fs::read_dir(&default_cache) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with(prefix) && entry.path().is_file() {
+                return Some(name_str.to_string());
+            }
+        }
+    }
+
+    None
+}
+
 fn render_html_image(
     tag: &str,
     in_center: bool,
@@ -150,6 +224,7 @@ fn render_html_image(
     badge_bg: &str,
     badge_stroke: &str,
     badge_fg: &str,
+    custom_cache: Option<&Path>,
 ) -> String {
     let src = extract_html_attr(tag, "src").unwrap_or_default();
     if src.is_empty() {
@@ -160,12 +235,18 @@ fn render_html_image(
     let height = extract_html_attr(tag, "height");
 
     let is_url = src.starts_with("http://") || src.starts_with("https://");
-    if is_url {
-        let escaped_alt = escape_typst_text(&alt);
-        return format!(
-            "#link(\"{src}\")[#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 4pt, y: 2pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🔗 {escaped_alt}]]]"
-        );
-    }
+    let resolved_src = if is_url {
+        if let Some(cached_filename) = find_cached_image_file(custom_cache, &src) {
+            cached_filename
+        } else {
+            let escaped_alt = escape_typst_text(&alt);
+            return format!(
+                "#link(\"{src}\")[#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 5pt, y: 2.5pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🖼️ {escaped_alt}]]]"
+            );
+        }
+    } else {
+        src
+    };
 
     let mut args = Vec::new();
     if let Some(w) = width {
@@ -186,7 +267,7 @@ fn render_html_image(
         ("none", "4pt")
     };
 
-    let block_str = format!("#block(radius: {img_radius}, stroke: {img_stroke}, clip: true)[#image(\"{src}\"{args_str})]");
+    let block_str = format!("#block(radius: {img_radius}, stroke: {img_stroke}, clip: true)[#image(\"{resolved_src}\"{args_str})]");
     if in_center {
         format!("\n{}\n", block_str)
     } else {
@@ -200,16 +281,24 @@ struct HtmlTranspiler<'a> {
     badge_bg: &'a str,
     badge_stroke: &'a str,
     badge_fg: &'a str,
+    custom_cache: Option<&'a Path>,
 }
 
 impl<'a> HtmlTranspiler<'a> {
-    fn new(is_dark: bool, badge_bg: &'a str, badge_stroke: &'a str, badge_fg: &'a str) -> Self {
+    fn new(
+        is_dark: bool,
+        badge_bg: &'a str,
+        badge_stroke: &'a str,
+        badge_fg: &'a str,
+        custom_cache: Option<&'a Path>,
+    ) -> Self {
         Self {
             center_depth: 0,
             is_dark,
             badge_bg,
             badge_stroke,
             badge_fg,
+            custom_cache,
         }
     }
 
@@ -250,6 +339,7 @@ impl<'a> HtmlTranspiler<'a> {
                 self.badge_bg,
                 self.badge_stroke,
                 self.badge_fg,
+                self.custom_cache,
             );
             out.push_str(&rendered);
         } else if (trimmed_lower.starts_with("<div")
@@ -576,7 +666,8 @@ pub fn convert_markdown_to_typst(
     let mut current_heading: Option<(HeadingLevel, String)> = None;
     let mut registered_slugs: HashSet<String> = HashSet::new();
     let mut referenced_anchors: HashSet<String> = HashSet::new();
-    let mut html_transpiler = HtmlTranspiler::new(is_dark, badge_bg, badge_stroke, badge_fg);
+    let custom_cache = options.image_cache_dir.as_deref().map(Path::new);
+    let mut html_transpiler = HtmlTranspiler::new(is_dark, badge_bg, badge_stroke, badge_fg, custom_cache);
 
     for event in parser {
         match event {
@@ -789,27 +880,32 @@ pub fn convert_markdown_to_typst(
                         let in_link = link_stack.iter().any(|&active| active);
 
                         let is_url = url.starts_with("http://") || url.starts_with("https://");
-                        if is_url {
-                            if in_link {
-                                // Inside an outer #link(...)[...], render clean inline badge without nesting #link
-                                out.push_str(&format!(
-                                    "#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 4pt, y: 2pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[{}]]",
-                                    escaped_alt
-                                ));
-                            } else {
-                                out.push_str(&format!(
-                                    "#link(\"{url}\")[#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 4pt, y: 2pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🔗 {}]]]",
-                                    escaped_alt
-                                ));
-                            }
+                        let resolved_image = if is_url {
+                            find_cached_image_file(custom_cache, &url)
                         } else {
-                            // Local file path (resolved by MemoryWorld against doc_dir)
+                            Some(url.clone())
+                        };
+
+                        if let Some(target_path) = resolved_image {
                             let (img_stroke, img_radius) = if is_dark {
                                 ("0.5pt + rgb(\"#383e4a\")", "4pt")
                             } else {
                                 ("none", "4pt")
                             };
-                            out.push_str(&format!("\n#align(center)[#block(radius: {img_radius}, stroke: {img_stroke}, clip: true)[#image(\"{url}\")]]\n\n"));
+                            out.push_str(&format!("\n#align(center)[#block(radius: {img_radius}, stroke: {img_stroke}, clip: true)[#image(\"{target_path}\")]]\n\n"));
+                        } else {
+                            // Remote image not yet cached: render elegant clickable placeholder badge
+                            if in_link {
+                                out.push_str(&format!(
+                                    "#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 5pt, y: 2.5pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🖼️ {}]]",
+                                    escaped_alt
+                                ));
+                            } else {
+                                out.push_str(&format!(
+                                    "#link(\"{url}\")[#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 5pt, y: 2.5pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🖼️ {}]]]",
+                                    escaped_alt
+                                ));
+                            }
                         }
                     }
                 }
@@ -1082,5 +1178,34 @@ Local image with dark border:
         assert!(pdf.starts_with(b"%PDF-"));
         println!("README header compiled PDF size: {} bytes", pdf.len());
         assert!(pdf.len() > 10_000);
+    }
+
+    #[test]
+    fn test_remote_image_caching_and_rendering() {
+        let wechat_url = "https://mmbiz.qpic.cn/sz_mmbiz_png/yVwYcibHCQbUhbtEib78gzlSRsHicerMcIao6Kvxeib6EtnWkS8KypicuPrSdJteTt5VxQgpPs7k9Bhgr6GdymmPvrxVnD3Q7Jdp98nhnvNmDfHY/640?wx_fmt=png&from=appmsg";
+        let md = format!("![Architecture Diagram]({wechat_url})");
+        let options = RenderOptions::default();
+
+        // 1. When not cached, it renders an elegant placeholder badge
+        let parsed_uncached = convert_markdown_to_typst(&md, "Blog", &options);
+        assert!(parsed_uncached.typst_source.contains("🖼️ Architecture Diagram"));
+
+        // 2. Mock a cached file in the cache directory
+        let cache_dir = crate::compiler::world::get_default_image_cache_dir();
+        let _ = std::fs::create_dir_all(&cache_dir);
+        let cache_filename = url_to_cache_filename(wechat_url);
+        let cache_file_path = cache_dir.join(&cache_filename);
+
+        // Copy a real 1x1 png or existing app_logo to the cache file path
+        let real_logo = std::path::Path::new("../docs/images/app_logo.png");
+        if real_logo.is_file() {
+            let _ = std::fs::copy(real_logo, &cache_file_path);
+
+            let parsed_cached = convert_markdown_to_typst(&md, "Blog", &options);
+            assert!(parsed_cached.typst_source.contains(&format!("#image(\"{cache_filename}\")")));
+
+            // Clean up mock cache file
+            let _ = std::fs::remove_file(cache_file_path);
+        }
     }
 }

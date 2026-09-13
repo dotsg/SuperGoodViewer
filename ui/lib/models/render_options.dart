@@ -8,6 +8,7 @@ class RenderOptions {
   final double fontSize; // in points
   final String? bodyFont; // custom proportional font
   final String? codeFont; // custom monospace font
+  final String? imageCacheDir; // custom remote image cache directory
 
   const RenderOptions({
     this.mode = 'fluid',
@@ -16,6 +17,7 @@ class RenderOptions {
     this.fontSize = 10.5,
     this.bodyFont,
     this.codeFont,
+    this.imageCacheDir,
   });
 
   bool get isFluid => mode == 'fluid';
@@ -28,6 +30,7 @@ class RenderOptions {
     double? fontSize,
     String? bodyFont,
     String? codeFont,
+    String? imageCacheDir,
   }) {
     return RenderOptions(
       mode: mode ?? this.mode,
@@ -36,6 +39,7 @@ class RenderOptions {
       fontSize: fontSize ?? this.fontSize,
       bodyFont: bodyFont ?? this.bodyFont,
       codeFont: codeFont ?? this.codeFont,
+      imageCacheDir: imageCacheDir ?? this.imageCacheDir,
     );
   }
 
@@ -52,6 +56,9 @@ class RenderOptions {
     if (codeFont != null && codeFont!.isNotEmpty) {
       map['code_font'] = codeFont;
     }
+    if (imageCacheDir != null && imageCacheDir!.isNotEmpty) {
+      map['image_cache_dir'] = imageCacheDir;
+    }
     return jsonEncode(map);
   }
 
@@ -64,9 +71,10 @@ class RenderOptions {
           other.viewportWidth == viewportWidth &&
           other.fontSize == fontSize &&
           other.bodyFont == bodyFont &&
-          other.codeFont == codeFont;
+          other.codeFont == codeFont &&
+          other.imageCacheDir == imageCacheDir;
 
   @override
-  int get hashCode => Object.hash(mode, theme, viewportWidth, fontSize, bodyFont, codeFont);
+  int get hashCode => Object.hash(mode, theme, viewportWidth, fontSize, bodyFont, codeFont, imageCacheDir);
 }
 

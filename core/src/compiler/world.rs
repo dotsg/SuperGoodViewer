@@ -263,6 +263,7 @@ pub struct MemoryWorld {
     main_id: FileId,
     main_source: Source,
     doc_dir: PathBuf,
+    image_cache_dir: Option<PathBuf>,
     virtual_files: HashMap<PathBuf, Bytes>,
     now: Datetime,
 }
@@ -272,6 +273,15 @@ impl MemoryWorld {
         source_text: &str,
         doc_dir: impl AsRef<Path>,
         virtual_files: HashMap<PathBuf, Bytes>,
+    ) -> Self {
+        Self::new_with_cache_dir(source_text, doc_dir, virtual_files, None)
+    }
+
+    pub fn new_with_cache_dir(
+        source_text: &str,
+        doc_dir: impl AsRef<Path>,
+        virtual_files: HashMap<PathBuf, Bytes>,
+        image_cache_dir: Option<PathBuf>,
     ) -> Self {
         let vpath = VirtualPath::new("main.typ").unwrap();
         let rooted = RootedPath::new(VirtualRoot::Project, vpath);
@@ -283,10 +293,25 @@ impl MemoryWorld {
             main_id,
             main_source,
             doc_dir,
+            image_cache_dir,
             virtual_files,
             now: Datetime::from_ymd(2026, 9, 11).unwrap_or_else(|| Datetime::from_ymd(2026, 1, 1).unwrap()),
         }
     }
+}
+
+pub fn get_default_image_cache_dir() -> PathBuf {
+    if let Ok(home) = std::env::var("HOME") {
+        let home = PathBuf::from(home);
+        #[cfg(target_os = "macos")]
+        return home.join("Library/Caches/com.sogood.sogoodviewer/remote_images");
+        #[cfg(not(target_os = "macos"))]
+        return home.join(".cache/sogoodviewer/remote_images");
+    }
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        return PathBuf::from(local).join("SuperGoodViewer/Cache/remote_images");
+    }
+    PathBuf::from(".cache/remote_images")
 }
 
 impl World for MemoryWorld {
@@ -344,22 +369,51 @@ impl World for MemoryWorld {
 
         // 2. Fall back to local file system in doc_dir
         let full_path = self.doc_dir.join(rel_path);
-        match fs::read(&full_path) {
-            Ok(data) => Ok(Bytes::new(data)),
-            Err(_) => {
-                // Graceful fallback for missing or remote assets:
-                // Provide a 1x1 transparent PNG so compilation never aborts with a fatal crash.
-                const TRANSPARENT_PNG: &[u8] = &[
-                    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
-                    0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-                    0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
-                    0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
-                    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
-                    0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
-                ];
-                Ok(Bytes::new(TRANSPARENT_PNG))
+        if let Ok(data) = fs::read(&full_path) {
+            return Ok(Bytes::new(data));
+        }
+
+        // 3. Fall back to image cache directory
+        if let Some(filename) = rel_path.file_name() {
+            if let Some(ref custom_cache) = self.image_cache_dir {
+                let cache_path = custom_cache.join(filename);
+                if let Ok(data) = fs::read(&cache_path) {
+                    return Ok(Bytes::new(data));
+                }
+            }
+            let default_cache = get_default_image_cache_dir();
+            let cache_path = default_cache.join(filename);
+            if let Ok(data) = fs::read(&cache_path) {
+                return Ok(Bytes::new(data));
             }
         }
+
+        // 4. Fall back to absolute path
+        #[cfg(unix)]
+        {
+            let abs_path = Path::new("/").join(rel_path);
+            if let Ok(data) = fs::read(&abs_path) {
+                return Ok(Bytes::new(data));
+            }
+        }
+        #[cfg(windows)]
+        {
+            if let Ok(data) = fs::read(rel_path) {
+                return Ok(Bytes::new(data));
+            }
+        }
+
+        // 5. Graceful fallback for missing assets:
+        // Provide a 1x1 transparent PNG so compilation never aborts with a fatal crash.
+        const TRANSPARENT_PNG: &[u8] = &[
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+            0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+            0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
+            0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+            0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+            0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+        Ok(Bytes::new(TRANSPARENT_PNG))
     }
 
 
