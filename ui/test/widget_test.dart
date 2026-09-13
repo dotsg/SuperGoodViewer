@@ -603,7 +603,7 @@ void main() {
     });
 
     test('ReaderController flags renderOptionsChanged across options including twoPage and preserves top scroll', () {
-      final controller = ReaderController();
+      final controller = ReaderController(autoRestorePreferences: false);
       expect(controller.renderOptionsChanged, false);
 
       // 1. Changing options sets renderOptionsChanged flag
@@ -644,9 +644,9 @@ void main() {
       controller.dispose();
     });
 
-    testWidgets('PdfCanvasView _isRestoringScroll auto-recovers via safety timeout', (tester) async {
+    testWidgets('PdfCanvasView _isRestoringScroll is governed by generation gating', (tester) async {
       final key = GlobalKey<PdfCanvasViewState>();
-      final controller = ReaderController();
+      final controller = ReaderController(autoRestorePreferences: false);
       final bytesA = Uint8List.fromList([1, 2, 3, 4]);
 
       await tester.pumpWidget(
@@ -664,17 +664,21 @@ void main() {
 
       final state = key.currentState;
       expect(state, isNotNull);
-      expect(state!.isRestoringScroll, false);
 
-      // Simulate a path where isRestoringScroll is set to true
-      state.setRestoringScrollForTesting(true, timeout: const Duration(milliseconds: 100));
+      // On initial mount before restore completes, isRestoringScroll is true
+      expect(state!.isRestoringScroll, true);
+
+      // Restore scroll completes
+      state.restoreScrollForTesting();
+      expect(state.isRestoringScroll, false);
+
+      // Trigger a new mount generation
+      state.setRestoringScrollForTesting(true);
       expect(state.isRestoringScroll, true);
 
-      // Advance time beyond the safety timeout
-      await tester.pump(const Duration(milliseconds: 150));
-
-      // Must auto-recover to false even if no onViewerReady fired
+      state.restoreScrollForTesting();
       expect(state.isRestoringScroll, false);
+
       controller.dispose();
     });
   });

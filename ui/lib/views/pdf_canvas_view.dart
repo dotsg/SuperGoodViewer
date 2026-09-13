@@ -816,7 +816,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   final List<Uint8List?> _slotBytes = [null, null];
   final List<int> _slotDocHash = [0, 0];
   final List<SuperGoodScrollInteractionDelegate?> _scrollDelegates = [null, null];
-  bool _isRestoringScroll = false;
+  int _mountGeneration = 0;
+  int _restoredGeneration = 0;
   bool _isProgrammaticZooming = false;
   double _currentZoom = 1.0;
   int _lastReportedPage = 1;
@@ -826,9 +827,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   bool _modeOrDocChanged = false;
   Timer? _pendingWatchdogTimer;
   Timer? _swapFallbackTimer;
-  Timer? _restoringScrollSafetyTimer;
   bool _pendingViewerReady = false;
   bool _pendingImageLoaded = false;
+
+  bool get _isRestoringScroll => _restoredGeneration < _mountGeneration;
 
   @visibleForTesting
   bool get renderOptionsChanged => widget.controller.renderOptionsChanged;
@@ -837,14 +839,18 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   bool get isRestoringScroll => _isRestoringScroll;
 
   @visibleForTesting
-  void setRestoringScrollForTesting(bool value, {Duration timeout = const Duration(milliseconds: 600)}) {
-    _setRestoringScroll(value, timeout: timeout);
+  void setRestoringScrollForTesting(bool value) {
+    if (value) {
+      _mountGeneration++;
+    } else {
+      _restoredGeneration = _mountGeneration;
+    }
   }
 
   @visibleForTesting
   void restoreScrollForTesting() {
     widget.controller.renderOptionsChanged = false;
-    _setRestoringScroll(false);
+    _restoredGeneration = _mountGeneration;
   }
 
   PdfViewerController get _pdfController => _controllers[_activeSlot];
@@ -860,6 +866,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     _slotDocHash[0] = widget.pdfBytes?.hashCode ?? 0;
     _activeSlot = 0;
     _pendingSlot = null;
+    _mountGeneration = 1;
+    _restoredGeneration = 0;
     _controllers[0].addListener(_onViewerChanged0);
     _controllers[1].addListener(_onViewerChanged1);
   }
@@ -872,22 +880,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     _cleanupTimer?.cancel();
     _pendingWatchdogTimer?.cancel();
     _swapFallbackTimer?.cancel();
-    _restoringScrollSafetyTimer?.cancel();
     _controllers[0].removeListener(_onViewerChanged0);
     _controllers[1].removeListener(_onViewerChanged1);
     super.dispose();
-  }
-
-  void _setRestoringScroll(bool value, {Duration timeout = const Duration(milliseconds: 600)}) {
-    _restoringScrollSafetyTimer?.cancel();
-    _isRestoringScroll = value;
-    if (value) {
-      _restoringScrollSafetyTimer = Timer(timeout, () {
-        if (mounted && _isRestoringScroll) {
-          _isRestoringScroll = false;
-        }
-      });
-    }
   }
 
   void _startPendingWatchdog() {
@@ -904,7 +899,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         _pendingViewerReady = false;
         _pendingImageLoaded = false;
         if (fallbackBytes != null && fallbackBytes.isNotEmpty) {
-          _setRestoringScroll(true); // Protected by 600ms safety timeout
+          _mountGeneration++;
           _activeSlot = 0;
           _slotBytes[0] = fallbackBytes;
           _slotDocHash[0] = fallbackBytes.hashCode;
@@ -933,6 +928,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     _pendingWatchdogTimer?.cancel();
     _pendingViewerReady = false;
     _pendingImageLoaded = false;
+    _restoredGeneration = _mountGeneration;
     setState(() {
       _activeSlot = slotIndex;
       _pendingSlot = null;
@@ -990,6 +986,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       _slotBytes[_activeSlot] = newBytes;
       _slotDocHash[_activeSlot] = newBytes.hashCode;
       _modeOrDocChanged = false;
+      _mountGeneration++;
       _pendingViewerReady = false;
       _pendingImageLoaded = false;
       setState(() {});
@@ -1002,10 +999,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
       if (isDirectReload) {
         // Mode change or different document opened: direct reload
+        _mountGeneration++;
         _cleanupTimer?.cancel();
         _pendingWatchdogTimer?.cancel();
         _swapFallbackTimer?.cancel();
-        _setRestoringScroll(true); // Protected by 600ms safety timeout
         _activeSlot = 0;
         _pendingSlot = null;
         _queuedBytes = null;
@@ -1099,9 +1096,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   void _restoreScrollFor(PdfViewerController ctrl) {
     final renderOptionsChanged = widget.controller.renderOptionsChanged;
     widget.controller.renderOptionsChanged = false;
+    final restoreGen = _mountGeneration;
 
     if (!ctrl.isReady) {
-      _setRestoringScroll(false);
+      _restoredGeneration = restoreGen;
       widget.controller.finishReloading();
       return;
     }
@@ -1125,12 +1123,11 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             : (targetRatio > 0.0 ? (targetRatio * docSize.height).clamp(0.0, maxScroll) : 0.0);
 
         if (targetY > 0.0) {
-          _setRestoringScroll(true, timeout: const Duration(milliseconds: 300));
           ctrl.goToPosition(documentOffset: Offset(0, targetY));
 
           Future.delayed(const Duration(milliseconds: 250), () {
-            if (mounted) {
-              _setRestoringScroll(false);
+            if (mounted && _mountGeneration == restoreGen) {
+              _restoredGeneration = restoreGen;
               _lastVisibleTop = targetY;
               final isAtTop = targetY <= 20.0;
               _lastReportedAtTop = isAtTop;
@@ -1144,12 +1141,11 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     } else {
       final targetPage = widget.controller.lastPageNumber;
       if (targetPage > 1 && targetPage <= ctrl.pageCount) {
-        _setRestoringScroll(true, timeout: const Duration(milliseconds: 300));
         ctrl.goToPage(pageNumber: targetPage, duration: Duration.zero);
 
         Future.delayed(const Duration(milliseconds: 250), () {
-          if (mounted) {
-            _setRestoringScroll(false);
+          if (mounted && _mountGeneration == restoreGen) {
+            _restoredGeneration = restoreGen;
             _lastReportedAtTop = false;
             widget.onScrollChanged?.call(deltaY: 0, isAtTop: false);
           }
@@ -1158,7 +1154,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         return;
       }
     }
-    _setRestoringScroll(false);
+    _restoredGeneration = restoreGen;
     _lastReportedAtTop = true;
     widget.onScrollChanged?.call(deltaY: 0, isAtTop: true);
     widget.controller.finishReloading();
@@ -1697,9 +1693,12 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     Color canvasBg,
   ) {
     final ctrl = _controllers[slotIndex];
+    final estimatedFluidPage = widget.controller.lastScrollOffset > 0
+        ? (widget.controller.lastScrollOffset / 6000.0).floor() + 1
+        : 1;
     return PdfViewer.data(
       bytes,
-      initialPageNumber: isFluid ? 1 : widget.controller.lastPageNumber.clamp(1, 999999),
+      initialPageNumber: isFluid ? estimatedFluidPage : widget.controller.lastPageNumber.clamp(1, 999999),
       key: ValueKey(
         'slot_${slotIndex}_${_slotDocHash[slotIndex]}_${widget.renderOptions.mode}_${widget.isTwoPage}',
       ),
@@ -1708,6 +1707,32 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       params: PdfViewerParams(
         backgroundColor: canvasBg,
         scrollByMouseWheel: 1.0,
+        calculateInitialPageNumber: (document, controller) {
+          if (isFluid) {
+            final layouts = controller.layout.pageLayouts;
+            if (layouts.isEmpty) return 1;
+            final targetOffset = widget.controller.lastScrollOffset;
+            final targetRatio = widget.controller.lastScrollRatio;
+            final useOffset = !widget.controller.renderOptionsChanged && targetOffset > 0.0;
+            final docHeight = controller.layout.documentSize.height;
+            final targetY = useOffset
+                ? targetOffset
+                : (targetRatio > 0.0 && docHeight > 0.0 ? targetRatio * docHeight : 0.0);
+
+            for (var i = 0; i < layouts.length; i++) {
+              final rect = layouts[i];
+              if (targetY >= rect.top && targetY <= rect.bottom) {
+                return i + 1;
+              }
+            }
+            if (targetY >= (layouts.lastOrNull?.bottom ?? 0)) {
+              return layouts.length;
+            }
+            return 1;
+          } else {
+            return widget.controller.lastPageNumber.clamp(1, document.pages.length);
+          }
+        },
         interactionDelegateProvider: SuperGoodScrollInteractionDelegateProvider(
           onDelegateCreated: (delegate) => _scrollDelegates[slotIndex] = delegate,
         ),

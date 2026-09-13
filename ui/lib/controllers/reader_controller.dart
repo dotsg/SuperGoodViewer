@@ -171,7 +171,6 @@ class ReaderController extends ChangeNotifier {
           savedFontSize != null ||
           savedBodyFont != null ||
           savedCodeFont != null) {
-        renderOptionsChanged = true;
         _renderOptions = _renderOptions.copyWith(
           theme: savedTheme ?? _renderOptions.theme,
           mode: savedMode ?? _renderOptions.mode,
@@ -181,7 +180,6 @@ class ReaderController extends ChangeNotifier {
         );
       }
       if (savedTwoPage != null) {
-        renderOptionsChanged = true;
         _isTwoPage = savedTwoPage;
       }
       if (savedAutoFit != null) {
