@@ -9,14 +9,13 @@ on:
       version:
         description: 'Release version tag (e.g. v1.0.5)'
         required: true
-        default: 'v1.0.5'
 
 permissions:
   contents: write
 
 # Re-running the release cancels superseded builds for the same version
 concurrency:
-  group: release-${{ inputs.version || github.ref }}
+  group: release-${{ inputs.version || github.ref_name }}
   cancel-in-progress: true
 
 env:
@@ -33,6 +32,17 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Verify Release Version
+        shell: bash
+        run: |
+          v="${RELEASE_VERSION}"
+          [[ "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version format: $v (expected vX.Y.Z)"; exit 1; }
+          c=$(grep -m1 '^version' core/Cargo.toml | cut -d'"' -f2)
+          [ "${v#v}" = "$c" ] || { echo "::error::$v != Cargo.toml $c"; exit 1; }
+          p=$(grep -m1 '^version:' ui/pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
+          [ "${v#v}" = "$p" ] || { echo "::error::$v != pubspec.yaml $p"; exit 1; }
+          echo "Verified release version: $v (matches Cargo.toml $c, pubspec.yaml $p)"
 
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -109,6 +119,17 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Verify Release Version
+        shell: bash
+        run: |
+          v="${RELEASE_VERSION}"
+          [[ "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version format: $v (expected vX.Y.Z)"; exit 1; }
+          c=$(grep -m1 '^version' core/Cargo.toml | cut -d'"' -f2)
+          [ "${v#v}" = "$c" ] || { echo "::error::$v != Cargo.toml $c"; exit 1; }
+          p=$(grep -m1 '^version:' ui/pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
+          [ "${v#v}" = "$p" ] || { echo "::error::$v != pubspec.yaml $p"; exit 1; }
+          echo "Verified release version: $v (matches Cargo.toml $c, pubspec.yaml $p)"
+
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -180,6 +201,17 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Verify Release Version
+        shell: bash
+        run: |
+          v="${RELEASE_VERSION}"
+          [[ "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version format: $v (expected vX.Y.Z)"; exit 1; }
+          c=$(grep -m1 '^version' core/Cargo.toml | cut -d'"' -f2)
+          [ "${v#v}" = "$c" ] || { echo "::error::$v != Cargo.toml $c"; exit 1; }
+          p=$(grep -m1 '^version:' ui/pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
+          [ "${v#v}" = "$p" ] || { echo "::error::$v != pubspec.yaml $p"; exit 1; }
+          echo "Verified release version: $v (matches Cargo.toml $c, pubspec.yaml $p)"
 
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
