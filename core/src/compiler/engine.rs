@@ -74,12 +74,7 @@ pub fn compile_typst_to_pdf(
     let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default())
         .map_err(|e| CompileError::Pdf(format!("{:?}", e)))?;
 
-    let sliced_pdf = crate::compiler::slicer::slice_continuous_pdf(
-        &pdf_bytes,
-        crate::compiler::slicer::DEFAULT_SLICE_HEIGHT,
-    )?;
-
-    Ok(sliced_pdf)
+    Ok(pdf_bytes)
 }
 
 #[cfg(test)]

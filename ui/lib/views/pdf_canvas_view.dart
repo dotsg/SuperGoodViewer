@@ -916,12 +916,11 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       }
 
       final docSize = ctrl.documentSize;
-      if (docSize.height > 0) {
-        final ratio = (ctrl.visibleRect.top / docSize.height).clamp(0.0, 1.0);
-        widget.controller.updateScrollRatio(ratio);
-      }
-
       final currentTop = ctrl.visibleRect.top;
+      if (docSize.height > 0) {
+        final ratio = (currentTop / docSize.height).clamp(0.0, 1.0);
+        widget.controller.updateScrollRatio(ratio, offset: currentTop);
+      }
       final deltaY = currentTop - _lastVisibleTop;
       final isFluid = widget.controller.renderOptions.isFluid;
       final isTwoPage = widget.controller.isTwoPage && !isFluid;
@@ -947,23 +946,29 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final isFluid = widget.controller.renderOptions.isFluid;
 
     if (isFluid) {
+      final targetOffset = widget.controller.lastScrollOffset;
       final targetRatio = widget.controller.lastScrollRatio;
-      if (targetRatio > 0.0 && docSize.height > 0) {
-        _isRestoringScroll = true;
-        final targetY = targetRatio * docSize.height;
-        ctrl.goToPosition(documentOffset: Offset(0, targetY));
+      if (docSize.height > 0) {
+        final targetY = targetOffset > 0.0
+            ? targetOffset.clamp(0.0, docSize.height)
+            : (targetRatio > 0.0 ? (targetRatio * docSize.height).clamp(0.0, docSize.height) : 0.0);
 
-        Future.delayed(const Duration(milliseconds: 250), () {
-          if (mounted) {
-            _isRestoringScroll = false;
-            _lastVisibleTop = targetY;
-            final isAtTop = targetY <= 20.0;
-            _lastReportedAtTop = isAtTop;
-            widget.onScrollChanged?.call(deltaY: 0, isAtTop: isAtTop);
-          }
-          widget.controller.finishReloading();
-        });
-        return;
+        if (targetY > 0.0) {
+          _isRestoringScroll = true;
+          ctrl.goToPosition(documentOffset: Offset(0, targetY));
+
+          Future.delayed(const Duration(milliseconds: 250), () {
+            if (mounted) {
+              _isRestoringScroll = false;
+              _lastVisibleTop = targetY;
+              final isAtTop = targetY <= 20.0;
+              _lastReportedAtTop = isAtTop;
+              widget.onScrollChanged?.call(deltaY: 0, isAtTop: isAtTop);
+            }
+            widget.controller.finishReloading();
+          });
+          return;
+        }
       }
     } else {
       final targetPage = widget.controller.lastPageNumber;
@@ -1538,7 +1543,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         boundaryMargin: isFluid
             ? const EdgeInsets.only(top: 36, bottom: 24, left: 0, right: 0)
             : const EdgeInsets.only(top: 36, bottom: 16, left: 8, right: 8),
-        verticalCacheExtent: 1.5,
+        verticalCacheExtent: 1.0,
         pageAnchor: PdfPageAnchor.top,
         underflowAnchor: PdfPageAnchor.top,
         pageDropShadow: isFluid
@@ -1550,7 +1555,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
                 offset: const Offset(0, 3),
               ),
         behaviorControlParams: const PdfViewerBehaviorControlParams(
-          enableLowResolutionPagePreview: false,
+          enableLowResolutionPagePreview: true,
           trailingPageLoadingDelay: Duration.zero,
           pageImageCachingDelay: Duration.zero,
           partialImageLoadingDelay: Duration.zero,

@@ -50,6 +50,7 @@ class ReaderController extends ChangeNotifier {
   bool _hasPendingCompile = false;
   String? _errorMessage;
   double _lastScrollRatio = 0.0;
+  double _lastScrollOffset = 0.0;
   int _lastPageNumber = 1;
   double _lastZoom = 1.0;
   AutoFitMode _autoFitMode = AutoFitMode.none;
@@ -85,6 +86,7 @@ class ReaderController extends ChangeNotifier {
   bool get isCompiling => _isCompiling;
   String? get errorMessage => _errorMessage;
   double get lastScrollRatio => _lastScrollRatio;
+  double get lastScrollOffset => _lastScrollOffset;
   int get lastPageNumber => _lastPageNumber;
   double get lastZoom => _lastZoom;
   AutoFitMode get autoFitMode => _autoFitMode;
@@ -216,6 +218,9 @@ class ReaderController extends ChangeNotifier {
           final savedScroll = (history?['scrollRatio'] as num?)?.toDouble() ??
               (prefs['lastScrollRatio'] as num?)?.toDouble() ??
               0.0;
+          final savedOffset = (history?['scrollOffset'] as num?)?.toDouble() ??
+              (prefs['lastScrollOffset'] as num?)?.toDouble() ??
+              0.0;
           final savedPage = (history?['pageNumber'] as num?)?.toInt() ??
               (prefs['lastPageNumber'] as num?)?.toInt() ??
               1;
@@ -224,6 +229,7 @@ class ReaderController extends ChangeNotifier {
               _lastZoom;
 
           _lastScrollRatio = savedScroll;
+          _lastScrollOffset = savedOffset;
           _lastPageNumber = savedPage;
           _lastZoom = savedZoom;
           _openFileInternal(lastFile, preservePosition: true);
@@ -250,6 +256,7 @@ class ReaderController extends ChangeNotifier {
       'bodyFont': _renderOptions.bodyFont,
       'codeFont': _renderOptions.codeFont,
       'lastScrollRatio': _lastScrollRatio,
+      'lastScrollOffset': _lastScrollOffset,
       'lastPageNumber': _lastPageNumber,
       'lastZoom': _lastZoom,
       'fileHistory': _fileHistory,
@@ -282,16 +289,20 @@ class ReaderController extends ChangeNotifier {
     if (_currentFilePath != null) {
       _fileHistory[_currentFilePath!] = {
         'scrollRatio': _lastScrollRatio,
+        'scrollOffset': _lastScrollOffset,
         'pageNumber': _lastPageNumber,
         'zoom': _lastZoom,
       };
     }
   }
 
-  void updateScrollRatio(double ratio) {
+  void updateScrollRatio(double ratio, {double? offset}) {
     if (_isReloading) return;
     if (ratio >= 0.0 && ratio <= 1.0) {
       _lastScrollRatio = ratio;
+      if (offset != null && offset >= 0.0) {
+        _lastScrollOffset = offset;
+      }
       _updateCurrentFileHistory();
       _persistDebounced();
     }
@@ -344,11 +355,13 @@ class ReaderController extends ChangeNotifier {
         final history = _fileHistory[filePath];
         if (history != null) {
           _lastScrollRatio = (history['scrollRatio'] as num?)?.toDouble() ?? 0.0;
+          _lastScrollOffset = (history['scrollOffset'] as num?)?.toDouble() ?? 0.0;
           _lastPageNumber = (history['pageNumber'] as num?)?.toInt() ?? 1;
           _lastZoom = (history['zoom'] as num?)?.toDouble() ?? _lastZoom;
           startReloading();
         } else {
           _lastScrollRatio = 0.0;
+          _lastScrollOffset = 0.0;
           _lastPageNumber = 1;
           finishReloading();
         }
@@ -422,7 +435,7 @@ class ReaderController extends ChangeNotifier {
   Timer? _debounceTimer;
   void _onExternalFileModified() {
     _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 200), () async {
+    _debounceTimer = Timer(const Duration(milliseconds: 400), () async {
       if (_currentFilePath != null) {
         final file = File(_currentFilePath!);
         if (await file.exists()) {
