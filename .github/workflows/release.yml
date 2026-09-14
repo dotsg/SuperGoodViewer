@@ -31,7 +31,7 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Verify Release Version
         shell: bash
@@ -102,7 +102,7 @@ jobs:
 
 
       - name: Upload macOS Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-binaries
           path: dist/*
@@ -117,7 +117,7 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Verify Release Version
         shell: bash
@@ -185,7 +185,7 @@ jobs:
           Write-Host "Created Windows x64 package: $zipName"
 
       - name: Upload Windows x64 Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-x64-binaries
           path: dist/*
@@ -200,7 +200,7 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Verify Release Version
         shell: bash
@@ -298,7 +298,7 @@ jobs:
           Write-Host "Created Windows ARM64 package: $zipName"
 
       - name: Upload Windows ARM64 Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-arm64-binaries
           path: dist/*
@@ -314,7 +314,7 @@ jobs:
 
     steps:
       - name: Download all built artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: release-artifacts
           merge-multiple: true
@@ -325,7 +325,7 @@ jobs:
           ls -lah release-artifacts/
 
       - name: Create or Update GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.RELEASE_VERSION }}
           target_commitish: ${{ github.sha }}
