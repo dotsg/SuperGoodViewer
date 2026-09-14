@@ -63,7 +63,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   @override
   void initState() {
     super.initState();
-    final isFluid = widget.controller.renderOptions.isFluid;
+    final isFluid = widget.controller.isFluidLayout;
     final atTop = isFluid
         ? (widget.controller.lastScrollOffset <= ReaderController.topScrollThreshold && widget.controller.lastScrollRatio <= 0.005)
         : (widget.controller.lastScrollRatio <= 0.005 && widget.controller.lastPageNumber <= 1);
@@ -310,7 +310,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       });
       _updateTrafficLights();
     }
-    if (widget.controller.renderOptions.isFluid) {
+    if (widget.controller.isFluidLayout) {
       _pdfCanvasKey.currentState?.scrollByDelta(420);
     } else {
       _pdfCanvasKey.currentState?.nextPage();
@@ -318,7 +318,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handlePrevPage() {
-    if (widget.controller.renderOptions.isFluid) {
+    if (widget.controller.isFluidLayout) {
       _pdfCanvasKey.currentState?.scrollByDelta(-420);
     } else {
       if (_currentPage <= 2) {
@@ -353,7 +353,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handleToggleTwoPage() {
-    if (widget.controller.renderOptions.isFluid) {
+    if (widget.controller.isFluidLayout) {
       widget.controller.toggleMode();
       if (!widget.controller.isTwoPage) {
         widget.controller.toggleTwoPage();
@@ -1486,5 +1486,4 @@ class _PageNavPill extends StatelessWidget {
     );
   }
 }
-
 

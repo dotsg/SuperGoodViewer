@@ -108,6 +108,9 @@ class ReaderController extends ChangeNotifier {
   bool get isPdfDocument =>
       _isRawPdf || (_currentFilePath?.toLowerCase().endsWith('.pdf') ?? false);
 
+  /// Native PDFs always use paged navigation, regardless of the saved Markdown layout preference.
+  bool get isFluidLayout => _renderOptions.isFluid && !isPdfDocument;
+
   /// Top scroll deadband threshold (in points). Offsets <= this value are treated as top of document.
   static const double topScrollThreshold = 20.0;
 

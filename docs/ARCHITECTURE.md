@@ -124,3 +124,10 @@ SuperGoodViewer targets both primary architectures on Windows:
 - **x64**: Optimized for standard Intel and AMD 64-bit systems.
 - **ARM64**: Cross-compiled natively using `aarch64-pc-windows-msvc` (Rust Core) and `windows-arm64` (Flutter Engine & Google PDFium), providing 100% native execution on Qualcomm Snapdragon X Elite/Plus and Microsoft Surface Pro devices with zero emulation overhead.
 
+
+## 6. Scrolling and raster readiness
+
+The application vendors pdfrx 2.6.1 with stable high-resolution tile caching, directional
+prefetch and a visible-raster completion callback. See [SCROLL_RENDERING.md](SCROLL_RENDERING.md)
+for cache budgets, invalidation, double buffering and validation, and
+[the dependency patch log](../ui/packages/pdfrx/PATCHES.md) for upstream maintenance.

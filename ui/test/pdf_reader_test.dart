@@ -1,6 +1,6 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:pdfrx/pdfrx.dart';
@@ -8,6 +8,7 @@ import 'package:sogoodviewer/controllers/reader_controller.dart';
 import 'package:sogoodviewer/services/preferences_service.dart';
 import 'package:sogoodviewer/views/settings_dialog.dart';
 import 'package:sogoodviewer/views/sidebar_view.dart';
+import 'package:sogoodviewer/views/pdf_canvas_view.dart';
 import 'package:sogoodviewer/views/workspace_view.dart';
 
 void main() {
@@ -65,6 +66,67 @@ void main() {
         tempTestDir.deleteSync(recursive: true);
       }
     } catch (_) {}
+  });
+
+  testWidgets('PDF two-page toggle must return to single page', (tester) async {
+    final controller = ReaderController(autoRestorePreferences: false);
+    addTearDown(controller.dispose);
+    await controller.openFile(samplePdfFile.path);
+    expect(controller.isPdfDocument, isTrue);
+    expect(controller.renderOptions.isFluid, isTrue);
+
+    await tester.pumpWidget(MaterialApp(home: WorkspaceView(controller: controller)));
+    await tester.pump(const Duration(milliseconds: 800));
+    await tester.tap(find.byIcon(Icons.menu_book_outlined));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(controller.isTwoPage, isTrue);
+    await tester.tap(find.byIcon(Icons.auto_stories_rounded));
+    await tester.pump(const Duration(milliseconds: 300));
+    final afterSecondClick = controller.isTwoPage;
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 2));
+    expect(afterSecondClick, isFalse,
+        reason: 'Clicking the selected spread button must switch a PDF back to single-page mode');
+  });
+
+  testWidgets('PDF PageDown and PageUp follow pages and spreads with fluid preferences', (tester) async {
+    const windowChannel = MethodChannel('com.sogoodviewer.window');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(windowChannel, (_) async => null);
+    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(windowChannel, null));
+    final controller = ReaderController(autoRestorePreferences: false);
+    addTearDown(controller.dispose);
+    await controller.openFile(File('packages/pdfrx/test/assets/multipage40.pdf').absolute.path);
+    expect(controller.renderOptions.isFluid, isTrue);
+    expect(controller.isFluidLayout, isFalse);
+    await tester.pumpWidget(MaterialApp(home: WorkspaceView(controller: controller)));
+
+    Future<void> advance([int frames = 30]) async {
+      for (var i = 0; i < frames; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 2)));
+      }
+    }
+
+    await advance(60);
+    final canvas = tester.state<PdfCanvasViewState>(find.byType(PdfCanvasView));
+    expect(canvas.isReady, isTrue);
+    expect(canvas.pageNumber, 1);
+    await tester.sendKeyEvent(LogicalKeyboardKey.pageDown);
+    await advance();
+    expect(canvas.pageNumber, 2);
+    await tester.sendKeyEvent(LogicalKeyboardKey.pageUp);
+    await advance();
+    expect(canvas.pageNumber, 1);
+    controller.setTwoPage(true);
+    await advance(60);
+    await tester.sendKeyEvent(LogicalKeyboardKey.pageDown);
+    await advance();
+    expect(canvas.pageNumber, 3);
+    await tester.sendKeyEvent(LogicalKeyboardKey.pageUp);
+    await advance();
+    expect(canvas.pageNumber, 1);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 2));
   });
 
   group('PDF Reader Functionality Tests', () {

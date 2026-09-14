@@ -834,7 +834,6 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   bool _modeOrDocChanged = false;
   Timer? _pendingWatchdogTimer;
   Timer? _directReloadWatchdogTimer;
-  Timer? _swapFallbackTimer;
   bool _pendingViewerReady = false;
   bool _pendingImageLoaded = false;
 
@@ -891,7 +890,6 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     _cleanupTimer?.cancel();
     _pendingWatchdogTimer?.cancel();
     _directReloadWatchdogTimer?.cancel();
-    _swapFallbackTimer?.cancel();
     _controllers[0].removeListener(_onViewerChanged0);
     _controllers[1].removeListener(_onViewerChanged1);
     super.dispose();
@@ -915,15 +913,14 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
   void _startPendingWatchdog() {
     _pendingWatchdogTimer?.cancel();
-    // 1500ms watchdog: If pending slot crashes or fails to ready,
+    // 5s watchdog: If pending rendering fails to complete,
     // recover by directly replacing active slot with latest bytes.
-    _pendingWatchdogTimer = Timer(const Duration(milliseconds: 1500), () {
+    _pendingWatchdogTimer = Timer(const Duration(seconds: 5), () {
       if (mounted && _pendingSlot != null) {
         debugPrint('[PdfCanvasView] Watchdog: pending slot $_pendingSlot timed out, recovering');
         final fallbackBytes = _queuedBytes ?? _slotBytes[_pendingSlot!];
         _pendingSlot = null;
         _queuedBytes = null;
-        _swapFallbackTimer?.cancel();
         _pendingViewerReady = false;
         _pendingImageLoaded = false;
         if (fallbackBytes != null && fallbackBytes.isNotEmpty) {
@@ -946,18 +943,20 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
   void _checkAndTriggerPendingSwap(int slotIndex) {
     if (!mounted || _pendingSlot != slotIndex) return;
-    if (!_pendingViewerReady) return;
-    _swapFallbackTimer?.cancel();
+    if (!_pendingViewerReady || !_pendingImageLoaded) return;
+    final expectedBytes = _slotBytes[slotIndex];
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _pendingSlot == slotIndex && _pendingViewerReady) {
+      if (mounted && _pendingSlot == slotIndex &&
+          identical(_slotBytes[slotIndex], expectedBytes) &&
+          _pendingViewerReady && _pendingImageLoaded) {
         _triggerSlotSwap(slotIndex);
       }
     });
+    WidgetsBinding.instance.scheduleFrame();
   }
 
   void _triggerSlotSwap(int slotIndex) {
     if (!mounted || _pendingSlot != slotIndex) return;
-    _swapFallbackTimer?.cancel();
     _pendingWatchdogTimer?.cancel();
     _pendingViewerReady = false;
     _pendingImageLoaded = false;
@@ -981,6 +980,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     _queuedBytes = null;
     if (queued != null && queued.isNotEmpty && queued.hashCode != _slotDocHash[_activeSlot]) {
       final nextSlot = 1 - _activeSlot;
+      _mountGeneration++;
       _pendingSlot = nextSlot;
       _pendingViewerReady = false;
       _pendingImageLoaded = false;
@@ -1023,7 +1023,6 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         _pendingViewerReady = false;
         _pendingImageLoaded = false;
         _pendingWatchdogTimer?.cancel();
-        _swapFallbackTimer?.cancel();
         setState(() {});
       }
       return;
@@ -1050,7 +1049,6 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         _mountGeneration++;
         _cleanupTimer?.cancel();
         _pendingWatchdogTimer?.cancel();
-        _swapFallbackTimer?.cancel();
         _activeSlot = 0;
         _pendingSlot = null;
         _queuedBytes = null;
@@ -1072,6 +1070,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           // Mount into background slot for seamless double buffering
           _cleanupTimer?.cancel();
           final nextSlot = 1 - _activeSlot;
+          _mountGeneration++;
           _pendingSlot = nextSlot;
           _slotBytes[nextSlot] = newBytes;
           _slotDocHash[nextSlot] = newBytes.hashCode;
@@ -1122,7 +1121,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
       final docSize = ctrl.documentSize;
       final currentTop = ctrl.visibleRect.top;
-      final isFluid = widget.renderOptions.isFluid && !widget.controller.isPdfDocument;
+      final isFluid = widget.controller.isFluidLayout;
       final isTwoPage = widget.isTwoPage && !isFluid;
       final isAtTop = isFluid
           ? (currentTop <= 20.0)
@@ -1162,7 +1161,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       return;
     }
     final docSize = ctrl.documentSize;
-    final isFluid = widget.renderOptions.isFluid;
+    final isFluid = widget.controller.isFluidLayout;
 
     if (isFluid) {
       if (docSize.height > 0) {
@@ -1240,7 +1239,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final totalLines = math.max(1, widget.controller.currentMarkdown.split('\n').length);
     final ratio = ((item.lineNumber - 1) / totalLines).clamp(0.0, 1.0);
 
-    if (widget.controller.renderOptions.isFluid) {
+    if (widget.controller.isFluidLayout) {
       final docHeight = _pdfController.documentSize.height;
       if (docHeight > 0) {
         await _pdfController.goToPosition(
@@ -1277,7 +1276,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final layout = _pdfController.layout;
     if (layout.pageLayouts.isEmpty) return _pdfController.centerPosition;
 
-    if (widget.controller.renderOptions.isFluid) {
+    if (widget.controller.isFluidLayout) {
       final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
       return Offset(docWidth / 2, _pdfController.centerPosition.dy);
     } else {
@@ -1311,7 +1310,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         break;
       }
     }
-    final minS = widget.controller.renderOptions.isFluid ? 0.35 : 0.2;
+    final minS = widget.controller.isFluidLayout ? 0.35 : 0.2;
     target = target.clamp(minS, 5.0);
     final center = _calcStableZoomCenter(focalPoint);
     _isProgrammaticZooming = true;
@@ -1340,7 +1339,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         break;
       }
     }
-    final minS = widget.controller.renderOptions.isFluid ? 0.35 : 0.2;
+    final minS = widget.controller.isFluidLayout ? 0.35 : 0.2;
     target = target.clamp(minS, 5.0);
     final center = _calcStableZoomCenter(focalPoint);
     _isProgrammaticZooming = true;
@@ -1378,7 +1377,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   Future<void> zoomTo(double targetZoom, {Offset? focalPoint}) async {
     if (!_pdfController.isReady) return;
     widget.controller.setAutoFitMode(AutoFitMode.none);
-    final minS = widget.controller.renderOptions.isFluid ? 0.35 : 0.2;
+    final minS = widget.controller.isFluidLayout ? 0.35 : 0.2;
     final center = _calcStableZoomCenter(focalPoint);
     _isProgrammaticZooming = true;
     try {
@@ -1436,7 +1435,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     if (!_pdfController.isReady) return;
     final pCount = _pdfController.pageCount;
     final currentPage = _pdfController.pageNumber ?? 1;
-    final isTwoPage = widget.controller.isTwoPage && !widget.controller.renderOptions.isFluid;
+    final isTwoPage = widget.controller.isTwoPage && !widget.controller.isFluidLayout;
 
     int targetPage;
     if (isTwoPage) {
@@ -1461,7 +1460,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   Future<void> prevPage() async {
     if (!_pdfController.isReady) return;
     final currentPage = _pdfController.pageNumber ?? 1;
-    final isTwoPage = widget.controller.isTwoPage && !widget.controller.renderOptions.isFluid;
+    final isTwoPage = widget.controller.isTwoPage && !widget.controller.isFluidLayout;
 
     int targetPage;
     if (isTwoPage) {
@@ -1676,7 +1675,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           },
         ),
       );
-      if (widget.controller.isPdfDocument || !widget.controller.renderOptions.isFluid) {
+      if (widget.controller.isPdfDocument || !widget.controller.isFluidLayout) {
         items.add(
           ContextMenuButtonItem(
             label: widget.controller.isTwoPage
@@ -1692,7 +1691,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (!widget.controller.isPdfDocument) {
         items.add(
           ContextMenuButtonItem(
-            label: widget.controller.renderOptions.isFluid
+            label: widget.controller.isFluidLayout
                 ? '切换为 A4 出版模式 (${widget.controller.shortcutService.getShortcutLabel('toggleMode')})'
                 : '切换为自适应流式 (${widget.controller.shortcutService.getShortcutLabel('toggleMode')})',
             onPressed: () {
@@ -1761,6 +1760,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final ctrl = _controllers[slotIndex];
     final isPdfDoc = widget.controller.isPdfDocument;
     final builtForPath = widget.controller.currentFilePath;
+    bool isCurrentSlot() => mounted && identical(_slotBytes[slotIndex], bytes) &&
+        widget.controller.currentFilePath == builtForPath;
     final effectiveFluid = isFluid && !isPdfDoc;
     return PdfViewer.data(
       bytes,
@@ -1772,6 +1773,16 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       controller: ctrl,
       params: PdfViewerParams(
         backgroundColor: canvasBg,
+        enableTiledRendering: true,
+        onVisiblePagesRendered: (ready) {
+          if (!isCurrentSlot()) return;
+          if (slotIndex == _pendingSlot) {
+            _pendingImageLoaded = ready;
+            if (ready) _checkAndTriggerPendingSwap(slotIndex);
+          } else if (slotIndex == _activeSlot && ready) {
+            StartupMetrics.markFirstDocument();
+          }
+        },
         scrollByMouseWheel: 1.0,
         calculateInitialPageNumber: (document, controller) {
           if (effectiveFluid) {
@@ -1808,15 +1819,16 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             : const EdgeInsets.only(top: 36, bottom: 16, left: 8, right: 8),
         maxImageBytesCachedOnMemory: effectiveFluid ? 256 * 1024 * 1024 : 64 * 1024 * 1024,
         onePassRenderingSizeThreshold: effectiveFluid ? 4000.0 : 2000.0,
-        getPageRenderingScale: effectiveFluid
-            ? (context, page, controller, estimatedScale) {
-                const maxDimension = 4000.0;
-                if (page.width > maxDimension || page.height > maxDimension) {
-                  return math.min(maxDimension / page.width, maxDimension / page.height);
-                }
-                return estimatedScale;
-              }
-            : null,
+        getPageRenderingScale: (context, page, controller, estimatedScale) {
+          if (effectiveFluid && (page.width > 4000 || page.height > 4000)) {
+            return math.min(4000 / page.width, 4000 / page.height);
+          }
+          final physicalScale = controller.currentZoom * MediaQuery.devicePixelRatioOf(context);
+          final screenScale = (physicalScale * 2).ceil() / 2;
+          final memoryScale = math.sqrt((16 * 1024 * 1024) / (4 * page.width * page.height));
+          final dimensionScale = 4096 / math.max(page.width, page.height);
+          return math.min(screenScale, math.min(memoryScale, dimensionScale));
+        },
         verticalCacheExtent: 1.5,
         pageAnchor: PdfPageAnchor.top,
         underflowAnchor: PdfPageAnchor.top,
@@ -1856,6 +1868,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           showContextMenuAutomatically: false,
         ),
         onDocumentLoadFinished: (documentRef, succeeded) {
+          if (!isCurrentSlot()) return;
           if (mounted &&
               widget.controller.isPdfDocument &&
               widget.controller.currentFilePath == builtForPath) {
@@ -1867,15 +1880,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
               widget.controller.setErrorMessage('Failed to load PDF document');
             }
           }
-          if (slotIndex == _pendingSlot) {
-            _pendingImageLoaded = true;
-            if (_pendingViewerReady) {
-              _checkAndTriggerPendingSwap(slotIndex);
-            }
-          }
         },
         onViewerReady: (document, controller) {
-          StartupMetrics.markFirstDocument();
+          if (!isCurrentSlot()) return;
           if (widget.controller.isPdfDocument) {
             final srcPath = widget.controller.currentFilePath;
             document.loadOutline().then((outlines) {
@@ -1910,16 +1917,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           if (slotIndex == _pendingSlot) {
             _pendingViewerReady = true;
             _restoreScrollFor(controller);
-            if (_pendingImageLoaded) {
-              _checkAndTriggerPendingSwap(slotIndex);
-            } else {
-              _swapFallbackTimer?.cancel();
-              _swapFallbackTimer = Timer(const Duration(milliseconds: 150), () {
-                if (mounted && _pendingSlot == slotIndex) {
-                  _triggerSlotSwap(slotIndex);
-                }
-              });
-            }
+            _checkAndTriggerPendingSwap(slotIndex);
           } else if (slotIndex == _activeSlot) {
             _restoreScroll();
           }
@@ -2043,7 +2041,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     }
 
     final isDark = widget.renderOptions.isDark;
-    final isFluid = widget.renderOptions.isFluid;
+    final isFluid = widget.controller.isFluidLayout;
     final canvasBg = isDark ? const Color(0xFF141414) : const Color(0xFFEBEBEB);
 
     final children = <Widget>[];
