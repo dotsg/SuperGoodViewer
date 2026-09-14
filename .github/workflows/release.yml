@@ -74,16 +74,21 @@ jobs:
 
       - name: Inject Dynamic Library & CLI Script into App Bundle
         run: |
-          mkdir -p ui/build/macos/Build/Products/Release/sogoodviewer.app/Contents/Frameworks/
-          cp core/target/release/libsogood_core.dylib ui/build/macos/Build/Products/Release/sogoodviewer.app/Contents/Frameworks/
-          mkdir -p ui/build/macos/Build/Products/Release/sogoodviewer.app/Contents/Resources/bin/
-          cp ui/bin/sgv ui/build/macos/Build/Products/Release/sogoodviewer.app/Contents/Resources/bin/sgv
-          chmod +x ui/build/macos/Build/Products/Release/sogoodviewer.app/Contents/Resources/bin/sgv
+          APP="ui/build/macos/Build/Products/Release/SuperGoodViewer.app"
+          test -f "$APP/Contents/MacOS/SuperGoodViewer" || { echo "::error::$APP does not exist or executable is missing"; exit 1; }
+          mkdir -p "$APP/Contents/Frameworks/"
+          cp core/target/release/libsogood_core.dylib "$APP/Contents/Frameworks/"
+          mkdir -p "$APP/Contents/Resources/bin/"
+          cp ui/bin/sgv "$APP/Contents/Resources/bin/sgv"
+          chmod +x "$APP/Contents/Resources/bin/sgv"
+          # Re-sign app bundle after injecting dylib and CLI script so Gatekeeper doesn't reject modified code
+          codesign --force --deep --sign - "$APP"
 
       - name: Create macOS DMG Package
         run: |
           mkdir -p dist
-          APP_PATH="ui/build/macos/Build/Products/Release/sogoodviewer.app"
+          APP_PATH="ui/build/macos/Build/Products/Release/SuperGoodViewer.app"
+          test -f "$APP_PATH/Contents/MacOS/SuperGoodViewer" || { echo "::error::Binary missing in $APP_PATH"; exit 1; }
           DMG_FILE="dist/SuperGoodViewer-${{ env.RELEASE_VERSION }}-macos.dmg"
           STAGING_DIR="dist/dmg_staging"
 

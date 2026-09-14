@@ -17,6 +17,8 @@ build: build-core build-app
 	@mkdir -p ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/
 	@cp ui/bin/sgv ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv
 	@chmod +x ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv
+	@echo "==> Re-signing macOS App Bundle..."
+	@codesign --force --deep --sign - ui/build/macos/Build/Products/Release/SuperGoodViewer.app
 	@echo "==> Build complete! Output: ui/build/macos/Build/Products/Release/SuperGoodViewer.app"
 
 build-core:
