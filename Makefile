@@ -4,15 +4,15 @@ else
   FLUTTER ?= flutter
 endif
 
-.PHONY: all build build-core build-app build-windows build-windows-arm64 test test-core test-app bench benchmark clean run-macos run-windows dmg package-windows package-windows-arm64
+.PHONY: all build build-core build-core-universal build-app build-windows build-windows-arm64 test test-core test-app bench benchmark clean run-macos run-windows dmg package-windows package-windows-arm64
 
 all: build test
 
 # Build Rust dynamic library and Flutter Desktop app
-build: build-core build-app
-	@echo "==> Packaging dylib into macOS App Bundle..."
+build: build-core-universal build-app
+	@echo "==> Packaging universal dylib into macOS App Bundle..."
 	@mkdir -p ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Frameworks/
-	@cp core/target/release/libsogood_core.dylib ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Frameworks/
+	@cp core/target/universal/release/libsogood_core.dylib ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Frameworks/
 	@echo "==> Packaging CLI script into macOS App Bundle..."
 	@mkdir -p ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/
 	@cp ui/bin/sgv ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv
@@ -21,9 +21,26 @@ build: build-core build-app
 	@codesign --force --deep --sign - ui/build/macos/Build/Products/Release/SuperGoodViewer.app
 	@echo "==> Build complete! Output: ui/build/macos/Build/Products/Release/SuperGoodViewer.app"
 
+# Host-architecture only -- fast path for local development (run-macos, tests).
 build-core:
-	@echo "==> Building Rust sogood_core (release)..."
+	@echo "==> Building Rust sogood_core (release, host arch)..."
 	@cd core && cargo build --release --lib
+
+# Universal (arm64 + x86_64) dylib. Flutter emits a universal Runner/engine for
+# release macOS builds, so an arm64-only dylib makes dlopen fail on Intel Macs
+# with "Invalid arguments" (incompatible architecture).
+build-core-universal:
+	@echo "==> Building Rust sogood_core (release, arm64 + x86_64)..."
+	@rustup target add aarch64-apple-darwin x86_64-apple-darwin
+	@cd core && cargo build --release --lib --target aarch64-apple-darwin
+	@cd core && cargo build --release --lib --target x86_64-apple-darwin
+	@echo "==> Merging into a universal binary with lipo..."
+	@mkdir -p core/target/universal/release
+	@lipo -create \
+		core/target/aarch64-apple-darwin/release/libsogood_core.dylib \
+		core/target/x86_64-apple-darwin/release/libsogood_core.dylib \
+		-output core/target/universal/release/libsogood_core.dylib
+	@lipo -info core/target/universal/release/libsogood_core.dylib
 
 build-app:
 	@echo "==> Building Flutter Desktop macOS app..."

@@ -48,6 +48,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Setup Flutter SDK
         uses: subosito/flutter-action@v2
@@ -59,12 +60,21 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
-          key: macos-arm64
+          key: macos-universal
 
-      - name: Build Rust sogood_core (Release)
+      - name: Build Rust sogood_core (Release, universal binary)
+        # Flutter emits a universal Runner/engine for release macOS builds, so an
+        # arm64-only dylib makes dlopen fail on Intel Macs with "Invalid arguments".
         run: |
           cd core
-          cargo build --release
+          cargo build --release --lib --target aarch64-apple-darwin
+          cargo build --release --lib --target x86_64-apple-darwin
+          mkdir -p target/universal/release
+          lipo -create \
+            target/aarch64-apple-darwin/release/libsogood_core.dylib \
+            target/x86_64-apple-darwin/release/libsogood_core.dylib \
+            -output target/universal/release/libsogood_core.dylib
+          lipo -info target/universal/release/libsogood_core.dylib
 
       - name: Build Flutter Desktop App (Release)
         run: |
@@ -77,7 +87,12 @@ jobs:
           APP="ui/build/macos/Build/Products/Release/SuperGoodViewer.app"
           test -f "$APP/Contents/MacOS/SuperGoodViewer" || { echo "::error::$APP does not exist or executable is missing"; exit 1; }
           mkdir -p "$APP/Contents/Frameworks/"
-          cp core/target/release/libsogood_core.dylib "$APP/Contents/Frameworks/"
+          cp core/target/universal/release/libsogood_core.dylib "$APP/Contents/Frameworks/"
+          # Fail loudly if the dylib is missing either architecture slice -- Intel or Apple Silicon would crash on launch.
+          ARCHS=$(lipo -archs "$APP/Contents/Frameworks/libsogood_core.dylib")
+          echo "libsogood_core.dylib architectures: $ARCHS"
+          echo "$ARCHS" | grep -q x86_64 || { echo "::error::libsogood_core.dylib is missing the x86_64 slice"; exit 1; }
+          echo "$ARCHS" | grep -q arm64 || { echo "::error::libsogood_core.dylib is missing the arm64 slice"; exit 1; }
           mkdir -p "$APP/Contents/Resources/bin/"
           cp ui/bin/sgv "$APP/Contents/Resources/bin/sgv"
           chmod +x "$APP/Contents/Resources/bin/sgv"
