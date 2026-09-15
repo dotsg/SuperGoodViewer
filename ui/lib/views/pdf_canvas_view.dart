@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -623,7 +624,12 @@ class SuperGoodScrollInteractionDelegate implements PdfViewerScrollInteractionDe
   /// Smoothly scrolls the canvas by a logical screen delta (e.g. from keyboard arrow keys or page navigation).
   /// Unlike goToPosition, modifying the matrix directly preserves existing rendered bitmap tiles and
   /// prevents white blank flashing or flickering.
-  void scrollByScreenDelta(Offset delta) {
+  ///
+  /// [accelerate] drives the key-repeat acceleration below, which is tuned for the
+  /// small line-scroll delta of the arrow keys. Deltas that are already a full
+  /// screen high must pass `false`: multiplying one by up to 3.5x would skip
+  /// several screens of unread content per keypress.
+  void scrollByScreenDelta(Offset delta, {bool accelerate = true}) {
     final controller = _controller;
     final vsync = _vsync;
     if (controller == null || !controller.isReady || vsync == null) {
@@ -645,7 +651,12 @@ class SuperGoodScrollInteractionDelegate implements PdfViewerScrollInteractionDe
     // scale delta with smooth physics acceleration
     final now = DateTime.now();
     double multiplier = 1.0;
-    if (_lastPanEventTime != null) {
+    if (!accelerate) {
+      // Neither consume nor leave behind an acceleration streak, so an
+      // unaccelerated scroll cannot boost a following arrow key either.
+      _currentMultiplier = 1.0;
+      _lastPanEventTime = null;
+    } else if (_lastPanEventTime != null) {
       final intervalMs = now.difference(_lastPanEventTime!).inMicroseconds / 1000.0;
       if (intervalMs < 140.0) {
         final freqFactor = (140.0 - intervalMs) / 140.0;
@@ -658,7 +669,7 @@ class SuperGoodScrollInteractionDelegate implements PdfViewerScrollInteractionDe
     } else {
       _currentMultiplier = 1.0;
     }
-    _lastPanEventTime = now;
+    if (accelerate) _lastPanEventTime = now;
 
     final effectiveDelta = delta * _currentMultiplier;
     _panTarget = _panTarget! + effectiveDelta;
@@ -834,7 +845,6 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   bool _modeOrDocChanged = false;
   Timer? _pendingWatchdogTimer;
   Timer? _directReloadWatchdogTimer;
-  Timer? _swapFallbackTimer;
   bool _pendingViewerReady = false;
   bool _pendingImageLoaded = false;
 
@@ -862,14 +872,31 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   }
 
   PdfViewerController get _pdfController => _controllers[_activeSlot];
+  @visibleForTesting
+  PdfViewerController get pdfController => _pdfController;
   double get currentZoom => _pdfController.isReady ? _pdfController.currentZoom : _currentZoom;
   bool get isReady => _pdfController.isReady;
   int get pageNumber => _pdfController.isReady ? (_pdfController.pageNumber ?? 1) : 1;
   int get pageCount => _pdfController.isReady ? _pdfController.pageCount : 1;
 
+  final List<PdfTextSearcher?> _textSearchers = [null, null];
+  bool _isSearchOpen = false;
+  late final TextEditingController _searchFieldController;
+  late final FocusNode _searchFocusNode;
+  int _searchMatchIndex = 0;
+  int _searchTotalMatches = 0;
+  bool _isSearchingText = false;
+
+  PdfTextSearcher? get _activeSearcher => _textSearchers[_activeSlot];
+  bool get isSearchOpen => _isSearchOpen;
+  bool get isSearchFocused => _isSearchOpen && _searchFocusNode.hasFocus;
+
   @override
   void initState() {
     super.initState();
+    _searchFieldController = TextEditingController();
+    _searchFocusNode = FocusNode(onKeyEvent: _handleSearchKeyEvent);
+
     _slotBytes[0] = widget.pdfBytes;
     _slotDocHash[0] = widget.pdfBytes?.hashCode ?? 0;
     _activeSlot = 0;
@@ -886,14 +913,29 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   void _onViewerChanged0() => _onPdfViewerChanged(0);
   void _onViewerChanged1() => _onPdfViewerChanged(1);
 
+  void _onSearchUpdated() {
+    if (!mounted) return;
+    final searcher = _activeSearcher;
+    setState(() {
+      _isSearchingText = searcher?.isSearching ?? false;
+      _searchTotalMatches = searcher?.matches.length ?? 0;
+      _searchMatchIndex = (searcher?.currentIndex != null) ? searcher!.currentIndex! + 1 : 0;
+    });
+  }
+
   @override
   void dispose() {
     _cleanupTimer?.cancel();
     _pendingWatchdogTimer?.cancel();
     _directReloadWatchdogTimer?.cancel();
-    _swapFallbackTimer?.cancel();
     _controllers[0].removeListener(_onViewerChanged0);
     _controllers[1].removeListener(_onViewerChanged1);
+    for (final s in _textSearchers) {
+      s?.removeListener(_onSearchUpdated);
+      s?.dispose();
+    }
+    _searchFieldController.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
@@ -915,15 +957,14 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
   void _startPendingWatchdog() {
     _pendingWatchdogTimer?.cancel();
-    // 1500ms watchdog: If pending slot crashes or fails to ready,
+    // 5s watchdog: If pending rendering fails to complete,
     // recover by directly replacing active slot with latest bytes.
-    _pendingWatchdogTimer = Timer(const Duration(milliseconds: 1500), () {
+    _pendingWatchdogTimer = Timer(const Duration(seconds: 5), () {
       if (mounted && _pendingSlot != null) {
         debugPrint('[PdfCanvasView] Watchdog: pending slot $_pendingSlot timed out, recovering');
         final fallbackBytes = _queuedBytes ?? _slotBytes[_pendingSlot!];
         _pendingSlot = null;
         _queuedBytes = null;
-        _swapFallbackTimer?.cancel();
         _pendingViewerReady = false;
         _pendingImageLoaded = false;
         if (fallbackBytes != null && fallbackBytes.isNotEmpty) {
@@ -946,18 +987,20 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
   void _checkAndTriggerPendingSwap(int slotIndex) {
     if (!mounted || _pendingSlot != slotIndex) return;
-    if (!_pendingViewerReady) return;
-    _swapFallbackTimer?.cancel();
+    if (!_pendingViewerReady || !_pendingImageLoaded) return;
+    final expectedBytes = _slotBytes[slotIndex];
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _pendingSlot == slotIndex && _pendingViewerReady) {
+      if (mounted && _pendingSlot == slotIndex &&
+          identical(_slotBytes[slotIndex], expectedBytes) &&
+          _pendingViewerReady && _pendingImageLoaded) {
         _triggerSlotSwap(slotIndex);
       }
     });
+    WidgetsBinding.instance.scheduleFrame();
   }
 
   void _triggerSlotSwap(int slotIndex) {
     if (!mounted || _pendingSlot != slotIndex) return;
-    _swapFallbackTimer?.cancel();
     _pendingWatchdogTimer?.cancel();
     _pendingViewerReady = false;
     _pendingImageLoaded = false;
@@ -966,6 +1009,14 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       _activeSlot = slotIndex;
       _pendingSlot = null;
     });
+    if (_isSearchOpen && _searchFieldController.text.trim().isNotEmpty) {
+      _activeSearcher?.startTextSearch(
+        _searchFieldController.text.trim(),
+        caseInsensitive: true,
+        goToFirstMatch: false,
+        searchImmediately: true,
+      );
+    }
     _cleanupTimer?.cancel();
     _cleanupTimer = Timer(const Duration(milliseconds: 500), () {
       if (mounted && _pendingSlot == null) {
@@ -980,15 +1031,23 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final queued = _queuedBytes;
     _queuedBytes = null;
     if (queued != null && queued.isNotEmpty && queued.hashCode != _slotDocHash[_activeSlot]) {
-      final nextSlot = 1 - _activeSlot;
-      _pendingSlot = nextSlot;
-      _pendingViewerReady = false;
-      _pendingImageLoaded = false;
-      _slotBytes[nextSlot] = queued;
-      _slotDocHash[nextSlot] = queued.hashCode;
-      _startPendingWatchdog();
-      setState(() {});
+      _loadQueuedBytes(queued);
+    } else {
+      widget.controller.renderOptionsChanged = false;
+      widget.controller.finishReloading();
     }
+  }
+
+  void _loadQueuedBytes(Uint8List queued) {
+    final nextSlot = 1 - _activeSlot;
+    _mountGeneration++;
+    _pendingSlot = nextSlot;
+    _pendingViewerReady = false;
+    _pendingImageLoaded = false;
+    _slotBytes[nextSlot] = queued;
+    _slotDocHash[nextSlot] = queued.hashCode;
+    _startPendingWatchdog();
+    setState(() {});
   }
 
   @override
@@ -999,7 +1058,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     // Frame A: User changes font/size/theme/mode -> notifyListeners() rebuilds with new options but old bytes.
     // Frame B: Async compilation finishes -> notifyListeners() rebuilds with new bytes.
     // Therefore, option/mode change detection MUST run unconditionally outside the byte hash guard.
+    final pageFormatChanged = widget.renderOptions.effectivePageFormat != oldWidget.renderOptions.effectivePageFormat;
     final optionsChanged = widget.renderOptions != oldWidget.renderOptions ||
+        pageFormatChanged ||
         widget.isTwoPage != oldWidget.isTwoPage ||
         widget.documentTitle != oldWidget.documentTitle;
     if (optionsChanged) {
@@ -1007,6 +1068,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     }
 
     if (widget.renderOptions.mode != oldWidget.renderOptions.mode ||
+        pageFormatChanged ||
         widget.isTwoPage != oldWidget.isTwoPage ||
         widget.documentTitle != oldWidget.documentTitle) {
       _modeOrDocChanged = true;
@@ -1023,7 +1085,6 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         _pendingViewerReady = false;
         _pendingImageLoaded = false;
         _pendingWatchdogTimer?.cancel();
-        _swapFallbackTimer?.cancel();
         setState(() {});
       }
       return;
@@ -1050,7 +1111,6 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         _mountGeneration++;
         _cleanupTimer?.cancel();
         _pendingWatchdogTimer?.cancel();
-        _swapFallbackTimer?.cancel();
         _activeSlot = 0;
         _pendingSlot = null;
         _queuedBytes = null;
@@ -1072,6 +1132,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           // Mount into background slot for seamless double buffering
           _cleanupTimer?.cancel();
           final nextSlot = 1 - _activeSlot;
+          _mountGeneration++;
           _pendingSlot = nextSlot;
           _slotBytes[nextSlot] = newBytes;
           _slotDocHash[nextSlot] = newBytes.hashCode;
@@ -1122,7 +1183,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
       final docSize = ctrl.documentSize;
       final currentTop = ctrl.visibleRect.top;
-      final isFluid = widget.renderOptions.isFluid && !widget.controller.isPdfDocument;
+      final isFluid = widget.controller.isFluidLayout;
       final isTwoPage = widget.isTwoPage && !isFluid;
       final isAtTop = isFluid
           ? (currentTop <= 20.0)
@@ -1162,7 +1223,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       return;
     }
     final docSize = ctrl.documentSize;
-    final isFluid = widget.renderOptions.isFluid;
+    final isFluid = widget.controller.isFluidLayout;
 
     if (isFluid) {
       if (docSize.height > 0) {
@@ -1240,7 +1301,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final totalLines = math.max(1, widget.controller.currentMarkdown.split('\n').length);
     final ratio = ((item.lineNumber - 1) / totalLines).clamp(0.0, 1.0);
 
-    if (widget.controller.renderOptions.isFluid) {
+    if (widget.controller.isFluidLayout) {
       final docHeight = _pdfController.documentSize.height;
       if (docHeight > 0) {
         await _pdfController.goToPosition(
@@ -1274,10 +1335,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   Offset _calcStableZoomCenter(Offset? focalPoint) {
     if (focalPoint != null) return focalPoint;
     if (!_pdfController.isReady) return Offset.zero;
-    final layout = _pdfController.layout;
-    if (layout.pageLayouts.isEmpty) return _pdfController.centerPosition;
+    final layout = _pdfController.layoutOrNull;
+    if (layout == null || layout.pageLayouts.isEmpty) return _pdfController.centerPosition;
 
-    if (widget.controller.renderOptions.isFluid) {
+    if (widget.controller.isFluidLayout) {
       final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
       return Offset(docWidth / 2, _pdfController.centerPosition.dy);
     } else {
@@ -1311,7 +1372,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         break;
       }
     }
-    final minS = widget.controller.renderOptions.isFluid ? 0.35 : 0.2;
+    final minS = widget.controller.isFluidLayout ? 0.35 : 0.2;
     target = target.clamp(minS, 5.0);
     final center = _calcStableZoomCenter(focalPoint);
     _isProgrammaticZooming = true;
@@ -1340,7 +1401,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         break;
       }
     }
-    final minS = widget.controller.renderOptions.isFluid ? 0.35 : 0.2;
+    final minS = widget.controller.isFluidLayout ? 0.35 : 0.2;
     target = target.clamp(minS, 5.0);
     final center = _calcStableZoomCenter(focalPoint);
     _isProgrammaticZooming = true;
@@ -1378,7 +1439,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   Future<void> zoomTo(double targetZoom, {Offset? focalPoint}) async {
     if (!_pdfController.isReady) return;
     widget.controller.setAutoFitMode(AutoFitMode.none);
-    final minS = widget.controller.renderOptions.isFluid ? 0.35 : 0.2;
+    final minS = widget.controller.isFluidLayout ? 0.35 : 0.2;
     final center = _calcStableZoomCenter(focalPoint);
     _isProgrammaticZooming = true;
     try {
@@ -1432,23 +1493,98 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     }
   }
 
-  Future<void> nextPage() async {
+  /// Bounding box of the page at [index], or of the whole spread it starts in
+  /// when [isTwoPage] is set.
+  Rect _spreadRectAt(PdfPageLayout layout, int index, bool isTwoPage) {
+    final rect = layout.pageLayouts[index];
+    if (isTwoPage && index + 1 < layout.pageLayouts.length) {
+      return rect.expandToInclude(layout.pageLayouts[index + 1]);
+    }
+    return rect;
+  }
+
+  /// Maps the viewport's offset from the edge of the page it currently sits on
+  /// onto a page of [targetExtent], along one axis.
+  double _mapAxis({
+    required double relStart,
+    required double currentExtent,
+    required double targetExtent,
+    required double viewportExtent,
+  }) {
+    // How far past the end of its own page the viewport already sits. Document
+    // margins legitimately put it slightly outside, and that is worth keeping:
+    // clamping it away would nudge the view sideways on every single flip.
+    final currentMax = math.max(0.0, currentExtent - viewportExtent);
+    final overhang = math.max(0.0, relStart - currentMax);
+    // Refuse to scroll further past the target's far edge than that. Without
+    // this, flipping onto a shorter page (a document mixing page sizes) lands
+    // the viewport over the *following* page while the indicator names this one.
+    final targetMax = math.max(0.0, targetExtent - viewportExtent);
+    return math.min(relStart, targetMax + overhang);
+  }
+
+  /// Document offset that lands [visibleRect] on [targetRect] the way it
+  /// currently sits on [currentRect], so a page flip keeps the reader where they
+  /// were within the page instead of jumping to its top-left corner.
+  ///
+  /// Both rects are the page's -- or, in two-page mode, the whole spread's --
+  /// own bounds rather than absolute document coordinates, because
+  /// `_layoutA4Pages` centres each row on its own width: an absolute left edge
+  /// drifts whenever the row width changes, such as the trailing single-page
+  /// spread of an odd-page document.
+  Offset _preservedOffset(Rect currentRect, Rect targetRect, Rect visibleRect) {
+    final relX = _mapAxis(
+      relStart: visibleRect.left - currentRect.left,
+      currentExtent: currentRect.width,
+      targetExtent: targetRect.width,
+      viewportExtent: visibleRect.width,
+    );
+    final relY = _mapAxis(
+      relStart: visibleRect.top - currentRect.top,
+      currentExtent: currentRect.height,
+      targetExtent: targetRect.height,
+      viewportExtent: visibleRect.height,
+    );
+    return Offset(targetRect.left + relX, targetRect.top + relY);
+  }
+
+  Future<void> nextPage({bool preserveOffset = true}) async {
     if (!_pdfController.isReady) return;
     final pCount = _pdfController.pageCount;
     final currentPage = _pdfController.pageNumber ?? 1;
-    final isTwoPage = widget.controller.isTwoPage && !widget.controller.renderOptions.isFluid;
+    final isTwoPage = widget.controller.isTwoPage && !widget.controller.isFluidLayout;
 
     int targetPage;
     if (isTwoPage) {
-      final spreadIndex = (currentPage - 1) ~/ 2;
-      targetPage = (spreadIndex + 1) * 2 + 1;
+      final currentSpreadIndex = (currentPage - 1) ~/ 2;
+      final maxSpreadIndex = (pCount - 1) ~/ 2;
+      if (currentSpreadIndex >= maxSpreadIndex) return;
+      targetPage = (currentSpreadIndex + 1) * 2 + 1;
     } else {
+      if (currentPage >= pCount) return;
       targetPage = currentPage + 1;
     }
 
-    if (targetPage > pCount) {
-      targetPage = pCount;
-      if (currentPage == pCount) return;
+    if (preserveOffset) {
+      final layout = _pdfController.layoutOrNull;
+      if (layout != null) {
+        final currentIdx = isTwoPage ? ((currentPage - 1) ~/ 2) * 2 : currentPage - 1;
+        final targetIdx = isTwoPage ? ((targetPage - 1) ~/ 2) * 2 : targetPage - 1;
+        if (currentIdx < layout.pageLayouts.length && targetIdx < layout.pageLayouts.length) {
+          final currentRect = _spreadRectAt(layout, currentIdx, isTwoPage);
+          final targetRect = _spreadRectAt(layout, targetIdx, isTwoPage);
+
+          final visibleRect = _pdfController.visibleRect;
+          final targetOffset = _preservedOffset(currentRect, targetRect, visibleRect);
+          await _pdfController.goToPosition(
+            documentOffset: targetOffset,
+            zoom: currentZoom,
+            duration: const Duration(milliseconds: 220),
+            targetPageNumber: targetPage,
+          );
+          return;
+        }
+      }
     }
 
     await _pdfController.goToPage(
@@ -1458,22 +1594,41 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     );
   }
 
-  Future<void> prevPage() async {
+  Future<void> prevPage({bool preserveOffset = true}) async {
     if (!_pdfController.isReady) return;
     final currentPage = _pdfController.pageNumber ?? 1;
-    final isTwoPage = widget.controller.isTwoPage && !widget.controller.renderOptions.isFluid;
+    final isTwoPage = widget.controller.isTwoPage && !widget.controller.isFluidLayout;
 
     int targetPage;
     if (isTwoPage) {
-      final spreadIndex = (currentPage - 1) ~/ 2;
-      targetPage = (spreadIndex - 1) * 2 + 1;
+      final currentSpreadIndex = (currentPage - 1) ~/ 2;
+      if (currentSpreadIndex <= 0) return;
+      targetPage = (currentSpreadIndex - 1) * 2 + 1;
     } else {
+      if (currentPage <= 1) return;
       targetPage = currentPage - 1;
     }
 
-    if (targetPage < 1) {
-      targetPage = 1;
-      if (currentPage == 1) return;
+    if (preserveOffset) {
+      final layout = _pdfController.layoutOrNull;
+      if (layout != null) {
+        final currentIdx = isTwoPage ? ((currentPage - 1) ~/ 2) * 2 : currentPage - 1;
+        final targetIdx = isTwoPage ? ((targetPage - 1) ~/ 2) * 2 : targetPage - 1;
+        if (currentIdx < layout.pageLayouts.length && targetIdx < layout.pageLayouts.length) {
+          final currentRect = _spreadRectAt(layout, currentIdx, isTwoPage);
+          final targetRect = _spreadRectAt(layout, targetIdx, isTwoPage);
+
+          final visibleRect = _pdfController.visibleRect;
+          final targetOffset = _preservedOffset(currentRect, targetRect, visibleRect);
+          await _pdfController.goToPosition(
+            documentOffset: targetOffset,
+            zoom: currentZoom,
+            duration: const Duration(milliseconds: 220),
+            targetPageNumber: targetPage,
+          );
+          return;
+        }
+      }
     }
 
     await _pdfController.goToPage(
@@ -1481,6 +1636,46 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       anchor: PdfPageAnchor.top,
       duration: const Duration(milliseconds: 220),
     );
+  }
+
+  bool get isCurrentPageFittingViewport {
+    if (!_pdfController.isReady) return false;
+    final layout = _pdfController.layoutOrNull;
+    if (layout == null) return false;
+    final currentPage = _pdfController.pageNumber ?? 1;
+    final isTwoPage = widget.controller.isTwoPage && !widget.controller.isFluidLayout;
+    final currentIdx = isTwoPage ? ((currentPage - 1) ~/ 2) * 2 : currentPage - 1;
+    if (currentIdx < 0 || currentIdx >= layout.pageLayouts.length) return false;
+    final currentRect = _spreadRectAt(layout, currentIdx, isTwoPage);
+    final visibleRect = _pdfController.visibleRect;
+    // Tolerance is in document units, so scale it to stay ~4 screen pixels
+    // regardless of zoom.
+    final zoom = currentZoom;
+    final tolerance = zoom > 0 ? 4.0 / zoom : 4.0;
+    // Fitting is not enough: the layout is a continuous stack, so after free
+    // panning the viewport can straddle two pages while the page still fits.
+    // Flipping from there would skip the part the reader has not seen yet.
+    return currentRect.top >= visibleRect.top - tolerance && currentRect.bottom <= visibleRect.bottom + tolerance;
+  }
+
+  Future<void> scrollScreenDown() async {
+    if (!_pdfController.isReady) return;
+    final h = _pdfController.visibleRect.height;
+    final zoom = currentZoom;
+    final screenH = h * zoom;
+    final screenStep = (screenH > 0 ? screenH * 0.85 : 420.0).clamp(40.0, 4000.0);
+    final step = zoom > 0 ? screenStep / zoom : screenStep;
+    await scrollByDelta(step, accelerate: false);
+  }
+
+  Future<void> scrollScreenUp() async {
+    if (!_pdfController.isReady) return;
+    final h = _pdfController.visibleRect.height;
+    final zoom = currentZoom;
+    final screenH = h * zoom;
+    final screenStep = (screenH > 0 ? screenH * 0.85 : 420.0).clamp(40.0, 4000.0);
+    final step = zoom > 0 ? screenStep / zoom : screenStep;
+    await scrollByDelta(-step, accelerate: false);
   }
 
   Future<void> goToPageNumber(int pageNumber) async {
@@ -1494,13 +1689,13 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     );
   }
 
-  Future<void> scrollByDelta(double deltaY) async {
+  Future<void> scrollByDelta(double deltaY, {bool accelerate = true}) async {
     final delegate = _scrollDelegates[_activeSlot];
     if (delegate != null && _pdfController.isReady) {
       final zoom = currentZoom;
       // In screen coordinates, scrolling DOWN (deltaY > 0) translates the viewport UP (negative Y)
       final screenDeltaY = -deltaY * zoom;
-      delegate.scrollByScreenDelta(Offset(0, screenDeltaY));
+      delegate.scrollByScreenDelta(Offset(0, screenDeltaY), accelerate: accelerate);
       return;
     }
 
@@ -1588,12 +1783,13 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
     final items = <ContextMenuButtonItem>[];
 
+    final s = widget.controller.strings;
     if (isText) {
       // 1. Text Selection Context Menu: strictly text actions
       if (params.isTextSelectionEnabled && params.textSelectionDelegate.isCopyAllowed) {
         items.add(
           ContextMenuButtonItem(
-            label: '复制 (Cmd+C)',
+            label: '${s.copy} (${Platform.isMacOS ? 'Cmd+C' : 'Ctrl+C'})',
             type: ContextMenuButtonType.copy,
             onPressed: () async {
               params.dismissContextMenu();
@@ -1608,7 +1804,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (params.isTextSelectionEnabled && !params.textSelectionDelegate.isSelectingAllText) {
         items.add(
           ContextMenuButtonItem(
-            label: '全选 (Cmd+A)',
+            label: '${s.selectAll} (${Platform.isMacOS ? 'Cmd+A' : 'Ctrl+A'})',
             type: ContextMenuButtonType.selectAll,
             onPressed: () {
               params.dismissContextMenu();
@@ -1622,7 +1818,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (params.isTextSelectionEnabled) {
         items.add(
           ContextMenuButtonItem(
-            label: '全选文本 (Cmd+A)',
+            label: '${s.selectAll} (${Platform.isMacOS ? 'Cmd+A' : 'Ctrl+A'})',
             type: ContextMenuButtonType.selectAll,
             onPressed: () {
               params.dismissContextMenu();
@@ -1633,7 +1829,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       }
       items.add(
         ContextMenuButtonItem(
-          label: '满窗口 (适应宽度) (${widget.controller.shortcutService.getShortcutLabel('fitWidth')})',
+          label: '${s.fitWindowWidth} (${widget.controller.shortcutService.getShortcutLabel('fitWidth')})',
           onPressed: () {
             params.dismissContextMenu();
             fitWidth();
@@ -1642,7 +1838,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       );
       items.add(
         ContextMenuButtonItem(
-          label: '满屏 (适应整页) (${widget.controller.shortcutService.getShortcutLabel('fitPage')})',
+          label: '${s.fitPageWhole} (${widget.controller.shortcutService.getShortcutLabel('fitPage')})',
           onPressed: () {
             params.dismissContextMenu();
             fitPage();
@@ -1651,7 +1847,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       );
       items.add(
         ContextMenuButtonItem(
-          label: '实际大小 100% (${widget.controller.shortcutService.getShortcutLabel('resetZoom')})',
+          label: s.resetZoomTooltip(widget.controller.shortcutService.getShortcutLabel('resetZoom')),
           onPressed: () {
             params.dismissContextMenu();
             resetZoom();
@@ -1660,7 +1856,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       );
       items.add(
         ContextMenuButtonItem(
-          label: '放大 (${widget.controller.shortcutService.getShortcutLabel('zoomIn')})',
+          label: s.zoomInTooltip(widget.controller.shortcutService.getShortcutLabel('zoomIn')),
           onPressed: () {
             params.dismissContextMenu();
             zoomIn();
@@ -1669,19 +1865,17 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       );
       items.add(
         ContextMenuButtonItem(
-          label: '缩小 (${widget.controller.shortcutService.getShortcutLabel('zoomOut')})',
+          label: s.zoomOutTooltip(widget.controller.shortcutService.getShortcutLabel('zoomOut')),
           onPressed: () {
             params.dismissContextMenu();
             zoomOut();
           },
         ),
       );
-      if (widget.controller.isPdfDocument || !widget.controller.renderOptions.isFluid) {
+      if (widget.controller.isPdfDocument || !widget.controller.isFluidLayout) {
         items.add(
           ContextMenuButtonItem(
-            label: widget.controller.isTwoPage
-                ? '切换为单页纵向浏览 (${widget.controller.shortcutService.getShortcutLabel('toggleTwoPage')})'
-                : '切换为双页对开浏览 (${widget.controller.shortcutService.getShortcutLabel('toggleTwoPage')})',
+            label: s.toggleTwoPageTooltip(widget.controller.isTwoPage, widget.controller.shortcutService.getShortcutLabel('toggleTwoPage')),
             onPressed: () {
               params.dismissContextMenu();
               widget.controller.toggleTwoPage();
@@ -1692,9 +1886,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (!widget.controller.isPdfDocument) {
         items.add(
           ContextMenuButtonItem(
-            label: widget.controller.renderOptions.isFluid
-                ? '切换为 A4 出版模式 (${widget.controller.shortcutService.getShortcutLabel('toggleMode')})'
-                : '切换为自适应流式 (${widget.controller.shortcutService.getShortcutLabel('toggleMode')})',
+            label: s.toggleModeTooltip(widget.controller.shortcutService.getShortcutLabel('toggleMode')),
             onPressed: () {
               params.dismissContextMenu();
               widget.controller.toggleMode();
@@ -1704,9 +1896,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       }
       items.add(
         ContextMenuButtonItem(
-          label: widget.controller.renderOptions.isDark
-              ? '切换为明亮主题 (${widget.controller.shortcutService.getShortcutLabel('toggleTheme')})'
-              : '切换为暗黑主题 (${widget.controller.shortcutService.getShortcutLabel('toggleTheme')})',
+          label: s.toggleThemeTooltip(widget.controller.renderOptions.isDark, widget.controller.shortcutService.getShortcutLabel('toggleTheme')),
           onPressed: () {
             params.dismissContextMenu();
             widget.controller.toggleTheme();
@@ -1716,7 +1906,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (widget.onToggleSidebar != null) {
         items.add(
           ContextMenuButtonItem(
-            label: '展开/收起侧边栏 (${widget.controller.shortcutService.getShortcutLabel('toggleSidebar')})',
+            label: s.toggleSidebarTooltip(widget.controller.shortcutService.getShortcutLabel('toggleSidebar')),
             onPressed: () {
               params.dismissContextMenu();
               widget.onToggleSidebar!();
@@ -1727,7 +1917,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (widget.onExportPdf != null) {
         items.add(
           ContextMenuButtonItem(
-            label: '导出出版级 PDF... (${widget.controller.shortcutService.getShortcutLabel('exportPdf')})',
+            label: '${s.exportPdf} (${widget.controller.shortcutService.getShortcutLabel('exportPdf')})',
             onPressed: () {
               params.dismissContextMenu();
               widget.onExportPdf!();
@@ -1761,17 +1951,36 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final ctrl = _controllers[slotIndex];
     final isPdfDoc = widget.controller.isPdfDocument;
     final builtForPath = widget.controller.currentFilePath;
+    bool isCurrentSlot() => mounted && identical(_slotBytes[slotIndex], bytes) &&
+        widget.controller.currentFilePath == builtForPath;
     final effectiveFluid = isFluid && !isPdfDoc;
     return PdfViewer.data(
       bytes,
       initialPageNumber: effectiveFluid ? 1 : widget.controller.lastPageNumber.clamp(1, 999999),
       key: ValueKey(
-        'slot_${slotIndex}_${_slotDocHash[slotIndex]}_${widget.renderOptions.mode}_${widget.isTwoPage}_$isPdfDoc',
+        'slot_${slotIndex}_${_slotDocHash[slotIndex]}_${widget.renderOptions.mode}_${widget.renderOptions.effectivePageFormat}_${widget.isTwoPage}_$isPdfDoc',
       ),
       sourceName: '${widget.documentTitle}_slot_${slotIndex}_${_slotDocHash[slotIndex]}',
       controller: ctrl,
       params: PdfViewerParams(
         backgroundColor: canvasBg,
+        enableTiledRendering: true,
+        pagePaintCallbacks: [
+          (canvas, pageRect, page) {
+            _textSearchers[slotIndex]?.pageTextMatchPaintCallback(canvas, pageRect, page);
+          },
+        ],
+        matchTextColor: isDark ? const Color(0x77FBC02D) : const Color(0x66FFEB3B),
+        activeMatchTextColor: isDark ? const Color(0xBBFF9800) : const Color(0x99FF9800),
+        onVisiblePagesRendered: (ready) {
+          if (!isCurrentSlot()) return;
+          if (slotIndex == _pendingSlot) {
+            _pendingImageLoaded = ready;
+            if (ready) _checkAndTriggerPendingSwap(slotIndex);
+          } else if (slotIndex == _activeSlot && ready) {
+            StartupMetrics.markFirstDocument();
+          }
+        },
         scrollByMouseWheel: 1.0,
         calculateInitialPageNumber: (document, controller) {
           if (effectiveFluid) {
@@ -1808,15 +2017,16 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             : const EdgeInsets.only(top: 36, bottom: 16, left: 8, right: 8),
         maxImageBytesCachedOnMemory: effectiveFluid ? 256 * 1024 * 1024 : 64 * 1024 * 1024,
         onePassRenderingSizeThreshold: effectiveFluid ? 4000.0 : 2000.0,
-        getPageRenderingScale: effectiveFluid
-            ? (context, page, controller, estimatedScale) {
-                const maxDimension = 4000.0;
-                if (page.width > maxDimension || page.height > maxDimension) {
-                  return math.min(maxDimension / page.width, maxDimension / page.height);
-                }
-                return estimatedScale;
-              }
-            : null,
+        getPageRenderingScale: (context, page, controller, estimatedScale) {
+          if (effectiveFluid && (page.width > 4000 || page.height > 4000)) {
+            return math.min(4000 / page.width, 4000 / page.height);
+          }
+          final physicalScale = controller.currentZoom * MediaQuery.devicePixelRatioOf(context);
+          final screenScale = (physicalScale * 2).ceil() / 2;
+          final memoryScale = math.sqrt((16 * 1024 * 1024) / (4 * page.width * page.height));
+          final dimensionScale = 4096 / math.max(page.width, page.height);
+          return math.min(screenScale, math.min(memoryScale, dimensionScale));
+        },
         verticalCacheExtent: 1.5,
         pageAnchor: PdfPageAnchor.top,
         underflowAnchor: PdfPageAnchor.top,
@@ -1856,6 +2066,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           showContextMenuAutomatically: false,
         ),
         onDocumentLoadFinished: (documentRef, succeeded) {
+          if (!isCurrentSlot()) return;
           if (mounted &&
               widget.controller.isPdfDocument &&
               widget.controller.currentFilePath == builtForPath) {
@@ -1867,15 +2078,20 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
               widget.controller.setErrorMessage('Failed to load PDF document');
             }
           }
-          if (slotIndex == _pendingSlot) {
-            _pendingImageLoaded = true;
-            if (_pendingViewerReady) {
-              _checkAndTriggerPendingSwap(slotIndex);
-            }
-          }
         },
         onViewerReady: (document, controller) {
-          StartupMetrics.markFirstDocument();
+          if (!isCurrentSlot()) return;
+          _textSearchers[slotIndex]?.removeListener(_onSearchUpdated);
+          _textSearchers[slotIndex]?.dispose();
+          _textSearchers[slotIndex] = PdfTextSearcher(controller)..addListener(_onSearchUpdated);
+          if (_isSearchOpen && _searchFieldController.text.trim().isNotEmpty) {
+            _textSearchers[slotIndex]?.startTextSearch(
+              _searchFieldController.text.trim(),
+              caseInsensitive: true,
+              goToFirstMatch: false,
+              searchImmediately: true,
+            );
+          }
           if (widget.controller.isPdfDocument) {
             final srcPath = widget.controller.currentFilePath;
             document.loadOutline().then((outlines) {
@@ -1910,16 +2126,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           if (slotIndex == _pendingSlot) {
             _pendingViewerReady = true;
             _restoreScrollFor(controller);
-            if (_pendingImageLoaded) {
-              _checkAndTriggerPendingSwap(slotIndex);
-            } else {
-              _swapFallbackTimer?.cancel();
-              _swapFallbackTimer = Timer(const Duration(milliseconds: 150), () {
-                if (mounted && _pendingSlot == slotIndex) {
-                  _triggerSlotSwap(slotIndex);
-                }
-              });
-            }
+            _checkAndTriggerPendingSwap(slotIndex);
           } else if (slotIndex == _activeSlot) {
             _restoreScroll();
           }
@@ -1997,7 +2204,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('目标文档不存在: ${p.basename(resolvedPath)}'),
+                      content: Text(widget.controller.strings.targetDocNotExist(p.basename(resolvedPath))),
                       duration: const Duration(seconds: 2),
                       behavior: SnackBarBehavior.floating,
                     ),
@@ -2030,7 +2237,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             ),
             const SizedBox(height: 16),
             Text(
-              '正在排版文档...',
+              widget.controller.strings.compiling,
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
                 fontSize: 13.5,
@@ -2043,7 +2250,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     }
 
     final isDark = widget.renderOptions.isDark;
-    final isFluid = widget.renderOptions.isFluid;
+    final isFluid = widget.controller.isFluidLayout;
     final canvasBg = isDark ? const Color(0xFF141414) : const Color(0xFFEBEBEB);
 
     final children = <Widget>[];
@@ -2110,7 +2317,227 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         child: SizedBox.expand(
           child: Stack(
             fit: StackFit.expand,
-            children: children,
+            children: [
+              ...children,
+              if (_isSearchOpen)
+                Positioned(
+                  top: 52,
+                  right: 24,
+                  child: _buildSearchBar(context, isDark),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void openSearch() {
+    _isSearchOpen = true;
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _searchFocusNode.requestFocus();
+        _searchFieldController.selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: _searchFieldController.text.length,
+        );
+      }
+    });
+  }
+
+  void closeSearch() {
+    if (!_isSearchOpen) return;
+    _isSearchOpen = false;
+    _searchFieldController.clear();
+    for (final s in _textSearchers) {
+      s?.resetTextSearch();
+    }
+    setState(() {
+      _searchMatchIndex = 0;
+      _searchTotalMatches = 0;
+      _isSearchingText = false;
+    });
+  }
+
+  void searchNext() async {
+    final searcher = _activeSearcher;
+    if (searcher == null) return;
+    if (searcher.matches.isEmpty) {
+      if (_searchFieldController.text.trim().isNotEmpty) {
+        searcher.startTextSearch(
+          _searchFieldController.text.trim(),
+          caseInsensitive: true,
+          goToFirstMatch: true,
+          searchImmediately: true,
+        );
+      }
+      return;
+    }
+    final curr = searcher.currentIndex ?? -1;
+    if (curr + 1 >= searcher.matches.length) {
+      await searcher.goToMatchOfIndex(0);
+    } else {
+      await searcher.goToNextMatch();
+    }
+  }
+
+  void searchPrev() async {
+    final searcher = _activeSearcher;
+    if (searcher == null || searcher.matches.isEmpty) return;
+    final curr = searcher.currentIndex ?? 0;
+    if (curr <= 0) {
+      await searcher.goToMatchOfIndex(searcher.matches.length - 1);
+    } else {
+      await searcher.goToPrevMatch();
+    }
+  }
+
+  void _onSearchQueryChanged(String query) {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) {
+      for (final s in _textSearchers) {
+        s?.resetTextSearch();
+      }
+      setState(() {
+        _searchTotalMatches = 0;
+        _searchMatchIndex = 0;
+        _isSearchingText = false;
+      });
+    } else {
+      _activeSearcher?.startTextSearch(
+        trimmed,
+        caseInsensitive: true,
+        goToFirstMatch: true,
+        searchImmediately: false,
+      );
+    }
+  }
+
+  KeyEventResult _handleSearchKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent || event is KeyRepeatEvent) {
+      if (event.logicalKey == LogicalKeyboardKey.escape) {
+        closeSearch();
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.enter) {
+        if (HardwareKeyboard.instance.isShiftPressed) {
+          searchPrev();
+        } else {
+          searchNext();
+        }
+        return KeyEventResult.handled;
+      }
+    }
+    // Return skipRemainingHandlers so ancestor shortcuts (such as Space for next page,
+    // Arrow keys, Home/End) do not intercept keystrokes while the search box is active,
+    // while still allowing the TextField and IME to receive keystrokes and candidate selection.
+    return KeyEventResult.skipRemainingHandlers;
+  }
+
+  Widget _buildSearchBar(BuildContext context, bool isDark) {
+    final bgColor = isDark ? const Color(0xEE242424) : const Color(0xEEF6F6F6);
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final hintColor = isDark ? Colors.white38 : Colors.black45;
+    final borderColor = isDark ? Colors.white.withValues(alpha: 0.12) : Colors.black.withValues(alpha: 0.1);
+    final iconColor = isDark ? Colors.white70 : Colors.black54;
+
+    final s = widget.controller.strings;
+    String matchInfo;
+    if (_searchFieldController.text.isEmpty) {
+      matchInfo = '';
+    } else if (_isSearchingText) {
+      matchInfo = '...';
+    } else if (_searchTotalMatches == 0) {
+      matchInfo = s.noMatches;
+    } else {
+      matchInfo = s.matchCount(_searchMatchIndex, _searchTotalMatches);
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: borderColor, width: 0.8),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.4 : 0.12),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.search, size: 16, color: hintColor),
+              const SizedBox(width: 6),
+              SizedBox(
+                width: 170,
+                child: TextField(
+                  controller: _searchFieldController,
+                  focusNode: _searchFocusNode,
+                  style: TextStyle(fontSize: 13, color: textColor),
+                  decoration: InputDecoration(
+                    hintText: s.searchPlaceholder,
+                    hintStyle: TextStyle(fontSize: 12.5, color: hintColor),
+                    isDense: true,
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 6),
+                  ),
+                  onChanged: _onSearchQueryChanged,
+                  onSubmitted: (_) => searchNext(),
+                ),
+              ),
+              if (matchInfo.isNotEmpty) ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Text(
+                    matchInfo,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: _searchTotalMatches == 0 && _searchFieldController.text.isNotEmpty
+                          ? Colors.redAccent
+                          : hintColor,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(width: 2),
+              IconButton(
+                icon: Icon(Icons.keyboard_arrow_up, size: 17, color: iconColor),
+                tooltip: s.searchPrevious,
+                splashRadius: 14,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                onPressed: _searchTotalMatches > 0 ? searchPrev : null,
+              ),
+              IconButton(
+                icon: Icon(Icons.keyboard_arrow_down, size: 17, color: iconColor),
+                tooltip: s.searchNext,
+                splashRadius: 14,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                onPressed: _searchTotalMatches > 0 ? searchNext : null,
+              ),
+              const SizedBox(width: 4),
+              Container(width: 1, height: 14, color: borderColor),
+              const SizedBox(width: 4),
+              IconButton(
+                icon: Icon(Icons.close, size: 15, color: iconColor),
+                tooltip: s.closeSearch,
+                splashRadius: 14,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                onPressed: closeSearch,
+              ),
+            ],
           ),
         ),
       ),

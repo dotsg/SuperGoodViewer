@@ -13,6 +13,8 @@ ui/.flutter-plugins-dependencies
 ui/.packages
 ui/build/
 ui/pubspec.lock
+ui/packages/**/build/
+ui/packages/**/pubspec.lock
 .pub-cache/
 
 # OS / IDE

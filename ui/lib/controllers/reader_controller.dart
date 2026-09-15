@@ -3,11 +3,15 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
+import 'dart:ui' show Locale;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 
 import 'package:path/path.dart' as p;
 import '../bridge/native_engine.dart';
+import '../i18n/app_localizations.dart';
+import '../i18n/app_strings.dart';
+import '../i18n/locales.dart';
 import '../models/render_options.dart';
 import '../services/document_cache_service.dart';
 import '../services/preferences_service.dart';
@@ -81,11 +85,25 @@ class ReaderController extends ChangeNotifier {
   final ShortcutService shortcutService = ShortcutService();
 
   bool _isTwoPage = false;
+  bool _isPresentationMode = false;
   List<OutlineItem> _outlineItems = [];
   OutlineItem? _requestedJumpItem;
   bool renderOptionsChanged = false;
 
+  String _language = 'zhHans';
+
   // Getters
+  String get language => _language;
+  Locale? get currentLocale => AppLanguage.fromCode(_language).locale;
+  AppStrings get strings => AppI18n.resolve(_language);
+
+  void setLanguage(String lang) {
+    if (_language != lang) {
+      _language = lang;
+      _persistPreferences();
+      notifyListeners();
+    }
+  }
   String? get currentFilePath => _currentFilePath;
   String get currentMarkdown => _currentMarkdown;
   String get documentTitle => _documentTitle;
@@ -103,10 +121,14 @@ class ReaderController extends ChangeNotifier {
   List<String> get recentFiles => List.unmodifiable(_recentFiles);
   Map<String, dynamic> get fontReport => _fontReport;
   bool get isTwoPage => _isTwoPage;
+  bool get isPresentationMode => _isPresentationMode;
   List<OutlineItem> get outlineItems => _outlineItems;
   OutlineItem? get requestedJumpItem => _requestedJumpItem;
   bool get isPdfDocument =>
       _isRawPdf || (_currentFilePath?.toLowerCase().endsWith('.pdf') ?? false);
+
+  /// Native PDFs always use paged navigation, regardless of the saved Markdown layout preference.
+  bool get isFluidLayout => _renderOptions.isFluid && !isPdfDocument;
 
   /// Top scroll deadband threshold (in points). Offsets <= this value are treated as top of document.
   static const double topScrollThreshold = 20.0;
@@ -242,7 +264,14 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
-  ReaderController({String? initialFilePath, bool autoRestorePreferences = true}) {
+  ReaderController({
+    String? initialFilePath,
+    bool autoRestorePreferences = true,
+    String? defaultLanguage,
+  }) {
+    if (defaultLanguage != null) {
+      _language = defaultLanguage;
+    }
     unawaited(refreshFontReport());
     _setSampleDocumentContent();
     if (initialFilePath != null && initialFilePath.isNotEmpty && File(initialFilePath).existsSync()) {
@@ -260,6 +289,7 @@ class ReaderController extends ChangeNotifier {
   void _initPreferencesOnly() {
     try {
       final prefs = PreferencesService.loadSync();
+      final savedLanguage = prefs['language'] as String?;
       final savedTheme = prefs['theme'] as String?;
       final savedMode = prefs['mode'] as String?;
       final savedTwoPage = prefs['isTwoPage'] as bool?;
@@ -270,6 +300,26 @@ class ReaderController extends ChangeNotifier {
       final savedCodeFont = prefs['codeFont'] as String?;
       final savedZoom = (prefs['lastZoom'] as num?)?.toDouble();
       final savedHistory = prefs['fileHistory'] as Map<String, dynamic>?;
+      final rawPageFormat = prefs['pageFormat'] as String?;
+      final savedPageFormat = (rawPageFormat != null && PageFormat.all.contains(rawPageFormat))
+          ? rawPageFormat
+          : null;
+      final rawLastPagedFormat = prefs['lastPagedFormat'] as String?;
+      final savedLastPagedFormat = (rawLastPagedFormat != null &&
+              rawLastPagedFormat != PageFormat.fluid &&
+              PageFormat.all.contains(rawLastPagedFormat))
+          ? rawLastPagedFormat
+          : null;
+      final savedHeaderLeft = prefs['headerLeft'] as String?;
+      final savedHeaderCenter = prefs['headerCenter'] as String?;
+      final savedHeaderRight = prefs['headerRight'] as String?;
+      final savedFooterLeft = prefs['footerLeft'] as String?;
+      final savedFooterCenter = prefs['footerCenter'] as String?;
+      final savedFooterRight = prefs['footerRight'] as String?;
+      final savedShowHeaderRule = prefs['showHeaderRule'] as bool?;
+      final savedShowFooterRule = prefs['showFooterRule'] as bool?;
+      final savedSkipFirstPage = prefs['skipFirstPageHeaderFooter'] as bool?;
+      final savedMarpEnabled = prefs['marpEnabled'] as bool?;
 
       if (recent != null && recent.isNotEmpty) {
         _recentFiles.clear();
@@ -280,15 +330,46 @@ class ReaderController extends ChangeNotifier {
           savedMode != null ||
           savedFontSize != null ||
           savedBodyFont != null ||
-          savedCodeFont != null) {
+          savedCodeFont != null ||
+          savedPageFormat != null ||
+          savedLastPagedFormat != null ||
+          savedHeaderLeft != null ||
+          savedHeaderCenter != null ||
+          savedHeaderRight != null ||
+          savedFooterLeft != null ||
+          savedFooterCenter != null ||
+          savedFooterRight != null ||
+          savedShowHeaderRule != null ||
+          savedShowFooterRule != null ||
+          savedSkipFirstPage != null ||
+          savedMarpEnabled != null) {
         _renderOptions = _renderOptions.copyWith(
           theme: savedTheme ?? _renderOptions.theme,
           mode: savedMode ?? _renderOptions.mode,
+          pageFormat: savedPageFormat ?? _renderOptions.pageFormat,
           fontSize: savedFontSize ?? _renderOptions.fontSize,
           bodyFont: savedBodyFont ?? _renderOptions.bodyFont,
           codeFont: savedCodeFont ?? _renderOptions.codeFont,
+          headerLeft: savedHeaderLeft ?? _renderOptions.headerLeft,
+          headerCenter: savedHeaderCenter ?? _renderOptions.headerCenter,
+          headerRight: savedHeaderRight ?? _renderOptions.headerRight,
+          footerLeft: savedFooterLeft ?? _renderOptions.footerLeft,
+          footerCenter: savedFooterCenter ?? _renderOptions.footerCenter,
+          footerRight: savedFooterRight ?? _renderOptions.footerRight,
+          showHeaderRule: savedShowHeaderRule ?? _renderOptions.showHeaderRule,
+          showFooterRule: savedShowFooterRule ?? _renderOptions.showFooterRule,
+          skipFirstPageHeaderFooter: savedSkipFirstPage ?? _renderOptions.skipFirstPageHeaderFooter,
+          marpEnabled: savedMarpEnabled ?? _renderOptions.marpEnabled,
           imageCacheDir: RemoteImageService.instance.getCacheDirectory().path,
         );
+        if (savedLastPagedFormat != null) {
+          _lastPagedFormat = savedLastPagedFormat;
+        } else if (savedPageFormat != null && savedPageFormat != PageFormat.fluid) {
+          _lastPagedFormat = savedPageFormat;
+        }
+      }
+      if (savedLanguage != null) {
+        _language = savedLanguage;
       }
       if (savedTwoPage != null) {
         _isTwoPage = savedTwoPage;
@@ -360,15 +441,28 @@ class ReaderController extends ChangeNotifier {
   void _persistPreferences() {
     _updateCurrentFileHistory();
     PreferencesService.save({
+      'language': _language,
       'lastOpenedFile': _currentFilePath,
       'recentFiles': List<String>.from(_recentFiles),
       'theme': _renderOptions.theme,
       'mode': _renderOptions.mode,
+      'pageFormat': _renderOptions.effectivePageFormat,
+      'lastPagedFormat': _lastPagedFormat,
       'isTwoPage': _isTwoPage,
       'autoFitMode': _autoFitMode.name,
       'fontSize': _renderOptions.fontSize,
       'bodyFont': _renderOptions.bodyFont,
       'codeFont': _renderOptions.codeFont,
+      'headerLeft': _renderOptions.headerLeft,
+      'headerCenter': _renderOptions.headerCenter,
+      'headerRight': _renderOptions.headerRight,
+      'footerLeft': _renderOptions.footerLeft,
+      'footerCenter': _renderOptions.footerCenter,
+      'footerRight': _renderOptions.footerRight,
+      'showHeaderRule': _renderOptions.showHeaderRule,
+      'showFooterRule': _renderOptions.showFooterRule,
+      'skipFirstPageHeaderFooter': _renderOptions.skipFirstPageHeaderFooter,
+      'marpEnabled': _renderOptions.marpEnabled,
       'lastScrollRatio': _lastScrollRatio,
       'lastScrollOffset': _lastScrollOffset,
       'lastPageNumber': _lastPageNumber,
@@ -768,12 +862,21 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
-  void toggleMode() {
+  String _lastPagedFormat = PageFormat.a4Portrait;
+
+  void setPageFormat(String format) {
     if (isPdfDocument) return;
+    if (format != PageFormat.fluid) {
+      _lastPagedFormat = format;
+    }
+    if (_renderOptions.effectivePageFormat == format) return;
     renderOptionsChanged = true;
     startReloading();
-    final nextMode = _renderOptions.mode == 'fluid' ? 'paged' : 'fluid';
-    _renderOptions = _renderOptions.copyWith(mode: nextMode);
+    final nextMode = format == PageFormat.fluid ? 'fluid' : 'paged';
+    _renderOptions = _renderOptions.copyWith(
+      mode: nextMode,
+      pageFormat: format,
+    );
     _persistDebounced();
     notifyListeners();
     if (_currentFilePath != null) {
@@ -781,11 +884,90 @@ class ReaderController extends ChangeNotifier {
       if (cached != null && cached.isNotEmpty) {
         _currentPdfBytes = cached;
         _errorMessage = null;
-        debugPrint('[ReaderController] Mode toggle cache hit: instant PDF loaded');
+        debugPrint('[ReaderController] PageFormat change cache hit: instant PDF loaded');
         notifyListeners();
         return;
       }
     }
+    compileDocument();
+  }
+
+  void cyclePageFormat() {
+    if (isPdfDocument) return;
+    final current = _renderOptions.effectivePageFormat;
+    final formats = PageFormat.all;
+    final idx = formats.indexOf(current);
+    final nextIdx = (idx == -1 || idx == formats.length - 1) ? 0 : idx + 1;
+    setPageFormat(formats[nextIdx]);
+  }
+
+  void toggleMode() {
+    if (isPdfDocument) return;
+    if (_renderOptions.isFluid) {
+      setPageFormat(_lastPagedFormat);
+    } else {
+      setPageFormat(PageFormat.fluid);
+    }
+  }
+
+  String? _formatBeforePresentation;
+
+  void setPresentationMode(bool value) {
+    if (_isPresentationMode != value) {
+      _isPresentationMode = value;
+      if (value) {
+        if (!isPdfDocument && _renderOptions.isFluid) {
+          _formatBeforePresentation = _renderOptions.effectivePageFormat;
+          final savedLastPaged = _lastPagedFormat;
+          setPageFormat(PageFormat.slide16x9);
+          _lastPagedFormat = savedLastPaged;
+        }
+      } else {
+        if (_formatBeforePresentation != null) {
+          final restore = _formatBeforePresentation!;
+          _formatBeforePresentation = null;
+          setPageFormat(restore);
+        }
+      }
+      notifyListeners();
+    }
+  }
+
+  void togglePresentationMode() {
+    setPresentationMode(!_isPresentationMode);
+  }
+
+  static const Object _undefined = Object();
+
+  void setHeaderFooterOptions({
+    Object? headerLeft = _undefined,
+    Object? headerCenter = _undefined,
+    Object? headerRight = _undefined,
+    Object? footerLeft = _undefined,
+    Object? footerCenter = _undefined,
+    Object? footerRight = _undefined,
+    bool? showHeaderRule,
+    bool? showFooterRule,
+    bool? skipFirstPageHeaderFooter,
+    bool? marpEnabled,
+  }) {
+    if (isPdfDocument) return;
+    renderOptionsChanged = true;
+    startReloading();
+    _renderOptions = _renderOptions.copyWith(
+      headerLeft: headerLeft,
+      headerCenter: headerCenter,
+      headerRight: headerRight,
+      footerLeft: footerLeft,
+      footerCenter: footerCenter,
+      footerRight: footerRight,
+      showHeaderRule: showHeaderRule,
+      showFooterRule: showFooterRule,
+      skipFirstPageHeaderFooter: skipFirstPageHeaderFooter,
+      marpEnabled: marpEnabled,
+    );
+    _persistDebounced();
+    notifyListeners();
     compileDocument();
   }
 

@@ -6,7 +6,7 @@
 </div>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Release: v1.0.5](https://img.shields.io/badge/Release-v1.0.5-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
+[![Release: v1.0.6](https://img.shields.io/badge/Release-v1.0.6-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
 [![CI Status](https://img.shields.io/badge/CI-Passing-brightgreen.svg)]()
 [![Platform: macOS | Windows | Linux](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)]()
 
@@ -19,9 +19,24 @@
 - 🎯 **专注只读，极致性能**：剥离富文本编辑器的一切冗余复杂度，纯 Rust 内存流水线，文档排版仅需 **0.5ms ~ 5ms**（100KB 书籍仅 2.8ms），冷启动仅 **~200ms**。
 - 📐 **出版级数学公式**：集成 `mitex` LaTeX $\to$ Typst 原生公式转换引擎，公式解析吞吐量高达 **150,000 ~ 320,000 式/秒**，全面支持复杂微积分、矩阵与多行对齐方程。
 - 📊 **离线纯矢量 Mermaid 渲染**：基于纯 Rust 实现的 `mermaid-rs-renderer`，毫秒级直接生成矢量路径，无 Chromium / Node.js 外部开销，带 SHA-256 增量图表缓存（复用仅 830ns）。
-- 🖥 **双排版视窗模型 (Dual-Layout)**：
-  - **自适应流式视窗 (Fluid Screen)**：锁定 720pt 黄金阅读行宽，无缝连续长卷轴阅读，窗口拉伸 **120 FPS 锁定满帧**（0次触发编译器）；
-  - **A4 出版打印视图 (Paged)**：标准 A4 页面排版、动态页眉页脚与防孤行分页控制，实现 100% “打印即所见”，支持单页纵向与双页对开。
+- 🖥 **多元版式与母版系统 (Multi-Layout System)**：
+  - **自适应流式 (Fluid Screen)**：锁定 720pt 黄金阅读行宽，无缝连续长卷轴阅读，窗口拉伸 **120 FPS 锁定满帧**；
+  - **A4 纵向出版 (A4 Portrait)**：标准 A4 页面排版、动态页眉页脚与防孤行分页控制，实现 100% “打印即所见”，支持单页纵向与双页对开；
+  - **A4 横向出版 (A4 Landscape)**：横向表格、宽屏报告排版；
+  - **16:9 与 4:3 幻灯片 (Slides)**：专为演讲汇报优化的幻灯片版式，正文字号自动缩放，投影大屏纤毫毕现。
+- 📽 **全屏单页演示模式 (Presentation Mode / PPT)**：
+  - 支持快捷键 `F5` / `Cmd + Enter` / `Cmd + Shift + P` 一键进入无边框纯净放映；
+  - **Marp 语法兼容**：支持 YAML Frontmatter (`marp: true`, `size: 16:9`, `paginate`, `header`, `footer`) 与 `---` 水平线幻灯片分页符；
+  - **双向兼容原生 PDF**：既可放映 Markdown 编译的幻灯片，也可直接全屏演示外部打开的原生 PDF 文档；
+  - **演讲者利器**：激光笔视角的自动隐藏 Presenter HUD 与鼠标光标（2.5秒闲置淡出）；背景底色与 HUD 自适应随明亮/暗黑模式无缝契合。
+- 🔍 **原生全文查找与高亮导航 (`Cmd + F`)**：
+  - 悬浮胶囊搜索栏，支持实时键入防抖搜索与匹配命中计数（如 `3 / 14`）；
+  - 支持 `Enter` / `Cmd + G` 跳转下一个匹配项、`Shift + Enter` / `Cmd + Shift + G` 跳转上一个匹配项，支持循环回绕；
+  - 硬件加速 Canvas 矢量高亮渲染（当前高亮橙色、其余高亮黄色），按 `Esc` 一键关闭并清除高亮。
+- 📑 **可定制三槽位页眉与页脚 (Header & Footer System)**：
+  - 支持左、中、右独立槽位内容配置；
+  - 支持动态宏替换：`{title}`（文档标题）、`{page}`（当前页码）、`{total}`（总页数）、`{date}`（当前日期）；
+  - 支持顶底分割线开关与首页（封面）页眉页脚智能隐藏。
 - 🪟 **沉浸式 macOS 统一标题栏**：深度融合原生 32pt 交通灯按钮；阅读向下滚动时标题栏自动平滑隐退，向上轻滑或回顶即时唤出，最大化阅读可视高度。
 - ⚙️ **macOS 风格排版与偏好设置 (`Cmd + ,`)**：
   - 左右分屏排版配置界面，配备**实时排版渲染预览卡片**，调整正文字号、行间距、对齐方式即时可见；
@@ -148,23 +163,57 @@ sgv -h
 
 ## ⌨️ 常用快捷键指南
 
-| macOS 快捷键     | Windows 快捷键   | 功能描述                                          |
-| ---------------- | ---------------- | ------------------------------------------------- |
-| `Cmd + O`        | `Ctrl + O`       | 打开本地 Markdown 文件                            |
-| `Cmd + R`        | `Ctrl + R`       | 立即重新编译与排版当前文档                        |
-| `Cmd + M`        | `Ctrl + M`       | 切换自适应流式 (Fluid) / A4 出版视图 (Paged)      |
-| `Cmd + T`        | `Ctrl + T`       | 切换浅色 (Light) / 暗黑 (Dark) 主题               |
-| `Cmd + E`        | `Ctrl + E`       | 0 毫秒即时导出高精度无损 PDF                      |
-| `Cmd + B`        | `Ctrl + B`       | 展开 / 折叠左侧目录与管理侧边栏                   |
-| `Cmd + ,`        | `Ctrl + ,`       | 打开系统偏好设置面板（排版字体/自动重载/CLI管理） |
-| `Cmd + K`        | `Ctrl + K`       | 查看并自定义全部键盘快捷键                        |
-| `Cmd + Ctrl + F` | `F11`            | 进入 / 退出全屏无边框沉浸阅读模式                 |
-| `Cmd + +` / `-`  | `Ctrl + +` / `-` | 放大 / 缩小阅读视口渲染比例 (100% ~ 300%)         |
-| `Cmd + 0`        | `Ctrl + 0`       | 恢复 100% 原始视口缩放比例                        |
+| macOS 快捷键 | Windows / Linux 快捷键 | 功能描述 |
+| :--- | :--- | :--- |
+| `Cmd + O` | `Ctrl + O` | 打开本地 Markdown 或 PDF 文件 |
+| `Cmd + R` | `Ctrl + R` | 立即重新编译与排版当前文档 |
+| `Cmd + M` | `Ctrl + M` | **切换版式**（流式 / A4纵向 / A4横向 / 16:9 / 4:3） |
+| **`F5`** / `Cmd + Shift + P` / `Cmd + Enter` | **`F5`** / `Ctrl + Shift + P` / `Ctrl + Enter` | **全屏单页演示模式 (PPT)** 进入与退出 |
+| `Cmd + F` | `Ctrl + F` | **查找文档内容**（唤起悬浮搜索栏） |
+| `Cmd + G` / `Enter` | `F3` / `Enter` | 跳转到下一个搜索匹配项 |
+| `Cmd + Shift + G` / `Shift + Enter` | `Shift + F3` / `Shift + Enter` | 跳转到上一个搜索匹配项 |
+| `Cmd + P` | `Ctrl + P` | **0 毫秒即时导出出版级无损明亮 PDF** |
+| `Cmd + D` | `Ctrl + D` | 切换单页纵向 / 双页对开书籍阅读 |
+| `Cmd + T` | `Ctrl + T` | 切换浅色 (Light) / 暗黑 (Dark) 主题 |
+| `Cmd + B` | `Ctrl + B` | 展开 / 折叠左侧目录与管理侧边栏 |
+| `Cmd + \` | `Ctrl + \` | 显示 / 隐藏底部浮动工具栏 (Zen 模式) |
+| `Cmd + ,` | `Ctrl + ,` | 打开偏好设置面板（版式/页眉页脚/字体/CLI） |
+| `Cmd + Ctrl + F` | `F11` | 进入 / 退出操作系统全屏模式 |
+| `Cmd + +` / `-` | `Ctrl + +` / `-` | 放大 / 缩小阅读视口渲染比例 (100% ~ 300%) |
+| `Cmd + 0` | `Ctrl + 0` | 恢复 100% 原始视口缩放比例 |
+
+### 📽 全屏演示模式专有控制键 (Presentation HUD)
+
+| 控制键 | 动作效果 | 说明 |
+| :--- | :--- | :--- |
+| **`Space`** / **`→`** / **`PageDown`** / **`↓`** | 下一张幻灯片 | 顺畅演讲前进 |
+| **`←`** / **`PageUp`** / **`↑`** | 上一张幻灯片 | 回顾前页内容 |
+| **`Home`** / **`End`** | 首页 / 末页 | 快速直达开头与结尾 |
+| **`Esc`** / **`F5`** | 退出演示模式 | 返回普通阅读排版视窗 |
 
 ---
 
 ## 📝 更新日志 (Changelog)
+
+### v1.0.6 (2026-09)
+- **Linux 平台原生桌面与 CLI 支持**：
+  - 全面支持主流 Linux 64 位桌面环境（GTK 3），原生嵌入 Flutter 渲染引擎与 Rust 核心动态库；
+  - 单实例控制与 Unix Domain Socket / IPC 通信：避免多开，支持命令行打开文件时将路径安全转发至已运行实例；
+  - Linux 原生 CLI 启动脚本（`bin/sgv`），偏好设置中支持免提权一键安装与符号链接维护；
+  - GitHub Actions 自动化构建与打包 Linux 便携归档包（`.tar.gz`）。
+- **多语言国际化支持 (i18n)**：
+  - 完整支持简体中文 (zh-CN)、繁体中文 (zh-TW) 与英文 (en) 三种语言，提供中立语言选择器并支持实时动态无缝切换；
+  - 动态同步窗口标题与语言感知启动，偏好设置与系统交互全面国际化。
+- **拖拽文件与目录交互 (Drag & Drop)**：
+  - 支持直接拖拽 Markdown / PDF 文件或整个目录至窗口快速打开，异步安全 I/O 与热重载监控。
+- **演播模式与多母版版式系统 (Presentation & Layouts)**：
+  - 支持多版式演示模式（Marp 幻灯片语法解析、自定义页眉与页脚插槽，支持转义与清空保存）；
+  - 全屏演示模式与视口状态双向同步，独立隔离演播排版状态与日常阅读排版设置。
+- **高清分块切片渲染与导航优化**：
+  - 引入高清分块切片渲染 (Tiled High-Resolution Rendering) 与狭长自适应栅格条带化，消除长文档内存尖峰与模糊；
+  - 翻页与长文档导航优化：翻页时精准保留页内相对偏移与缩放比例，区分屏幕卷动与整页翻转，防空格加速与边界状态保护。
+- **macOS Universal 双架构动态库**：
+  - 自动化构建包含 Apple Silicon (arm64) 与 Intel (x86_64) 的通用架构动态库，消除混合架构兼容问题。
 
 ### v1.0.5 (2026-09)
 - **原生 PDF 阅读器与大纲目录导航**：

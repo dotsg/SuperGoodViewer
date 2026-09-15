@@ -43,7 +43,8 @@ class CliOperationResult {
 class NativeCliService {
   static const MethodChannel channel = MethodChannel('com.sogoodviewer.app');
 
-  static bool get isSupported => Platform.isMacOS || Platform.isWindows;
+  static bool get isSupported =>
+      Platform.isMacOS || Platform.isWindows || Platform.isLinux;
 
   /// Queries the current installation status of `sgv` CLI symlink in /usr/local/bin
   static Future<CliStatus> checkStatus() async {

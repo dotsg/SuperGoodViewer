@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../controllers/reader_controller.dart';
+import '../i18n/locales.dart';
+import '../models/render_options.dart';
 import '../services/document_cache_service.dart';
 import '../services/native_cli_service.dart';
 import '../services/shortcut_service.dart';
@@ -10,6 +12,7 @@ import '../services/shortcut_service.dart';
 /// Available tabs within the unified SettingsDialog.
 enum SettingsTab {
   general,
+  layout,
   typography,
   shortcuts,
   cli,
@@ -32,7 +35,7 @@ void showSettingsDialog(
 }
 
 class SettingsDialog extends StatefulWidget {
-  static const String appVersion = '1.0.5';
+  static const String appVersion = '1.0.6';
 
   final ReaderController controller;
   final SettingsTab initialTab;
@@ -56,6 +59,19 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late double _selectedFontSize;
   bool _isScanningFonts = false;
 
+  // Layout & Header/Footer state
+  late String _selectedPageFormat;
+  late TextEditingController _headerLeftController;
+  late TextEditingController _headerCenterController;
+  late TextEditingController _headerRightController;
+  late TextEditingController _footerLeftController;
+  late TextEditingController _footerCenterController;
+  late TextEditingController _footerRightController;
+  late bool _showHeaderRule;
+  late bool _showFooterRule;
+  late bool _skipFirstPage;
+  late bool _marpEnabled;
+
   bool get _hasUnsavedTypographyChanges {
     final opts = widget.controller.renderOptions;
     return _selectedBodyFont != opts.bodyFont ||
@@ -74,14 +90,82 @@ class _SettingsDialogState extends State<SettingsDialog> {
       final messenger = ScaffoldMessenger.maybeOf(context);
       if (messenger != null && Scaffold.maybeOf(context) != null) {
         messenger.showSnackBar(
-          const SnackBar(
-            content: Text('字体排版设置已保存，正在重新渲染当前文档...'),
+          SnackBar(
+            content: Text(widget.controller.strings.typographySavedSuccess),
             behavior: SnackBarBehavior.floating,
-            duration: Duration(seconds: 2),
+            duration: const Duration(seconds: 2),
           ),
         );
       }
     } catch (_) {}
+  }
+
+  void _saveLayout() {
+    widget.controller.setPageFormat(_selectedPageFormat);
+    widget.controller.setHeaderFooterOptions(
+      headerLeft: _headerLeftController.text.trim().isEmpty ? null : _headerLeftController.text.trim(),
+      headerCenter: _headerCenterController.text.trim().isEmpty ? null : _headerCenterController.text.trim(),
+      headerRight: _headerRightController.text.trim().isEmpty ? null : _headerRightController.text.trim(),
+      footerLeft: _footerLeftController.text.trim().isEmpty ? null : _footerLeftController.text.trim(),
+      footerCenter: _footerCenterController.text.trim().isEmpty ? null : _footerCenterController.text.trim(),
+      footerRight: _footerRightController.text.trim().isEmpty ? null : _footerRightController.text.trim(),
+      showHeaderRule: _showHeaderRule,
+      showFooterRule: _showFooterRule,
+      skipFirstPageHeaderFooter: _skipFirstPage,
+      marpEnabled: _marpEnabled,
+    );
+    setState(() {});
+    try {
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      if (messenger != null && Scaffold.maybeOf(context) != null) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(widget.controller.strings.layoutSavedSuccess),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (_) {}
+  }
+
+  bool get _hasUnsavedLayoutChanges {
+    final opts = widget.controller.renderOptions;
+    if (_selectedPageFormat != opts.effectivePageFormat) return true;
+    final hL = _headerLeftController.text.trim().isEmpty ? null : _headerLeftController.text.trim();
+    if (hL != opts.headerLeft) return true;
+    final hC = _headerCenterController.text.trim().isEmpty ? null : _headerCenterController.text.trim();
+    if (hC != opts.headerCenter) return true;
+    final hR = _headerRightController.text.trim().isEmpty ? null : _headerRightController.text.trim();
+    if (hR != opts.headerRight) return true;
+    final fL = _footerLeftController.text.trim().isEmpty ? null : _footerLeftController.text.trim();
+    if (fL != opts.footerLeft) return true;
+    final fC = _footerCenterController.text.trim().isEmpty ? null : _footerCenterController.text.trim();
+    if (fC != opts.footerCenter) return true;
+    final fR = _footerRightController.text.trim().isEmpty ? null : _footerRightController.text.trim();
+    if (fR != opts.footerRight) return true;
+    if (_showHeaderRule != (opts.showHeaderRule ?? false)) return true;
+    if (_showFooterRule != (opts.showFooterRule ?? false)) return true;
+    if (_skipFirstPage != (opts.skipFirstPageHeaderFooter ?? true)) return true;
+    if (_marpEnabled != (opts.marpEnabled ?? true)) return true;
+    return false;
+  }
+
+  void _revertLayout() {
+    final opts = widget.controller.renderOptions;
+    setState(() {
+      _selectedPageFormat = opts.effectivePageFormat;
+      _headerLeftController.text = opts.headerLeft ?? '';
+      _headerCenterController.text = opts.headerCenter ?? '';
+      _headerRightController.text = opts.headerRight ?? '';
+      _footerLeftController.text = opts.footerLeft ?? '';
+      _footerCenterController.text = opts.footerCenter ?? '';
+      _footerRightController.text = opts.footerRight ?? '';
+      _showHeaderRule = opts.showHeaderRule ?? false;
+      _showFooterRule = opts.showFooterRule ?? false;
+      _skipFirstPage = opts.skipFirstPageHeaderFooter ?? true;
+      _marpEnabled = opts.marpEnabled ?? true;
+    });
   }
 
   void _revertTypography() {
@@ -114,11 +198,53 @@ class _SettingsDialogState extends State<SettingsDialog> {
   void initState() {
     super.initState();
     _currentTab = widget.initialTab;
-    _selectedBodyFont = widget.controller.renderOptions.bodyFont;
-    _selectedCodeFont = widget.controller.renderOptions.codeFont;
-    _selectedFontSize = widget.controller.renderOptions.fontSize;
+    final opts = widget.controller.renderOptions;
+    _selectedBodyFont = opts.bodyFont;
+    _selectedCodeFont = opts.codeFont;
+    _selectedFontSize = opts.fontSize;
+    _selectedPageFormat = opts.effectivePageFormat;
+    _headerLeftController = TextEditingController(text: opts.headerLeft ?? '');
+    _headerCenterController = TextEditingController(text: opts.headerCenter ?? '');
+    _headerRightController = TextEditingController(text: opts.headerRight ?? '');
+    _footerLeftController = TextEditingController(text: opts.footerLeft ?? '');
+    _footerCenterController = TextEditingController(text: opts.footerCenter ?? '');
+    _footerRightController = TextEditingController(text: opts.footerRight ?? '');
+    _showHeaderRule = opts.showHeaderRule ?? false;
+    _showFooterRule = opts.showFooterRule ?? false;
+    _skipFirstPage = opts.skipFirstPageHeaderFooter ?? true;
+    _marpEnabled = opts.marpEnabled ?? true;
+
+    _headerLeftController.addListener(_onLayoutFieldChanged);
+    _headerCenterController.addListener(_onLayoutFieldChanged);
+    _headerRightController.addListener(_onLayoutFieldChanged);
+    _footerLeftController.addListener(_onLayoutFieldChanged);
+    _footerCenterController.addListener(_onLayoutFieldChanged);
+    _footerRightController.addListener(_onLayoutFieldChanged);
+
     _loadCacheStats();
     _loadCliStatus();
+  }
+
+  void _onLayoutFieldChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _headerLeftController.removeListener(_onLayoutFieldChanged);
+    _headerCenterController.removeListener(_onLayoutFieldChanged);
+    _headerRightController.removeListener(_onLayoutFieldChanged);
+    _footerLeftController.removeListener(_onLayoutFieldChanged);
+    _footerCenterController.removeListener(_onLayoutFieldChanged);
+    _footerRightController.removeListener(_onLayoutFieldChanged);
+
+    _headerLeftController.dispose();
+    _headerCenterController.dispose();
+    _headerRightController.dispose();
+    _footerLeftController.dispose();
+    _footerCenterController.dispose();
+    _footerRightController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadCacheStats() async {
@@ -145,7 +271,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         if (messenger != null) {
           messenger.showSnackBar(
             SnackBar(
-              content: Text('已清理 ${cleared.deletedCount} 个编译缓存文件 (${cleared.formattedFreedSize})'),
+              content: Text(widget.controller.strings.cacheCleared(cleared.formattedFreedSize)),
               behavior: SnackBarBehavior.floating,
               duration: const Duration(seconds: 2),
             ),
@@ -173,17 +299,17 @@ class _SettingsDialogState extends State<SettingsDialog> {
       setState(() => _isOperatingCli = false);
       if (res.isSuccess) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('🎉 \'sgv\' 命令行工具已成功安装！可在终端直接使用。'),
+          SnackBar(
+            content: Text(widget.controller.strings.cliInstallSuccess),
             behavior: SnackBarBehavior.floating,
-            backgroundColor: Color(0xFF10B981),
-            duration: Duration(seconds: 3),
+            backgroundColor: const Color(0xFF10B981),
+            duration: const Duration(seconds: 3),
           ),
         );
       } else if (!res.isCancelled) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('安装失败: ${res.message}'),
+            content: Text(widget.controller.strings.cliInstallFailed(res.message ?? '')),
             behavior: SnackBarBehavior.floating,
             backgroundColor: Colors.redAccent,
             duration: const Duration(seconds: 4),
@@ -201,16 +327,16 @@ class _SettingsDialogState extends State<SettingsDialog> {
       setState(() => _isOperatingCli = false);
       if (res.isSuccess) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('已成功卸载 \'sgv\' 命令行工具'),
+          SnackBar(
+            content: Text(widget.controller.strings.cliUninstallSuccess),
             behavior: SnackBarBehavior.floating,
-            duration: Duration(seconds: 3),
+            duration: const Duration(seconds: 3),
           ),
         );
       } else if (!res.isCancelled) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('卸载失败: ${res.message}'),
+            content: Text(widget.controller.strings.cliUninstallFailed(res.message ?? '')),
             behavior: SnackBarBehavior.floating,
             backgroundColor: Colors.redAccent,
             duration: const Duration(seconds: 4),
@@ -225,7 +351,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     Clipboard.setData(ClipboardData(text: cmd));
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('已复制命令: $cmd'),
+        content: Text(widget.controller.strings.copiedCommand(cmd)),
         behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 2),
       ),
@@ -315,12 +441,15 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   color: theme.colorScheme.primary,
                 ),
                 const SizedBox(width: 8),
-                const Text(
-                  '偏好设置',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.3,
+                Expanded(
+                  child: Text(
+                    widget.controller.strings.settingsTitle,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.3,
+                    ),
                   ),
                 ),
               ],
@@ -331,35 +460,42 @@ class _SettingsDialogState extends State<SettingsDialog> {
           // Nav Items
           _buildNavItem(
             tab: SettingsTab.general,
-            label: '常规阅读',
+            label: widget.controller.strings.tabGeneral,
             icon: Icons.tune_rounded,
             theme: theme,
             isDark: isDark,
           ),
           _buildNavItem(
+            tab: SettingsTab.layout,
+            label: widget.controller.strings.tabLayout,
+            icon: Icons.auto_stories_outlined,
+            theme: theme,
+            isDark: isDark,
+          ),
+          _buildNavItem(
             tab: SettingsTab.typography,
-            label: '排版与字体',
+            label: widget.controller.strings.tabTypography,
             icon: Icons.font_download_outlined,
             theme: theme,
             isDark: isDark,
           ),
           _buildNavItem(
             tab: SettingsTab.shortcuts,
-            label: '快捷键',
+            label: widget.controller.strings.tabShortcuts,
             icon: Icons.keyboard_outlined,
             theme: theme,
             isDark: isDark,
           ),
           _buildNavItem(
             tab: SettingsTab.cli,
-            label: '命令行 (sgv)',
+            label: widget.controller.strings.tabCli,
             icon: Icons.terminal_rounded,
             theme: theme,
             isDark: isDark,
           ),
           _buildNavItem(
             tab: SettingsTab.about,
-            label: '关于软件',
+            label: widget.controller.strings.tabAbout,
             icon: Icons.info_outline_rounded,
             theme: theme,
             isDark: isDark,
@@ -476,7 +612,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ),
               IconButton(
                 icon: const Icon(Icons.close_rounded, size: 20),
-                tooltip: '关闭',
+                tooltip: widget.controller.strings.close,
                 onPressed: () => Navigator.of(context).pop(),
               ),
             ],
@@ -496,42 +632,53 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
                   child: _buildTypographyTab(theme, isDark),
                 )
-              : SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                  child: _buildActiveTabBody(theme, isDark),
-                ),
+              : _currentTab == SettingsTab.layout
+                  ? Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 16, 24, 14),
+                      child: _buildLayoutTab(theme, isDark),
+                    )
+                  : SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                      child: _buildActiveTabBody(theme, isDark),
+                    ),
         ),
       ],
     );
   }
 
   String _getTabTitle(SettingsTab tab) {
+    final s = widget.controller.strings;
     switch (tab) {
       case SettingsTab.general:
-        return '常规与阅读偏好';
+        return s.tabGeneralTitle;
+      case SettingsTab.layout:
+        return s.tabLayoutTitle;
       case SettingsTab.typography:
-        return '字体排版与中英文等宽对齐';
+        return s.tabTypographyTitle;
       case SettingsTab.shortcuts:
-        return '快捷键自定义设置';
+        return s.tabShortcutsTitle;
       case SettingsTab.cli:
-        return '命令行工具 (sgv) 集成';
+        return s.tabCliTitle;
       case SettingsTab.about:
-        return '关于 SuperGoodViewer';
+        return s.tabAboutTitle;
     }
   }
 
   String _getTabSubtitle(SettingsTab tab) {
+    final s = widget.controller.strings;
     switch (tab) {
       case SettingsTab.general:
-        return '配置文件外部修改自动重载与阅读历史记录';
+        return s.displayLanguageDesc;
+      case SettingsTab.layout:
+        return s.twoPageSpreadDesc;
       case SettingsTab.typography:
-        return '定制正文与等宽字体，支持全角半角 1:2 等宽对齐与实时渲染预览';
+        return s.pdfTypographyNotice;
       case SettingsTab.shortcuts:
-        return '自定义各常用操作的键盘快捷键，点击键位直接录制';
+        return s.shortcutsDesc;
       case SettingsTab.cli:
-        return '在终端中随时通过 sgv 命令秒级预览任何 Markdown';
+        return Platform.isWindows ? s.cliDescWin : s.cliDescMac;
       case SettingsTab.about:
-        return '基于现代 Typst 0.13.1 编译器与无损矢量 PDFium 引擎构建';
+        return s.appSubtitle;
     }
   }
 
@@ -539,6 +686,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
     switch (_currentTab) {
       case SettingsTab.general:
         return _buildGeneralTab(theme, isDark);
+      case SettingsTab.layout:
+        return _buildLayoutTab(theme, isDark);
       case SettingsTab.typography:
         return _buildTypographyTab(theme, isDark);
       case SettingsTab.shortcuts:
@@ -550,15 +699,458 @@ class _SettingsDialogState extends State<SettingsDialog> {
     }
   }
 
+  // ==================== LAYOUT TAB ====================
+  Widget _buildLayoutTab(ThemeData theme, bool isDark) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.only(right: 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildSectionHeader('页面排版版式 (Page Format)'),
+        const SizedBox(height: 6),
+        Text(
+          '设置文档默认排版形态。演示请选择 16:9 / 4:3 幻灯片，出版阅读请选择 A4 或自适应流式。',
+          style: TextStyle(
+            fontSize: 12,
+            color: isDark ? const Color(0xFF9E9E9E) : const Color(0xFF666666),
+          ),
+        ),
+        const SizedBox(height: 12),
+        ...PageFormat.all.map((fmt) {
+          final isSelected = _selectedPageFormat == fmt;
+          String desc;
+          IconData icon;
+          switch (fmt) {
+            case PageFormat.fluid:
+              desc = '锁定黄金阅读行宽，高度自适应，连续无缝卷轴滚动，适合技术文档与长文';
+              icon = Icons.view_stream_rounded;
+              break;
+            case PageFormat.a4Portrait:
+              desc = '标准 A4 出版纵向 (595.28 × 841.89 pt)，带页眉页脚与孤行控制，适合出版打印';
+              icon = Icons.description_outlined;
+              break;
+            case PageFormat.a4Landscape:
+              desc = '标准 A4 出版横向 (841.89 × 595.28 pt)，适合架构图与横向宽表排版';
+              icon = Icons.landscape_outlined;
+              break;
+            case PageFormat.slide16x9:
+              desc = '16:9 现代宽屏幻灯片 (960 × 540 pt)，大字号，适合高保真 PPT 演播';
+              icon = Icons.slideshow_rounded;
+              break;
+            case PageFormat.slide4x3:
+              desc = '4:3 经典传统幻灯片 (960 × 720 pt)，适合传统投影仪演示与学术报告';
+              icon = Icons.tv_rounded;
+              break;
+            default:
+              desc = '';
+              icon = Icons.auto_stories_rounded;
+          }
+
+          return Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: () => setState(() => _selectedPageFormat = fmt),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? theme.colorScheme.primary.withValues(alpha: 0.1)
+                        : (isDark ? const Color(0xFF222222) : const Color(0xFFF9F9F9)),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: isSelected
+                          ? theme.colorScheme.primary
+                          : (isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5)),
+                      width: isSelected ? 1.5 : 1.0,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
+                        size: 18,
+                        color: isSelected
+                            ? theme.colorScheme.primary
+                            : (isDark ? Colors.white38 : Colors.black38),
+                      ),
+                      const SizedBox(width: 12),
+                      Icon(
+                        icon,
+                        size: 18,
+                        color: isSelected
+                            ? theme.colorScheme.primary
+                            : (isDark ? Colors.white70 : Colors.black54),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              PageFormat.getDisplayName(fmt, widget.controller.strings),
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight:
+                                    isSelected ? FontWeight.w700 : FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              desc,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: isDark
+                                    ? const Color(0xFF888888)
+                                    : const Color(0xFF777777),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        }),
+
+        const SizedBox(height: 18),
+        _buildSectionHeader('${widget.controller.strings.headerFooterSection} (Header & Footer)'),
+        const SizedBox(height: 6),
+        Text(
+          '支持三插槽定制。可用占位宏：{title} (标题)、{page} (当前页)、{total} (总页数)、{date} (日期)。在流式模式下页眉页脚自动隐藏。',
+          style: TextStyle(
+            fontSize: 12,
+            color: isDark ? const Color(0xFF9E9E9E) : const Color(0xFF666666),
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        SwitchListTile(
+          value: _skipFirstPage,
+          onChanged: (val) => setState(() => _skipFirstPage = val),
+          title: Text(widget.controller.strings.skipFirstPage, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          subtitle: const Text('出版物与 PPT 标题页惯例，第一页不打印页眉页脚', style: TextStyle(fontSize: 11.5)),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+        SwitchListTile(
+          value: _showHeaderRule,
+          onChanged: (val) => setState(() => _showHeaderRule = val),
+          title: Text(widget.controller.strings.showHeaderRule, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+        SwitchListTile(
+          value: _showFooterRule,
+          onChanged: (val) => setState(() => _showFooterRule = val),
+          title: Text(widget.controller.strings.showFooterRule, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+
+        const SizedBox(height: 12),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('页眉插槽 (Header Slots)', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: theme.colorScheme.primary)),
+            TextButton.icon(
+              icon: const Icon(Icons.clear_all_rounded, size: 14),
+              label: Text(widget.controller.strings.clearHeaderSlots, style: const TextStyle(fontSize: 11)),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              onPressed: () {
+                _headerLeftController.clear();
+                _headerCenterController.clear();
+                _headerRightController.clear();
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Expanded(
+              child: _buildSlotField(
+                controller: _headerLeftController,
+                label: widget.controller.strings.slotLeft,
+                hintText: widget.controller.strings.slotHintCustom,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _buildSlotField(
+                controller: _headerCenterController,
+                label: widget.controller.strings.slotCenter,
+                hintText: widget.controller.strings.slotHintEmpty,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _buildSlotField(
+                controller: _headerRightController,
+                label: widget.controller.strings.slotRight,
+                hintText: '{title}',
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 14),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('页脚插槽 (Footer Slots)', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: theme.colorScheme.primary)),
+            TextButton.icon(
+              icon: const Icon(Icons.clear_all_rounded, size: 14),
+              label: Text(widget.controller.strings.clearFooterSlots, style: const TextStyle(fontSize: 11)),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              onPressed: () {
+                _footerLeftController.clear();
+                _footerCenterController.clear();
+                _footerRightController.clear();
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Expanded(
+              child: _buildSlotField(
+                controller: _footerLeftController,
+                label: widget.controller.strings.slotLeft,
+                hintText: widget.controller.strings.slotHintCopyright,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _buildSlotField(
+                controller: _footerCenterController,
+                label: widget.controller.strings.slotCenter,
+                hintText: '{page}',
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _buildSlotField(
+                controller: _footerRightController,
+                label: widget.controller.strings.slotRight,
+                hintText: widget.controller.strings.slotHintPageTotal,
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 20),
+        _buildSectionHeader('${widget.controller.strings.marpCompatibility} (Marp Directives)'),
+        const SizedBox(height: 6),
+        SwitchListTile(
+          value: _marpEnabled,
+          onChanged: (val) => setState(() => _marpEnabled = val),
+          title: Text(widget.controller.strings.marpCompatibility, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          subtitle: Text(widget.controller.strings.marpCompatibilityDesc, style: const TextStyle(fontSize: 11.5)),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+
+                const SizedBox(height: 12),
+              ],
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 10),
+        Divider(
+          height: 1,
+          thickness: 1,
+          color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+        ),
+        const SizedBox(height: 8),
+
+        // Bottom Bar: Save & Apply Button
+        _buildLayoutBottomBar(theme, isDark),
+      ],
+    );
+  }
+
+  Widget _buildLayoutBottomBar(ThemeData theme, bool isDark) {
+    final s = widget.controller.strings;
+    final hasChanges = _hasUnsavedLayoutChanges;
+
+    return Row(
+      children: [
+        Icon(
+          hasChanges ? Icons.edit_note_rounded : Icons.check_circle_outline_rounded,
+          size: 16,
+          color: hasChanges ? const Color(0xFFF59E0B) : const Color(0xFF10B981),
+        ),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            hasChanges ? s.layoutHasChanges : s.layoutUpToDate,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11.5,
+              color: hasChanges
+                  ? (isDark ? const Color(0xFFFBBF24) : const Color(0xFFD97706))
+                  : (isDark ? const Color(0xFF34D399) : const Color(0xFF059669)),
+              fontWeight: hasChanges ? FontWeight.w600 : FontWeight.normal,
+            ),
+          ),
+        ),
+        const Spacer(),
+        if (hasChanges) ...[
+          OutlinedButton(
+            onPressed: _revertLayout,
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            ),
+            child: Text(s.discardChanges, style: const TextStyle(fontSize: 11.5)),
+          ),
+          const SizedBox(width: 8),
+        ],
+        FilledButton.icon(
+          icon: const Icon(Icons.check_rounded, size: 15),
+          label: Text(s.saveAndApplyLayout, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+          style: FilledButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            backgroundColor: hasChanges ? const Color(0xFF0284C7) : null,
+          ),
+          onPressed: hasChanges ? _saveLayout : null,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSlotField({
+    required TextEditingController controller,
+    required String label,
+    required String hintText,
+  }) {
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: controller,
+      builder: (context, value, _) {
+        return TextField(
+          controller: controller,
+          decoration: InputDecoration(
+            labelText: label,
+            hintText: hintText,
+            isDense: true,
+            border: const OutlineInputBorder(),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            suffixIcon: value.text.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.clear, size: 14),
+                    splashRadius: 12,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                    tooltip: widget.controller.strings.clearSlotTooltip,
+                    onPressed: controller.clear,
+                  )
+                : null,
+          ),
+          style: const TextStyle(fontSize: 12),
+        );
+      },
+    );
+  }
+
   // ==================== 1. GENERAL TAB ====================
   Widget _buildGeneralTab(ThemeData theme, bool isDark) {
     final controller = widget.controller;
+    final strings = controller.strings;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // 1. Language Selector
+        _buildSectionHeader('${strings.displayLanguage} (Display Language)'),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF9F9F9),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.translate_rounded, size: 22, color: theme.colorScheme.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      strings.displayLanguage,
+                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      strings.displayLanguageDesc,
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: controller.language,
+                  borderRadius: BorderRadius.circular(8),
+                  items: AppLanguage.values.map((lang) {
+                    return DropdownMenuItem<String>(
+                      value: lang.code,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(lang.icon, size: 16, color: theme.colorScheme.primary),
+                          const SizedBox(width: 8),
+                          Text(
+                            lang.nativeLabel,
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (val) {
+                    if (val != null) {
+                      controller.setLanguage(val);
+                      setState(() {});
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+
         // Auto Reload Switch
-        _buildSectionHeader('文档自动重载 (Hot Reload)'),
+        _buildSectionHeader('${strings.autoReloadSection} (Hot Reload)'),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -577,13 +1169,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      '文件修改自动热重载 (Auto Reload)',
-                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                    Text(
+                      strings.autoReload,
+                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      '外部编辑器（如 VS Code / Cursor / Obsidian）保存文档时立即无缝重绘',
+                      strings.autoReloadDesc,
                       style: TextStyle(
                         fontSize: 11.5,
                         color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
@@ -602,7 +1194,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         const SizedBox(height: 18),
 
         // Session & History
-        _buildSectionHeader('会话与历史记录 (Session & History)'),
+        _buildSectionHeader('${strings.sessionSection} (Session & History)'),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -624,13 +1216,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          '最近打开文档记录',
-                          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                        Text(
+                          strings.recentDocsRecord,
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          '已记录 ${controller.recentFiles.length} 个历史文档',
+                          strings.recentFilesCount(controller.recentFiles.length),
                           style: TextStyle(
                             fontSize: 11.5,
                             color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
@@ -641,7 +1233,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                   OutlinedButton.icon(
                     icon: const Icon(Icons.delete_sweep_outlined, size: 15),
-                    label: const Text('清空历史', style: TextStyle(fontSize: 12)),
+                    label: Text(strings.clearRecentHistory, style: const TextStyle(fontSize: 12)),
                     onPressed: controller.recentFiles.isEmpty
                         ? null
                         : () {
@@ -707,7 +1299,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         const SizedBox(height: 18),
 
         // Compiled Document Cache Section
-        _buildSectionHeader('预编译 PDF 缓存 (Compiled Cache)'),
+        _buildSectionHeader('${strings.cacheSection} (Compiled Cache)'),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -729,17 +1321,17 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          '本地磁盘缓存',
-                          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                        Text(
+                          strings.localDiskCache,
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                         ),
                         const SizedBox(height: 2),
                         Text(
                           _isLoadingCache
-                              ? '正在读取缓存统计...'
+                              ? strings.loadingCacheStats
                               : (_cacheStats.fileCount > 0
-                                  ? '已缓存 ${_cacheStats.fileCount} 个文档 (${_cacheStats.formattedSize})'
-                                  : '暂无缓存文件 (0 B)'),
+                                  ? strings.currentCacheSize(_cacheStats.fileCount, _cacheStats.formattedSize)
+                                  : strings.noCacheFiles),
                           style: TextStyle(
                             fontSize: 11.5,
                             color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
@@ -761,7 +1353,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     icon: _isClearingCache
                         ? const SizedBox(width: 13, height: 13, child: CircularProgressIndicator(strokeWidth: 2))
                         : const Icon(Icons.cleaning_services_outlined, size: 15),
-                    label: const Text('清理缓存', style: TextStyle(fontSize: 12)),
+                    label: Text(strings.clearCache, style: const TextStyle(fontSize: 12)),
                     onPressed: _isLoadingCache || _cacheStats.fileCount == 0 || _isClearingCache
                         ? null
                         : _handleClearCache,
@@ -784,7 +1376,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      '编译生成的矢量 PDF 会缓存到本地磁盘，用于实现秒级极速冷启动与历史切换。源文件编辑保存时会自动失效重编。',
+                      strings.cacheDesc,
                       style: TextStyle(
                         fontSize: 11.0,
                         color: isDark ? const Color(0xFF666666) : const Color(0xFF888888),
@@ -1272,6 +1864,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 
   Widget _buildTypographyBottomBar(ThemeData theme, bool isDark) {
+    final s = widget.controller.strings;
     final hasChanges = _hasUnsavedTypographyChanges;
 
     return Row(
@@ -1284,7 +1877,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         const SizedBox(width: 6),
         Flexible(
           child: Text(
-            hasChanges ? '排版设置有变动 (未保存到文档)' : '排版设置与当前文档一致',
+            hasChanges ? s.typographyHasChanges : s.typographyUpToDate,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontSize: 11.5,
@@ -1303,13 +1896,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
               visualDensity: VisualDensity.compact,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             ),
-            child: const Text('放弃修改', style: TextStyle(fontSize: 11.5)),
+            child: Text(s.discardChanges, style: const TextStyle(fontSize: 11.5)),
           ),
           const SizedBox(width: 8),
         ],
         FilledButton.icon(
           icon: const Icon(Icons.check_rounded, size: 15),
-          label: const Text('保存并刷新文档', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+          label: Text(s.saveAndApplyTypography, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
           style: FilledButton.styleFrom(
             visualDensity: VisualDensity.compact,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -1570,6 +2163,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   // ==================== 3. SHORTCUTS TAB ====================
   Widget _buildShortcutsTab(ThemeData theme, bool isDark) {
     final shortcutService = widget.controller.shortcutService;
+    final strings = widget.controller.strings;
 
     // Group actions by category
     final categories = <String, List<AppShortcutAction>>{};
@@ -1609,7 +2203,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
           Padding(
             padding: const EdgeInsets.only(top: 8, bottom: 6),
             child: Text(
-              category,
+              strings.shortcutCategoryName(category),
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
@@ -1636,7 +2230,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               });
             },
             icon: const Icon(Icons.restart_alt_rounded, size: 16),
-            label: const Text('恢复全部默认快捷键', style: TextStyle(fontSize: 12.5)),
+            label: Text(strings.resetAllShortcuts, style: const TextStyle(fontSize: 12.5)),
             style: TextButton.styleFrom(
               foregroundColor: isDark ? Colors.white70 : Colors.black54,
             ),
@@ -1652,6 +2246,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     bool isDark,
     ThemeData theme,
   ) {
+    final strings = widget.controller.strings;
     final isListening = _listeningActionId == action.id;
     final isCustomized = shortcutService.isCustomized(action.id);
     final shortcutLabel = shortcutService.getShortcutLabel(action.id);
@@ -1680,7 +2275,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 Row(
                   children: [
                     Text(
-                      action.name,
+                      strings.shortcutActionName(action.id, action.name),
                       style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
@@ -1708,7 +2303,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  action.description,
+                  strings.shortcutActionDesc(action.id, action.description),
                   style: TextStyle(
                     fontSize: 11,
                     color: isDark ? const Color(0xFF888888) : const Color(0xFF777777),
@@ -1738,7 +2333,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   setState(() {
                     _listeningActionId = null;
                     if (conflict != null) {
-                      _conflictMessage = '快捷键已绑定为 $key，与「$conflict」存在相同主键，请留意避免冲突';
+                      _conflictMessage = strings.shortcutConflict(conflict);
                     } else {
                       _conflictMessage = null;
                     }
@@ -1787,7 +2382,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     ),
                     const SizedBox(width: 5),
                     Text(
-                      isListening ? '请直接按下新按键...' : shortcutLabel,
+                      isListening ? strings.pressNewShortcut : shortcutLabel,
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
@@ -1829,6 +2424,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
   // ==================== 4. CLI TAB ====================
   Widget _buildCliTab(ThemeData theme, bool isDark) {
+    final s = widget.controller.strings;
+
     if (!NativeCliService.isSupported) {
       return Center(
         child: Padding(
@@ -1880,7 +2477,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      isInstalled ? '命令行工具 \'sgv\' 已成功就绪' : '尚未安装 \'sgv\' 命令行工具',
+                      isInstalled ? s.cliStatusReady : s.cliStatusNotInstalled,
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 13.5,
@@ -1892,7 +2489,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     const SizedBox(height: 2),
                     Text(
                       isInstalled
-                          ? (Platform.isWindows ? '脚本路径: ${_cliStatus.path}' : '符号链接路径: ${_cliStatus.path}')
+                          ? (Platform.isWindows ? 'PATH: ${_cliStatus.path}' : s.cliSymlinkPath(_cliStatus.path))
                           : '安装后可直接在终端中输入 sgv README.md 极速预览任何文档',
                       style: TextStyle(
                         fontSize: 11.5,
@@ -1915,7 +2512,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     foregroundColor: Colors.redAccent,
                     visualDensity: VisualDensity.compact,
                   ),
-                  child: const Text('卸载', style: TextStyle(fontSize: 12)),
+                  child: Text(s.cliUninstall, style: const TextStyle(fontSize: 12)),
                 )
               else
                 ElevatedButton(
@@ -1925,19 +2522,19 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     foregroundColor: Colors.white,
                     visualDensity: VisualDensity.compact,
                   ),
-                  child: const Text('一键安装', style: TextStyle(fontSize: 12)),
+                  child: Text(s.cliInstall, style: const TextStyle(fontSize: 12)),
                 ),
             ],
           ),
         ),
         const SizedBox(height: 18),
 
-        _buildSectionHeader('终端使用范例 (Terminal Usage)'),
+        _buildSectionHeader('${s.cliUsageExamples} (Terminal Usage)'),
         const SizedBox(height: 8),
 
-        _buildCliCodeSnippet('查看本地文件', 'sgv README.md', isDark),
+        _buildCliCodeSnippet(s.cliExampleCurrentDir, 'sgv README.md', isDark),
         const SizedBox(height: 8),
-        _buildCliCodeSnippet('以 A4 出版模式打开', 'sgv --a4 report.md', isDark),
+        _buildCliCodeSnippet(s.cliExampleAnyFile, 'sgv --a4 report.md', isDark),
         const SizedBox(height: 8),
         _buildCliCodeSnippet('通过管道即时预览 stdin', 'cat note.md | sgv', isDark),
       ],
@@ -1981,7 +2578,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
           ),
           IconButton(
             icon: const Icon(Icons.copy_rounded, size: 16),
-            tooltip: '复制命令',
+            tooltip: widget.controller.strings.copyCommandTooltip,
             onPressed: () => _copyCliCommand(cmd),
           ),
         ],
@@ -1991,6 +2588,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
   // ==================== 5. ABOUT TAB ====================
   Widget _buildAboutTab(ThemeData theme, bool isDark) {
+    final s = widget.controller.strings;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2036,7 +2635,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ),
               const SizedBox(height: 4),
               Text(
-                '版本 ${SettingsDialog.appVersion} (Build 2026.09)',
+                '${s.aboutVersion(SettingsDialog.appVersion)} (Build 2026.09)',
                 style: TextStyle(
                   fontSize: 12,
                   color: isDark ? Colors.white54 : Colors.black45,
@@ -2110,7 +2709,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ),
               ElevatedButton.icon(
                 icon: const Icon(Icons.description_outlined, size: 15),
-                label: const Text('载入体验', style: TextStyle(fontSize: 12)),
+                label: Text(s.loadSampleDoc, style: const TextStyle(fontSize: 12)),
                 onPressed: () {
                   widget.controller.loadSampleDocument();
                   Navigator.of(context).pop();

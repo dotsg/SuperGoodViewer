@@ -37,6 +37,54 @@ pub struct RenderOptions {
     pub code_font: Option<String>,
     #[serde(default)]
     pub image_cache_dir: Option<String>,
+    #[serde(default)]
+    pub page_format: Option<String>,
+    #[serde(default)]
+    pub header_left: Option<String>,
+    #[serde(default)]
+    pub header_center: Option<String>,
+    #[serde(default)]
+    pub header_right: Option<String>,
+    #[serde(default)]
+    pub footer_left: Option<String>,
+    #[serde(default)]
+    pub footer_center: Option<String>,
+    #[serde(default)]
+    pub footer_right: Option<String>,
+    #[serde(default)]
+    pub show_header_rule: Option<bool>,
+    #[serde(default)]
+    pub show_footer_rule: Option<bool>,
+    #[serde(default)]
+    pub skip_first_page_header_footer: Option<bool>,
+    #[serde(default)]
+    pub marp_enabled: Option<bool>,
+}
+
+impl RenderOptions {
+    pub fn resolved_page_format(&self) -> &str {
+        if let Some(ref pf) = self.page_format {
+            pf.as_str()
+        } else if self.mode == "fluid" {
+            "fluid"
+        } else {
+            "a4"
+        }
+    }
+
+    pub fn is_fluid(&self) -> bool {
+        self.resolved_page_format() == "fluid"
+    }
+
+    pub fn is_slide(&self) -> bool {
+        let fmt = self.resolved_page_format();
+        fmt == "slide_16_9"
+            || fmt == "slide_4_3"
+            || fmt == "slide16x9"
+            || fmt == "slide4x3"
+            || fmt == "16:9"
+            || fmt == "4:3"
+    }
 }
 
 impl Default for RenderOptions {
@@ -49,6 +97,17 @@ impl Default for RenderOptions {
             body_font: None,
             code_font: None,
             image_cache_dir: None,
+            page_format: None,
+            header_left: None,
+            header_center: None,
+            header_right: None,
+            footer_left: None,
+            footer_center: None,
+            footer_right: None,
+            show_header_rule: None,
+            show_footer_rule: None,
+            skip_first_page_header_footer: None,
+            marp_enabled: None,
         }
     }
 }

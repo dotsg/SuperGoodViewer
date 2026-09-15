@@ -1,14 +1,20 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 import '../controllers/reader_controller.dart';
+import '../i18n/app_strings.dart';
+import '../models/render_options.dart';
 import '../services/cli_ipc_service.dart';
 import '../services/native_cli_service.dart';
 import 'pdf_canvas_view.dart';
+import 'presentation_view.dart';
 import 'settings_dialog.dart';
 import 'sidebar_view.dart';
 
@@ -28,12 +34,14 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   bool _isHoveringToolbar = false;
   Timer? _toolbarTimer;
   final GlobalKey<PdfCanvasViewState> _pdfCanvasKey = GlobalKey<PdfCanvasViewState>();
+  final GlobalKey<PresentationViewState> _presentationKey = GlobalKey<PresentationViewState>();
 
   // Titlebar auto-hide on scroll
   bool _isTitleBarVisible = true;
   bool _isAtTop = true;
   bool _isHoveringTitleBar = false;
   Timer? _titleBarHoverTimer;
+  bool _isDraggingFileOver = false;
 
   bool get _shouldShowTitleBar {
     if (_isFullScreen) return false;
@@ -43,7 +51,9 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _updateTrafficLights() {
-    final show = _shouldShowTitleBar;
+    // In full screen, macOS handles traffic lights automatically on top hover.
+    // Never hide standard window buttons in full screen mode.
+    final show = _isFullScreen ? true : _shouldShowTitleBar;
     try {
       _windowChannel.invokeMethod('setTrafficLightsVisible', show);
     } catch (_) {}
@@ -63,7 +73,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   @override
   void initState() {
     super.initState();
-    final isFluid = widget.controller.renderOptions.isFluid;
+    final isFluid = widget.controller.isFluidLayout;
     final atTop = isFluid
         ? (widget.controller.lastScrollOffset <= ReaderController.topScrollThreshold && widget.controller.lastScrollRatio <= 0.005)
         : (widget.controller.lastScrollRatio <= 0.005 && widget.controller.lastPageNumber <= 1);
@@ -74,6 +84,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     _showToolbarTemporarily();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _updateTrafficLights();
+      _syncWindowTitle();
     });
     widget.controller.addListener(_onControllerChanged);
     NativeCliService.channel.setMethodCallHandler(_handleNativeMethodCall);
@@ -83,6 +94,23 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         widget.controller.openFile(filePath);
       }
     });
+  }
+
+  String? _lastSyncedTitle;
+
+  void _syncWindowTitle() {
+    final appTitle = widget.controller.strings.appTitle;
+    final docTitle = widget.controller.documentTitle;
+    final fullTitle = (docTitle.isNotEmpty && docTitle != 'Welcome' && docTitle != 'SuperGoodViewer Demo')
+        ? '$docTitle - $appTitle'
+        : appTitle;
+
+    if (_lastSyncedTitle != fullTitle) {
+      _lastSyncedTitle = fullTitle;
+      try {
+        _windowChannel.invokeMethod('setWindowTitle', fullTitle);
+      } catch (_) {}
+    }
   }
 
   void _initWindowChannel() {
@@ -129,6 +157,13 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       widget.controller.clearJumpRequest();
       _pdfCanvasKey.currentState?.jumpToOutline(req);
     }
+    if (!widget.controller.isPresentationMode && _enteredFullScreenForPresentation) {
+      _enteredFullScreenForPresentation = false;
+      if (_isFullScreen) {
+        _toggleFullScreen();
+      }
+    }
+    _syncWindowTitle();
   }
 
   @override
@@ -235,7 +270,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['md', 'markdown', 'txt', 'pdf'],
-        dialogTitle: '选择要阅读的 Markdown 或 PDF 文件',
+        dialogTitle: widget.controller.strings.openDocument,
       );
 
       if (result != null && result.files.isNotEmpty) {
@@ -248,8 +283,139 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('打开文件失败: $e'),
+            content: Text(widget.controller.strings.openFileFailed('$e')),
             behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  static const Set<String> _supportedExtensions = {
+    '.md',
+    '.markdown',
+    '.mdown',
+    '.mkd',
+    '.mdx',
+    '.pdf',
+    '.typ',
+    '.txt',
+  };
+
+  static const Set<String> _knownBinaryExtensions = {
+    '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.tiff', '.heic',
+    '.zip', '.tar', '.gz', '.7z', '.rar', '.bz2', '.xz',
+    '.dmg', '.iso', '.pkg', '.app', '.exe', '.dll', '.so', '.dylib', '.bin',
+    '.mp4', '.mov', '.avi', '.mkv', '.webm', '.mp3', '.wav', '.flac', '.aac',
+    '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+  };
+
+  static Future<bool> _isFileSupported(File file) async {
+    final ext = p.extension(file.path).toLowerCase();
+    if (_supportedExtensions.contains(ext)) return true;
+    if (_knownBinaryExtensions.contains(ext)) return false;
+
+    // For files with unknown or missing extension, inspect sample bytes
+    try {
+      RandomAccessFile? raf;
+      Uint8List sample;
+      try {
+        raf = await file.open(mode: FileMode.read);
+        sample = await raf.read(1024);
+      } finally {
+        await raf?.close();
+      }
+
+      if (sample.isEmpty) return true; // Empty file is safe to open as empty markdown
+      if (ReaderController.startsWithPdfHeader(sample)) return true;
+
+      // If sample contains null bytes, it's very likely a binary format
+      if (sample.contains(0)) return false;
+
+      // Otherwise, attempt UTF-8 decode
+      utf8.decode(sample, allowMalformed: false);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _handleDroppedFiles(List<DropItem> files) async {
+    if (files.isEmpty) return;
+
+    String? targetFilePath;
+    String? unsupportedReason;
+
+    for (final file in files) {
+      final path = file.path;
+      if (path.isEmpty) continue;
+
+      try {
+        final type = await FileSystemEntity.type(path);
+        if (type == FileSystemEntityType.file) {
+          final f = File(path);
+          if (await _isFileSupported(f)) {
+            targetFilePath = path;
+            break;
+          } else {
+            final ext = p.extension(path);
+            unsupportedReason = ext.isNotEmpty
+                ? widget.controller.strings.unsupportedFileFormat(ext)
+                : widget.controller.strings.unsupportedBinaryFile;
+          }
+        } else if (type == FileSystemEntityType.directory) {
+          // If a directory was dropped, check for common entry files
+          const candidates = [
+            'README.md',
+            'readme.md',
+            'index.md',
+            'main.md',
+            'README.markdown',
+            'readme.markdown',
+          ];
+          for (final c in candidates) {
+            final candidateFile = File(p.join(path, c));
+            if (await candidateFile.exists()) {
+              targetFilePath = candidateFile.path;
+              break;
+            }
+          }
+          if (targetFilePath != null) break;
+
+          // Try to find the first supported file in the directory (sorted deterministically)
+          final dir = Directory(path);
+          final entries = await dir.list(followLinks: false).toList();
+          entries.sort((a, b) {
+            final cmp = a.path.toLowerCase().compareTo(b.path.toLowerCase());
+            return cmp != 0 ? cmp : a.path.compareTo(b.path);
+          });
+          for (final entry in entries) {
+            if (entry is File && await _isFileSupported(entry)) {
+              targetFilePath = entry.path;
+              break;
+            }
+          }
+          if (targetFilePath != null) break;
+
+          unsupportedReason = widget.controller.strings.unsupportedDirectory;
+        }
+      } catch (e) {
+        debugPrint('Error inspecting dropped file: $e');
+      }
+    }
+
+    if (targetFilePath != null) {
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.of(context, rootNavigator: true).popUntil((route) => route.isFirst);
+      }
+      await widget.controller.openFile(targetFilePath);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(unsupportedReason ?? widget.controller.strings.unsupportedDropGeneral),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
           ),
         );
       }
@@ -261,7 +427,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     final defaultFileName = '$title.pdf';
 
     final savePath = await FilePicker.platform.saveFile(
-      dialogTitle: '导出为出版级 PDF',
+      dialogTitle: widget.controller.strings.exportPdfDialogTitle,
       fileName: defaultFileName,
       type: FileType.custom,
       allowedExtensions: ['pdf'],
@@ -273,7 +439,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              success ? '已成功导出出版级 PDF 至 $savePath' : '导出失败，请重试',
+              success ? widget.controller.strings.exportPdfSuccess(savePath) : widget.controller.strings.exportPdfFailed,
             ),
             duration: const Duration(seconds: 3),
             behavior: SnackBarBehavior.floating,
@@ -286,9 +452,9 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   void _showCopiedFeedback() {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('已复制所选文本'),
-        duration: Duration(seconds: 1),
+      SnackBar(
+        content: Text(widget.controller.strings.copiedSelectedText),
+        duration: const Duration(seconds: 1),
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -303,6 +469,11 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handleNextPage() {
+    if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
+    if (widget.controller.isPresentationMode) {
+      _presentationKey.currentState?.nextPage();
+      return;
+    }
     if (!_isSidebarOpen && !_isHoveringTitleBar && (_isTitleBarVisible || _isAtTop)) {
       setState(() {
         _isAtTop = false;
@@ -310,16 +481,21 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       });
       _updateTrafficLights();
     }
-    if (widget.controller.renderOptions.isFluid) {
-      _pdfCanvasKey.currentState?.scrollByDelta(420);
+    if (widget.controller.isFluidLayout) {
+      _pdfCanvasKey.currentState?.scrollScreenDown();
     } else {
       _pdfCanvasKey.currentState?.nextPage();
     }
   }
 
   void _handlePrevPage() {
-    if (widget.controller.renderOptions.isFluid) {
-      _pdfCanvasKey.currentState?.scrollByDelta(-420);
+    if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
+    if (widget.controller.isPresentationMode) {
+      _presentationKey.currentState?.prevPage();
+      return;
+    }
+    if (widget.controller.isFluidLayout) {
+      _pdfCanvasKey.currentState?.scrollScreenUp();
     } else {
       if (_currentPage <= 2) {
         setState(() {
@@ -332,7 +508,51 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     }
   }
 
+  void _handleScrollScreenDown() {
+    if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
+    if (widget.controller.isPresentationMode) {
+      _presentationKey.currentState?.nextPage();
+      return;
+    }
+    if (!_isSidebarOpen && !_isHoveringTitleBar && (_isTitleBarVisible || _isAtTop)) {
+      setState(() {
+        _isAtTop = false;
+        _isTitleBarVisible = false;
+      });
+      _updateTrafficLights();
+    }
+    if (!widget.controller.isFluidLayout) {
+      final canvas = _pdfCanvasKey.currentState;
+      if (canvas != null && canvas.isCurrentPageFittingViewport) {
+        _handleNextPage();
+        return;
+      }
+    }
+    _pdfCanvasKey.currentState?.scrollScreenDown();
+  }
+
+  void _handleScrollScreenUp() {
+    if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
+    if (widget.controller.isPresentationMode) {
+      _presentationKey.currentState?.prevPage();
+      return;
+    }
+    if (!widget.controller.isFluidLayout) {
+      final canvas = _pdfCanvasKey.currentState;
+      if (canvas != null && canvas.isCurrentPageFittingViewport) {
+        _handlePrevPage();
+        return;
+      }
+    }
+    _pdfCanvasKey.currentState?.scrollScreenUp();
+  }
+
   void _handleFirstPage() {
+    if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
+    if (widget.controller.isPresentationMode) {
+      _presentationKey.currentState?.goToPage(1);
+      return;
+    }
     setState(() {
       _isAtTop = true;
       _isTitleBarVisible = true;
@@ -342,6 +562,11 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handleLastPage() {
+    if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
+    if (widget.controller.isPresentationMode) {
+      _presentationKey.currentState?.goToLastPage();
+      return;
+    }
     if (!_isSidebarOpen && !_isHoveringTitleBar) {
       setState(() {
         _isAtTop = false;
@@ -353,15 +578,15 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handleToggleTwoPage() {
-    if (widget.controller.renderOptions.isFluid) {
+    if (widget.controller.isFluidLayout) {
       widget.controller.toggleMode();
       if (!widget.controller.isTwoPage) {
         widget.controller.toggleTwoPage();
       }
-      _showZoomHud('A4 双页对开浏览');
+      _showZoomHud(widget.controller.strings.hudTwoPageA4);
     } else {
       widget.controller.toggleTwoPage();
-      _showZoomHud(widget.controller.isTwoPage ? '双页对开浏览' : '单页纵向浏览');
+      _showZoomHud(widget.controller.isTwoPage ? widget.controller.strings.hudTwoPage : widget.controller.strings.hudSinglePage);
     }
   }
 
@@ -372,6 +597,33 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         setState(() => _isFullScreen = res);
       }
     } catch (_) {}
+  }
+
+  bool _enteredFullScreenForPresentation = false;
+
+  Future<void> _handleTogglePresentation() async {
+    final willEnter = !widget.controller.isPresentationMode;
+    if (willEnter) {
+      if (!_isFullScreen) {
+        _enteredFullScreenForPresentation = true;
+        await _toggleFullScreen();
+      } else {
+        _enteredFullScreenForPresentation = false;
+      }
+      widget.controller.setPresentationMode(true);
+    } else {
+      await _exitPresentationMode();
+    }
+  }
+
+  Future<void> _exitPresentationMode() async {
+    widget.controller.setPresentationMode(false);
+    if (_enteredFullScreenForPresentation) {
+      _enteredFullScreenForPresentation = false;
+      if (_isFullScreen) {
+        await _toggleFullScreen();
+      }
+    }
   }
 
   void _showZoomHud(String text) {
@@ -409,7 +661,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     widget.controller.setAutoFitMode(AutoFitMode.none);
     await _pdfCanvasKey.currentState?.resetZoom();
     setState(() => _currentZoom = 1.0);
-    _showZoomHud('实际大小 100%');
+    _showZoomHud(widget.controller.strings.hudActualSize);
   }
 
   void _handleFitWidth() async {
@@ -417,7 +669,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     await _pdfCanvasKey.currentState?.fitWidth();
     final zoom = _pdfCanvasKey.currentState?.currentZoom ?? _currentZoom;
     setState(() => _currentZoom = zoom);
-    _showZoomHud('满窗口 (${(zoom * 100).round()}%)');
+    _showZoomHud(widget.controller.strings.hudFitWidth((zoom * 100).round()));
   }
 
   void _handleFitPage() async {
@@ -425,7 +677,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     await _pdfCanvasKey.currentState?.fitPage();
     final zoom = _pdfCanvasKey.currentState?.currentZoom ?? _currentZoom;
     setState(() => _currentZoom = zoom);
-    _showZoomHud('满屏 (${(zoom * 100).round()}%)');
+    _showZoomHud(widget.controller.strings.hudFitPage((zoom * 100).round()));
   }
 
   void _handleZoomTo(double targetZoom) async {
@@ -461,27 +713,50 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               onFitPage: _handleFitPage,
               onToggleToolbar: _toggleToolbar,
               onFontSettings: () => showSettingsDialog(context, controller, initialTab: SettingsTab.typography),
+              onTogglePresentation: _handleTogglePresentation,
+              onFindInDocument: () => _pdfCanvasKey.currentState?.openSearch(),
               onPreferences: () => showSettingsDialog(context, controller, initialTab: SettingsTab.general),
               onKeyboardShortcuts: () => showSettingsDialog(context, controller, initialTab: SettingsTab.shortcuts),
             ),
+
+            // In-Document Search Shortcuts (Cmd+F / Ctrl+F, Cmd+G / Ctrl+G)
+            const SingleActivator(LogicalKeyboardKey.keyF, meta: true): () =>
+                _pdfCanvasKey.currentState?.openSearch(),
+            const SingleActivator(LogicalKeyboardKey.keyF, control: true): () =>
+                _pdfCanvasKey.currentState?.openSearch(),
+            const SingleActivator(LogicalKeyboardKey.keyG, meta: true): () =>
+                _pdfCanvasKey.currentState?.searchNext(),
+            const SingleActivator(LogicalKeyboardKey.keyG, meta: true, shift: true): () =>
+                _pdfCanvasKey.currentState?.searchPrev(),
+            const SingleActivator(LogicalKeyboardKey.keyG, control: true): () =>
+                _pdfCanvasKey.currentState?.searchNext(),
+            const SingleActivator(LogicalKeyboardKey.keyG, control: true, shift: true): () =>
+                _pdfCanvasKey.currentState?.searchPrev(),
+
+            // Presentation Mode Direct Activators (F5, Cmd+Enter, Ctrl+Enter)
+            const SingleActivator(LogicalKeyboardKey.f5): _handleTogglePresentation,
+            const SingleActivator(LogicalKeyboardKey.enter, meta: true): _handleTogglePresentation,
+            const SingleActivator(LogicalKeyboardKey.enter, control: true): _handleTogglePresentation,
 
             // Zoom Keypad Aliases (Numpad +)
             const SingleActivator(LogicalKeyboardKey.add, meta: true): _handleZoomIn,
             const SingleActivator(LogicalKeyboardKey.add, control: true): _handleZoomIn,
 
-            // Page Navigation & Book Mode (Arrow keys, Bracket keys, PageUp/PageDown, Space)
+            // Page Navigation & Book Mode (Arrow keys, Bracket keys, PageUp/PageDown)
             const SingleActivator(LogicalKeyboardKey.arrowLeft): _handlePrevPage,
             const SingleActivator(LogicalKeyboardKey.arrowRight): _handleNextPage,
-            const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
-                _pdfCanvasKey.currentState?.scrollByDelta(-120),
-            const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
-                _pdfCanvasKey.currentState?.scrollByDelta(120),
             const SingleActivator(LogicalKeyboardKey.bracketLeft): _handlePrevPage,
             const SingleActivator(LogicalKeyboardKey.bracketRight): _handleNextPage,
             const SingleActivator(LogicalKeyboardKey.pageUp): _handlePrevPage,
             const SingleActivator(LogicalKeyboardKey.pageDown): _handleNextPage,
-            const SingleActivator(LogicalKeyboardKey.space): _handleNextPage,
-            const SingleActivator(LogicalKeyboardKey.space, shift: true): _handlePrevPage,
+
+            // Scrolling (Arrow keys = line scroll, Space = screen scroll)
+            const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
+                _pdfCanvasKey.currentState?.scrollByDelta(-120),
+            const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
+                _pdfCanvasKey.currentState?.scrollByDelta(120),
+            const SingleActivator(LogicalKeyboardKey.space): _handleScrollScreenDown,
+            const SingleActivator(LogicalKeyboardKey.space, shift: true): _handleScrollScreenUp,
             const SingleActivator(LogicalKeyboardKey.home): _handleFirstPage,
             const SingleActivator(LogicalKeyboardKey.end): _handleLastPage,
             const SingleActivator(LogicalKeyboardKey.arrowUp, meta: true): _handleFirstPage,
@@ -493,7 +768,13 @@ class _WorkspaceViewState extends State<WorkspaceView> {
             const SingleActivator(LogicalKeyboardKey.f11): _toggleFullScreen,
 
             const SingleActivator(LogicalKeyboardKey.escape): () {
-              if (_isToolbarVisible) {
+              if (_pdfCanvasKey.currentState?.isSearchOpen == true) {
+                _pdfCanvasKey.currentState?.closeSearch();
+              } else if (controller.isPresentationMode) {
+                _exitPresentationMode();
+              } else if (_isFullScreen) {
+                _toggleFullScreen();
+              } else if (_isToolbarVisible) {
                 setState(() => _isToolbarVisible = false);
               } else if (_isSidebarOpen) {
                 _setSidebarOpen(false);
@@ -510,10 +791,19 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               await _pdfCanvasKey.currentState?.selectAllText();
             },
           },
-      child: Focus(
-        autofocus: true,
-        child: Scaffold(
-          body: Row(
+      child: DropTarget(
+        onDragEntered: (_) => setState(() => _isDraggingFileOver = true),
+        onDragExited: (_) => setState(() => _isDraggingFileOver = false),
+        onDragDone: (detail) {
+          setState(() => _isDraggingFileOver = false);
+          _handleDroppedFiles(detail.files);
+        },
+        child: Focus(
+          autofocus: true,
+          child: Scaffold(
+            body: Stack(
+              children: [
+                Row(
             children: [
               // Collapsible Left Sidebar (Outline & Recents)
               if (_isSidebarOpen)
@@ -757,17 +1047,90 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                           ),
                         ),
                       ),
-                    ],
-                  ),
+
+                    // Full-screen Presentation View (PPT Mode)
+                    if (controller.isPresentationMode && controller.currentPdfBytes != null)
+                      Positioned.fill(
+                        child: PresentationView(
+                          key: _presentationKey,
+                          controller: controller,
+                          onExit: _exitPresentationMode,
+                        ),
+                      ),
+                  ],
                 ),
-              ],
+              ),
+            ],
+          ),
+          if (_isDraggingFileOver)
+            _buildDragDropOverlay(theme, isDark),
+        ],
+      ),
+    ),
+  ),
+),
+);
+},
+);
+}
+
+  Widget _buildDragDropOverlay(ThemeData theme, bool isDark) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Container(
+          color: (isDark ? const Color(0xFF141414) : Colors.white).withValues(alpha: 0.88),
+          child: Container(
+            margin: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0x1F0284C7) : const Color(0x0F0284C7),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: const Color(0xFF0284C7),
+                width: 2.5,
+              ),
+            ),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 76,
+                    height: 76,
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0x330284C7) : const Color(0x240284C7),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.file_download_outlined,
+                      size: 40,
+                      color: Color(0xFF0284C7),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    widget.controller.strings.dragDropTitle,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.4,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    widget.controller.strings.dragDropSubtitle,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: isDark ? const Color(0xFFA1A1AA) : const Color(0xFF64748B),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
-      );
-    },
-  );
-}
+      ),
+    );
+  }
 
   Widget _buildTopTitleBar(
     BuildContext context,
@@ -823,7 +1186,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                     if (!_isSidebarOpen) ...[
                       if (Platform.isMacOS) const SizedBox(width: 78),
                       Tooltip(
-                        message: '切换侧边栏 (${controller.shortcutService.getShortcutLabel('toggleSidebar')})',
+                        message: controller.strings.toggleSidebarTooltip(controller.shortcutService.getShortcutLabel('toggleSidebar')),
                         child: InkWell(
                           onTap: () => _setSidebarOpen(true),
                           borderRadius: BorderRadius.circular(4),
@@ -877,7 +1240,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                       ),
                     ),
 
-                    if (!_isSidebarOpen) const SizedBox(width: 78 + 32),
+                    if (!_isSidebarOpen) SizedBox(width: (Platform.isMacOS ? 78.0 : 0.0) + 32.0),
                   ],
                 ),
               ),
@@ -930,7 +1293,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               // Open Local File
               _PillIconButton(
                 icon: Icons.folder_open_rounded,
-                tooltip: '打开本地文档 (${controller.shortcutService.getShortcutLabel('openFile')})',
+                tooltip: '${controller.strings.openDocument} (${controller.shortcutService.getShortcutLabel('openFile')})',
                 onPressed: _pickAndOpenFile,
               ),
               _PillDivider(isDark: isDark),
@@ -941,23 +1304,35 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                     ? Icons.view_sidebar_rounded
                     : Icons.view_sidebar_outlined,
                 tooltip: _isSidebarOpen
-                    ? '收起侧边栏 (${controller.shortcutService.getShortcutLabel('toggleSidebar')})'
-                    : '展开侧边栏 (${controller.shortcutService.getShortcutLabel('toggleSidebar')})',
+                    ? controller.strings.toggleSidebarCollapse(controller.shortcutService.getShortcutLabel('toggleSidebar'))
+                    : controller.strings.toggleSidebarExpand(controller.shortcutService.getShortcutLabel('toggleSidebar')),
                 isSelected: _isSidebarOpen,
                 onPressed: _toggleSidebar,
               ),
               _PillDivider(isDark: isDark),
 
-              // Mode switcher (Fluid vs A4 Paged) - Markdown only
+              // Mode & Layout switcher (Fluid, A4, 16:9, etc.) - Markdown only
               if (!controller.isPdfDocument) ...[
-                _ModePill(
-                  mode: controller.renderOptions.mode,
+                _FormatSelectorPill(
+                  format: controller.renderOptions.effectivePageFormat,
                   shortcutLabel: controller.shortcutService.getShortcutLabel('toggleMode'),
+                  onSelectFormat: controller.setPageFormat,
                   onToggle: controller.toggleMode,
                   isDark: isDark,
+                  strings: controller.strings,
                 ),
                 _PillDivider(isDark: isDark),
               ],
+
+              // Full-screen Presentation Mode (PPT) - works for both Markdown and PDF
+              _PillIconButton(
+                icon: Icons.slideshow_rounded,
+                tooltip: controller.strings.togglePresentationTooltip(controller.shortcutService.getShortcutLabel('togglePresentation')),
+                isSelected: controller.isPresentationMode,
+                iconSize: 18,
+                onPressed: _handleTogglePresentation,
+              ),
+              _PillDivider(isDark: isDark),
 
               // When in A4 Paged mode or reading a PDF, show Two-Page Spread toggle and Page Navigation
               if (controller.isPdfDocument || !controller.renderOptions.isFluid) ...[
@@ -965,9 +1340,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                   icon: controller.isTwoPage
                       ? Icons.auto_stories_rounded
                       : Icons.menu_book_outlined,
-                  tooltip: controller.isTwoPage
-                      ? '当前为双页对开，点击切换单页 (${controller.shortcutService.getShortcutLabel('toggleTwoPage')})'
-                      : '当前为单页纵向，点击切换双页对开 (${controller.shortcutService.getShortcutLabel('toggleTwoPage')})',
+                  tooltip: controller.strings.toggleTwoPageTooltip(controller.isTwoPage, controller.shortcutService.getShortcutLabel('toggleTwoPage')),
                   isSelected: controller.isTwoPage,
                   iconSize: 17,
                   onPressed: _handleToggleTwoPage,
@@ -978,6 +1351,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                   pageCount: _pageCount,
                   isTwoPage: controller.isTwoPage,
                   isDark: isDark,
+                  strings: controller.strings,
                   onPrev: _handlePrevPage,
                   onNext: _handleNextPage,
                   onJumpToPage: (p) => _pdfCanvasKey.currentState?.goToPageNumber(p),
@@ -988,7 +1362,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               // Page Zoom Stepper & Preset Dropdown (- / % / +)
               _PillIconButton(
                 icon: Icons.remove_rounded,
-                tooltip: '缩小页面 (${controller.shortcutService.getShortcutLabel('zoomOut')})',
+                tooltip: controller.strings.zoomOutTooltip(controller.shortcutService.getShortcutLabel('zoomOut')),
                 iconSize: 15,
                 onPressed: _handleZoomOut,
               ),
@@ -996,6 +1370,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 currentZoom: _currentZoom,
                 autoFitMode: controller.autoFitMode,
                 isDark: isDark,
+                strings: controller.strings,
                 onZoomSelected: (zoom) {
                   if (zoom == -1.0) {
                     _handleFitWidth();
@@ -1010,7 +1385,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               ),
               _PillIconButton(
                 icon: Icons.add_rounded,
-                tooltip: '放大页面 (${controller.shortcutService.getShortcutLabel('zoomIn')})',
+                tooltip: controller.strings.zoomInTooltip(controller.shortcutService.getShortcutLabel('zoomIn')),
                 iconSize: 15,
                 onPressed: _handleZoomIn,
               ),
@@ -1021,9 +1396,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 icon: controller.renderOptions.isDark
                     ? Icons.light_mode_rounded
                     : Icons.dark_mode_rounded,
-                tooltip: controller.renderOptions.isDark
-                    ? '切换为亮色模式 (${controller.shortcutService.getShortcutLabel('toggleTheme')})'
-                    : '切换为暗黑模式 (${controller.shortcutService.getShortcutLabel('toggleTheme')})',
+                tooltip: controller.strings.toggleThemeTooltip(controller.renderOptions.isDark, controller.shortcutService.getShortcutLabel('toggleTheme')),
                 onPressed: controller.toggleTheme,
               ),
               _PillDivider(isDark: isDark),
@@ -1031,7 +1404,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               // Export PDF
               _PillIconButton(
                 icon: Icons.download_rounded,
-                tooltip: '导出出版级 PDF (${controller.shortcutService.getShortcutLabel('exportPdf')})',
+                tooltip: '${controller.strings.exportPdf} (${controller.shortcutService.getShortcutLabel('exportPdf')})',
                 onPressed: _handleExportPdf,
               ),
               _PillDivider(isDark: isDark),
@@ -1039,7 +1412,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               // Settings (Preferences)
               _PillIconButton(
                 icon: Icons.settings_outlined,
-                tooltip: '偏好设置 (${controller.shortcutService.getShortcutLabel('preferences')})',
+                tooltip: controller.strings.settingsTooltip(controller.shortcutService.getShortcutLabel('preferences')),
                 onPressed: () => showSettingsDialog(context, controller),
               ),
               _PillDivider(isDark: isDark),
@@ -1047,7 +1420,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               // Zen Mode Button (Hide Floating Toolbar)
               _PillIconButton(
                 icon: Icons.close_rounded,
-                tooltip: '隐藏工具栏 (Esc 或 ${controller.shortcutService.getShortcutLabel('toggleToolbar')})',
+                tooltip: controller.strings.hideToolbarTooltip(controller.shortcutService.getShortcutLabel('toggleToolbar')),
                 onPressed: () => setState(() => _isToolbarVisible = false),
               ),
             ],
@@ -1103,56 +1476,154 @@ class _PillIconButton extends StatelessWidget {
   }
 }
 
-class _ModePill extends StatelessWidget {
-  final String mode;
+class _FormatSelectorPill extends StatelessWidget {
+  final String format;
+  final ValueChanged<String> onSelectFormat;
   final VoidCallback onToggle;
   final bool isDark;
   final String? shortcutLabel;
+  final AppStrings strings;
 
-  const _ModePill({
-    required this.mode,
+  const _FormatSelectorPill({
+    required this.format,
+    required this.onSelectFormat,
     required this.onToggle,
     required this.isDark,
+    required this.strings,
     this.shortcutLabel,
   });
 
+  IconData _getFormatIcon(String fmt) {
+    switch (fmt) {
+      case PageFormat.fluid:
+        return Icons.view_stream_rounded;
+      case PageFormat.a4Portrait:
+        return Icons.description_outlined;
+      case PageFormat.a4Landscape:
+        return Icons.landscape_outlined;
+      case PageFormat.slide16x9:
+        return Icons.slideshow_rounded;
+      case PageFormat.slide4x3:
+        return Icons.tv_rounded;
+      default:
+        return Icons.auto_stories_rounded;
+    }
+  }
+
+  String _getFormatShortLabel(String fmt) {
+    return strings.layoutModeShortName(fmt);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final isFluid = mode == 'fluid';
     final theme = Theme.of(context);
-    final shortcut = shortcutLabel ?? 'Cmd+F';
+    final shortcut = shortcutLabel ?? 'Cmd+M';
 
-    return Tooltip(
-      message: isFluid ? '当前：自适应流式 (点击切换 A4 出版 $shortcut)' : '当前：A4 出版 (点击切换流式 $shortcut)',
-      waitDuration: const Duration(milliseconds: 500),
-      child: GestureDetector(
-        onTap: onToggle,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.primary.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                isFluid ? Icons.view_stream_rounded : Icons.auto_stories_rounded,
-                size: 14,
-                color: theme.colorScheme.primary,
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Tooltip(
+            message: '${PageFormat.getDisplayName(format, strings)} ($shortcut)',
+            waitDuration: const Duration(milliseconds: 500),
+            child: InkWell(
+              onTap: onToggle,
+              borderRadius: const BorderRadius.horizontal(left: Radius.circular(12)),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(8, 4, 4, 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _getFormatIcon(format),
+                      size: 14,
+                      color: theme.colorScheme.primary,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      _getFormatShortLabel(format),
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(width: 4),
-              Text(
-                isFluid ? '流式' : 'A4',
-                style: TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
-                  color: theme.colorScheme.primary,
+            ),
+          ),
+          PopupMenuButton<String>(
+            tooltip: strings.layoutSelectTooltip,
+            initialValue: format,
+            offset: const Offset(0, -230),
+            onSelected: onSelectFormat,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            icon: Icon(
+              Icons.arrow_drop_up_rounded,
+              size: 18,
+              color: theme.colorScheme.primary,
+            ),
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: PageFormat.fluid,
+                child: Row(
+                  children: [
+                    const Icon(Icons.view_stream_rounded, size: 16),
+                    const SizedBox(width: 8),
+                    Text(strings.layoutModeFluid),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: PageFormat.a4Portrait,
+                child: Row(
+                  children: [
+                    const Icon(Icons.description_outlined, size: 16),
+                    const SizedBox(width: 8),
+                    Text(strings.layoutModeA4Portrait),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: PageFormat.a4Landscape,
+                child: Row(
+                  children: [
+                    const Icon(Icons.landscape_outlined, size: 16),
+                    const SizedBox(width: 8),
+                    Text(strings.layoutModeA4Landscape),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: PageFormat.slide16x9,
+                child: Row(
+                  children: [
+                    const Icon(Icons.slideshow_rounded, size: 16),
+                    const SizedBox(width: 8),
+                    Text(strings.layoutModeSlide169),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: PageFormat.slide4x3,
+                child: Row(
+                  children: [
+                    const Icon(Icons.tv_rounded, size: 16),
+                    const SizedBox(width: 8),
+                    Text(strings.layoutModeSlide43),
+                  ],
                 ),
               ),
             ],
           ),
-        ),
+          const SizedBox(width: 2),
+        ],
       ),
     );
   }
@@ -1179,11 +1650,13 @@ class _ZoomDropdownBadge extends StatelessWidget {
   final AutoFitMode autoFitMode;
   final bool isDark;
   final ValueChanged<double> onZoomSelected;
+  final AppStrings strings;
 
   const _ZoomDropdownBadge({
     required this.currentZoom,
     required this.autoFitMode,
     required this.isDark,
+    required this.strings,
     required this.onZoomSelected,
   });
 
@@ -1194,7 +1667,7 @@ class _ZoomDropdownBadge extends StatelessWidget {
     final theme = Theme.of(context);
 
     return PopupMenuButton<double>(
-      tooltip: '页面缩放比例与预设',
+      tooltip: strings.zoomPresetsTooltip,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       color: isDark ? const Color(0xFF262626) : Colors.white,
       onSelected: onZoomSelected,
@@ -1210,7 +1683,7 @@ class _ZoomDropdownBadge extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Text(
-                '满窗口 (适应宽度)',
+                strings.fitWindowWidth,
                 style: TextStyle(
                   fontSize: 12.5,
                   fontWeight: autoFitMode == AutoFitMode.fitWidth ? FontWeight.w600 : FontWeight.normal,
@@ -1236,7 +1709,7 @@ class _ZoomDropdownBadge extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Text(
-                '满屏 (适应整页)',
+                strings.fitPageWhole,
                 style: TextStyle(
                   fontSize: 12.5,
                   fontWeight: autoFitMode == AutoFitMode.fitPage ? FontWeight.w600 : FontWeight.normal,
@@ -1251,22 +1724,22 @@ class _ZoomDropdownBadge extends StatelessWidget {
             ],
           ),
         ),
-        const PopupMenuItem<double>(
+        PopupMenuItem<double>(
           value: -3.0,
           child: Row(
             children: [
-              Icon(Icons.fullscreen_rounded, size: 16),
-              SizedBox(width: 8),
-              Text('全屏沉浸浏览', style: TextStyle(fontSize: 12.5)),
-              Spacer(),
-              Text('Cmd+Ctrl+F', style: TextStyle(fontSize: 11, color: Colors.grey)),
+              const Icon(Icons.fullscreen_rounded, size: 16),
+              const SizedBox(width: 8),
+              Text(strings.fullScreenImmersive, style: const TextStyle(fontSize: 12.5)),
+              const Spacer(),
+              const Text('Cmd+Ctrl+F', style: TextStyle(fontSize: 11, color: Colors.grey)),
             ],
           ),
         ),
         const PopupMenuDivider(),
         _buildZoomItem(0.50, '50%'),
         _buildZoomItem(0.75, '75%'),
-        _buildZoomItem(1.00, '100% (原始大小)', shortcut: 'Cmd+0'),
+        _buildZoomItem(1.00, strings.originalSize, shortcut: 'Cmd+0'),
         _buildZoomItem(1.25, '125%'),
         _buildZoomItem(1.50, '150%'),
         _buildZoomItem(2.00, '200%'),
@@ -1335,12 +1808,14 @@ class _PageNavPill extends StatelessWidget {
   final VoidCallback onPrev;
   final VoidCallback onNext;
   final ValueChanged<int> onJumpToPage;
+  final AppStrings strings;
 
   const _PageNavPill({
     required this.currentPage,
     required this.pageCount,
     required this.isTwoPage,
     required this.isDark,
+    required this.strings,
     required this.onPrev,
     required this.onNext,
     required this.onJumpToPage,
@@ -1363,12 +1838,12 @@ class _PageNavPill extends StatelessWidget {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('跳转到页面', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        title: Text(strings.jumpToPageTitle, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('请输入页码 (1 - $pageCount):', style: const TextStyle(fontSize: 13)),
+            Text(strings.jumpToPageHint(1, pageCount), style: const TextStyle(fontSize: 13)),
             const SizedBox(height: 12),
             TextField(
               controller: textController,
@@ -1393,7 +1868,7 @@ class _PageNavPill extends StatelessWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('取消'),
+            child: Text(strings.cancel),
           ),
           FilledButton(
             onPressed: () {
@@ -1403,7 +1878,7 @@ class _PageNavPill extends StatelessWidget {
                 onJumpToPage(page);
               }
             },
-            child: const Text('跳转'),
+            child: Text(strings.jumpButton),
           ),
         ],
       ),
@@ -1423,7 +1898,7 @@ class _PageNavPill extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Tooltip(
-          message: '上一页 (← 或 [)',
+          message: strings.pageNavPrev,
           waitDuration: const Duration(milliseconds: 500),
           child: InkWell(
             onTap: canPrev ? onPrev : null,
@@ -1441,7 +1916,7 @@ class _PageNavPill extends StatelessWidget {
           ),
         ),
         Tooltip(
-          message: '点击跳转页面',
+          message: strings.pageNavTooltip,
           waitDuration: const Duration(milliseconds: 500),
           child: InkWell(
             onTap: () => _showJumpDialog(context),
@@ -1465,7 +1940,7 @@ class _PageNavPill extends StatelessWidget {
           ),
         ),
         Tooltip(
-          message: '下一页 (→ 或 ])',
+          message: strings.pageNavNext,
           waitDuration: const Duration(milliseconds: 500),
           child: InkWell(
             onTap: canNext ? onNext : null,
@@ -1486,5 +1961,4 @@ class _PageNavPill extends StatelessWidget {
     );
   }
 }
-
 

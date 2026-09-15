@@ -39,15 +39,23 @@ void main() {
       final service = ShortcutService();
 
       // Primary user requests:
-      // 1. toggleMode primary key MUST be F (Cmd+F / Ctrl+F)
-      expect(service.getKey('toggleMode'), LogicalKeyboardKey.keyF);
-      expect(service.getShortcutLabel('toggleMode'), contains('F'));
+      // 1. toggleMode primary key is M (Cmd+M / Ctrl+M)
+      expect(service.getKey('toggleMode'), LogicalKeyboardKey.keyM);
+      expect(service.getShortcutLabel('toggleMode'), contains('M'));
 
-      // 2. exportPdf primary key MUST be P (Cmd+P / Ctrl+P)
+      // 2. togglePresentation is Shift+P (Cmd+Shift+P / Ctrl+Shift+P)
+      expect(service.getKey('togglePresentation'), LogicalKeyboardKey.keyP);
+      expect(service.getShortcutLabel('togglePresentation'), contains('P'));
+
+      // 3. findInDocument is F (Cmd+F / Ctrl+F)
+      expect(service.getKey('findInDocument'), LogicalKeyboardKey.keyF);
+      expect(service.getShortcutLabel('findInDocument'), contains('F'));
+
+      // 4. exportPdf primary key MUST be P (Cmd+P / Ctrl+P)
       expect(service.getKey('exportPdf'), LogicalKeyboardKey.keyP);
       expect(service.getShortcutLabel('exportPdf'), contains('P'));
 
-      // 3. other standard keys
+      // 5. other standard keys
       expect(service.getKey('openFile'), LogicalKeyboardKey.keyO);
       expect(service.getKey('toggleSidebar'), LogicalKeyboardKey.keyB);
       expect(service.getKey('compileDocument'), LogicalKeyboardKey.keyR);
@@ -61,16 +69,16 @@ void main() {
 
       expect(service.isCustomized('toggleMode'), isFalse);
 
-      // Rebind toggleMode to Key M
-      service.setKey('toggleMode', LogicalKeyboardKey.keyM);
+      // Rebind toggleMode to Key J
+      service.setKey('toggleMode', LogicalKeyboardKey.keyJ);
       expect(service.isCustomized('toggleMode'), isTrue);
-      expect(service.getKey('toggleMode'), LogicalKeyboardKey.keyM);
-      expect(service.getShortcutLabel('toggleMode'), contains('M'));
+      expect(service.getKey('toggleMode'), LogicalKeyboardKey.keyJ);
+      expect(service.getShortcutLabel('toggleMode'), contains('J'));
 
       // Single action reset
       service.resetKey('toggleMode');
       expect(service.isCustomized('toggleMode'), isFalse);
-      expect(service.getKey('toggleMode'), LogicalKeyboardKey.keyF);
+      expect(service.getKey('toggleMode'), LogicalKeyboardKey.keyM);
 
       // Multiple customizations and resetAll
       service.setKey('toggleMode', LogicalKeyboardKey.keyJ);
@@ -81,35 +89,40 @@ void main() {
       service.resetAll();
       expect(service.isCustomized('toggleMode'), isFalse);
       expect(service.isCustomized('exportPdf'), isFalse);
-      expect(service.getKey('toggleMode'), LogicalKeyboardKey.keyF);
+      expect(service.getKey('toggleMode'), LogicalKeyboardKey.keyM);
       expect(service.getKey('exportPdf'), LogicalKeyboardKey.keyP);
     });
 
     test('conflict detection catches duplicates among same modifier profiles', () {
       final service = ShortcutService();
 
-      // Default toggleMode uses F. If user tries to set openFile to F:
+      // Default toggleMode uses M. If user tries to set openFile to M:
+      final conflictWithM = service.findConflict('openFile', LogicalKeyboardKey.keyM);
+      expect(conflictWithM, isNotNull);
+      expect(conflictWithM, '切换版式 / 视图模式');
+
+      // findInDocument uses F. If user tries to set openFile to F:
       final conflictWithF = service.findConflict('openFile', LogicalKeyboardKey.keyF);
       expect(conflictWithF, isNotNull);
-      expect(conflictWithF, '切换 A4 / 流式视图');
+      expect(conflictWithF, '查找文档内容');
 
       // fontSettings uses Shift+F, so binding a non-shift key should not conflict with fontSettings
-      final conflictWithShift = service.findConflict('toggleMode', LogicalKeyboardKey.keyF);
-      expect(conflictWithShift, isNull); // Setting to its own current key is allowed
+      final conflictWithSelf = service.findConflict('toggleMode', LogicalKeyboardKey.keyM);
+      expect(conflictWithSelf, isNull); // Setting to its own current key is allowed
     });
 
     test('toMap and loadFromMap serialize correctly', () {
       final service = ShortcutService();
-      service.setKey('toggleMode', LogicalKeyboardKey.keyM);
+      service.setKey('toggleMode', LogicalKeyboardKey.keyK);
       service.setKey('exportPdf', LogicalKeyboardKey.keyE);
 
       final map = service.toMap();
-      expect(map['toggleMode'], 'M');
+      expect(map['toggleMode'], 'K');
       expect(map['exportPdf'], 'E');
 
       final newService = ShortcutService();
       newService.loadFromMap(map);
-      expect(newService.getKey('toggleMode'), LogicalKeyboardKey.keyM);
+      expect(newService.getKey('toggleMode'), LogicalKeyboardKey.keyK);
       expect(newService.getKey('exportPdf'), LogicalKeyboardKey.keyE);
       expect(newService.isCustomized('toggleMode'), isTrue);
       expect(newService.isCustomized('exportPdf'), isTrue);
@@ -118,10 +131,12 @@ void main() {
     test('buildBindings maps shortcuts to callbacks', () {
       final service = ShortcutService();
       bool toggledMode = false;
+      bool toggledPresentation = false;
       bool exported = false;
 
       final bindings = service.buildBindings(
         onToggleMode: () => toggledMode = true,
+        onTogglePresentation: () => toggledPresentation = true,
         onExportPdf: () => exported = true,
         onOpenFile: () {},
         onToggleSidebar: () {},
@@ -137,10 +152,10 @@ void main() {
         onFontSettings: () {},
       );
 
-      // Find activator for keyF
+      // Find activator for keyM
       final toggleActivators = bindings.keys.where((a) {
         if (a is SingleActivator) {
-          return a.trigger == LogicalKeyboardKey.keyF && !a.shift;
+          return a.trigger == LogicalKeyboardKey.keyM && !a.shift;
         }
         return false;
       });
@@ -150,10 +165,21 @@ void main() {
       bindings[toggleActivators.first]!();
       expect(toggledMode, isTrue);
 
-      // Find activator for keyP
+      // Find activator for togglePresentation (keyP with shift)
+      final presActivators = bindings.keys.where((a) {
+        if (a is SingleActivator) {
+          return a.trigger == LogicalKeyboardKey.keyP && a.shift;
+        }
+        return false;
+      });
+      expect(presActivators, isNotEmpty);
+      bindings[presActivators.first]!();
+      expect(toggledPresentation, isTrue);
+
+      // Find activator for keyP without shift (exportPdf)
       final exportActivators = bindings.keys.where((a) {
         if (a is SingleActivator) {
-          return a.trigger == LogicalKeyboardKey.keyP;
+          return a.trigger == LogicalKeyboardKey.keyP && !a.shift;
         }
         return false;
       });
@@ -197,12 +223,14 @@ void main() {
       expect(find.text('文档文件'), findsOneWidget);
 
       // Primary actions are present
-      expect(find.text('切换 A4 / 流式视图'), findsOneWidget);
+      expect(find.text('切换版式 / 视图模式'), findsOneWidget);
+      expect(find.text('全屏单页演示 (PPT)'), findsOneWidget);
+      expect(find.text('查找文档内容'), findsOneWidget);
       expect(find.text('导出为出版级 PDF'), findsOneWidget);
 
-      // Initial keys: toggleMode is F, exportPdf is P
+      // Initial keys: toggleMode is M, exportPdf is P
       final modeShortcutLabel = controller.shortcutService.getShortcutLabel('toggleMode');
-      expect(modeShortcutLabel, contains('F'));
+      expect(modeShortcutLabel, contains('M'));
       expect(find.text(modeShortcutLabel), findsWidgets);
 
       // Close dialog
@@ -243,10 +271,10 @@ void main() {
       await tester.tap(resetBtn);
       await tester.pumpAndSettle();
 
-      // Reverts back to default F
+      // Reverts back to default M
       expect(controller.shortcutService.isCustomized('toggleMode'), isFalse);
       expect(find.text('已修改'), findsNothing);
-      expect(controller.shortcutService.getKey('toggleMode'), LogicalKeyboardKey.keyF);
+      expect(controller.shortcutService.getKey('toggleMode'), LogicalKeyboardKey.keyM);
 
       // Drain debounced persist timer
       await tester.pump(const Duration(milliseconds: 700));

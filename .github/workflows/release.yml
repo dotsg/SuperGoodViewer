@@ -48,6 +48,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Setup Flutter SDK
         uses: subosito/flutter-action@v2
@@ -59,12 +60,21 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
-          key: macos-arm64
+          key: macos-universal
 
-      - name: Build Rust sogood_core (Release)
+      - name: Build Rust sogood_core (Release, universal binary)
+        # Flutter emits a universal Runner/engine for release macOS builds, so an
+        # arm64-only dylib makes dlopen fail on Intel Macs with "Invalid arguments".
         run: |
           cd core
-          cargo build --release
+          cargo build --release --lib --target aarch64-apple-darwin
+          cargo build --release --lib --target x86_64-apple-darwin
+          mkdir -p target/universal/release
+          lipo -create \
+            target/aarch64-apple-darwin/release/libsogood_core.dylib \
+            target/x86_64-apple-darwin/release/libsogood_core.dylib \
+            -output target/universal/release/libsogood_core.dylib
+          lipo -info target/universal/release/libsogood_core.dylib
 
       - name: Build Flutter Desktop App (Release)
         run: |
@@ -77,7 +87,12 @@ jobs:
           APP="ui/build/macos/Build/Products/Release/SuperGoodViewer.app"
           test -f "$APP/Contents/MacOS/SuperGoodViewer" || { echo "::error::$APP does not exist or executable is missing"; exit 1; }
           mkdir -p "$APP/Contents/Frameworks/"
-          cp core/target/release/libsogood_core.dylib "$APP/Contents/Frameworks/"
+          cp core/target/universal/release/libsogood_core.dylib "$APP/Contents/Frameworks/"
+          # Fail loudly if the dylib is missing either architecture slice -- Intel or Apple Silicon would crash on launch.
+          ARCHS=$(lipo -archs "$APP/Contents/Frameworks/libsogood_core.dylib")
+          echo "libsogood_core.dylib architectures: $ARCHS"
+          echo "$ARCHS" | grep -q x86_64 || { echo "::error::libsogood_core.dylib is missing the x86_64 slice"; exit 1; }
+          echo "$ARCHS" | grep -q arm64 || { echo "::error::libsogood_core.dylib is missing the arm64 slice"; exit 1; }
           mkdir -p "$APP/Contents/Resources/bin/"
           cp ui/bin/sgv "$APP/Contents/Resources/bin/sgv"
           chmod +x "$APP/Contents/Resources/bin/sgv"
@@ -310,11 +325,83 @@ jobs:
           if-no-files-found: error
 
   # =============================================================
+  # Linux Build & Package (x64 portable tar.gz)
+  # =============================================================
+  build-linux-x64:
+    name: Build Linux x64
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Verify Release Version
+        shell: bash
+        run: |
+          v="${RELEASE_VERSION}"
+          [[ "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version format: $v (expected vX.Y.Z)"; exit 1; }
+          c=$(grep -m1 '^version' core/Cargo.toml | cut -d'"' -f2)
+          [ "${v#v}" = "$c" ] || { echo "::error::$v != Cargo.toml $c"; exit 1; }
+          p=$(grep -m1 '^version:' ui/pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
+          [ "${v#v}" = "$p" ] || { echo "::error::$v != pubspec.yaml $p"; exit 1; }
+          echo "Verified release version: $v (matches Cargo.toml $c, pubspec.yaml $p)"
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build libgtk-3-dev pkg-config
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Setup Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Cache Rust Build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: linux-x64
+
+      - name: Build Rust sogood_core (Release)
+        run: |
+          cd core
+          cargo build --release
+
+      - name: Build Flutter Desktop Linux App (Release)
+        run: |
+          cd ui
+          flutter pub get
+          flutter build linux --release
+
+      - name: Package Linux Portable tar.gz
+        run: |
+          BUNDLE="ui/build/linux/x64/release/bundle"
+          test -f "$BUNDLE/sogoodviewer" || { echo "::error::$BUNDLE/sogoodviewer missing"; exit 1; }
+          test -f "$BUNDLE/lib/libsogood_core.so" || { echo "::error::$BUNDLE/lib/libsogood_core.so missing"; exit 1; }
+          test -f "$BUNDLE/bin/sgv" || { echo "::error::$BUNDLE/bin/sgv missing"; exit 1; }
+          test -x "$BUNDLE/bin/sgv" || { echo "::error::$BUNDLE/bin/sgv is not executable"; exit 1; }
+          mkdir -p dist
+          tar -czvf "dist/SuperGoodViewer-${{ env.RELEASE_VERSION }}-linux-x64.tar.gz" -C "$BUNDLE" .
+
+      - name: Upload Linux x64 Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-x64-binaries
+          path: dist/*
+          if-no-files-found: error
+
+  # =============================================================
   # Publish Release
   # =============================================================
   publish-release:
     name: Publish GitHub Release
-    needs: [build-macos, build-windows-x64, build-windows-arm64]
+    needs: [build-macos, build-windows-x64, build-windows-arm64, build-linux-x64]
     runs-on: ubuntu-latest
 
     steps:
@@ -363,3 +450,8 @@ jobs:
             - **高通骁龙 X / Surface 等 ARM64 设备**：下载 `SuperGoodViewer-${{ env.RELEASE_VERSION }}-windows-arm64.zip`（100% 纯原生 Native ARM64 架构，零转译开销与超高能效）
             - **使用方式**：解压 zip 包至任意目录，双击 `SuperGoodViewer.exe` 即可即开即用（绿色免安装便携版）；亦可将解压目录加入系统环境变量或使用内置的 `sgv.cmd` / `sgv.ps1` 命令行工具快速预览文档。
             - **首次运行提示**：如遇 Windows SmartScreen 提示拦截，点击「更多信息」并选择「仍要运行」。
+
+            #### 🐧 Linux 用户
+            - **Intel / AMD 64位 Linux**：下载 `SuperGoodViewer-${{ env.RELEASE_VERSION }}-linux-x64.tar.gz`
+            - **系统要求**：Ubuntu 20.04+、Debian 11+、Fedora、Arch Linux 等主流 64 位发行版（需安装 GTK 3 环境）
+            - **使用方式**：解压 tar.gz 归档至任意目录，运行 `./sogoodviewer` 即可直接启动（绿色免安装）；亦可将解压目录中的 `bin/sgv` 脚本软链接至 `~/.local/bin/sgv`，在终端随时以命令行唤起。

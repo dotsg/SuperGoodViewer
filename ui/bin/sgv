@@ -12,18 +12,37 @@ while [ -L "$SOURCE" ]; do
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
 
-# 2. Locate the SuperGoodViewer.app bundle
-APP_DIR="$(cd "$SCRIPT_DIR/../../.." >/dev/null 2>&1 && pwd)"
+IS_DARWIN=false
+if [ "$(uname -s)" = "Darwin" ]; then
+  IS_DARWIN=true
+fi
 
-if [ ! -d "$APP_DIR" ] || [[ "$APP_DIR" != *".app" ]]; then
-  if [ -d "/Applications/SuperGoodViewer.app" ]; then
-    APP_DIR="/Applications/SuperGoodViewer.app"
-  elif [ -d "$HOME/Applications/SuperGoodViewer.app" ]; then
-    APP_DIR="$HOME/Applications/SuperGoodViewer.app"
-  elif [ -d "/Applications/超好读.app" ]; then
-    APP_DIR="/Applications/超好读.app"
+# 2. Locate the application
+if [ "$IS_DARWIN" = true ]; then
+  APP_DIR="$(cd "$SCRIPT_DIR/../../.." >/dev/null 2>&1 && pwd)"
+  if [ ! -d "$APP_DIR" ] || [[ "$APP_DIR" != *".app" ]]; then
+    if [ -d "/Applications/SuperGoodViewer.app" ]; then
+      APP_DIR="/Applications/SuperGoodViewer.app"
+    elif [ -d "$HOME/Applications/SuperGoodViewer.app" ]; then
+      APP_DIR="$HOME/Applications/SuperGoodViewer.app"
+    elif [ -d "/Applications/超好读.app" ]; then
+      APP_DIR="/Applications/超好读.app"
+    else
+      APP_DIR="SuperGoodViewer"
+    fi
+  fi
+else
+  # Linux: find sogoodviewer binary
+  if [ -x "$SCRIPT_DIR/sogoodviewer" ]; then
+    APP_BIN="$SCRIPT_DIR/sogoodviewer"
+  elif [ -x "$SCRIPT_DIR/../sogoodviewer" ]; then
+    APP_BIN="$(cd "$SCRIPT_DIR/.." && pwd)/sogoodviewer"
+  elif command -v sogoodviewer >/dev/null 2>&1; then
+    APP_BIN="$(command -v sogoodviewer)"
+  elif [ -x "/opt/supergoodviewer/sogoodviewer" ]; then
+    APP_BIN="/opt/supergoodviewer/sogoodviewer"
   else
-    APP_DIR="SuperGoodViewer"
+    APP_BIN="sogoodviewer"
   fi
 fi
 
@@ -42,19 +61,41 @@ SOCK_FILE="/tmp/sgv_${USER:-user}.sock"
 
 # 4. Open application or files
 if [ $# -eq 0 ]; then
-  open -a "$APP_DIR"
+  if [ "$IS_DARWIN" = true ]; then
+    open -a "$APP_DIR"
+  else
+    nohup "$APP_BIN" >/dev/null 2>&1 &
+  fi
 else
   for f in "$@"; do
     if [ -e "$f" ]; then
       ABS_PATH="$(cd "$(dirname "$f")" && pwd)/$(basename "$f")"
 
       # If SuperGoodViewer is already running, send file via local IPC socket for instant loading
+      SENT=false
       if [ -S "$SOCK_FILE" ]; then
-        echo "$ABS_PATH" | nc -U -w 1 "$SOCK_FILE" >/dev/null 2>&1
-        open -a "$APP_DIR"
-      else
-        # Cold start: launch app passing both document argument and --args
-        open -a "$APP_DIR" "$ABS_PATH" --args "$ABS_PATH"
+        if command -v nc >/dev/null 2>&1; then
+          if echo "$ABS_PATH" | nc -U -w 1 "$SOCK_FILE" >/dev/null 2>&1; then
+            SENT=true
+          fi
+        elif command -v socat >/dev/null 2>&1; then
+          if echo "$ABS_PATH" | socat - UNIX-CONNECT:"$SOCK_FILE" >/dev/null 2>&1; then
+            SENT=true
+          fi
+        fi
+        if [ "$IS_DARWIN" = true ]; then
+          open -a "$APP_DIR"
+          SENT=true
+        fi
+      fi
+
+      if [ "$SENT" = false ]; then
+        # Cold start (or stale socket fallback): launch app passing document argument
+        if [ "$IS_DARWIN" = true ]; then
+          open -a "$APP_DIR" "$ABS_PATH" --args "$ABS_PATH"
+        else
+          nohup "$APP_BIN" "$ABS_PATH" >/dev/null 2>&1 &
+        fi
       fi
     else
       echo "sgv: error: file not found: $f" >&2

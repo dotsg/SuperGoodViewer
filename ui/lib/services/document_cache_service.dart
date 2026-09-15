@@ -53,7 +53,7 @@ class DocumentCacheService {
     // Quantize viewportWidth to 20pt grid to maximize cache hit rates across minor window resize variations,
     // which aligns with ReaderController's 40pt deadband threshold for fluid re-renders.
     final quantizedWidth = (options.viewportWidth / 20.0).round() * 20;
-    final raw = '$filePath#$mtime#$size#${options.mode}#${options.theme}#${options.fontSize}#$quantizedWidth#${options.bodyFont ?? ''}#${options.codeFont ?? ''}';
+    final raw = '$filePath#$mtime#$size#${options.mode}#${options.effectivePageFormat}#${options.theme}#${options.fontSize}#$quantizedWidth#${options.bodyFont ?? ''}#${options.codeFont ?? ''}#${options.headerLeft ?? ''}#${options.headerCenter ?? ''}#${options.headerRight ?? ''}#${options.footerLeft ?? ''}#${options.footerCenter ?? ''}#${options.footerRight ?? ''}#${options.showHeaderRule ?? false}#${options.showFooterRule ?? false}#${options.skipFirstPageHeaderFooter ?? false}#${options.marpEnabled ?? true}';
     int hash = 0xcbf29ce484222325;
     for (final unit in utf8.encode(raw)) {
       hash ^= unit;
