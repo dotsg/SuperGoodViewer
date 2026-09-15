@@ -292,9 +292,14 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
     // For files with unknown or missing extension, inspect sample bytes
     try {
-      final raf = await file.open(mode: FileMode.read);
-      final sample = await raf.read(1024);
-      await raf.close();
+      RandomAccessFile? raf;
+      Uint8List sample;
+      try {
+        raf = await file.open(mode: FileMode.read);
+        sample = await raf.read(1024);
+      } finally {
+        await raf?.close();
+      }
 
       if (sample.isEmpty) return true; // Empty file is safe to open as empty markdown
       if (ReaderController.startsWithPdfHeader(sample)) return true;

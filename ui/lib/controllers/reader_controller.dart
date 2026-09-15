@@ -300,7 +300,16 @@ class ReaderController extends ChangeNotifier {
       final savedCodeFont = prefs['codeFont'] as String?;
       final savedZoom = (prefs['lastZoom'] as num?)?.toDouble();
       final savedHistory = prefs['fileHistory'] as Map<String, dynamic>?;
-      final savedPageFormat = prefs['pageFormat'] as String?;
+      final rawPageFormat = prefs['pageFormat'] as String?;
+      final savedPageFormat = (rawPageFormat != null && PageFormat.all.contains(rawPageFormat))
+          ? rawPageFormat
+          : null;
+      final rawLastPagedFormat = prefs['lastPagedFormat'] as String?;
+      final savedLastPagedFormat = (rawLastPagedFormat != null &&
+              rawLastPagedFormat != PageFormat.fluid &&
+              PageFormat.all.contains(rawLastPagedFormat))
+          ? rawLastPagedFormat
+          : null;
       final savedHeaderLeft = prefs['headerLeft'] as String?;
       final savedHeaderCenter = prefs['headerCenter'] as String?;
       final savedHeaderRight = prefs['headerRight'] as String?;
@@ -323,6 +332,7 @@ class ReaderController extends ChangeNotifier {
           savedBodyFont != null ||
           savedCodeFont != null ||
           savedPageFormat != null ||
+          savedLastPagedFormat != null ||
           savedHeaderLeft != null ||
           savedHeaderCenter != null ||
           savedHeaderRight != null ||
@@ -352,7 +362,9 @@ class ReaderController extends ChangeNotifier {
           marpEnabled: savedMarpEnabled ?? _renderOptions.marpEnabled,
           imageCacheDir: RemoteImageService.instance.getCacheDirectory().path,
         );
-        if (savedPageFormat != null && savedPageFormat != PageFormat.fluid) {
+        if (savedLastPagedFormat != null) {
+          _lastPagedFormat = savedLastPagedFormat;
+        } else if (savedPageFormat != null && savedPageFormat != PageFormat.fluid) {
           _lastPagedFormat = savedPageFormat;
         }
       }
@@ -435,6 +447,7 @@ class ReaderController extends ChangeNotifier {
       'theme': _renderOptions.theme,
       'mode': _renderOptions.mode,
       'pageFormat': _renderOptions.effectivePageFormat,
+      'lastPagedFormat': _lastPagedFormat,
       'isTwoPage': _isTwoPage,
       'autoFitMode': _autoFitMode.name,
       'fontSize': _renderOptions.fontSize,
@@ -905,7 +918,9 @@ class ReaderController extends ChangeNotifier {
       if (value) {
         if (!isPdfDocument && _renderOptions.isFluid) {
           _formatBeforePresentation = _renderOptions.effectivePageFormat;
+          final savedLastPaged = _lastPagedFormat;
           setPageFormat(PageFormat.slide16x9);
+          _lastPagedFormat = savedLastPaged;
         }
       } else {
         if (_formatBeforePresentation != null) {

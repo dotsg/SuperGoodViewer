@@ -538,10 +538,10 @@ fn format_slot_to_typst(template: &str, safe_title: &str, text_color: &str) -> S
         return "[]".to_string();
     }
     let safe_template = escape_typst_text(template);
-    let with_title = safe_template.replace("{title}", safe_title);
-    let with_page = with_title.replace("{page}", "#page-num");
+    let with_page = safe_template.replace("{page}", "#page-num");
     let with_total = with_page.replace("{total}", "#total-pages");
-    format!("[#text(fill: {}, size: 9pt)[{}]]", text_color, with_total)
+    let with_title = with_total.replace("{title}", safe_title);
+    format!("[#text(fill: {}, size: 9pt)[{}]]", text_color, with_title)
 }
 
 pub fn convert_markdown_to_typst(
@@ -1693,12 +1693,16 @@ footer: "single ] and single [ and trailing \\"
 Body text with unmatched brackets: array[0] and single ] and single [ and trailing \.
 "#;
         let mut options = RenderOptions::default();
-        options.header_left = Some("single ]".to_string());
+        options.page_format = Some("a4".to_string());
+        options.header_left = Some("{title}".to_string());
         options.header_center = Some("single [".to_string());
         options.header_right = Some("trailing \\".to_string());
         options.footer_center = Some("Doc [v1.0] \\ Page {page} of {total} ]".to_string());
 
-        let parsed = convert_markdown_to_typst(md, "Title with ] and [ and \\", &options);
+        let parsed = convert_markdown_to_typst(md, "Title with ] and [ and \\ and {page}", &options);
+        // Verify literal {page} inside title is NOT replaced by #page-num
+        assert!(parsed.typst_source.contains(r#"Title with \] and \[ and \\ and {page}"#));
+
         let res = crate::compiler::engine::compile_typst_to_pdf(&parsed.typst_source, ".", parsed.virtual_files);
         assert!(res.is_ok(), "Typst compilation failed with brackets/backslashes in slots: {:?}", res.err());
         let pdf = res.unwrap();

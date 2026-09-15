@@ -106,6 +106,74 @@ void main() {
       expect(controller.renderOptions.pageFormat, PageFormat.a4Landscape);
     });
 
+    test('Presentation mode round-trip does not pollute _lastPagedFormat', () {
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      // Initially in fluid mode, default paged format is A4 portrait
+      expect(controller.renderOptions.isFluid, isTrue);
+
+      // Enter presentation mode (switches format to slide16x9 temporarily)
+      controller.setPresentationMode(true);
+      expect(controller.isPresentationMode, isTrue);
+      expect(controller.renderOptions.pageFormat, PageFormat.slide16x9);
+
+      // Exit presentation mode (restores fluid mode)
+      controller.setPresentationMode(false);
+      expect(controller.isPresentationMode, isFalse);
+      expect(controller.renderOptions.isFluid, isTrue);
+
+      // Toggle mode should switch to A4 portrait, NOT slide16x9!
+      controller.toggleMode();
+      expect(controller.renderOptions.pageFormat, PageFormat.a4Portrait);
+      expect(controller.renderOptions.isFluid, isFalse);
+    });
+
+    test('lastPagedFormat is persisted and restored across app restarts even when exiting in fluid mode', () async {
+      final controller1 = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller1.dispose);
+
+      // Set format to a4Landscape, then switch to fluid
+      controller1.setPageFormat(PageFormat.a4Landscape);
+      controller1.toggleMode();
+      expect(controller1.renderOptions.isFluid, isTrue);
+
+      // Wait for debounced write to complete (600ms debounce + flush)
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      if (PreferencesService.pendingSave != null) {
+        await PreferencesService.pendingSave;
+      }
+
+      // Assert write path: controller1 persisted lastPagedFormat via _persistPreferences
+      final savedPrefs = PreferencesService.loadSync();
+      expect(savedPrefs['lastPagedFormat'], PageFormat.a4Landscape);
+      expect(savedPrefs['pageFormat'], PageFormat.fluid);
+      expect(savedPrefs['mode'], 'fluid');
+
+      // Launch a new controller with autoRestorePreferences: true to verify read path
+      final controller2 = ReaderController(autoRestorePreferences: true);
+      addTearDown(controller2.dispose);
+
+      expect(controller2.renderOptions.isFluid, isTrue);
+      controller2.toggleMode();
+      expect(controller2.renderOptions.pageFormat, PageFormat.a4Landscape);
+    });
+
+    test('corrupted or invalid pageFormat in preferences falls back safely without polluting renderOptions', () async {
+      await PreferencesService.save({
+        'pageFormat': 'corrupted_format_xyz',
+        'lastPagedFormat': 'another_invalid_format',
+      });
+
+      final controller = ReaderController(autoRestorePreferences: true);
+      addTearDown(controller.dispose);
+
+      // Should safely retain default valid formats instead of garbage string
+      expect(controller.renderOptions.effectivePageFormat, PageFormat.fluid);
+      controller.toggleMode();
+      expect(controller.renderOptions.pageFormat, PageFormat.a4Portrait);
+    });
+
     test('RenderOptions serialization and copyWith handle pageFormat and headers/footers', () {
       final options = const RenderOptions().copyWith(
         mode: 'paged',
