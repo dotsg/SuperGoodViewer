@@ -1825,9 +1825,11 @@ class _PdfViewerState extends State<PdfViewer>
         if (needsDetail) {
           final regions = RasterTileRegion.covering(page.pageNumber, rect, tileTarget, tileScale).toList();
           requestedTiles.addAll(regions);
-          for (final region in RasterTileRegion.covering(page.pageNumber, rect, targetRect, tileScale)) {
-            visibleTiles.add(region.key);
-            if (!_tileCache.contains(region.key)) rasterReady = false;
+          for (final region in regions) {
+            if (region.rect.overlaps(targetRect)) {
+              visibleTiles.add(region.key);
+              if (!_tileCache.contains(region.key)) rasterReady = false;
+            }
           }
           _tileCache.draw(canvas, page.pageNumber, rect, targetRect, tileScale, filterQuality);
         } else if (rect.overlaps(targetRect) &&

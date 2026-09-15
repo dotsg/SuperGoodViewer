@@ -16,8 +16,10 @@ Local changes:
 - `lib/src/widgets/pdf_viewer.dart`: opt-in tiled rendering at device resolution,
   directional look-ahead, visible tiles before speculative work, raster-ready
   notification after paint, document/page invalidation and correct preview
-  eviction only when the byte budget is exceeded. Original partial rendering
-  remains available for non-tiled viewers and the selection magnifier.
+  eviction only when the byte budget is exceeded; `removeCacheImagesIfCacheBytesExceedsLimit`
+  lifted out of the per-page loop to execute once per layout pass, and `dist:` metric
+  updated from current page center to viewport center (`targetRect.center`). Original
+  partial rendering remains available for non-tiled viewers and the selection magnifier.
 - `lib/src/widgets/pdf_viewer_params.dart`: `enableTiledRendering` and
   `onVisiblePagesRendered`, included in parameter equality/hash.
 - `test/lazy_loading_test.dart`: correct a stale documentation reference.

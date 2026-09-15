@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:pdfrx/pdfrx.dart';
 import 'package:sogoodviewer/controllers/reader_controller.dart';
+import 'package:sogoodviewer/i18n/strings_en.dart';
+import 'package:sogoodviewer/i18n/strings_zh_hans.dart';
 import 'package:sogoodviewer/models/render_options.dart';
 import 'package:sogoodviewer/services/preferences_service.dart';
 import 'package:sogoodviewer/views/presentation_view.dart';
@@ -60,11 +62,48 @@ void main() {
         PageFormat.slide4x3,
       ]);
 
-      expect(PageFormat.getDisplayName(PageFormat.fluid), contains('流式'));
-      expect(PageFormat.getDisplayName(PageFormat.a4Portrait), contains('A4'));
-      expect(PageFormat.getDisplayName(PageFormat.a4Landscape), contains('横向'));
-      expect(PageFormat.getDisplayName(PageFormat.slide16x9), contains('16:9'));
-      expect(PageFormat.getDisplayName(PageFormat.slide4x3), contains('4:3'));
+      final zhStrings = ZhHansStrings();
+      expect(PageFormat.getDisplayName(PageFormat.fluid, zhStrings), contains('长卷轴'));
+      expect(PageFormat.getDisplayName(PageFormat.a4Portrait, zhStrings), contains('A4'));
+      expect(PageFormat.getDisplayName(PageFormat.a4Landscape, zhStrings), contains('横向'));
+      expect(PageFormat.getDisplayName(PageFormat.slide16x9, zhStrings), contains('16:9'));
+      expect(PageFormat.getDisplayName(PageFormat.slide4x3, zhStrings), contains('4:3'));
+
+      final enStrings = EnStrings();
+      expect(PageFormat.getDisplayName(PageFormat.fluid, enStrings), contains('Fluid'));
+      expect(PageFormat.getDisplayName(PageFormat.slide16x9, enStrings), contains('16:9'));
+    });
+
+    test('toggleMode remembers previous non-fluid format when cycling between fluid and paged', () {
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      // Default is fluid
+      expect(controller.renderOptions.isFluid, isTrue);
+
+      // Set to slide16x9
+      controller.setPageFormat(PageFormat.slide16x9);
+      expect(controller.renderOptions.pageFormat, PageFormat.slide16x9);
+      expect(controller.renderOptions.isFluid, isFalse);
+
+      // Toggle to fluid
+      controller.toggleMode();
+      expect(controller.renderOptions.isFluid, isTrue);
+
+      // Toggle back - should restore slide16x9, NOT reset to a4Portrait!
+      controller.toggleMode();
+      expect(controller.renderOptions.pageFormat, PageFormat.slide16x9);
+      expect(controller.renderOptions.isFluid, isFalse);
+
+      // Switch to a4Landscape
+      controller.setPageFormat(PageFormat.a4Landscape);
+      expect(controller.renderOptions.pageFormat, PageFormat.a4Landscape);
+
+      // Toggle to fluid and back
+      controller.toggleMode();
+      expect(controller.renderOptions.isFluid, isTrue);
+      controller.toggleMode();
+      expect(controller.renderOptions.pageFormat, PageFormat.a4Landscape);
     });
 
     test('RenderOptions serialization and copyWith handle pageFormat and headers/footers', () {

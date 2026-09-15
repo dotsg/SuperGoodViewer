@@ -285,16 +285,16 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
   };
 
-  static bool _isFileSupported(File file) {
+  static Future<bool> _isFileSupported(File file) async {
     final ext = p.extension(file.path).toLowerCase();
     if (_supportedExtensions.contains(ext)) return true;
     if (_knownBinaryExtensions.contains(ext)) return false;
 
     // For files with unknown or missing extension, inspect sample bytes
     try {
-      final raf = file.openSync(mode: FileMode.read);
-      final sample = raf.readSync(1024);
-      raf.closeSync();
+      final raf = await file.open(mode: FileMode.read);
+      final sample = await raf.read(1024);
+      await raf.close();
 
       if (sample.isEmpty) return true; // Empty file is safe to open as empty markdown
       if (ReaderController.startsWithPdfHeader(sample)) return true;
@@ -321,10 +321,10 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       if (path.isEmpty) continue;
 
       try {
-        final type = FileSystemEntity.typeSync(path);
+        final type = await FileSystemEntity.type(path);
         if (type == FileSystemEntityType.file) {
           final f = File(path);
-          if (_isFileSupported(f)) {
+          if (await _isFileSupported(f)) {
             targetFilePath = path;
             break;
           } else {
@@ -345,18 +345,22 @@ class _WorkspaceViewState extends State<WorkspaceView> {
           ];
           for (final c in candidates) {
             final candidateFile = File(p.join(path, c));
-            if (candidateFile.existsSync()) {
+            if (await candidateFile.exists()) {
               targetFilePath = candidateFile.path;
               break;
             }
           }
           if (targetFilePath != null) break;
 
-          // Try to find the first supported file in the directory
+          // Try to find the first supported file in the directory (sorted deterministically)
           final dir = Directory(path);
-          final entries = dir.listSync(followLinks: false);
+          final entries = await dir.list(followLinks: false).toList();
+          entries.sort((a, b) {
+            final cmp = a.path.toLowerCase().compareTo(b.path.toLowerCase());
+            return cmp != 0 ? cmp : a.path.compareTo(b.path);
+          });
           for (final entry in entries) {
-            if (entry is File && _isFileSupported(entry)) {
+            if (entry is File && await _isFileSupported(entry)) {
               targetFilePath = entry.path;
               break;
             }

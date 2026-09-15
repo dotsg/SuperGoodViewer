@@ -17,6 +17,9 @@ fn escape_typst_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
         match c {
+            '\\' => out.push_str("\\\\"),
+            '[' => out.push_str("\\["),
+            ']' => out.push_str("\\]"),
             '#' => out.push_str("\\#"),
             '@' => out.push_str("\\@"),
             '$' => out.push_str("\\$"),
@@ -1678,4 +1681,28 @@ A table with wide metrics.
         let pdf = res.unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
     }
+
+    #[test]
+    fn test_header_footer_slot_escaping_with_brackets_and_backslashes() {
+        // Test frontmatter with unmatched brackets and backslashes
+        let md = r#"---
+header: "x] y [z] \\"
+footer: "single ] and single [ and trailing \\"
+---
+# Test Document
+Body text with unmatched brackets: array[0] and single ] and single [ and trailing \.
+"#;
+        let mut options = RenderOptions::default();
+        options.header_left = Some("single ]".to_string());
+        options.header_center = Some("single [".to_string());
+        options.header_right = Some("trailing \\".to_string());
+        options.footer_center = Some("Doc [v1.0] \\ Page {page} of {total} ]".to_string());
+
+        let parsed = convert_markdown_to_typst(md, "Title with ] and [ and \\", &options);
+        let res = crate::compiler::engine::compile_typst_to_pdf(&parsed.typst_source, ".", parsed.virtual_files);
+        assert!(res.is_ok(), "Typst compilation failed with brackets/backslashes in slots: {:?}", res.err());
+        let pdf = res.unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
+    }
 }
+

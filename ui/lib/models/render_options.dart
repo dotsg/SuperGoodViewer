@@ -17,32 +17,18 @@ class PageFormat {
     slide4x3,
   ];
 
-  static String getDisplayName(String format, [AppStrings? strings]) {
-    if (strings != null) {
-      switch (format) {
-        case fluid:
-          return strings.layoutModeFluid;
-        case a4Portrait:
-          return strings.layoutModeA4Portrait;
-        case a4Landscape:
-          return strings.layoutModeA4Landscape;
-        case slide16x9:
-          return strings.layoutModeSlide169;
-        case slide4x3:
-          return strings.layoutModeSlide43;
-      }
-    }
+  static String getDisplayName(String format, AppStrings strings) {
     switch (format) {
       case fluid:
-        return '自适应流式';
+        return strings.layoutModeFluid;
       case a4Portrait:
-        return 'A4 纵向';
+        return strings.layoutModeA4Portrait;
       case a4Landscape:
-        return 'A4 横向';
+        return strings.layoutModeA4Landscape;
       case slide16x9:
-        return '16:9 幻灯片';
+        return strings.layoutModeSlide169;
       case slide4x3:
-        return '4:3 幻灯片';
+        return strings.layoutModeSlide43;
       default:
         return format;
     }

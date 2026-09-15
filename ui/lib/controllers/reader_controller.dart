@@ -352,6 +352,9 @@ class ReaderController extends ChangeNotifier {
           marpEnabled: savedMarpEnabled ?? _renderOptions.marpEnabled,
           imageCacheDir: RemoteImageService.instance.getCacheDirectory().path,
         );
+        if (savedPageFormat != null && savedPageFormat != PageFormat.fluid) {
+          _lastPagedFormat = savedPageFormat;
+        }
       }
       if (savedLanguage != null) {
         _language = savedLanguage;
@@ -846,8 +849,13 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
+  String _lastPagedFormat = PageFormat.a4Portrait;
+
   void setPageFormat(String format) {
     if (isPdfDocument) return;
+    if (format != PageFormat.fluid) {
+      _lastPagedFormat = format;
+    }
     if (_renderOptions.effectivePageFormat == format) return;
     renderOptionsChanged = true;
     startReloading();
@@ -883,10 +891,7 @@ class ReaderController extends ChangeNotifier {
   void toggleMode() {
     if (isPdfDocument) return;
     if (_renderOptions.isFluid) {
-      final target = (_renderOptions.pageFormat == null || _renderOptions.pageFormat == PageFormat.fluid)
-          ? PageFormat.a4Portrait
-          : _renderOptions.pageFormat!;
-      setPageFormat(target);
+      setPageFormat(_lastPagedFormat);
     } else {
       setPageFormat(PageFormat.fluid);
     }
