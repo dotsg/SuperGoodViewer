@@ -1965,6 +1965,76 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       params: PdfViewerParams(
         backgroundColor: canvasBg,
         enableTiledRendering: true,
+        onKey: (params, key, isRealKeyPress) {
+          if (key == LogicalKeyboardKey.arrowLeft ||
+              key == LogicalKeyboardKey.arrowRight ||
+              key == LogicalKeyboardKey.arrowUp ||
+              key == LogicalKeyboardKey.arrowDown ||
+              key == LogicalKeyboardKey.pageUp ||
+              key == LogicalKeyboardKey.pageDown ||
+              key == LogicalKeyboardKey.space ||
+              key == LogicalKeyboardKey.home ||
+              key == LogicalKeyboardKey.end ||
+              key == LogicalKeyboardKey.bracketLeft ||
+              key == LogicalKeyboardKey.bracketRight ||
+              key == LogicalKeyboardKey.equal ||
+              key == LogicalKeyboardKey.minus ||
+              key == LogicalKeyboardKey.add) {
+            return false;
+          }
+          return null;
+        },
+        calculateCurrentPageNumber: (visibleRect, pageLayouts, controller) {
+          if (pageLayouts.isEmpty) return 1;
+          if (effectiveFluid) {
+            final targetY = visibleRect.top;
+            for (var i = 0; i < pageLayouts.length; i++) {
+              final rect = pageLayouts[i];
+              if (targetY >= rect.top && targetY <= rect.bottom) {
+                return i + 1;
+              }
+            }
+            if (targetY >= (pageLayouts.lastOrNull?.bottom ?? 0)) {
+              return pageLayouts.length;
+            }
+            return 1;
+          }
+
+          final isTwoPage = widget.isTwoPage && !effectiveFluid;
+          final viewCenter = visibleRect.center;
+
+          double maxVisibleArea = -1;
+          int bestPage = 1;
+          double minCenterDistanceSq = double.infinity;
+          int closestPage = 1;
+
+          for (int i = 0; i < pageLayouts.length; i++) {
+            final rect = pageLayouts[i];
+            final dx = rect.center.dx - viewCenter.dx;
+            final dy = rect.center.dy - viewCenter.dy;
+            final distSq = dx * dx + dy * dy;
+            if (distSq < minCenterDistanceSq) {
+              minCenterDistanceSq = distSq;
+              closestPage = i + 1;
+            }
+
+            final intersect = visibleRect.intersect(rect);
+            if (!intersect.isEmpty && intersect.width > 0 && intersect.height > 0) {
+              final area = intersect.width * intersect.height;
+              if (area > maxVisibleArea) {
+                maxVisibleArea = area;
+                bestPage = i + 1;
+              }
+            }
+          }
+
+          final selectedPage = maxVisibleArea > 0 ? bestPage : closestPage;
+          if (isTwoPage) {
+            final spreadIndex = (selectedPage - 1) ~/ 2;
+            return (spreadIndex * 2 + 1).clamp(1, pageLayouts.length);
+          }
+          return selectedPage;
+        },
         pagePaintCallbacks: [
           (canvas, pageRect, page) {
             _textSearchers[slotIndex]?.pageTextMatchPaintCallback(canvas, pageRect, page);

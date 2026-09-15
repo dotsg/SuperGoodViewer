@@ -359,4 +359,68 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 1));
   });
+
+  testWidgets('Two-page spread navigation with ArrowRight/ArrowLeft works reliably even after focusing the PDF canvas', (tester) async {
+    const windowChannel = MethodChannel('com.sogoodviewer.window');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(windowChannel, (_) async => null);
+    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(windowChannel, null));
+
+    final controller = ReaderController(autoRestorePreferences: false);
+    addTearDown(controller.dispose);
+    await controller.openFile(multipagePdfFile.path);
+    controller.setPageFormat(PageFormat.a4Portrait);
+    controller.setTwoPage(true);
+
+    // Large enough so spread fits viewport
+    tester.view.physicalSize = const Size(1600, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(MaterialApp(home: WorkspaceView(controller: controller)));
+
+    Future<void> advance([int frames = 30]) async {
+      for (var i = 0; i < frames; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 2)));
+      }
+    }
+
+    await advance(60);
+    final canvas = tester.state<PdfCanvasViewState>(find.byType(PdfCanvasView));
+    expect(canvas.isReady, isTrue);
+    expect(canvas.pageNumber, 1);
+
+    // Click/tap directly on the PDF viewer canvas, which gives focus to pdfrx's internal PdfViewerKeyHandler
+    await tester.tap(find.byType(PdfViewer));
+    await advance(10);
+
+    // Press ArrowRight: must advance to Spread 1 (Page 3)
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await advance(40);
+    expect(canvas.pageNumber, 3, reason: 'ArrowRight must flip to next spread (page 3) even when canvas has focus');
+
+    // Tap again on canvas
+    await tester.tap(find.byType(PdfViewer));
+    await advance(10);
+
+    // Press ArrowRight again: must advance to Spread 2 (Page 5)
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await advance(40);
+    expect(canvas.pageNumber, 5, reason: 'ArrowRight must flip to next spread (page 5)');
+
+    // Press ArrowLeft: must flip back to Spread 1 (Page 3)
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await advance(40);
+    expect(canvas.pageNumber, 3, reason: 'ArrowLeft must flip back to spread 1 (page 3)');
+
+    // Press ArrowLeft: must flip back to Spread 0 (Page 1)
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await advance(40);
+    expect(canvas.pageNumber, 1, reason: 'ArrowLeft must flip back to first spread (page 1)');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+  });
 }
+
