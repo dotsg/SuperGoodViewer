@@ -72,17 +72,25 @@ else
       ABS_PATH="$(cd "$(dirname "$f")" && pwd)/$(basename "$f")"
 
       # If SuperGoodViewer is already running, send file via local IPC socket for instant loading
+      SENT=false
       if [ -S "$SOCK_FILE" ]; then
         if command -v nc >/dev/null 2>&1; then
-          echo "$ABS_PATH" | nc -U -w 1 "$SOCK_FILE" >/dev/null 2>&1 || true
+          if echo "$ABS_PATH" | nc -U -w 1 "$SOCK_FILE" >/dev/null 2>&1; then
+            SENT=true
+          fi
         elif command -v socat >/dev/null 2>&1; then
-          echo "$ABS_PATH" | socat - UNIX-CONNECT:"$SOCK_FILE" >/dev/null 2>&1 || true
+          if echo "$ABS_PATH" | socat - UNIX-CONNECT:"$SOCK_FILE" >/dev/null 2>&1; then
+            SENT=true
+          fi
         fi
         if [ "$IS_DARWIN" = true ]; then
           open -a "$APP_DIR"
+          SENT=true
         fi
-      else
-        # Cold start: launch app passing document argument
+      fi
+
+      if [ "$SENT" = false ]; then
+        # Cold start (or stale socket fallback): launch app passing document argument
         if [ "$IS_DARWIN" = true ]; then
           open -a "$APP_DIR" "$ABS_PATH" --args "$ABS_PATH"
         else

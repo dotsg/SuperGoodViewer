@@ -381,8 +381,13 @@ jobs:
 
       - name: Package Linux Portable tar.gz
         run: |
+          BUNDLE="ui/build/linux/x64/release/bundle"
+          test -f "$BUNDLE/sogoodviewer" || { echo "::error::$BUNDLE/sogoodviewer missing"; exit 1; }
+          test -f "$BUNDLE/lib/libsogood_core.so" || { echo "::error::$BUNDLE/lib/libsogood_core.so missing"; exit 1; }
+          test -f "$BUNDLE/bin/sgv" || { echo "::error::$BUNDLE/bin/sgv missing"; exit 1; }
+          test -x "$BUNDLE/bin/sgv" || { echo "::error::$BUNDLE/bin/sgv is not executable"; exit 1; }
           mkdir -p dist
-          tar -czvf "dist/SuperGoodViewer-${{ env.RELEASE_VERSION }}-linux-x64.tar.gz" -C ui/build/linux/x64/release/bundle .
+          tar -czvf "dist/SuperGoodViewer-${{ env.RELEASE_VERSION }}-linux-x64.tar.gz" -C "$BUNDLE" .
 
       - name: Upload Linux x64 Artifacts
         uses: actions/upload-artifact@v7

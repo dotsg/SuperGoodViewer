@@ -72,9 +72,11 @@ Write-Host ("  ✓ Windows x64 Package Created: {0:N2} MB ({1}s)" -f $winSize, $
 Write-Host "`n[3/4] Simulating Linux x64 Release Build in WSL..." -ForegroundColor Yellow
 $swLinux = [System.Diagnostics.Stopwatch]::StartNew()
 
+$wslRoot = (wsl wslpath -u ($root.ToString().Replace('\', '/'))).Trim()
+
 $wslCmd = @"
 set -e
-cd /mnt/c/Users/wuvis/code/SuperGoodViewer
+cd "$wslRoot"
 export PATH="/usr/local/bin:/opt/flutter/bin:`$PATH"
 echo "  -> [WSL] Building Rust sogood_core (--lib)..."
 cd core && cargo build --release --lib
@@ -83,7 +85,7 @@ cd ../ui && flutter pub get
 echo "  -> [WSL] Building Flutter Linux..."
 flutter build linux --release
 echo "  -> [WSL] Packaging tar.gz..."
-cd /mnt/c/Users/wuvis/code/SuperGoodViewer
+cd "$wslRoot"
 mkdir -p dist
 tar -czvf "dist/SuperGoodViewer-$Version-linux-x64.tar.gz" -C ui/build/linux/x64/release/bundle .
 "@

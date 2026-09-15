@@ -51,7 +51,7 @@ static gchar* get_linux_cli_target_script() {
     }
     g_free(candidate);
   }
-  const gchar* cwd = g_get_current_dir();
+  g_autofree gchar* cwd = g_get_current_dir();
   gchar* candidate = g_build_filename(cwd, "ui", "bin", "sgv", nullptr);
   if (g_file_test(candidate, G_FILE_TEST_EXISTS)) {
     return candidate;
@@ -383,6 +383,18 @@ static gboolean my_application_local_command_line(GApplication* application,
   if (!g_application_register(application, nullptr, &error)) {
     g_warning("Failed to register: %s", error->message);
     *exit_status = 1;
+    return TRUE;
+  }
+
+  if (g_application_get_is_remote(application)) {
+    if (self->pending_file != nullptr) {
+      g_autoptr(GFile) file = g_file_new_for_path(self->pending_file);
+      GFile* files[1] = { file };
+      g_application_open(application, files, 1, "");
+    } else {
+      g_application_activate(application);
+    }
+    *exit_status = 0;
     return TRUE;
   }
 
