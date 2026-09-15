@@ -4,7 +4,7 @@ else
   FLUTTER ?= flutter
 endif
 
-.PHONY: all build build-core build-core-universal build-app build-windows build-windows-arm64 build-linux test test-core test-app bench benchmark clean run-macos run-windows run-linux dmg package-windows package-windows-arm64 package-linux
+.PHONY: all build build-core build-core-universal build-app build-windows build-windows-arm64 build-linux test test-core test-app test-release-local bench benchmark clean run-macos run-windows run-linux dmg package-windows package-windows-arm64 package-linux
 
 all: build test
 
@@ -58,6 +58,10 @@ test-app:
 	@echo "==> Running Flutter static analysis and tests..."
 	@cd ui && $(FLUTTER) analyze
 	@cd ui && $(FLUTTER) test
+
+test-release-local:
+	@echo "==> Running local release rehearsal simulation (Windows x64 + Linux x64)..."
+	@powershell -ExecutionPolicy Bypass -File scripts/test-release-local.ps1
 
 # Run micro-benchmarks explicitly on demand
 benchmark: bench
