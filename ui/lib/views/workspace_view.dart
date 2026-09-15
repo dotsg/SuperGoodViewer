@@ -457,7 +457,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       _updateTrafficLights();
     }
     if (widget.controller.isFluidLayout) {
-      _pdfCanvasKey.currentState?.scrollByDelta(420);
+      _pdfCanvasKey.currentState?.scrollScreenDown();
     } else {
       _pdfCanvasKey.currentState?.nextPage();
     }
@@ -470,7 +470,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       return;
     }
     if (widget.controller.isFluidLayout) {
-      _pdfCanvasKey.currentState?.scrollByDelta(-420);
+      _pdfCanvasKey.currentState?.scrollScreenUp();
     } else {
       if (_currentPage <= 2) {
         setState(() {
@@ -481,6 +481,45 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       }
       _pdfCanvasKey.currentState?.prevPage();
     }
+  }
+
+  void _handleScrollScreenDown() {
+    if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
+    if (widget.controller.isPresentationMode) {
+      _presentationKey.currentState?.nextPage();
+      return;
+    }
+    if (!_isSidebarOpen && !_isHoveringTitleBar && (_isTitleBarVisible || _isAtTop)) {
+      setState(() {
+        _isAtTop = false;
+        _isTitleBarVisible = false;
+      });
+      _updateTrafficLights();
+    }
+    if (!widget.controller.isFluidLayout) {
+      final canvas = _pdfCanvasKey.currentState;
+      if (canvas != null && canvas.isCurrentPageFittingViewport) {
+        _handleNextPage();
+        return;
+      }
+    }
+    _pdfCanvasKey.currentState?.scrollScreenDown();
+  }
+
+  void _handleScrollScreenUp() {
+    if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
+    if (widget.controller.isPresentationMode) {
+      _presentationKey.currentState?.prevPage();
+      return;
+    }
+    if (!widget.controller.isFluidLayout) {
+      final canvas = _pdfCanvasKey.currentState;
+      if (canvas != null && canvas.isCurrentPageFittingViewport) {
+        _handlePrevPage();
+        return;
+      }
+    }
+    _pdfCanvasKey.currentState?.scrollScreenUp();
   }
 
   void _handleFirstPage() {
@@ -655,19 +694,21 @@ class _WorkspaceViewState extends State<WorkspaceView> {
             const SingleActivator(LogicalKeyboardKey.add, meta: true): _handleZoomIn,
             const SingleActivator(LogicalKeyboardKey.add, control: true): _handleZoomIn,
 
-            // Page Navigation & Book Mode (Arrow keys, Bracket keys, PageUp/PageDown, Space)
+            // Page Navigation & Book Mode (Arrow keys, Bracket keys, PageUp/PageDown)
             const SingleActivator(LogicalKeyboardKey.arrowLeft): _handlePrevPage,
             const SingleActivator(LogicalKeyboardKey.arrowRight): _handleNextPage,
-            const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
-                _pdfCanvasKey.currentState?.scrollByDelta(-120),
-            const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
-                _pdfCanvasKey.currentState?.scrollByDelta(120),
             const SingleActivator(LogicalKeyboardKey.bracketLeft): _handlePrevPage,
             const SingleActivator(LogicalKeyboardKey.bracketRight): _handleNextPage,
             const SingleActivator(LogicalKeyboardKey.pageUp): _handlePrevPage,
             const SingleActivator(LogicalKeyboardKey.pageDown): _handleNextPage,
-            const SingleActivator(LogicalKeyboardKey.space): _handleNextPage,
-            const SingleActivator(LogicalKeyboardKey.space, shift: true): _handlePrevPage,
+
+            // Scrolling (Arrow keys = line scroll, Space = screen scroll)
+            const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
+                _pdfCanvasKey.currentState?.scrollByDelta(-120),
+            const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
+                _pdfCanvasKey.currentState?.scrollByDelta(120),
+            const SingleActivator(LogicalKeyboardKey.space): _handleScrollScreenDown,
+            const SingleActivator(LogicalKeyboardKey.space, shift: true): _handleScrollScreenUp,
             const SingleActivator(LogicalKeyboardKey.home): _handleFirstPage,
             const SingleActivator(LogicalKeyboardKey.end): _handleLastPage,
             const SingleActivator(LogicalKeyboardKey.arrowUp, meta: true): _handleFirstPage,

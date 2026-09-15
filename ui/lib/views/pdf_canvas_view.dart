@@ -862,6 +862,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   }
 
   PdfViewerController get _pdfController => _controllers[_activeSlot];
+  @visibleForTesting
+  PdfViewerController get pdfController => _pdfController;
   double get currentZoom => _pdfController.isReady ? _pdfController.currentZoom : _currentZoom;
   bool get isReady => _pdfController.isReady;
   int get pageNumber => _pdfController.isReady ? (_pdfController.pageNumber ?? 1) : 1;
@@ -1323,8 +1325,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   Offset _calcStableZoomCenter(Offset? focalPoint) {
     if (focalPoint != null) return focalPoint;
     if (!_pdfController.isReady) return Offset.zero;
-    final layout = _pdfController.layout;
-    if (layout.pageLayouts.isEmpty) return _pdfController.centerPosition;
+    final layout = _pdfController.layoutOrNull;
+    if (layout == null || layout.pageLayouts.isEmpty) return _pdfController.centerPosition;
 
     if (widget.controller.isFluidLayout) {
       final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
@@ -1481,7 +1483,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     }
   }
 
-  Future<void> nextPage() async {
+  Future<void> nextPage({bool preserveOffset = true}) async {
     if (!_pdfController.isReady) return;
     final pCount = _pdfController.pageCount;
     final currentPage = _pdfController.pageNumber ?? 1;
@@ -1489,15 +1491,39 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
     int targetPage;
     if (isTwoPage) {
-      final spreadIndex = (currentPage - 1) ~/ 2;
-      targetPage = (spreadIndex + 1) * 2 + 1;
+      final currentSpreadIndex = (currentPage - 1) ~/ 2;
+      final maxSpreadIndex = (pCount - 1) ~/ 2;
+      if (currentSpreadIndex >= maxSpreadIndex) return;
+      targetPage = (currentSpreadIndex + 1) * 2 + 1;
     } else {
+      if (currentPage >= pCount) return;
       targetPage = currentPage + 1;
     }
 
-    if (targetPage > pCount) {
-      targetPage = pCount;
-      if (currentPage == pCount) return;
+    if (preserveOffset) {
+      final layout = _pdfController.layoutOrNull;
+      if (layout != null) {
+        final currentIdx = isTwoPage ? ((currentPage - 1) ~/ 2) * 2 : currentPage - 1;
+        final targetIdx = isTwoPage ? ((targetPage - 1) ~/ 2) * 2 : targetPage - 1;
+        if (currentIdx < layout.pageLayouts.length && targetIdx < layout.pageLayouts.length) {
+          final currentRect = layout.pageLayouts[currentIdx];
+          final targetRect = layout.pageLayouts[targetIdx];
+
+          final visibleRect = _pdfController.visibleRect;
+          final relX = visibleRect.left - currentRect.left;
+          final relY = visibleRect.top - currentRect.top;
+
+          final targetX = isTwoPage ? visibleRect.left : (targetRect.left + relX);
+          final targetOffset = Offset(targetX, targetRect.top + relY);
+          await _pdfController.goToPosition(
+            documentOffset: targetOffset,
+            zoom: currentZoom,
+            duration: const Duration(milliseconds: 220),
+            targetPageNumber: targetPage,
+          );
+          return;
+        }
+      }
     }
 
     await _pdfController.goToPage(
@@ -1507,22 +1533,45 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     );
   }
 
-  Future<void> prevPage() async {
+  Future<void> prevPage({bool preserveOffset = true}) async {
     if (!_pdfController.isReady) return;
     final currentPage = _pdfController.pageNumber ?? 1;
     final isTwoPage = widget.controller.isTwoPage && !widget.controller.isFluidLayout;
 
     int targetPage;
     if (isTwoPage) {
-      final spreadIndex = (currentPage - 1) ~/ 2;
-      targetPage = (spreadIndex - 1) * 2 + 1;
+      final currentSpreadIndex = (currentPage - 1) ~/ 2;
+      if (currentSpreadIndex <= 0) return;
+      targetPage = (currentSpreadIndex - 1) * 2 + 1;
     } else {
+      if (currentPage <= 1) return;
       targetPage = currentPage - 1;
     }
 
-    if (targetPage < 1) {
-      targetPage = 1;
-      if (currentPage == 1) return;
+    if (preserveOffset) {
+      final layout = _pdfController.layoutOrNull;
+      if (layout != null) {
+        final currentIdx = isTwoPage ? ((currentPage - 1) ~/ 2) * 2 : currentPage - 1;
+        final targetIdx = isTwoPage ? ((targetPage - 1) ~/ 2) * 2 : targetPage - 1;
+        if (currentIdx < layout.pageLayouts.length && targetIdx < layout.pageLayouts.length) {
+          final currentRect = layout.pageLayouts[currentIdx];
+          final targetRect = layout.pageLayouts[targetIdx];
+
+          final visibleRect = _pdfController.visibleRect;
+          final relX = visibleRect.left - currentRect.left;
+          final relY = visibleRect.top - currentRect.top;
+
+          final targetX = isTwoPage ? visibleRect.left : (targetRect.left + relX);
+          final targetOffset = Offset(targetX, targetRect.top + relY);
+          await _pdfController.goToPosition(
+            documentOffset: targetOffset,
+            zoom: currentZoom,
+            duration: const Duration(milliseconds: 220),
+            targetPageNumber: targetPage,
+          );
+          return;
+        }
+      }
     }
 
     await _pdfController.goToPage(
@@ -1530,6 +1579,44 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       anchor: PdfPageAnchor.top,
       duration: const Duration(milliseconds: 220),
     );
+  }
+
+  bool get isCurrentPageFittingViewport {
+    if (!_pdfController.isReady) return false;
+    final layout = _pdfController.layoutOrNull;
+    if (layout == null) return false;
+    final currentPage = _pdfController.pageNumber ?? 1;
+    final isTwoPage = widget.controller.isTwoPage && !widget.controller.isFluidLayout;
+    final currentIdx = isTwoPage ? ((currentPage - 1) ~/ 2) * 2 : currentPage - 1;
+    if (currentIdx < 0 || currentIdx >= layout.pageLayouts.length) return false;
+    final currentRect = layout.pageLayouts[currentIdx];
+    final visibleRect = _pdfController.visibleRect;
+    var pageHeight = currentRect.height;
+    if (isTwoPage && currentIdx + 1 < layout.pageLayouts.length) {
+      final secondRect = layout.pageLayouts[currentIdx + 1];
+      pageHeight = math.max(pageHeight, secondRect.height);
+    }
+    return pageHeight <= visibleRect.height + 4.0;
+  }
+
+  Future<void> scrollScreenDown() async {
+    if (!_pdfController.isReady) return;
+    final h = _pdfController.visibleRect.height;
+    final zoom = currentZoom;
+    final screenH = h * zoom;
+    final screenStep = (screenH > 0 ? screenH * 0.85 : 420.0).clamp(40.0, 4000.0);
+    final step = zoom > 0 ? screenStep / zoom : screenStep;
+    await scrollByDelta(step);
+  }
+
+  Future<void> scrollScreenUp() async {
+    if (!_pdfController.isReady) return;
+    final h = _pdfController.visibleRect.height;
+    final zoom = currentZoom;
+    final screenH = h * zoom;
+    final screenStep = (screenH > 0 ? screenH * 0.85 : 420.0).clamp(40.0, 4000.0);
+    final step = zoom > 0 ? screenStep / zoom : screenStep;
+    await scrollByDelta(-step);
   }
 
   Future<void> goToPageNumber(int pageNumber) async {

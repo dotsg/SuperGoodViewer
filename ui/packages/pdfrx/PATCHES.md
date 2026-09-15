@@ -19,7 +19,11 @@ Local changes:
   eviction only when the byte budget is exceeded; `removeCacheImagesIfCacheBytesExceedsLimit`
   lifted out of the per-page loop to execute once per layout pass, and `dist:` metric
   updated from current page center to viewport center (`targetRect.center`). Original
-  partial rendering remains available for non-tiled viewers and the selection magnifier.
+  partial rendering remains available for non-tiled viewers and the selection magnifier;
+  optional `targetPageNumber` parameter added to `goToPosition` to preserve page tracking
+  during intra-page offset and two-page spread navigation; `layoutOrNull` safe getter added
+  to `PdfViewerController`; visible tiles in tiled rendering filtered by exact `coreRect`
+  bounds rather than gutter-expanded `rect` to prevent gutter overlaps from delaying `rasterReady`.
 - `lib/src/widgets/pdf_viewer_params.dart`: `enableTiledRendering` and
   `onVisiblePagesRendered`, included in parameter equality/hash.
 - `test/lazy_loading_test.dart`: correct a stale documentation reference.

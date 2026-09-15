@@ -1826,7 +1826,7 @@ class _PdfViewerState extends State<PdfViewer>
           final regions = RasterTileRegion.covering(page.pageNumber, rect, tileTarget, tileScale).toList();
           requestedTiles.addAll(regions);
           for (final region in regions) {
-            if (region.rect.overlaps(targetRect)) {
+            if (region.coreRect.overlaps(targetRect)) {
               visibleTiles.add(region.key);
               if (!_tileCache.contains(region.key)) rasterReady = false;
             }
@@ -2705,10 +2705,15 @@ class _PdfViewerState extends State<PdfViewer>
     required Offset documentOffset,
     Duration duration = const Duration(milliseconds: 0),
     double? zoom,
+    int? targetPageNumber,
   }) async {
     // Clear any cached partial images to avoid stale tiles after
     // going to the new matrix
     _imageCache.releasePartialImages();
+
+    if (targetPageNumber != null) {
+      _gotoTargetPageNumber = targetPageNumber;
+    }
 
     zoom = zoom ?? _currentZoom;
     final tx = -documentOffset.dx * zoom;
@@ -2719,6 +2724,9 @@ class _PdfViewerState extends State<PdfViewer>
     _adjustBoundaryMargins(_viewSize!, zoom);
     final clamped = _calcMatrixForClampedToNearestBoundary(m, viewSize: _viewSize!);
     await _goTo(clamped, duration: duration);
+    if (targetPageNumber != null) {
+      _setCurrentPageNumber(targetPageNumber);
+    }
   }
 
   Future<void> _goToRectInsidePage({
@@ -4601,6 +4609,9 @@ class PdfViewerController extends ValueListenable<Matrix4> {
   /// Page layout.
   PdfPageLayout get layout => _state._layout!;
 
+  /// Page layout if available, or null if not yet computed.
+  PdfPageLayout? get layoutOrNull => __state?._layout;
+
   /// The view port size (The widget's client area's size)
   Size get viewSize => _state._viewSize!;
 
@@ -4734,7 +4745,13 @@ class PdfViewerController extends ValueListenable<Matrix4> {
     required Offset documentOffset,
     double? zoom,
     Duration duration = const Duration(milliseconds: 0),
-  }) => _state._goToPosition(documentOffset: documentOffset, zoom: zoom, duration: duration);
+    int? targetPageNumber,
+  }) => _state._goToPosition(
+        documentOffset: documentOffset,
+        zoom: zoom,
+        duration: duration,
+        targetPageNumber: targetPageNumber,
+      );
 
   /// Calculate the rectangle for the specified area inside the page.
   ///
