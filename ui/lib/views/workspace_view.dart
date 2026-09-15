@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 import '../controllers/reader_controller.dart';
 import '../models/render_options.dart';
 import '../services/cli_ipc_service.dart';
@@ -37,6 +40,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   bool _isAtTop = true;
   bool _isHoveringTitleBar = false;
   Timer? _titleBarHoverTimer;
+  bool _isDraggingFileOver = false;
 
   bool get _shouldShowTitleBar {
     if (_isFullScreen) return false;
@@ -255,6 +259,128 @@ class _WorkspaceViewState extends State<WorkspaceView> {
           SnackBar(
             content: Text('打开文件失败: $e'),
             behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  static const Set<String> _supportedExtensions = {
+    '.md',
+    '.markdown',
+    '.mdown',
+    '.mkd',
+    '.mdx',
+    '.pdf',
+    '.typ',
+    '.txt',
+  };
+
+  static const Set<String> _knownBinaryExtensions = {
+    '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.tiff', '.heic',
+    '.zip', '.tar', '.gz', '.7z', '.rar', '.bz2', '.xz',
+    '.dmg', '.iso', '.pkg', '.app', '.exe', '.dll', '.so', '.dylib', '.bin',
+    '.mp4', '.mov', '.avi', '.mkv', '.webm', '.mp3', '.wav', '.flac', '.aac',
+    '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+  };
+
+  static bool _isFileSupported(File file) {
+    final ext = p.extension(file.path).toLowerCase();
+    if (_supportedExtensions.contains(ext)) return true;
+    if (_knownBinaryExtensions.contains(ext)) return false;
+
+    // For files with unknown or missing extension, inspect sample bytes
+    try {
+      final raf = file.openSync(mode: FileMode.read);
+      final sample = raf.readSync(1024);
+      raf.closeSync();
+
+      if (sample.isEmpty) return true; // Empty file is safe to open as empty markdown
+      if (ReaderController.startsWithPdfHeader(sample)) return true;
+
+      // If sample contains null bytes, it's very likely a binary format
+      if (sample.contains(0)) return false;
+
+      // Otherwise, attempt UTF-8 decode
+      utf8.decode(sample, allowMalformed: false);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _handleDroppedFiles(List<DropItem> files) async {
+    if (files.isEmpty) return;
+
+    String? targetFilePath;
+    String? unsupportedReason;
+
+    for (final file in files) {
+      final path = file.path;
+      if (path.isEmpty) continue;
+
+      try {
+        final type = FileSystemEntity.typeSync(path);
+        if (type == FileSystemEntityType.file) {
+          final f = File(path);
+          if (_isFileSupported(f)) {
+            targetFilePath = path;
+            break;
+          } else {
+            final ext = p.extension(path);
+            unsupportedReason = ext.isNotEmpty
+                ? '暂不支持打开 $ext 格式文件，请拖入 Markdown (.md) 或 PDF (.pdf)'
+                : '暂不支持打开该二进制文件，请拖入 Markdown (.md) 或 PDF (.pdf)';
+          }
+        } else if (type == FileSystemEntityType.directory) {
+          // If a directory was dropped, check for common entry files
+          const candidates = [
+            'README.md',
+            'readme.md',
+            'index.md',
+            'main.md',
+            'README.markdown',
+            'readme.markdown',
+          ];
+          for (final c in candidates) {
+            final candidateFile = File(p.join(path, c));
+            if (candidateFile.existsSync()) {
+              targetFilePath = candidateFile.path;
+              break;
+            }
+          }
+          if (targetFilePath != null) break;
+
+          // Try to find the first supported file in the directory
+          final dir = Directory(path);
+          final entries = dir.listSync(followLinks: false);
+          for (final entry in entries) {
+            if (entry is File && _isFileSupported(entry)) {
+              targetFilePath = entry.path;
+              break;
+            }
+          }
+          if (targetFilePath != null) break;
+
+          unsupportedReason = '所选文件夹中未找到可打开的 Markdown 或 PDF 文档';
+        }
+      } catch (e) {
+        debugPrint('Error inspecting dropped file: $e');
+      }
+    }
+
+    if (targetFilePath != null) {
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.of(context, rootNavigator: true).popUntil((route) => route.isFirst);
+      }
+      await widget.controller.openFile(targetFilePath);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(unsupportedReason ?? '未找到支持打开的 Markdown (.md) 或 PDF (.pdf) 文件'),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
           ),
         );
       }
@@ -566,10 +692,19 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               await _pdfCanvasKey.currentState?.selectAllText();
             },
           },
-      child: Focus(
-        autofocus: true,
-        child: Scaffold(
-          body: Row(
+      child: DropTarget(
+        onDragEntered: (_) => setState(() => _isDraggingFileOver = true),
+        onDragExited: (_) => setState(() => _isDraggingFileOver = false),
+        onDragDone: (detail) {
+          setState(() => _isDraggingFileOver = false);
+          _handleDroppedFiles(detail.files);
+        },
+        child: Focus(
+          autofocus: true,
+          child: Scaffold(
+            body: Stack(
+              children: [
+                Row(
             children: [
               // Collapsible Left Sidebar (Outline & Recents)
               if (_isSidebarOpen)
@@ -825,15 +960,78 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                       ),
                   ],
                 ),
-                ),
-              ],
+              ),
+            ],
+          ),
+          if (_isDraggingFileOver)
+            _buildDragDropOverlay(theme, isDark),
+        ],
+      ),
+    ),
+  ),
+),
+);
+},
+);
+}
+
+  Widget _buildDragDropOverlay(ThemeData theme, bool isDark) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Container(
+          color: (isDark ? const Color(0xFF141414) : Colors.white).withValues(alpha: 0.88),
+          child: Container(
+            margin: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0x1F0284C7) : const Color(0x0F0284C7),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: const Color(0xFF0284C7),
+                width: 2.5,
+              ),
+            ),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 76,
+                    height: 76,
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0x330284C7) : const Color(0x240284C7),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.file_download_outlined,
+                      size: 40,
+                      color: Color(0xFF0284C7),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    '释放以在此窗口打开文档',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.4,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '支持 Markdown (.md, .markdown)、PDF (.pdf)、Typst (.typ) 或包含 README 的项目目录',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: isDark ? const Color(0xFFA1A1AA) : const Color(0xFF64748B),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
-      );
-    },
-  );
-}
+      ),
+    );
+  }
 
   Widget _buildTopTitleBar(
     BuildContext context,

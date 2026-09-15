@@ -43,7 +43,7 @@ dependencies:
   path: ^1.9.0
   vector_math: ^2.1.4
   crypto: ^3.0.6
-
+  desktop_drop: ^0.8.4
 dev_dependencies:
   flutter_test:
     sdk: flutter
