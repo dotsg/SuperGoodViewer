@@ -6,7 +6,7 @@
 </div>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Release: v1.0.5](https://img.shields.io/badge/Release-v1.0.5-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
+[![Release: v1.0.6](https://img.shields.io/badge/Release-v1.0.6-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
 [![CI Status](https://img.shields.io/badge/CI-Passing-brightgreen.svg)]()
 [![Platform: macOS | Windows | Linux](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)]()
 
@@ -194,6 +194,26 @@ sgv -h
 ---
 
 ## 📝 更新日志 (Changelog)
+
+### v1.0.6 (2026-09)
+- **Linux 平台原生桌面与 CLI 支持**：
+  - 全面支持主流 Linux 64 位桌面环境（GTK 3），原生嵌入 Flutter 渲染引擎与 Rust 核心动态库；
+  - 单实例控制与 Unix Domain Socket / IPC 通信：避免多开，支持命令行打开文件时将路径安全转发至已运行实例；
+  - Linux 原生 CLI 启动脚本（`bin/sgv`），偏好设置中支持免提权一键安装与符号链接维护；
+  - GitHub Actions 自动化构建与打包 Linux 便携归档包（`.tar.gz`）。
+- **多语言国际化支持 (i18n)**：
+  - 完整支持简体中文 (zh-CN)、繁体中文 (zh-TW) 与英文 (en) 三种语言，提供中立语言选择器并支持实时动态无缝切换；
+  - 动态同步窗口标题与语言感知启动，偏好设置与系统交互全面国际化。
+- **拖拽文件与目录交互 (Drag & Drop)**：
+  - 支持直接拖拽 Markdown / PDF 文件或整个目录至窗口快速打开，异步安全 I/O 与热重载监控。
+- **演播模式与多母版版式系统 (Presentation & Layouts)**：
+  - 支持多版式演示模式（Marp 幻灯片语法解析、自定义页眉与页脚插槽，支持转义与清空保存）；
+  - 全屏演示模式与视口状态双向同步，独立隔离演播排版状态与日常阅读排版设置。
+- **高清分块切片渲染与导航优化**：
+  - 引入高清分块切片渲染 (Tiled High-Resolution Rendering) 与狭长自适应栅格条带化，消除长文档内存尖峰与模糊；
+  - 翻页与长文档导航优化：翻页时精准保留页内相对偏移与缩放比例，区分屏幕卷动与整页翻转，防空格加速与边界状态保护。
+- **macOS Universal 双架构动态库**：
+  - 自动化构建包含 Apple Silicon (arm64) 与 Intel (x86_64) 的通用架构动态库，消除混合架构兼容问题。
 
 ### v1.0.5 (2026-09)
 - **原生 PDF 阅读器与大纲目录导航**：
