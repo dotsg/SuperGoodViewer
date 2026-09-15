@@ -84,6 +84,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     _showToolbarTemporarily();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _updateTrafficLights();
+      _syncWindowTitle();
     });
     widget.controller.addListener(_onControllerChanged);
     NativeCliService.channel.setMethodCallHandler(_handleNativeMethodCall);
@@ -93,6 +94,23 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         widget.controller.openFile(filePath);
       }
     });
+  }
+
+  String? _lastSyncedTitle;
+
+  void _syncWindowTitle() {
+    final appTitle = widget.controller.strings.appTitle;
+    final docTitle = widget.controller.documentTitle;
+    final fullTitle = (docTitle.isNotEmpty && docTitle != 'Welcome' && docTitle != 'SuperGoodViewer Demo')
+        ? '$docTitle - $appTitle'
+        : appTitle;
+
+    if (_lastSyncedTitle != fullTitle) {
+      _lastSyncedTitle = fullTitle;
+      try {
+        _windowChannel.invokeMethod('setWindowTitle', fullTitle);
+      } catch (_) {}
+    }
   }
 
   void _initWindowChannel() {
@@ -139,6 +157,13 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       widget.controller.clearJumpRequest();
       _pdfCanvasKey.currentState?.jumpToOutline(req);
     }
+    if (!widget.controller.isPresentationMode && _enteredFullScreenForPresentation) {
+      _enteredFullScreenForPresentation = false;
+      if (_isFullScreen) {
+        _toggleFullScreen();
+      }
+    }
+    _syncWindowTitle();
   }
 
   @override
@@ -574,8 +599,31 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     } catch (_) {}
   }
 
-  void _handleTogglePresentation() {
-    widget.controller.togglePresentationMode();
+  bool _enteredFullScreenForPresentation = false;
+
+  Future<void> _handleTogglePresentation() async {
+    final willEnter = !widget.controller.isPresentationMode;
+    if (willEnter) {
+      if (!_isFullScreen) {
+        _enteredFullScreenForPresentation = true;
+        await _toggleFullScreen();
+      } else {
+        _enteredFullScreenForPresentation = false;
+      }
+      widget.controller.setPresentationMode(true);
+    } else {
+      await _exitPresentationMode();
+    }
+  }
+
+  Future<void> _exitPresentationMode() async {
+    widget.controller.setPresentationMode(false);
+    if (_enteredFullScreenForPresentation) {
+      _enteredFullScreenForPresentation = false;
+      if (_isFullScreen) {
+        await _toggleFullScreen();
+      }
+    }
   }
 
   void _showZoomHud(String text) {
@@ -723,7 +771,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               if (_pdfCanvasKey.currentState?.isSearchOpen == true) {
                 _pdfCanvasKey.currentState?.closeSearch();
               } else if (controller.isPresentationMode) {
-                controller.setPresentationMode(false);
+                _exitPresentationMode();
               } else if (_isFullScreen) {
                 _toggleFullScreen();
               } else if (_isToolbarVisible) {
@@ -1006,7 +1054,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                         child: PresentationView(
                           key: _presentationKey,
                           controller: controller,
-                          onExit: () => controller.setPresentationMode(false),
+                          onExit: _exitPresentationMode,
                         ),
                       ),
                   ],
@@ -1192,7 +1240,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                       ),
                     ),
 
-                    if (!_isSidebarOpen) const SizedBox(width: 78 + 32),
+                    if (!_isSidebarOpen) SizedBox(width: (Platform.isMacOS ? 78.0 : 0.0) + 32.0),
                   ],
                 ),
               ),

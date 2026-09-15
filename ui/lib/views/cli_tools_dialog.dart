@@ -170,7 +170,9 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
                         Text(
                           Platform.isWindows
                               ? '在终端 (CMD / PowerShell) 中随时通过 sgv 命令打开 Markdown'
-                              : '在 macOS 终端中随时通过 sgv 命令打开 Markdown',
+                              : Platform.isLinux
+                                  ? '在 Linux 终端中随时通过 sgv 命令打开 Markdown'
+                                  : '在 macOS 终端中随时通过 sgv 命令打开 Markdown',
                           style: TextStyle(
                             fontSize: 12,
                             color: theme.textTheme.bodySmall?.color,
@@ -348,7 +350,9 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
               Text(
                 Platform.isWindows
                     ? '提示：安装后可在命令提示符、PowerShell 或 Windows Terminal 中直接运行 sgv 命令。'
-                    : '提示：点击安装若系统需要权限，macOS 会自动弹出指纹或管理员密码授权窗口，无需您手动打开终端输入任何命令。',
+                    : Platform.isLinux
+                        ? '提示：安装将在 ~/.local/bin 中创建 sgv 软链接，请确保该目录在 PATH 环境变量中。'
+                        : '提示：点击安装若系统需要权限，macOS 会自动弹出指纹或管理员密码授权窗口，无需您手动打开终端输入任何命令。',
                 style: TextStyle(
                   fontSize: 11,
                   color: Colors.grey.shade500,

@@ -81,6 +81,13 @@ void FlutterWindow::SetupMethodChannels() {
         } else if (call.method_name() == "setTrafficLightsVisible") {
           // No traffic lights on Windows; no-op
           result->Success();
+        } else if (call.method_name() == "setWindowTitle") {
+          const auto* title = std::get_if<std::string>(call.arguments());
+          if (title && this->GetHandle()) {
+            std::wstring wide_title = Utf16FromUtf8(*title);
+            ::SetWindowTextW(this->GetHandle(), wide_title.c_str());
+          }
+          result->Success();
         } else {
           result->NotImplemented();
         }
