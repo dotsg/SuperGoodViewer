@@ -607,6 +607,17 @@ class ReaderController extends ChangeNotifier {
       _currentMarkdown = content;
       _extractOutline(_currentMarkdown);
 
+      final frontmatterFormat = _detectFrontmatterPageFormat(content);
+      if (frontmatterFormat != null) {
+        _renderOptions = _renderOptions.copyWith(
+          pageFormat: frontmatterFormat,
+          mode: frontmatterFormat == PageFormat.fluid ? 'fluid' : 'paged',
+        );
+        if (frontmatterFormat != PageFormat.fluid) {
+          _lastPagedFormat = frontmatterFormat;
+        }
+      }
+
       if (!preservePosition) {
         final history = _fileHistory[filePath];
         if (history != null) {
@@ -1312,6 +1323,75 @@ graph LR
       slug = slug.substring(0, slug.length - 1);
     }
     return slug;
+  }
+
+  String? _detectFrontmatterPageFormat(String markdown) {
+    if (!(_renderOptions.marpEnabled ?? true)) return null;
+    final trimmed = markdown.trimLeft();
+    if (!trimmed.startsWith('---')) return null;
+    final rest = trimmed.substring(3);
+    final firstNl = rest.indexOf('\n');
+    if (firstNl == -1 || rest.substring(0, firstNl).trim().isNotEmpty) return null;
+    final afterFirstLine = rest.substring(firstNl + 1);
+    final endIdx = afterFirstLine.indexOf('\n---');
+    if (endIdx == -1) return null;
+    final yaml = afterFirstLine.substring(0, endIdx);
+
+    bool isMarp = false;
+    String? size;
+    String? pageFormat;
+
+    for (final line in yaml.split('\n')) {
+      final lineTrimmed = line.trim();
+      if (lineTrimmed.isEmpty || lineTrimmed.startsWith('#')) continue;
+      final colonIdx = lineTrimmed.indexOf(':');
+      if (colonIdx == -1) continue;
+      final key = lineTrimmed.substring(0, colonIdx).trim().toLowerCase();
+      final val = lineTrimmed.substring(colonIdx + 1).replaceAll(RegExp(r'''^['"]|['"]$'''), '').trim();
+
+      if (key == 'marp') {
+        isMarp = val.toLowerCase() == 'true' || val.toLowerCase() == 'yes';
+      } else if (key == 'size') {
+        size = val;
+      } else if (key == 'page_format' || key == 'page-format') {
+        pageFormat = val;
+      }
+    }
+
+    if (pageFormat != null) {
+      switch (pageFormat.toLowerCase()) {
+        case 'fluid':
+          return PageFormat.fluid;
+        case 'a4':
+        case 'a4_portrait':
+        case 'a4portrait':
+        case 'portrait':
+          return PageFormat.a4Portrait;
+        case 'a4_landscape':
+        case 'a4landscape':
+        case 'landscape':
+          return PageFormat.a4Landscape;
+        case 'slide_16_9':
+        case 'slide16x9':
+        case '16:9':
+        case '16_9':
+          return PageFormat.slide16x9;
+        case 'slide_4_3':
+        case 'slide4x3':
+        case '4:3':
+        case '4_3':
+          return PageFormat.slide4x3;
+      }
+    }
+
+    if (isMarp) {
+      if (size == '4:3' || size == '4_3') {
+        return PageFormat.slide4x3;
+      }
+      return PageFormat.slide16x9;
+    }
+
+    return null;
   }
 
   @override
