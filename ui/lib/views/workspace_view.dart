@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import '../controllers/reader_controller.dart';
+import '../i18n/app_strings.dart';
 import '../models/render_options.dart';
 import '../services/cli_ipc_service.dart';
 import '../services/native_cli_service.dart';
@@ -244,7 +245,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['md', 'markdown', 'txt', 'pdf'],
-        dialogTitle: '选择要阅读的 Markdown 或 PDF 文件',
+        dialogTitle: widget.controller.strings.openDocument,
       );
 
       if (result != null && result.files.isNotEmpty) {
@@ -257,7 +258,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('打开文件失败: $e'),
+            content: Text(widget.controller.strings.openFileFailed('$e')),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -329,8 +330,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
           } else {
             final ext = p.extension(path);
             unsupportedReason = ext.isNotEmpty
-                ? '暂不支持打开 $ext 格式文件，请拖入 Markdown (.md) 或 PDF (.pdf)'
-                : '暂不支持打开该二进制文件，请拖入 Markdown (.md) 或 PDF (.pdf)';
+                ? widget.controller.strings.unsupportedFileFormat(ext)
+                : widget.controller.strings.unsupportedBinaryFile;
           }
         } else if (type == FileSystemEntityType.directory) {
           // If a directory was dropped, check for common entry files
@@ -362,7 +363,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
           }
           if (targetFilePath != null) break;
 
-          unsupportedReason = '所选文件夹中未找到可打开的 Markdown 或 PDF 文档';
+          unsupportedReason = widget.controller.strings.unsupportedDirectory;
         }
       } catch (e) {
         debugPrint('Error inspecting dropped file: $e');
@@ -378,7 +379,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(unsupportedReason ?? '未找到支持打开的 Markdown (.md) 或 PDF (.pdf) 文件'),
+            content: Text(unsupportedReason ?? widget.controller.strings.unsupportedDropGeneral),
             behavior: SnackBarBehavior.floating,
             duration: const Duration(seconds: 3),
           ),
@@ -392,7 +393,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     final defaultFileName = '$title.pdf';
 
     final savePath = await FilePicker.platform.saveFile(
-      dialogTitle: '导出为出版级 PDF',
+      dialogTitle: widget.controller.strings.exportPdfDialogTitle,
       fileName: defaultFileName,
       type: FileType.custom,
       allowedExtensions: ['pdf'],
@@ -404,7 +405,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              success ? '已成功导出出版级 PDF 至 $savePath' : '导出失败，请重试',
+              success ? widget.controller.strings.exportPdfSuccess(savePath) : widget.controller.strings.exportPdfFailed,
             ),
             duration: const Duration(seconds: 3),
             behavior: SnackBarBehavior.floating,
@@ -417,9 +418,9 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   void _showCopiedFeedback() {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('已复制所选文本'),
-        duration: Duration(seconds: 1),
+      SnackBar(
+        content: Text(widget.controller.strings.copiedSelectedText),
+        duration: const Duration(seconds: 1),
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -509,10 +510,10 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       if (!widget.controller.isTwoPage) {
         widget.controller.toggleTwoPage();
       }
-      _showZoomHud('A4 双页对开浏览');
+      _showZoomHud(widget.controller.strings.hudTwoPageA4);
     } else {
       widget.controller.toggleTwoPage();
-      _showZoomHud(widget.controller.isTwoPage ? '双页对开浏览' : '单页纵向浏览');
+      _showZoomHud(widget.controller.isTwoPage ? widget.controller.strings.hudTwoPage : widget.controller.strings.hudSinglePage);
     }
   }
 
@@ -564,7 +565,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     widget.controller.setAutoFitMode(AutoFitMode.none);
     await _pdfCanvasKey.currentState?.resetZoom();
     setState(() => _currentZoom = 1.0);
-    _showZoomHud('实际大小 100%');
+    _showZoomHud(widget.controller.strings.hudActualSize);
   }
 
   void _handleFitWidth() async {
@@ -572,7 +573,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     await _pdfCanvasKey.currentState?.fitWidth();
     final zoom = _pdfCanvasKey.currentState?.currentZoom ?? _currentZoom;
     setState(() => _currentZoom = zoom);
-    _showZoomHud('满窗口 (${(zoom * 100).round()}%)');
+    _showZoomHud(widget.controller.strings.hudFitWidth((zoom * 100).round()));
   }
 
   void _handleFitPage() async {
@@ -580,7 +581,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     await _pdfCanvasKey.currentState?.fitPage();
     final zoom = _pdfCanvasKey.currentState?.currentZoom ?? _currentZoom;
     setState(() => _currentZoom = zoom);
-    _showZoomHud('满屏 (${(zoom * 100).round()}%)');
+    _showZoomHud(widget.controller.strings.hudFitPage((zoom * 100).round()));
   }
 
   void _handleZoomTo(double targetZoom) async {
@@ -1008,9 +1009,9 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  const Text(
-                    '释放以在此窗口打开文档',
-                    style: TextStyle(
+                  Text(
+                    widget.controller.strings.dragDropTitle,
+                    style: const TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w700,
                       letterSpacing: -0.4,
@@ -1018,7 +1019,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '支持 Markdown (.md, .markdown)、PDF (.pdf)、Typst (.typ) 或包含 README 的项目目录',
+                    widget.controller.strings.dragDropSubtitle,
                     style: TextStyle(
                       fontSize: 13,
                       color: isDark ? const Color(0xFFA1A1AA) : const Color(0xFF64748B),
@@ -1087,7 +1088,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                     if (!_isSidebarOpen) ...[
                       if (Platform.isMacOS) const SizedBox(width: 78),
                       Tooltip(
-                        message: '切换侧边栏 (${controller.shortcutService.getShortcutLabel('toggleSidebar')})',
+                        message: controller.strings.toggleSidebarTooltip(controller.shortcutService.getShortcutLabel('toggleSidebar')),
                         child: InkWell(
                           onTap: () => _setSidebarOpen(true),
                           borderRadius: BorderRadius.circular(4),
@@ -1194,7 +1195,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               // Open Local File
               _PillIconButton(
                 icon: Icons.folder_open_rounded,
-                tooltip: '打开本地文档 (${controller.shortcutService.getShortcutLabel('openFile')})',
+                tooltip: '${controller.strings.openDocument} (${controller.shortcutService.getShortcutLabel('openFile')})',
                 onPressed: _pickAndOpenFile,
               ),
               _PillDivider(isDark: isDark),
@@ -1205,8 +1206,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                     ? Icons.view_sidebar_rounded
                     : Icons.view_sidebar_outlined,
                 tooltip: _isSidebarOpen
-                    ? '收起侧边栏 (${controller.shortcutService.getShortcutLabel('toggleSidebar')})'
-                    : '展开侧边栏 (${controller.shortcutService.getShortcutLabel('toggleSidebar')})',
+                    ? controller.strings.toggleSidebarCollapse(controller.shortcutService.getShortcutLabel('toggleSidebar'))
+                    : controller.strings.toggleSidebarExpand(controller.shortcutService.getShortcutLabel('toggleSidebar')),
                 isSelected: _isSidebarOpen,
                 onPressed: _toggleSidebar,
               ),
@@ -1220,6 +1221,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                   onSelectFormat: controller.setPageFormat,
                   onToggle: controller.toggleMode,
                   isDark: isDark,
+                  strings: controller.strings,
                 ),
                 _PillDivider(isDark: isDark),
               ],
@@ -1227,7 +1229,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               // Full-screen Presentation Mode (PPT) - works for both Markdown and PDF
               _PillIconButton(
                 icon: Icons.slideshow_rounded,
-                tooltip: '全屏单页演示 (${controller.shortcutService.getShortcutLabel('togglePresentation')} / F5)',
+                tooltip: controller.strings.togglePresentationTooltip(controller.shortcutService.getShortcutLabel('togglePresentation')),
                 isSelected: controller.isPresentationMode,
                 iconSize: 18,
                 onPressed: _handleTogglePresentation,
@@ -1240,9 +1242,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                   icon: controller.isTwoPage
                       ? Icons.auto_stories_rounded
                       : Icons.menu_book_outlined,
-                  tooltip: controller.isTwoPage
-                      ? '当前为双页对开，点击切换单页 (${controller.shortcutService.getShortcutLabel('toggleTwoPage')})'
-                      : '当前为单页纵向，点击切换双页对开 (${controller.shortcutService.getShortcutLabel('toggleTwoPage')})',
+                  tooltip: controller.strings.toggleTwoPageTooltip(controller.isTwoPage, controller.shortcutService.getShortcutLabel('toggleTwoPage')),
                   isSelected: controller.isTwoPage,
                   iconSize: 17,
                   onPressed: _handleToggleTwoPage,
@@ -1253,6 +1253,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                   pageCount: _pageCount,
                   isTwoPage: controller.isTwoPage,
                   isDark: isDark,
+                  strings: controller.strings,
                   onPrev: _handlePrevPage,
                   onNext: _handleNextPage,
                   onJumpToPage: (p) => _pdfCanvasKey.currentState?.goToPageNumber(p),
@@ -1263,7 +1264,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               // Page Zoom Stepper & Preset Dropdown (- / % / +)
               _PillIconButton(
                 icon: Icons.remove_rounded,
-                tooltip: '缩小页面 (${controller.shortcutService.getShortcutLabel('zoomOut')})',
+                tooltip: controller.strings.zoomOutTooltip(controller.shortcutService.getShortcutLabel('zoomOut')),
                 iconSize: 15,
                 onPressed: _handleZoomOut,
               ),
@@ -1271,6 +1272,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 currentZoom: _currentZoom,
                 autoFitMode: controller.autoFitMode,
                 isDark: isDark,
+                strings: controller.strings,
                 onZoomSelected: (zoom) {
                   if (zoom == -1.0) {
                     _handleFitWidth();
@@ -1285,7 +1287,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               ),
               _PillIconButton(
                 icon: Icons.add_rounded,
-                tooltip: '放大页面 (${controller.shortcutService.getShortcutLabel('zoomIn')})',
+                tooltip: controller.strings.zoomInTooltip(controller.shortcutService.getShortcutLabel('zoomIn')),
                 iconSize: 15,
                 onPressed: _handleZoomIn,
               ),
@@ -1296,9 +1298,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 icon: controller.renderOptions.isDark
                     ? Icons.light_mode_rounded
                     : Icons.dark_mode_rounded,
-                tooltip: controller.renderOptions.isDark
-                    ? '切换为亮色模式 (${controller.shortcutService.getShortcutLabel('toggleTheme')})'
-                    : '切换为暗黑模式 (${controller.shortcutService.getShortcutLabel('toggleTheme')})',
+                tooltip: controller.strings.toggleThemeTooltip(controller.renderOptions.isDark, controller.shortcutService.getShortcutLabel('toggleTheme')),
                 onPressed: controller.toggleTheme,
               ),
               _PillDivider(isDark: isDark),
@@ -1306,7 +1306,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               // Export PDF
               _PillIconButton(
                 icon: Icons.download_rounded,
-                tooltip: '导出出版级 PDF (${controller.shortcutService.getShortcutLabel('exportPdf')})',
+                tooltip: '${controller.strings.exportPdf} (${controller.shortcutService.getShortcutLabel('exportPdf')})',
                 onPressed: _handleExportPdf,
               ),
               _PillDivider(isDark: isDark),
@@ -1314,7 +1314,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               // Settings (Preferences)
               _PillIconButton(
                 icon: Icons.settings_outlined,
-                tooltip: '偏好设置 (${controller.shortcutService.getShortcutLabel('preferences')})',
+                tooltip: controller.strings.settingsTooltip(controller.shortcutService.getShortcutLabel('preferences')),
                 onPressed: () => showSettingsDialog(context, controller),
               ),
               _PillDivider(isDark: isDark),
@@ -1322,7 +1322,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               // Zen Mode Button (Hide Floating Toolbar)
               _PillIconButton(
                 icon: Icons.close_rounded,
-                tooltip: '隐藏工具栏 (Esc 或 ${controller.shortcutService.getShortcutLabel('toggleToolbar')})',
+                tooltip: controller.strings.hideToolbarTooltip(controller.shortcutService.getShortcutLabel('toggleToolbar')),
                 onPressed: () => setState(() => _isToolbarVisible = false),
               ),
             ],
@@ -1384,12 +1384,14 @@ class _FormatSelectorPill extends StatelessWidget {
   final VoidCallback onToggle;
   final bool isDark;
   final String? shortcutLabel;
+  final AppStrings strings;
 
   const _FormatSelectorPill({
     required this.format,
     required this.onSelectFormat,
     required this.onToggle,
     required this.isDark,
+    required this.strings,
     this.shortcutLabel,
   });
 
@@ -1411,20 +1413,7 @@ class _FormatSelectorPill extends StatelessWidget {
   }
 
   String _getFormatShortLabel(String fmt) {
-    switch (fmt) {
-      case PageFormat.fluid:
-        return '流式';
-      case PageFormat.a4Portrait:
-        return 'A4';
-      case PageFormat.a4Landscape:
-        return 'A4横向';
-      case PageFormat.slide16x9:
-        return '16:9';
-      case PageFormat.slide4x3:
-        return '4:3';
-      default:
-        return 'A4';
-    }
+    return strings.layoutModeShortName(fmt);
   }
 
   @override
@@ -1441,7 +1430,7 @@ class _FormatSelectorPill extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Tooltip(
-            message: '当前：${PageFormat.getDisplayName(format)} (点击切换 $shortcut)',
+            message: '${PageFormat.getDisplayName(format, strings)} ($shortcut)',
             waitDuration: const Duration(milliseconds: 500),
             child: InkWell(
               onTap: onToggle,
@@ -1471,7 +1460,7 @@ class _FormatSelectorPill extends StatelessWidget {
             ),
           ),
           PopupMenuButton<String>(
-            tooltip: '选择版式',
+            tooltip: strings.layoutSelectTooltip,
             initialValue: format,
             offset: const Offset(0, -230),
             onSelected: onSelectFormat,
@@ -1483,53 +1472,53 @@ class _FormatSelectorPill extends StatelessWidget {
               color: theme.colorScheme.primary,
             ),
             itemBuilder: (context) => [
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: PageFormat.fluid,
                 child: Row(
                   children: [
-                    Icon(Icons.view_stream_rounded, size: 16),
-                    SizedBox(width: 8),
-                    Text('自适应流式 (长卷轴)'),
+                    const Icon(Icons.view_stream_rounded, size: 16),
+                    const SizedBox(width: 8),
+                    Text(strings.layoutModeFluid),
                   ],
                 ),
               ),
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: PageFormat.a4Portrait,
                 child: Row(
                   children: [
-                    Icon(Icons.description_outlined, size: 16),
-                    SizedBox(width: 8),
-                    Text('A4 纵向出版'),
+                    const Icon(Icons.description_outlined, size: 16),
+                    const SizedBox(width: 8),
+                    Text(strings.layoutModeA4Portrait),
                   ],
                 ),
               ),
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: PageFormat.a4Landscape,
                 child: Row(
                   children: [
-                    Icon(Icons.landscape_outlined, size: 16),
-                    SizedBox(width: 8),
-                    Text('A4 横向出版'),
+                    const Icon(Icons.landscape_outlined, size: 16),
+                    const SizedBox(width: 8),
+                    Text(strings.layoutModeA4Landscape),
                   ],
                 ),
               ),
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: PageFormat.slide16x9,
                 child: Row(
                   children: [
-                    Icon(Icons.slideshow_rounded, size: 16),
-                    SizedBox(width: 8),
-                    Text('16:9 幻灯片 (PPT)'),
+                    const Icon(Icons.slideshow_rounded, size: 16),
+                    const SizedBox(width: 8),
+                    Text(strings.layoutModeSlide169),
                   ],
                 ),
               ),
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: PageFormat.slide4x3,
                 child: Row(
                   children: [
-                    Icon(Icons.tv_rounded, size: 16),
-                    SizedBox(width: 8),
-                    Text('4:3 幻灯片 (PPT)'),
+                    const Icon(Icons.tv_rounded, size: 16),
+                    const SizedBox(width: 8),
+                    Text(strings.layoutModeSlide43),
                   ],
                 ),
               ),
@@ -1563,11 +1552,13 @@ class _ZoomDropdownBadge extends StatelessWidget {
   final AutoFitMode autoFitMode;
   final bool isDark;
   final ValueChanged<double> onZoomSelected;
+  final AppStrings strings;
 
   const _ZoomDropdownBadge({
     required this.currentZoom,
     required this.autoFitMode,
     required this.isDark,
+    required this.strings,
     required this.onZoomSelected,
   });
 
@@ -1578,7 +1569,7 @@ class _ZoomDropdownBadge extends StatelessWidget {
     final theme = Theme.of(context);
 
     return PopupMenuButton<double>(
-      tooltip: '页面缩放比例与预设',
+      tooltip: strings.zoomPresetsTooltip,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       color: isDark ? const Color(0xFF262626) : Colors.white,
       onSelected: onZoomSelected,
@@ -1594,7 +1585,7 @@ class _ZoomDropdownBadge extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Text(
-                '满窗口 (适应宽度)',
+                strings.fitWindowWidth,
                 style: TextStyle(
                   fontSize: 12.5,
                   fontWeight: autoFitMode == AutoFitMode.fitWidth ? FontWeight.w600 : FontWeight.normal,
@@ -1620,7 +1611,7 @@ class _ZoomDropdownBadge extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Text(
-                '满屏 (适应整页)',
+                strings.fitPageWhole,
                 style: TextStyle(
                   fontSize: 12.5,
                   fontWeight: autoFitMode == AutoFitMode.fitPage ? FontWeight.w600 : FontWeight.normal,
@@ -1635,22 +1626,22 @@ class _ZoomDropdownBadge extends StatelessWidget {
             ],
           ),
         ),
-        const PopupMenuItem<double>(
+        PopupMenuItem<double>(
           value: -3.0,
           child: Row(
             children: [
-              Icon(Icons.fullscreen_rounded, size: 16),
-              SizedBox(width: 8),
-              Text('全屏沉浸浏览', style: TextStyle(fontSize: 12.5)),
-              Spacer(),
-              Text('Cmd+Ctrl+F', style: TextStyle(fontSize: 11, color: Colors.grey)),
+              const Icon(Icons.fullscreen_rounded, size: 16),
+              const SizedBox(width: 8),
+              Text(strings.fullScreenImmersive, style: const TextStyle(fontSize: 12.5)),
+              const Spacer(),
+              const Text('Cmd+Ctrl+F', style: TextStyle(fontSize: 11, color: Colors.grey)),
             ],
           ),
         ),
         const PopupMenuDivider(),
         _buildZoomItem(0.50, '50%'),
         _buildZoomItem(0.75, '75%'),
-        _buildZoomItem(1.00, '100% (原始大小)', shortcut: 'Cmd+0'),
+        _buildZoomItem(1.00, strings.originalSize, shortcut: 'Cmd+0'),
         _buildZoomItem(1.25, '125%'),
         _buildZoomItem(1.50, '150%'),
         _buildZoomItem(2.00, '200%'),
@@ -1719,12 +1710,14 @@ class _PageNavPill extends StatelessWidget {
   final VoidCallback onPrev;
   final VoidCallback onNext;
   final ValueChanged<int> onJumpToPage;
+  final AppStrings strings;
 
   const _PageNavPill({
     required this.currentPage,
     required this.pageCount,
     required this.isTwoPage,
     required this.isDark,
+    required this.strings,
     required this.onPrev,
     required this.onNext,
     required this.onJumpToPage,
@@ -1747,12 +1740,12 @@ class _PageNavPill extends StatelessWidget {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('跳转到页面', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        title: Text(strings.jumpToPageTitle, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('请输入页码 (1 - $pageCount):', style: const TextStyle(fontSize: 13)),
+            Text(strings.jumpToPageHint(1, pageCount), style: const TextStyle(fontSize: 13)),
             const SizedBox(height: 12),
             TextField(
               controller: textController,
@@ -1777,7 +1770,7 @@ class _PageNavPill extends StatelessWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('取消'),
+            child: Text(strings.cancel),
           ),
           FilledButton(
             onPressed: () {
@@ -1787,7 +1780,7 @@ class _PageNavPill extends StatelessWidget {
                 onJumpToPage(page);
               }
             },
-            child: const Text('跳转'),
+            child: Text(strings.jumpButton),
           ),
         ],
       ),
@@ -1807,7 +1800,7 @@ class _PageNavPill extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Tooltip(
-          message: '上一页 (← 或 [)',
+          message: strings.pageNavPrev,
           waitDuration: const Duration(milliseconds: 500),
           child: InkWell(
             onTap: canPrev ? onPrev : null,
@@ -1825,7 +1818,7 @@ class _PageNavPill extends StatelessWidget {
           ),
         ),
         Tooltip(
-          message: '点击跳转页面',
+          message: strings.pageNavTooltip,
           waitDuration: const Duration(milliseconds: 500),
           child: InkWell(
             onTap: () => _showJumpDialog(context),
@@ -1849,7 +1842,7 @@ class _PageNavPill extends StatelessWidget {
           ),
         ),
         Tooltip(
-          message: '下一页 (→ 或 ])',
+          message: strings.pageNavNext,
           waitDuration: const Duration(milliseconds: 500),
           child: InkWell(
             onTap: canNext ? onNext : null,

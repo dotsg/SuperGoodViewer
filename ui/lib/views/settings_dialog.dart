@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../controllers/reader_controller.dart';
+import '../i18n/locales.dart';
 import '../models/render_options.dart';
 import '../services/document_cache_service.dart';
 import '../services/native_cli_service.dart';
@@ -89,10 +90,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
       final messenger = ScaffoldMessenger.maybeOf(context);
       if (messenger != null && Scaffold.maybeOf(context) != null) {
         messenger.showSnackBar(
-          const SnackBar(
-            content: Text('字体排版设置已保存，正在重新渲染当前文档...'),
+          SnackBar(
+            content: Text(widget.controller.strings.typographySavedSuccess),
             behavior: SnackBarBehavior.floating,
-            duration: Duration(seconds: 2),
+            duration: const Duration(seconds: 2),
           ),
         );
       }
@@ -118,10 +119,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
       final messenger = ScaffoldMessenger.maybeOf(context);
       if (messenger != null && Scaffold.maybeOf(context) != null) {
         messenger.showSnackBar(
-          const SnackBar(
-            content: Text('版式与页眉页脚设置已保存并应用'),
+          SnackBar(
+            content: Text(widget.controller.strings.layoutSavedSuccess),
             behavior: SnackBarBehavior.floating,
-            duration: Duration(seconds: 2),
+            duration: const Duration(seconds: 2),
           ),
         );
       }
@@ -270,7 +271,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         if (messenger != null) {
           messenger.showSnackBar(
             SnackBar(
-              content: Text('已清理 ${cleared.deletedCount} 个编译缓存文件 (${cleared.formattedFreedSize})'),
+              content: Text(widget.controller.strings.cacheCleared(cleared.formattedFreedSize)),
               behavior: SnackBarBehavior.floating,
               duration: const Duration(seconds: 2),
             ),
@@ -298,17 +299,17 @@ class _SettingsDialogState extends State<SettingsDialog> {
       setState(() => _isOperatingCli = false);
       if (res.isSuccess) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('🎉 \'sgv\' 命令行工具已成功安装！可在终端直接使用。'),
+          SnackBar(
+            content: Text(widget.controller.strings.cliInstallSuccess),
             behavior: SnackBarBehavior.floating,
-            backgroundColor: Color(0xFF10B981),
-            duration: Duration(seconds: 3),
+            backgroundColor: const Color(0xFF10B981),
+            duration: const Duration(seconds: 3),
           ),
         );
       } else if (!res.isCancelled) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('安装失败: ${res.message}'),
+            content: Text(widget.controller.strings.cliInstallFailed(res.message ?? '')),
             behavior: SnackBarBehavior.floating,
             backgroundColor: Colors.redAccent,
             duration: const Duration(seconds: 4),
@@ -326,16 +327,16 @@ class _SettingsDialogState extends State<SettingsDialog> {
       setState(() => _isOperatingCli = false);
       if (res.isSuccess) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('已成功卸载 \'sgv\' 命令行工具'),
+          SnackBar(
+            content: Text(widget.controller.strings.cliUninstallSuccess),
             behavior: SnackBarBehavior.floating,
-            duration: Duration(seconds: 3),
+            duration: const Duration(seconds: 3),
           ),
         );
       } else if (!res.isCancelled) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('卸载失败: ${res.message}'),
+            content: Text(widget.controller.strings.cliUninstallFailed(res.message ?? '')),
             behavior: SnackBarBehavior.floating,
             backgroundColor: Colors.redAccent,
             duration: const Duration(seconds: 4),
@@ -350,7 +351,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     Clipboard.setData(ClipboardData(text: cmd));
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('已复制命令: $cmd'),
+        content: Text(widget.controller.strings.copiedCommand(cmd)),
         behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 2),
       ),
@@ -440,12 +441,15 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   color: theme.colorScheme.primary,
                 ),
                 const SizedBox(width: 8),
-                const Text(
-                  '偏好设置',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.3,
+                Expanded(
+                  child: Text(
+                    widget.controller.strings.settingsTitle,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.3,
+                    ),
                   ),
                 ),
               ],
@@ -456,42 +460,42 @@ class _SettingsDialogState extends State<SettingsDialog> {
           // Nav Items
           _buildNavItem(
             tab: SettingsTab.general,
-            label: '常规阅读',
+            label: widget.controller.strings.tabGeneral,
             icon: Icons.tune_rounded,
             theme: theme,
             isDark: isDark,
           ),
           _buildNavItem(
             tab: SettingsTab.layout,
-            label: '版式与页眉页脚',
+            label: widget.controller.strings.tabLayout,
             icon: Icons.auto_stories_outlined,
             theme: theme,
             isDark: isDark,
           ),
           _buildNavItem(
             tab: SettingsTab.typography,
-            label: '排版与字体',
+            label: widget.controller.strings.tabTypography,
             icon: Icons.font_download_outlined,
             theme: theme,
             isDark: isDark,
           ),
           _buildNavItem(
             tab: SettingsTab.shortcuts,
-            label: '快捷键',
+            label: widget.controller.strings.tabShortcuts,
             icon: Icons.keyboard_outlined,
             theme: theme,
             isDark: isDark,
           ),
           _buildNavItem(
             tab: SettingsTab.cli,
-            label: '命令行 (sgv)',
+            label: widget.controller.strings.tabCli,
             icon: Icons.terminal_rounded,
             theme: theme,
             isDark: isDark,
           ),
           _buildNavItem(
             tab: SettingsTab.about,
-            label: '关于软件',
+            label: widget.controller.strings.tabAbout,
             icon: Icons.info_outline_rounded,
             theme: theme,
             isDark: isDark,
@@ -608,7 +612,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ),
               IconButton(
                 icon: const Icon(Icons.close_rounded, size: 20),
-                tooltip: '关闭',
+                tooltip: widget.controller.strings.close,
                 onPressed: () => Navigator.of(context).pop(),
               ),
             ],
@@ -643,36 +647,38 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 
   String _getTabTitle(SettingsTab tab) {
+    final s = widget.controller.strings;
     switch (tab) {
       case SettingsTab.general:
-        return '常规与阅读偏好';
+        return s.tabGeneralTitle;
       case SettingsTab.layout:
-        return '版式形态与页眉页脚定制';
+        return s.tabLayoutTitle;
       case SettingsTab.typography:
-        return '字体排版与中英文等宽对齐';
+        return s.tabTypographyTitle;
       case SettingsTab.shortcuts:
-        return '快捷键自定义设置';
+        return s.tabShortcutsTitle;
       case SettingsTab.cli:
-        return '命令行工具 (sgv) 集成';
+        return s.tabCliTitle;
       case SettingsTab.about:
-        return '关于 SuperGoodViewer';
+        return s.tabAboutTitle;
     }
   }
 
   String _getTabSubtitle(SettingsTab tab) {
+    final s = widget.controller.strings;
     switch (tab) {
       case SettingsTab.general:
-        return '配置文件外部修改自动重载与阅读历史记录';
+        return s.displayLanguageDesc;
       case SettingsTab.layout:
-        return '配置文档长卷/出版A4/16:9/4:3幻灯片版式与三插槽页眉页脚';
+        return s.twoPageSpreadDesc;
       case SettingsTab.typography:
-        return '定制正文与等宽字体，支持全角半角 1:2 等宽对齐与实时渲染预览';
+        return s.pdfTypographyNotice;
       case SettingsTab.shortcuts:
-        return '自定义各常用操作的键盘快捷键，点击键位直接录制';
+        return s.shortcutsDesc;
       case SettingsTab.cli:
-        return '在终端中随时通过 sgv 命令秒级预览任何 Markdown';
+        return Platform.isWindows ? s.cliDescWin : s.cliDescMac;
       case SettingsTab.about:
-        return '基于现代 Typst 0.13.1 编译器与无损矢量 PDFium 引擎构建';
+        return s.appSubtitle;
     }
   }
 
@@ -788,7 +794,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              PageFormat.getDisplayName(fmt),
+                              PageFormat.getDisplayName(fmt, widget.controller.strings),
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight:
@@ -817,7 +823,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         }),
 
         const SizedBox(height: 18),
-        _buildSectionHeader('页眉与页脚定制 (Header & Footer)'),
+        _buildSectionHeader('${widget.controller.strings.headerFooterSection} (Header & Footer)'),
         const SizedBox(height: 6),
         Text(
           '支持三插槽定制。可用占位宏：{title} (标题)、{page} (当前页)、{total} (总页数)、{date} (日期)。在流式模式下页眉页脚自动隐藏。',
@@ -831,7 +837,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         SwitchListTile(
           value: _skipFirstPage,
           onChanged: (val) => setState(() => _skipFirstPage = val),
-          title: const Text('封面 / 首页隐藏页眉与页脚', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          title: Text(widget.controller.strings.skipFirstPage, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           subtitle: const Text('出版物与 PPT 标题页惯例，第一页不打印页眉页脚', style: TextStyle(fontSize: 11.5)),
           dense: true,
           contentPadding: EdgeInsets.zero,
@@ -839,14 +845,14 @@ class _SettingsDialogState extends State<SettingsDialog> {
         SwitchListTile(
           value: _showHeaderRule,
           onChanged: (val) => setState(() => _showHeaderRule = val),
-          title: const Text('显示页眉下边框细分割线', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          title: Text(widget.controller.strings.showHeaderRule, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           dense: true,
           contentPadding: EdgeInsets.zero,
         ),
         SwitchListTile(
           value: _showFooterRule,
           onChanged: (val) => setState(() => _showFooterRule = val),
-          title: const Text('显示页脚上边框细分割线', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          title: Text(widget.controller.strings.showFooterRule, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           dense: true,
           contentPadding: EdgeInsets.zero,
         ),
@@ -858,7 +864,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
             Text('页眉插槽 (Header Slots)', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: theme.colorScheme.primary)),
             TextButton.icon(
               icon: const Icon(Icons.clear_all_rounded, size: 14),
-              label: const Text('清空页眉', style: TextStyle(fontSize: 11)),
+              label: Text(widget.controller.strings.clearHeaderSlots, style: const TextStyle(fontSize: 11)),
               style: TextButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 minimumSize: Size.zero,
@@ -878,23 +884,23 @@ class _SettingsDialogState extends State<SettingsDialog> {
             Expanded(
               child: _buildSlotField(
                 controller: _headerLeftController,
-                label: '左插槽',
-                hintText: '空或自定义文字',
+                label: widget.controller.strings.slotLeft,
+                hintText: widget.controller.strings.slotHintCustom,
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
               child: _buildSlotField(
                 controller: _headerCenterController,
-                label: '中插槽',
-                hintText: '空',
+                label: widget.controller.strings.slotCenter,
+                hintText: widget.controller.strings.slotHintEmpty,
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
               child: _buildSlotField(
                 controller: _headerRightController,
-                label: '右插槽',
+                label: widget.controller.strings.slotRight,
                 hintText: '{title}',
               ),
             ),
@@ -908,7 +914,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
             Text('页脚插槽 (Footer Slots)', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: theme.colorScheme.primary)),
             TextButton.icon(
               icon: const Icon(Icons.clear_all_rounded, size: 14),
-              label: const Text('清空页脚', style: TextStyle(fontSize: 11)),
+              label: Text(widget.controller.strings.clearFooterSlots, style: const TextStyle(fontSize: 11)),
               style: TextButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 minimumSize: Size.zero,
@@ -928,15 +934,15 @@ class _SettingsDialogState extends State<SettingsDialog> {
             Expanded(
               child: _buildSlotField(
                 controller: _footerLeftController,
-                label: '左插槽',
-                hintText: '空或版权声明',
+                label: widget.controller.strings.slotLeft,
+                hintText: widget.controller.strings.slotHintCopyright,
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
               child: _buildSlotField(
                 controller: _footerCenterController,
-                label: '中插槽',
+                label: widget.controller.strings.slotCenter,
                 hintText: '{page}',
               ),
             ),
@@ -944,21 +950,21 @@ class _SettingsDialogState extends State<SettingsDialog> {
             Expanded(
               child: _buildSlotField(
                 controller: _footerRightController,
-                label: '右插槽',
-                hintText: '空或 {page}/{total}',
+                label: widget.controller.strings.slotRight,
+                hintText: widget.controller.strings.slotHintPageTotal,
               ),
             ),
           ],
         ),
 
         const SizedBox(height: 20),
-        _buildSectionHeader('Marp 幻灯片生态支持 (Marp Directives)'),
+        _buildSectionHeader('${widget.controller.strings.marpCompatibility} (Marp Directives)'),
         const SizedBox(height: 6),
         SwitchListTile(
           value: _marpEnabled,
           onChanged: (val) => setState(() => _marpEnabled = val),
-          title: const Text('启用 Marp Frontmatter 与分页语法', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-          subtitle: const Text('自动识别 Frontmatter 中的 marp: true, size, paginate, header, footer，并将 --- 自动转换为幻灯片切页', style: TextStyle(fontSize: 11.5)),
+          title: Text(widget.controller.strings.marpCompatibility, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          subtitle: Text(widget.controller.strings.marpCompatibilityDesc, style: const TextStyle(fontSize: 11.5)),
           dense: true,
           contentPadding: EdgeInsets.zero,
         ),
@@ -984,6 +990,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 
   Widget _buildLayoutBottomBar(ThemeData theme, bool isDark) {
+    final s = widget.controller.strings;
     final hasChanges = _hasUnsavedLayoutChanges;
 
     return Row(
@@ -996,7 +1003,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         const SizedBox(width: 6),
         Flexible(
           child: Text(
-            hasChanges ? '版式与页眉页脚有变动 (未保存)' : '版式与页眉页脚与当前文档一致',
+            hasChanges ? s.layoutHasChanges : s.layoutUpToDate,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontSize: 11.5,
@@ -1015,13 +1022,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
               visualDensity: VisualDensity.compact,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             ),
-            child: const Text('放弃修改', style: TextStyle(fontSize: 11.5)),
+            child: Text(s.discardChanges, style: const TextStyle(fontSize: 11.5)),
           ),
           const SizedBox(width: 8),
         ],
         FilledButton.icon(
           icon: const Icon(Icons.check_rounded, size: 15),
-          label: const Text('保存并应用版式', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+          label: Text(s.saveAndApplyLayout, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
           style: FilledButton.styleFrom(
             visualDensity: VisualDensity.compact,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -1055,7 +1062,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     splashRadius: 12,
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
-                    tooltip: '清除此插槽',
+                    tooltip: widget.controller.strings.clearSlotTooltip,
                     onPressed: controller.clear,
                   )
                 : null,
@@ -1069,12 +1076,81 @@ class _SettingsDialogState extends State<SettingsDialog> {
   // ==================== 1. GENERAL TAB ====================
   Widget _buildGeneralTab(ThemeData theme, bool isDark) {
     final controller = widget.controller;
+    final strings = controller.strings;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // 1. Language Selector
+        _buildSectionHeader('${strings.displayLanguage} (Display Language)'),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF9F9F9),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.translate_rounded, size: 22, color: theme.colorScheme.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      strings.displayLanguage,
+                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      strings.displayLanguageDesc,
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: controller.language,
+                  borderRadius: BorderRadius.circular(8),
+                  items: AppLanguage.values.map((lang) {
+                    return DropdownMenuItem<String>(
+                      value: lang.code,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(lang.icon, size: 16, color: theme.colorScheme.primary),
+                          const SizedBox(width: 8),
+                          Text(
+                            lang.nativeLabel,
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (val) {
+                    if (val != null) {
+                      controller.setLanguage(val);
+                      setState(() {});
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+
         // Auto Reload Switch
-        _buildSectionHeader('文档自动重载 (Hot Reload)'),
+        _buildSectionHeader('${strings.autoReloadSection} (Hot Reload)'),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -1093,13 +1169,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      '文件修改自动热重载 (Auto Reload)',
-                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                    Text(
+                      strings.autoReload,
+                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      '外部编辑器（如 VS Code / Cursor / Obsidian）保存文档时立即无缝重绘',
+                      strings.autoReloadDesc,
                       style: TextStyle(
                         fontSize: 11.5,
                         color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
@@ -1118,7 +1194,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         const SizedBox(height: 18),
 
         // Session & History
-        _buildSectionHeader('会话与历史记录 (Session & History)'),
+        _buildSectionHeader('${strings.sessionSection} (Session & History)'),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -1140,13 +1216,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          '最近打开文档记录',
-                          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                        Text(
+                          strings.recentDocsRecord,
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          '已记录 ${controller.recentFiles.length} 个历史文档',
+                          strings.recentFilesCount(controller.recentFiles.length),
                           style: TextStyle(
                             fontSize: 11.5,
                             color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
@@ -1157,7 +1233,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                   OutlinedButton.icon(
                     icon: const Icon(Icons.delete_sweep_outlined, size: 15),
-                    label: const Text('清空历史', style: TextStyle(fontSize: 12)),
+                    label: Text(strings.clearRecentHistory, style: const TextStyle(fontSize: 12)),
                     onPressed: controller.recentFiles.isEmpty
                         ? null
                         : () {
@@ -1223,7 +1299,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         const SizedBox(height: 18),
 
         // Compiled Document Cache Section
-        _buildSectionHeader('预编译 PDF 缓存 (Compiled Cache)'),
+        _buildSectionHeader('${strings.cacheSection} (Compiled Cache)'),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -1245,17 +1321,17 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          '本地磁盘缓存',
-                          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                        Text(
+                          strings.localDiskCache,
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                         ),
                         const SizedBox(height: 2),
                         Text(
                           _isLoadingCache
-                              ? '正在读取缓存统计...'
+                              ? strings.loadingCacheStats
                               : (_cacheStats.fileCount > 0
-                                  ? '已缓存 ${_cacheStats.fileCount} 个文档 (${_cacheStats.formattedSize})'
-                                  : '暂无缓存文件 (0 B)'),
+                                  ? strings.currentCacheSize(_cacheStats.fileCount, _cacheStats.formattedSize)
+                                  : strings.noCacheFiles),
                           style: TextStyle(
                             fontSize: 11.5,
                             color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
@@ -1277,7 +1353,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     icon: _isClearingCache
                         ? const SizedBox(width: 13, height: 13, child: CircularProgressIndicator(strokeWidth: 2))
                         : const Icon(Icons.cleaning_services_outlined, size: 15),
-                    label: const Text('清理缓存', style: TextStyle(fontSize: 12)),
+                    label: Text(strings.clearCache, style: const TextStyle(fontSize: 12)),
                     onPressed: _isLoadingCache || _cacheStats.fileCount == 0 || _isClearingCache
                         ? null
                         : _handleClearCache,
@@ -1300,7 +1376,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      '编译生成的矢量 PDF 会缓存到本地磁盘，用于实现秒级极速冷启动与历史切换。源文件编辑保存时会自动失效重编。',
+                      strings.cacheDesc,
                       style: TextStyle(
                         fontSize: 11.0,
                         color: isDark ? const Color(0xFF666666) : const Color(0xFF888888),
@@ -1788,6 +1864,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 
   Widget _buildTypographyBottomBar(ThemeData theme, bool isDark) {
+    final s = widget.controller.strings;
     final hasChanges = _hasUnsavedTypographyChanges;
 
     return Row(
@@ -1800,7 +1877,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         const SizedBox(width: 6),
         Flexible(
           child: Text(
-            hasChanges ? '排版设置有变动 (未保存到文档)' : '排版设置与当前文档一致',
+            hasChanges ? s.typographyHasChanges : s.typographyUpToDate,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontSize: 11.5,
@@ -1819,13 +1896,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
               visualDensity: VisualDensity.compact,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             ),
-            child: const Text('放弃修改', style: TextStyle(fontSize: 11.5)),
+            child: Text(s.discardChanges, style: const TextStyle(fontSize: 11.5)),
           ),
           const SizedBox(width: 8),
         ],
         FilledButton.icon(
           icon: const Icon(Icons.check_rounded, size: 15),
-          label: const Text('保存并刷新文档', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+          label: Text(s.saveAndApplyTypography, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
           style: FilledButton.styleFrom(
             visualDensity: VisualDensity.compact,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -2086,6 +2163,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   // ==================== 3. SHORTCUTS TAB ====================
   Widget _buildShortcutsTab(ThemeData theme, bool isDark) {
     final shortcutService = widget.controller.shortcutService;
+    final strings = widget.controller.strings;
 
     // Group actions by category
     final categories = <String, List<AppShortcutAction>>{};
@@ -2125,7 +2203,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
           Padding(
             padding: const EdgeInsets.only(top: 8, bottom: 6),
             child: Text(
-              category,
+              strings.shortcutCategoryName(category),
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
@@ -2152,7 +2230,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               });
             },
             icon: const Icon(Icons.restart_alt_rounded, size: 16),
-            label: const Text('恢复全部默认快捷键', style: TextStyle(fontSize: 12.5)),
+            label: Text(strings.resetAllShortcuts, style: const TextStyle(fontSize: 12.5)),
             style: TextButton.styleFrom(
               foregroundColor: isDark ? Colors.white70 : Colors.black54,
             ),
@@ -2168,6 +2246,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     bool isDark,
     ThemeData theme,
   ) {
+    final strings = widget.controller.strings;
     final isListening = _listeningActionId == action.id;
     final isCustomized = shortcutService.isCustomized(action.id);
     final shortcutLabel = shortcutService.getShortcutLabel(action.id);
@@ -2196,7 +2275,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 Row(
                   children: [
                     Text(
-                      action.name,
+                      strings.shortcutActionName(action.id, action.name),
                       style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
@@ -2224,7 +2303,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  action.description,
+                  strings.shortcutActionDesc(action.id, action.description),
                   style: TextStyle(
                     fontSize: 11,
                     color: isDark ? const Color(0xFF888888) : const Color(0xFF777777),
@@ -2254,7 +2333,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   setState(() {
                     _listeningActionId = null;
                     if (conflict != null) {
-                      _conflictMessage = '快捷键已绑定为 $key，与「$conflict」存在相同主键，请留意避免冲突';
+                      _conflictMessage = strings.shortcutConflict(conflict);
                     } else {
                       _conflictMessage = null;
                     }
@@ -2303,7 +2382,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     ),
                     const SizedBox(width: 5),
                     Text(
-                      isListening ? '请直接按下新按键...' : shortcutLabel,
+                      isListening ? strings.pressNewShortcut : shortcutLabel,
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
@@ -2345,6 +2424,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
   // ==================== 4. CLI TAB ====================
   Widget _buildCliTab(ThemeData theme, bool isDark) {
+    final s = widget.controller.strings;
+
     if (!NativeCliService.isSupported) {
       return Center(
         child: Padding(
@@ -2396,7 +2477,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      isInstalled ? '命令行工具 \'sgv\' 已成功就绪' : '尚未安装 \'sgv\' 命令行工具',
+                      isInstalled ? s.cliStatusReady : s.cliStatusNotInstalled,
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 13.5,
@@ -2408,7 +2489,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     const SizedBox(height: 2),
                     Text(
                       isInstalled
-                          ? (Platform.isWindows ? '脚本路径: ${_cliStatus.path}' : '符号链接路径: ${_cliStatus.path}')
+                          ? (Platform.isWindows ? 'PATH: ${_cliStatus.path}' : s.cliSymlinkPath(_cliStatus.path))
                           : '安装后可直接在终端中输入 sgv README.md 极速预览任何文档',
                       style: TextStyle(
                         fontSize: 11.5,
@@ -2431,7 +2512,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     foregroundColor: Colors.redAccent,
                     visualDensity: VisualDensity.compact,
                   ),
-                  child: const Text('卸载', style: TextStyle(fontSize: 12)),
+                  child: Text(s.cliUninstall, style: const TextStyle(fontSize: 12)),
                 )
               else
                 ElevatedButton(
@@ -2441,19 +2522,19 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     foregroundColor: Colors.white,
                     visualDensity: VisualDensity.compact,
                   ),
-                  child: const Text('一键安装', style: TextStyle(fontSize: 12)),
+                  child: Text(s.cliInstall, style: const TextStyle(fontSize: 12)),
                 ),
             ],
           ),
         ),
         const SizedBox(height: 18),
 
-        _buildSectionHeader('终端使用范例 (Terminal Usage)'),
+        _buildSectionHeader('${s.cliUsageExamples} (Terminal Usage)'),
         const SizedBox(height: 8),
 
-        _buildCliCodeSnippet('查看本地文件', 'sgv README.md', isDark),
+        _buildCliCodeSnippet(s.cliExampleCurrentDir, 'sgv README.md', isDark),
         const SizedBox(height: 8),
-        _buildCliCodeSnippet('以 A4 出版模式打开', 'sgv --a4 report.md', isDark),
+        _buildCliCodeSnippet(s.cliExampleAnyFile, 'sgv --a4 report.md', isDark),
         const SizedBox(height: 8),
         _buildCliCodeSnippet('通过管道即时预览 stdin', 'cat note.md | sgv', isDark),
       ],
@@ -2497,7 +2578,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
           ),
           IconButton(
             icon: const Icon(Icons.copy_rounded, size: 16),
-            tooltip: '复制命令',
+            tooltip: widget.controller.strings.copyCommandTooltip,
             onPressed: () => _copyCliCommand(cmd),
           ),
         ],
@@ -2507,6 +2588,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
   // ==================== 5. ABOUT TAB ====================
   Widget _buildAboutTab(ThemeData theme, bool isDark) {
+    final s = widget.controller.strings;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2552,7 +2635,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ),
               const SizedBox(height: 4),
               Text(
-                '版本 ${SettingsDialog.appVersion} (Build 2026.09)',
+                '${s.aboutVersion(SettingsDialog.appVersion)} (Build 2026.09)',
                 style: TextStyle(
                   fontSize: 12,
                   color: isDark ? Colors.white54 : Colors.black45,
@@ -2626,7 +2709,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ),
               ElevatedButton.icon(
                 icon: const Icon(Icons.description_outlined, size: 15),
-                label: const Text('载入体验', style: TextStyle(fontSize: 12)),
+                label: Text(s.loadSampleDoc, style: const TextStyle(fontSize: 12)),
                 onPressed: () {
                   widget.controller.loadSampleDocument();
                   Navigator.of(context).pop();

@@ -129,7 +129,7 @@ class _SidebarViewState extends State<SidebarView> {
             ),
             const SizedBox(height: 8),
             Text(
-              '当前文档未检测到标题大纲',
+              widget.controller.strings.noOutlineFound,
               style: TextStyle(
                 fontSize: 12,
                 color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
@@ -214,7 +214,7 @@ class _SidebarViewState extends State<SidebarView> {
           child: Row(
             children: [
               Text(
-                '历史文件${widget.controller.recentFiles.isNotEmpty ? ' (${widget.controller.recentFiles.length})' : ''}',
+                widget.controller.strings.recentFilesCount(widget.controller.recentFiles.length),
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
@@ -229,7 +229,7 @@ class _SidebarViewState extends State<SidebarView> {
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     child: Text(
-                      '清空',
+                      widget.controller.strings.clearRecentHistory,
                       style: TextStyle(
                         fontSize: 10.5,
                         color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
@@ -256,7 +256,7 @@ class _SidebarViewState extends State<SidebarView> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          '暂无历史文件',
+                          widget.controller.strings.noRecentFiles,
                           style: TextStyle(
                             fontSize: 12,
                             color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
@@ -265,7 +265,7 @@ class _SidebarViewState extends State<SidebarView> {
                         const SizedBox(height: 12),
                         OutlinedButton.icon(
                           icon: const Icon(Icons.auto_awesome, size: 14),
-                          label: const Text('载入精选样例', style: TextStyle(fontSize: 11.5)),
+                          label: Text(widget.controller.strings.loadSampleDoc, style: const TextStyle(fontSize: 11.5)),
                           onPressed: widget.controller.loadSampleDocument,
                           style: OutlinedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -378,7 +378,7 @@ class _SidebarViewState extends State<SidebarView> {
                     width: 24,
                     height: 24,
                     child: IconButton(
-                      tooltip: '打开本地文件 (${widget.controller.shortcutService.getShortcutLabel('openFile')})',
+                      tooltip: '${controller.strings.openDocument} (${controller.shortcutService.getShortcutLabel('openFile')})',
                       icon: const Icon(Icons.folder_open_rounded, size: 16),
                       onPressed: () => _pickAndOpenFile(context),
                       style: IconButton.styleFrom(
@@ -394,7 +394,7 @@ class _SidebarViewState extends State<SidebarView> {
                       width: 24,
                       height: 24,
                       child: IconButton(
-                        tooltip: '收起侧边栏 (${widget.controller.shortcutService.getShortcutLabel('toggleSidebar')} 或 Esc)',
+                        tooltip: controller.strings.sidebarCloseTooltip(controller.shortcutService.getShortcutLabel('toggleSidebar')),
                         icon: const Icon(Icons.close_rounded, size: 16),
                         onPressed: widget.onClose,
                         style: IconButton.styleFrom(
@@ -487,7 +487,7 @@ class _SidebarViewState extends State<SidebarView> {
                           )
                         else
                           Text(
-                            '就绪',
+                            controller.strings.statusReady,
                             style: TextStyle(
                               fontSize: 10,
                               color: Colors.green.shade600,
@@ -514,7 +514,7 @@ class _SidebarViewState extends State<SidebarView> {
                   children: [
                     Expanded(
                       child: _buildTabButton(
-                        title: '大纲目录',
+                        title: controller.strings.sidebarTabOutline,
                         icon: Icons.format_list_bulleted_rounded,
                         count: controller.outlineItems.length,
                         isSelected: _selectedTab == 0,
@@ -525,7 +525,7 @@ class _SidebarViewState extends State<SidebarView> {
                     ),
                     Expanded(
                       child: _buildTabButton(
-                        title: '最近文件',
+                        title: controller.strings.sidebarTabRecent,
                         icon: Icons.history_rounded,
                         count: controller.recentFiles.length,
                         isSelected: _selectedTab == 1,
@@ -565,7 +565,7 @@ class _SidebarViewState extends State<SidebarView> {
                   // Unified Settings Entry
                   Expanded(
                     child: Tooltip(
-                      message: '偏好设置 (${controller.shortcutService.getShortcutLabel('preferences')})',
+                      message: controller.strings.settingsTooltip(controller.shortcutService.getShortcutLabel('openSettings')),
                       child: InkWell(
                         borderRadius: BorderRadius.circular(6),
                         onTap: () => showSettingsDialog(context, controller),
@@ -581,7 +581,7 @@ class _SidebarViewState extends State<SidebarView> {
                               ),
                               const SizedBox(width: 6),
                               Text(
-                                '偏好设置',
+                                controller.strings.settingsTitle,
                                 style: TextStyle(
                                   fontSize: 11.5,
                                   color: theme.colorScheme.onSurface.withValues(alpha: 0.85),
@@ -600,7 +600,7 @@ class _SidebarViewState extends State<SidebarView> {
                       color: isDark ? const Color(0x22FFFFFF) : const Color(0x18000000),
                     ),
                     Tooltip(
-                      message: '清空最近打开历史',
+                      message: controller.strings.clearRecentHistory,
                       child: InkWell(
                         borderRadius: BorderRadius.circular(6),
                         onTap: controller.clearRecentFiles,

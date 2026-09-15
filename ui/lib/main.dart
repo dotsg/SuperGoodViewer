@@ -1,6 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'controllers/reader_controller.dart';
+import 'i18n/app_localizations.dart';
+import 'i18n/locales.dart';
 import 'views/workspace_view.dart';
 import 'services/startup_metrics.dart';
 
@@ -35,7 +38,10 @@ class _SuperGoodViewerAppState extends State<SuperGoodViewerApp> {
   @override
   void initState() {
     super.initState();
-    _controller = ReaderController(initialFilePath: widget.initialFile);
+    _controller = ReaderController(
+      initialFilePath: widget.initialFile,
+      defaultLanguage: 'system',
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       StartupMetrics.markFirstFrame();
     });
@@ -103,11 +109,19 @@ class _SuperGoodViewerAppState extends State<SuperGoodViewerApp> {
         final isDark = _controller.renderOptions.isDark;
 
         return MaterialApp(
-          title: '超好读',
+          title: _controller.strings.appTitle,
           debugShowCheckedModeBanner: false,
           themeMode: isDark ? ThemeMode.dark : ThemeMode.light,
           theme: _lightTheme,
           darkTheme: _darkTheme,
+          locale: _controller.currentLocale,
+          supportedLocales: AppLocales.supportedLocales,
+          localizationsDelegates: [
+            AppLocalizationsDelegate(_controller.language),
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
           home: WorkspaceView(controller: _controller),
         );
       },

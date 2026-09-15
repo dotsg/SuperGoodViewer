@@ -274,7 +274,7 @@ class PresentationViewState extends State<PresentationView> {
           children: [
             CircularProgressIndicator(color: indicatorColor),
             const SizedBox(height: 16),
-            Text('正在排版幻灯片...', style: TextStyle(color: textColor, fontSize: 14)),
+            Text(widget.controller.strings.compiling, style: TextStyle(color: textColor, fontSize: 14)),
           ],
         ),
       );
@@ -290,7 +290,7 @@ class PresentationViewState extends State<PresentationView> {
     if (_document == null || _pageCount == 0) {
       return Center(
         child: Text(
-          '无可用幻灯片页面',
+          widget.controller.strings.noMatches,
           style: TextStyle(color: textColor, fontSize: 16),
         ),
       );
@@ -339,7 +339,7 @@ class PresentationViewState extends State<PresentationView> {
               // Prev
               IconButton(
                 icon: Icon(Icons.arrow_back_ios_new, size: 15, color: iconColor),
-                tooltip: '上一页 (← / PageUp)',
+                tooltip: widget.controller.strings.presentationPrev,
                 splashRadius: 18,
                 onPressed: _currentPage > 1 ? _prevPage : null,
               ),
@@ -361,7 +361,7 @@ class PresentationViewState extends State<PresentationView> {
               // Next
               IconButton(
                 icon: Icon(Icons.arrow_forward_ios, size: 15, color: iconColor),
-                tooltip: '下一页 (→ / Space)',
+                tooltip: widget.controller.strings.presentationNext,
                 splashRadius: 18,
                 onPressed: _currentPage < _pageCount ? _nextPage : null,
               ),
@@ -373,7 +373,7 @@ class PresentationViewState extends State<PresentationView> {
               // Exit presentation
               IconButton(
                 icon: Icon(Icons.close, size: 17, color: iconColor),
-                tooltip: '退出放映 (Esc)',
+                tooltip: widget.controller.strings.exitPresentation,
                 splashRadius: 18,
                 onPressed: widget.onExit,
               ),

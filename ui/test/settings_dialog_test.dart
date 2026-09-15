@@ -213,6 +213,11 @@ void main() {
     });
 
     testWidgets('General tab displays compiled cache info and clears cache on button press', (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
       final tempDir = Directory.systemTemp.createTempSync('sgv_settings_cache_test_');
       DocumentCacheService.setCacheDirForTesting(tempDir);
       final dummyFile = File(p.join(tempDir.path, 'test_123.pdf'));

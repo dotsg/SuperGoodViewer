@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../i18n/app_strings.dart';
 
 /// Predefined page layout formats for SuperGoodViewer.
 class PageFormat {
@@ -16,7 +17,21 @@ class PageFormat {
     slide4x3,
   ];
 
-  static String getDisplayName(String format) {
+  static String getDisplayName(String format, [AppStrings? strings]) {
+    if (strings != null) {
+      switch (format) {
+        case fluid:
+          return strings.layoutModeFluid;
+        case a4Portrait:
+          return strings.layoutModeA4Portrait;
+        case a4Landscape:
+          return strings.layoutModeA4Landscape;
+        case slide16x9:
+          return strings.layoutModeSlide169;
+        case slide4x3:
+          return strings.layoutModeSlide43;
+      }
+    }
     switch (format) {
       case fluid:
         return '自适应流式';

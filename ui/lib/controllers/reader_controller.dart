@@ -3,11 +3,15 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
+import 'dart:ui' show Locale;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 
 import 'package:path/path.dart' as p;
 import '../bridge/native_engine.dart';
+import '../i18n/app_localizations.dart';
+import '../i18n/app_strings.dart';
+import '../i18n/locales.dart';
 import '../models/render_options.dart';
 import '../services/document_cache_service.dart';
 import '../services/preferences_service.dart';
@@ -86,7 +90,20 @@ class ReaderController extends ChangeNotifier {
   OutlineItem? _requestedJumpItem;
   bool renderOptionsChanged = false;
 
+  String _language = 'zhHans';
+
   // Getters
+  String get language => _language;
+  Locale? get currentLocale => AppLanguage.fromCode(_language).locale;
+  AppStrings get strings => AppI18n.resolve(_language);
+
+  void setLanguage(String lang) {
+    if (_language != lang) {
+      _language = lang;
+      _persistPreferences();
+      notifyListeners();
+    }
+  }
   String? get currentFilePath => _currentFilePath;
   String get currentMarkdown => _currentMarkdown;
   String get documentTitle => _documentTitle;
@@ -247,7 +264,14 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
-  ReaderController({String? initialFilePath, bool autoRestorePreferences = true}) {
+  ReaderController({
+    String? initialFilePath,
+    bool autoRestorePreferences = true,
+    String? defaultLanguage,
+  }) {
+    if (defaultLanguage != null) {
+      _language = defaultLanguage;
+    }
     unawaited(refreshFontReport());
     _setSampleDocumentContent();
     if (initialFilePath != null && initialFilePath.isNotEmpty && File(initialFilePath).existsSync()) {
@@ -265,6 +289,7 @@ class ReaderController extends ChangeNotifier {
   void _initPreferencesOnly() {
     try {
       final prefs = PreferencesService.loadSync();
+      final savedLanguage = prefs['language'] as String?;
       final savedTheme = prefs['theme'] as String?;
       final savedMode = prefs['mode'] as String?;
       final savedTwoPage = prefs['isTwoPage'] as bool?;
@@ -327,6 +352,9 @@ class ReaderController extends ChangeNotifier {
           marpEnabled: savedMarpEnabled ?? _renderOptions.marpEnabled,
           imageCacheDir: RemoteImageService.instance.getCacheDirectory().path,
         );
+      }
+      if (savedLanguage != null) {
+        _language = savedLanguage;
       }
       if (savedTwoPage != null) {
         _isTwoPage = savedTwoPage;
@@ -398,6 +426,7 @@ class ReaderController extends ChangeNotifier {
   void _persistPreferences() {
     _updateCurrentFileHistory();
     PreferencesService.save({
+      'language': _language,
       'lastOpenedFile': _currentFilePath,
       'recentFiles': List<String>.from(_recentFiles),
       'theme': _renderOptions.theme,

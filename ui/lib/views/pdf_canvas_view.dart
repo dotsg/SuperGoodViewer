@@ -1637,12 +1637,13 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
     final items = <ContextMenuButtonItem>[];
 
+    final s = widget.controller.strings;
     if (isText) {
       // 1. Text Selection Context Menu: strictly text actions
       if (params.isTextSelectionEnabled && params.textSelectionDelegate.isCopyAllowed) {
         items.add(
           ContextMenuButtonItem(
-            label: '复制 (Cmd+C)',
+            label: '${s.copy} (${Platform.isMacOS ? 'Cmd+C' : 'Ctrl+C'})',
             type: ContextMenuButtonType.copy,
             onPressed: () async {
               params.dismissContextMenu();
@@ -1657,7 +1658,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (params.isTextSelectionEnabled && !params.textSelectionDelegate.isSelectingAllText) {
         items.add(
           ContextMenuButtonItem(
-            label: '全选 (Cmd+A)',
+            label: '${s.selectAll} (${Platform.isMacOS ? 'Cmd+A' : 'Ctrl+A'})',
             type: ContextMenuButtonType.selectAll,
             onPressed: () {
               params.dismissContextMenu();
@@ -1671,7 +1672,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (params.isTextSelectionEnabled) {
         items.add(
           ContextMenuButtonItem(
-            label: '全选文本 (Cmd+A)',
+            label: '${s.selectAll} (${Platform.isMacOS ? 'Cmd+A' : 'Ctrl+A'})',
             type: ContextMenuButtonType.selectAll,
             onPressed: () {
               params.dismissContextMenu();
@@ -1682,7 +1683,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       }
       items.add(
         ContextMenuButtonItem(
-          label: '满窗口 (适应宽度) (${widget.controller.shortcutService.getShortcutLabel('fitWidth')})',
+          label: '${s.fitWindowWidth} (${widget.controller.shortcutService.getShortcutLabel('fitWidth')})',
           onPressed: () {
             params.dismissContextMenu();
             fitWidth();
@@ -1691,7 +1692,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       );
       items.add(
         ContextMenuButtonItem(
-          label: '满屏 (适应整页) (${widget.controller.shortcutService.getShortcutLabel('fitPage')})',
+          label: '${s.fitPageWhole} (${widget.controller.shortcutService.getShortcutLabel('fitPage')})',
           onPressed: () {
             params.dismissContextMenu();
             fitPage();
@@ -1700,7 +1701,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       );
       items.add(
         ContextMenuButtonItem(
-          label: '实际大小 100% (${widget.controller.shortcutService.getShortcutLabel('resetZoom')})',
+          label: s.resetZoomTooltip(widget.controller.shortcutService.getShortcutLabel('resetZoom')),
           onPressed: () {
             params.dismissContextMenu();
             resetZoom();
@@ -1709,7 +1710,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       );
       items.add(
         ContextMenuButtonItem(
-          label: '放大 (${widget.controller.shortcutService.getShortcutLabel('zoomIn')})',
+          label: s.zoomInTooltip(widget.controller.shortcutService.getShortcutLabel('zoomIn')),
           onPressed: () {
             params.dismissContextMenu();
             zoomIn();
@@ -1718,7 +1719,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       );
       items.add(
         ContextMenuButtonItem(
-          label: '缩小 (${widget.controller.shortcutService.getShortcutLabel('zoomOut')})',
+          label: s.zoomOutTooltip(widget.controller.shortcutService.getShortcutLabel('zoomOut')),
           onPressed: () {
             params.dismissContextMenu();
             zoomOut();
@@ -1728,9 +1729,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (widget.controller.isPdfDocument || !widget.controller.isFluidLayout) {
         items.add(
           ContextMenuButtonItem(
-            label: widget.controller.isTwoPage
-                ? '切换为单页纵向浏览 (${widget.controller.shortcutService.getShortcutLabel('toggleTwoPage')})'
-                : '切换为双页对开浏览 (${widget.controller.shortcutService.getShortcutLabel('toggleTwoPage')})',
+            label: s.toggleTwoPageTooltip(widget.controller.isTwoPage, widget.controller.shortcutService.getShortcutLabel('toggleTwoPage')),
             onPressed: () {
               params.dismissContextMenu();
               widget.controller.toggleTwoPage();
@@ -1741,9 +1740,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (!widget.controller.isPdfDocument) {
         items.add(
           ContextMenuButtonItem(
-            label: widget.controller.isFluidLayout
-                ? '切换为 A4 出版模式 (${widget.controller.shortcutService.getShortcutLabel('toggleMode')})'
-                : '切换为自适应流式 (${widget.controller.shortcutService.getShortcutLabel('toggleMode')})',
+            label: s.toggleModeTooltip(widget.controller.shortcutService.getShortcutLabel('toggleMode')),
             onPressed: () {
               params.dismissContextMenu();
               widget.controller.toggleMode();
@@ -1753,9 +1750,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       }
       items.add(
         ContextMenuButtonItem(
-          label: widget.controller.renderOptions.isDark
-              ? '切换为明亮主题 (${widget.controller.shortcutService.getShortcutLabel('toggleTheme')})'
-              : '切换为暗黑主题 (${widget.controller.shortcutService.getShortcutLabel('toggleTheme')})',
+          label: s.toggleThemeTooltip(widget.controller.renderOptions.isDark, widget.controller.shortcutService.getShortcutLabel('toggleTheme')),
           onPressed: () {
             params.dismissContextMenu();
             widget.controller.toggleTheme();
@@ -1765,7 +1760,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (widget.onToggleSidebar != null) {
         items.add(
           ContextMenuButtonItem(
-            label: '展开/收起侧边栏 (${widget.controller.shortcutService.getShortcutLabel('toggleSidebar')})',
+            label: s.toggleSidebarTooltip(widget.controller.shortcutService.getShortcutLabel('toggleSidebar')),
             onPressed: () {
               params.dismissContextMenu();
               widget.onToggleSidebar!();
@@ -1776,7 +1771,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (widget.onExportPdf != null) {
         items.add(
           ContextMenuButtonItem(
-            label: '导出出版级 PDF... (${widget.controller.shortcutService.getShortcutLabel('exportPdf')})',
+            label: '${s.exportPdf} (${widget.controller.shortcutService.getShortcutLabel('exportPdf')})',
             onPressed: () {
               params.dismissContextMenu();
               widget.onExportPdf!();
@@ -2063,7 +2058,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('目标文档不存在: ${p.basename(resolvedPath)}'),
+                      content: Text(widget.controller.strings.targetDocNotExist(p.basename(resolvedPath))),
                       duration: const Duration(seconds: 2),
                       behavior: SnackBarBehavior.floating,
                     ),
@@ -2096,7 +2091,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             ),
             const SizedBox(height: 16),
             Text(
-              '正在排版文档...',
+              widget.controller.strings.compiling,
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
                 fontSize: 13.5,
@@ -2301,15 +2296,16 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final borderColor = isDark ? Colors.white.withValues(alpha: 0.12) : Colors.black.withValues(alpha: 0.1);
     final iconColor = isDark ? Colors.white70 : Colors.black54;
 
+    final s = widget.controller.strings;
     String matchInfo;
     if (_searchFieldController.text.isEmpty) {
       matchInfo = '';
     } else if (_isSearchingText) {
-      matchInfo = '搜索中...';
+      matchInfo = '...';
     } else if (_searchTotalMatches == 0) {
-      matchInfo = '无匹配';
+      matchInfo = s.noMatches;
     } else {
-      matchInfo = '$_searchMatchIndex / $_searchTotalMatches';
+      matchInfo = s.matchCount(_searchMatchIndex, _searchTotalMatches);
     }
 
     return ClipRRect(
@@ -2342,7 +2338,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
                   focusNode: _searchFocusNode,
                   style: TextStyle(fontSize: 13, color: textColor),
                   decoration: InputDecoration(
-                    hintText: '查找文档内容...',
+                    hintText: s.searchPlaceholder,
                     hintStyle: TextStyle(fontSize: 12.5, color: hintColor),
                     isDense: true,
                     border: InputBorder.none,
@@ -2370,7 +2366,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
               const SizedBox(width: 2),
               IconButton(
                 icon: Icon(Icons.keyboard_arrow_up, size: 17, color: iconColor),
-                tooltip: '上一个 (Shift+Enter)',
+                tooltip: s.searchPrevious,
                 splashRadius: 14,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
@@ -2378,7 +2374,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
               ),
               IconButton(
                 icon: Icon(Icons.keyboard_arrow_down, size: 17, color: iconColor),
-                tooltip: '下一个 (Enter)',
+                tooltip: s.searchNext,
                 splashRadius: 14,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
@@ -2389,7 +2385,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
               const SizedBox(width: 4),
               IconButton(
                 icon: Icon(Icons.close, size: 15, color: iconColor),
-                tooltip: '关闭 (Esc)',
+                tooltip: s.closeSearch,
                 splashRadius: 14,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
