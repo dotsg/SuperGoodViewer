@@ -783,62 +783,100 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ),
 
         const SizedBox(height: 12),
-        Text('页眉插槽 (Header Slots)', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: theme.colorScheme.primary)),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('页眉插槽 (Header Slots)', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: theme.colorScheme.primary)),
+            TextButton.icon(
+              icon: const Icon(Icons.clear_all_rounded, size: 14),
+              label: const Text('清空页眉', style: TextStyle(fontSize: 11)),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              onPressed: () {
+                _headerLeftController.clear();
+                _headerCenterController.clear();
+                _headerRightController.clear();
+              },
+            ),
+          ],
+        ),
         const SizedBox(height: 6),
         Row(
           children: [
             Expanded(
-              child: TextField(
+              child: _buildSlotField(
                 controller: _headerLeftController,
-                decoration: const InputDecoration(labelText: '左插槽', hintText: '空或自定义文字', isDense: true, border: OutlineInputBorder()),
-                style: const TextStyle(fontSize: 12),
+                label: '左插槽',
+                hintText: '空或自定义文字',
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: TextField(
+              child: _buildSlotField(
                 controller: _headerCenterController,
-                decoration: const InputDecoration(labelText: '中插槽', hintText: '空', isDense: true, border: OutlineInputBorder()),
-                style: const TextStyle(fontSize: 12),
+                label: '中插槽',
+                hintText: '空',
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: TextField(
+              child: _buildSlotField(
                 controller: _headerRightController,
-                decoration: const InputDecoration(labelText: '右插槽', hintText: '{title}', isDense: true, border: OutlineInputBorder()),
-                style: const TextStyle(fontSize: 12),
+                label: '右插槽',
+                hintText: '{title}',
               ),
             ),
           ],
         ),
 
         const SizedBox(height: 14),
-        Text('页脚插槽 (Footer Slots)', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: theme.colorScheme.primary)),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('页脚插槽 (Footer Slots)', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: theme.colorScheme.primary)),
+            TextButton.icon(
+              icon: const Icon(Icons.clear_all_rounded, size: 14),
+              label: const Text('清空页脚', style: TextStyle(fontSize: 11)),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              onPressed: () {
+                _footerLeftController.clear();
+                _footerCenterController.clear();
+                _footerRightController.clear();
+              },
+            ),
+          ],
+        ),
         const SizedBox(height: 6),
         Row(
           children: [
             Expanded(
-              child: TextField(
+              child: _buildSlotField(
                 controller: _footerLeftController,
-                decoration: const InputDecoration(labelText: '左插槽', hintText: '空或版权声明', isDense: true, border: OutlineInputBorder()),
-                style: const TextStyle(fontSize: 12),
+                label: '左插槽',
+                hintText: '空或版权声明',
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: TextField(
+              child: _buildSlotField(
                 controller: _footerCenterController,
-                decoration: const InputDecoration(labelText: '中插槽', hintText: '{page}', isDense: true, border: OutlineInputBorder()),
-                style: const TextStyle(fontSize: 12),
+                label: '中插槽',
+                hintText: '{page}',
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: TextField(
+              child: _buildSlotField(
                 controller: _footerRightController,
-                decoration: const InputDecoration(labelText: '右插槽', hintText: '空或 {page}/{total}', isDense: true, border: OutlineInputBorder()),
-                style: const TextStyle(fontSize: 12),
+                label: '右插槽',
+                hintText: '空或 {page}/{total}',
               ),
             ),
           ],
@@ -869,6 +907,39 @@ class _SettingsDialogState extends State<SettingsDialog> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildSlotField({
+    required TextEditingController controller,
+    required String label,
+    required String hintText,
+  }) {
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: controller,
+      builder: (context, value, _) {
+        return TextField(
+          controller: controller,
+          decoration: InputDecoration(
+            labelText: label,
+            hintText: hintText,
+            isDense: true,
+            border: const OutlineInputBorder(),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            suffixIcon: value.text.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.clear, size: 14),
+                    splashRadius: 12,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                    tooltip: '清除此插槽',
+                    onPressed: controller.clear,
+                  )
+                : null,
+          ),
+          style: const TextStyle(fontSize: 12),
+        );
+      },
     );
   }
 

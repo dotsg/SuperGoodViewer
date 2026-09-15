@@ -276,6 +276,16 @@ class ReaderController extends ChangeNotifier {
       final savedZoom = (prefs['lastZoom'] as num?)?.toDouble();
       final savedHistory = prefs['fileHistory'] as Map<String, dynamic>?;
       final savedPageFormat = prefs['pageFormat'] as String?;
+      final savedHeaderLeft = prefs['headerLeft'] as String?;
+      final savedHeaderCenter = prefs['headerCenter'] as String?;
+      final savedHeaderRight = prefs['headerRight'] as String?;
+      final savedFooterLeft = prefs['footerLeft'] as String?;
+      final savedFooterCenter = prefs['footerCenter'] as String?;
+      final savedFooterRight = prefs['footerRight'] as String?;
+      final savedShowHeaderRule = prefs['showHeaderRule'] as bool?;
+      final savedShowFooterRule = prefs['showFooterRule'] as bool?;
+      final savedSkipFirstPage = prefs['skipFirstPageHeaderFooter'] as bool?;
+      final savedMarpEnabled = prefs['marpEnabled'] as bool?;
 
       if (recent != null && recent.isNotEmpty) {
         _recentFiles.clear();
@@ -287,7 +297,17 @@ class ReaderController extends ChangeNotifier {
           savedFontSize != null ||
           savedBodyFont != null ||
           savedCodeFont != null ||
-          savedPageFormat != null) {
+          savedPageFormat != null ||
+          savedHeaderLeft != null ||
+          savedHeaderCenter != null ||
+          savedHeaderRight != null ||
+          savedFooterLeft != null ||
+          savedFooterCenter != null ||
+          savedFooterRight != null ||
+          savedShowHeaderRule != null ||
+          savedShowFooterRule != null ||
+          savedSkipFirstPage != null ||
+          savedMarpEnabled != null) {
         _renderOptions = _renderOptions.copyWith(
           theme: savedTheme ?? _renderOptions.theme,
           mode: savedMode ?? _renderOptions.mode,
@@ -295,6 +315,16 @@ class ReaderController extends ChangeNotifier {
           fontSize: savedFontSize ?? _renderOptions.fontSize,
           bodyFont: savedBodyFont ?? _renderOptions.bodyFont,
           codeFont: savedCodeFont ?? _renderOptions.codeFont,
+          headerLeft: savedHeaderLeft ?? _renderOptions.headerLeft,
+          headerCenter: savedHeaderCenter ?? _renderOptions.headerCenter,
+          headerRight: savedHeaderRight ?? _renderOptions.headerRight,
+          footerLeft: savedFooterLeft ?? _renderOptions.footerLeft,
+          footerCenter: savedFooterCenter ?? _renderOptions.footerCenter,
+          footerRight: savedFooterRight ?? _renderOptions.footerRight,
+          showHeaderRule: savedShowHeaderRule ?? _renderOptions.showHeaderRule,
+          showFooterRule: savedShowFooterRule ?? _renderOptions.showFooterRule,
+          skipFirstPageHeaderFooter: savedSkipFirstPage ?? _renderOptions.skipFirstPageHeaderFooter,
+          marpEnabled: savedMarpEnabled ?? _renderOptions.marpEnabled,
           imageCacheDir: RemoteImageService.instance.getCacheDirectory().path,
         );
       }
@@ -378,6 +408,16 @@ class ReaderController extends ChangeNotifier {
       'fontSize': _renderOptions.fontSize,
       'bodyFont': _renderOptions.bodyFont,
       'codeFont': _renderOptions.codeFont,
+      'headerLeft': _renderOptions.headerLeft,
+      'headerCenter': _renderOptions.headerCenter,
+      'headerRight': _renderOptions.headerRight,
+      'footerLeft': _renderOptions.footerLeft,
+      'footerCenter': _renderOptions.footerCenter,
+      'footerRight': _renderOptions.footerRight,
+      'showHeaderRule': _renderOptions.showHeaderRule,
+      'showFooterRule': _renderOptions.showFooterRule,
+      'skipFirstPageHeaderFooter': _renderOptions.skipFirstPageHeaderFooter,
+      'marpEnabled': _renderOptions.marpEnabled,
       'lastScrollRatio': _lastScrollRatio,
       'lastScrollOffset': _lastScrollOffset,
       'lastPageNumber': _lastPageNumber,
@@ -848,13 +888,15 @@ class ReaderController extends ChangeNotifier {
     setPresentationMode(!_isPresentationMode);
   }
 
+  static const Object _undefined = Object();
+
   void setHeaderFooterOptions({
-    String? headerLeft,
-    String? headerCenter,
-    String? headerRight,
-    String? footerLeft,
-    String? footerCenter,
-    String? footerRight,
+    Object? headerLeft = _undefined,
+    Object? headerCenter = _undefined,
+    Object? headerRight = _undefined,
+    Object? footerLeft = _undefined,
+    Object? footerCenter = _undefined,
+    Object? footerRight = _undefined,
     bool? showHeaderRule,
     bool? showFooterRule,
     bool? skipFirstPageHeaderFooter,

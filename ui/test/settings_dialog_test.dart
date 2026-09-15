@@ -256,5 +256,62 @@ void main() {
       tempDir.deleteSync(recursive: true);
       controller.dispose();
     });
+
+    testWidgets('Layout tab allows setting header slots and then clearing and saving them', (tester) async {
+      tester.view.physicalSize = const Size(1200, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SettingsDialog(
+              controller: controller,
+              initialTab: SettingsTab.layout,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Find the Header Center slot by looking for the TextField with label '中插槽' in header slots
+      final centerFields = find.widgetWithText(TextField, '中插槽');
+      expect(centerFields, findsNWidgets(2)); // header and footer
+
+      // Enter header text
+      await tester.enterText(centerFields.first, '{title}');
+      await tester.pumpAndSettle();
+
+      // Tap '保存并应用版式与页眉页脚'
+      final saveBtn = find.text('保存并应用版式与页眉页脚');
+      expect(saveBtn, findsOneWidget);
+      await tester.ensureVisible(saveBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(saveBtn);
+      await tester.pumpAndSettle();
+
+      expect(controller.renderOptions.headerCenter, '{title}');
+
+      // Tap '清空页眉' button
+      final clearHeaderBtn = find.text('清空页眉');
+      expect(clearHeaderBtn, findsOneWidget);
+      await tester.ensureVisible(clearHeaderBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(clearHeaderBtn);
+      await tester.pumpAndSettle();
+
+      // Save again
+      await tester.ensureVisible(saveBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(saveBtn);
+      await tester.pumpAndSettle();
+
+      // Header center should now be null!
+      expect(controller.renderOptions.headerCenter, isNull);
+    });
   });
 }

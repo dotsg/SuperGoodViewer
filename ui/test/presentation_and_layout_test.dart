@@ -158,6 +158,15 @@ void main() {
       expect(controller.renderOptions.footerRight, '{page} / {total}');
       expect(controller.renderOptions.showHeaderRule, isTrue);
       expect(controller.renderOptions.marpEnabled, isTrue);
+
+      // Verify clearing header and footer slots
+      controller.setHeaderFooterOptions(
+        headerLeft: null,
+        footerRight: null,
+      );
+
+      expect(controller.renderOptions.headerLeft, isNull);
+      expect(controller.renderOptions.footerRight, isNull);
     });
   });
 
