@@ -278,6 +278,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      // Initially status says consistent
+      expect(find.text('版式与页眉页脚与当前文档一致'), findsOneWidget);
+
       // Find the Header Center slot by looking for the TextField with label '中插槽' in header slots
       final centerFields = find.widgetWithText(TextField, '中插槽');
       expect(centerFields, findsNWidgets(2)); // header and footer
@@ -286,32 +289,47 @@ void main() {
       await tester.enterText(centerFields.first, '{title}');
       await tester.pumpAndSettle();
 
-      // Tap '保存并应用版式与页眉页脚'
-      final saveBtn = find.text('保存并应用版式与页眉页脚');
+      // Status changes to modified and '放弃修改' is visible
+      expect(find.text('版式与页眉页脚有变动 (未保存)'), findsOneWidget);
+      expect(find.text('放弃修改'), findsOneWidget);
+
+      // Tap '保存并应用版式'
+      final saveBtn = find.text('保存并应用版式');
       expect(saveBtn, findsOneWidget);
-      await tester.ensureVisible(saveBtn);
-      await tester.pumpAndSettle();
       await tester.tap(saveBtn);
       await tester.pumpAndSettle();
 
       expect(controller.renderOptions.headerCenter, '{title}');
+      expect(find.text('版式与页眉页脚与当前文档一致'), findsOneWidget);
+      expect(find.text('放弃修改'), findsNothing);
+
+      // Now test '放弃修改'
+      await tester.enterText(centerFields.first, 'Temporary changed text');
+      await tester.pumpAndSettle();
+      expect(find.text('版式与页眉页脚有变动 (未保存)'), findsOneWidget);
+      final revertBtn = find.text('放弃修改');
+      expect(revertBtn, findsOneWidget);
+      await tester.tap(revertBtn);
+      await tester.pumpAndSettle();
+
+      expect(tester.widget<TextField>(centerFields.first).controller?.text, '{title}');
+      expect(find.text('版式与页眉页脚与当前文档一致'), findsOneWidget);
 
       // Tap '清空页眉' button
       final clearHeaderBtn = find.text('清空页眉');
       expect(clearHeaderBtn, findsOneWidget);
-      await tester.ensureVisible(clearHeaderBtn);
-      await tester.pumpAndSettle();
       await tester.tap(clearHeaderBtn);
       await tester.pumpAndSettle();
 
+      expect(find.text('版式与页眉页脚有变动 (未保存)'), findsOneWidget);
+
       // Save again
-      await tester.ensureVisible(saveBtn);
-      await tester.pumpAndSettle();
       await tester.tap(saveBtn);
       await tester.pumpAndSettle();
 
       // Header center should now be null!
       expect(controller.renderOptions.headerCenter, isNull);
+      expect(find.text('版式与页眉页脚与当前文档一致'), findsOneWidget);
     });
   });
 }

@@ -128,6 +128,45 @@ class _SettingsDialogState extends State<SettingsDialog> {
     } catch (_) {}
   }
 
+  bool get _hasUnsavedLayoutChanges {
+    final opts = widget.controller.renderOptions;
+    if (_selectedPageFormat != opts.effectivePageFormat) return true;
+    final hL = _headerLeftController.text.trim().isEmpty ? null : _headerLeftController.text.trim();
+    if (hL != opts.headerLeft) return true;
+    final hC = _headerCenterController.text.trim().isEmpty ? null : _headerCenterController.text.trim();
+    if (hC != opts.headerCenter) return true;
+    final hR = _headerRightController.text.trim().isEmpty ? null : _headerRightController.text.trim();
+    if (hR != opts.headerRight) return true;
+    final fL = _footerLeftController.text.trim().isEmpty ? null : _footerLeftController.text.trim();
+    if (fL != opts.footerLeft) return true;
+    final fC = _footerCenterController.text.trim().isEmpty ? null : _footerCenterController.text.trim();
+    if (fC != opts.footerCenter) return true;
+    final fR = _footerRightController.text.trim().isEmpty ? null : _footerRightController.text.trim();
+    if (fR != opts.footerRight) return true;
+    if (_showHeaderRule != (opts.showHeaderRule ?? false)) return true;
+    if (_showFooterRule != (opts.showFooterRule ?? false)) return true;
+    if (_skipFirstPage != (opts.skipFirstPageHeaderFooter ?? true)) return true;
+    if (_marpEnabled != (opts.marpEnabled ?? true)) return true;
+    return false;
+  }
+
+  void _revertLayout() {
+    final opts = widget.controller.renderOptions;
+    setState(() {
+      _selectedPageFormat = opts.effectivePageFormat;
+      _headerLeftController.text = opts.headerLeft ?? '';
+      _headerCenterController.text = opts.headerCenter ?? '';
+      _headerRightController.text = opts.headerRight ?? '';
+      _footerLeftController.text = opts.footerLeft ?? '';
+      _footerCenterController.text = opts.footerCenter ?? '';
+      _footerRightController.text = opts.footerRight ?? '';
+      _showHeaderRule = opts.showHeaderRule ?? false;
+      _showFooterRule = opts.showFooterRule ?? false;
+      _skipFirstPage = opts.skipFirstPageHeaderFooter ?? true;
+      _marpEnabled = opts.marpEnabled ?? true;
+    });
+  }
+
   void _revertTypography() {
     setState(() {
       _selectedBodyFont = widget.controller.renderOptions.bodyFont;
@@ -173,12 +212,31 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _showFooterRule = opts.showFooterRule ?? false;
     _skipFirstPage = opts.skipFirstPageHeaderFooter ?? true;
     _marpEnabled = opts.marpEnabled ?? true;
+
+    _headerLeftController.addListener(_onLayoutFieldChanged);
+    _headerCenterController.addListener(_onLayoutFieldChanged);
+    _headerRightController.addListener(_onLayoutFieldChanged);
+    _footerLeftController.addListener(_onLayoutFieldChanged);
+    _footerCenterController.addListener(_onLayoutFieldChanged);
+    _footerRightController.addListener(_onLayoutFieldChanged);
+
     _loadCacheStats();
     _loadCliStatus();
   }
 
+  void _onLayoutFieldChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _headerLeftController.removeListener(_onLayoutFieldChanged);
+    _headerCenterController.removeListener(_onLayoutFieldChanged);
+    _headerRightController.removeListener(_onLayoutFieldChanged);
+    _footerLeftController.removeListener(_onLayoutFieldChanged);
+    _footerCenterController.removeListener(_onLayoutFieldChanged);
+    _footerRightController.removeListener(_onLayoutFieldChanged);
+
     _headerLeftController.dispose();
     _headerCenterController.dispose();
     _headerRightController.dispose();
@@ -570,10 +628,15 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
                   child: _buildTypographyTab(theme, isDark),
                 )
-              : SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                  child: _buildActiveTabBody(theme, isDark),
-                ),
+              : _currentTab == SettingsTab.layout
+                  ? Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 16, 24, 14),
+                      child: _buildLayoutTab(theme, isDark),
+                    )
+                  : SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                      child: _buildActiveTabBody(theme, isDark),
+                    ),
         ),
       ],
     );
@@ -635,7 +698,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _buildSectionHeader('页面排版版式 (Page Format)'),
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.only(right: 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildSectionHeader('页面排版版式 (Page Format)'),
         const SizedBox(height: 6),
         Text(
           '设置文档默认排版形态。演示请选择 16:9 / 4:3 幻灯片，出版阅读请选择 A4 或自适应流式。',
@@ -894,17 +963,71 @@ class _SettingsDialogState extends State<SettingsDialog> {
           contentPadding: EdgeInsets.zero,
         ),
 
-        const SizedBox(height: 24),
-        Align(
-          alignment: Alignment.centerRight,
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.check_circle_outline_rounded, size: 16),
-            label: const Text('保存并应用版式与页眉页脚'),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                const SizedBox(height: 12),
+              ],
             ),
-            onPressed: _saveLayout,
           ),
+        ),
+
+        const SizedBox(height: 10),
+        Divider(
+          height: 1,
+          thickness: 1,
+          color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+        ),
+        const SizedBox(height: 8),
+
+        // Bottom Bar: Save & Apply Button
+        _buildLayoutBottomBar(theme, isDark),
+      ],
+    );
+  }
+
+  Widget _buildLayoutBottomBar(ThemeData theme, bool isDark) {
+    final hasChanges = _hasUnsavedLayoutChanges;
+
+    return Row(
+      children: [
+        Icon(
+          hasChanges ? Icons.edit_note_rounded : Icons.check_circle_outline_rounded,
+          size: 16,
+          color: hasChanges ? const Color(0xFFF59E0B) : const Color(0xFF10B981),
+        ),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            hasChanges ? '版式与页眉页脚有变动 (未保存)' : '版式与页眉页脚与当前文档一致',
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11.5,
+              color: hasChanges
+                  ? (isDark ? const Color(0xFFFBBF24) : const Color(0xFFD97706))
+                  : (isDark ? const Color(0xFF34D399) : const Color(0xFF059669)),
+              fontWeight: hasChanges ? FontWeight.w600 : FontWeight.normal,
+            ),
+          ),
+        ),
+        const Spacer(),
+        if (hasChanges) ...[
+          OutlinedButton(
+            onPressed: _revertLayout,
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            ),
+            child: const Text('放弃修改', style: TextStyle(fontSize: 11.5)),
+          ),
+          const SizedBox(width: 8),
+        ],
+        FilledButton.icon(
+          icon: const Icon(Icons.check_rounded, size: 15),
+          label: const Text('保存并应用版式', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+          style: FilledButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            backgroundColor: hasChanges ? const Color(0xFF0284C7) : null,
+          ),
+          onPressed: hasChanges ? _saveLayout : null,
         ),
       ],
     );
