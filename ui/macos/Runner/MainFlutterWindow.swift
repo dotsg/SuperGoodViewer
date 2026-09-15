@@ -66,6 +66,11 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
         self?.standardWindowButton(.miniaturizeButton)?.isHidden = !visible
         self?.standardWindowButton(.zoomButton)?.isHidden = !visible
         result(nil)
+      } else if call.method == "setWindowTitle" {
+        if let title = call.arguments as? String {
+          self?.title = title
+        }
+        result(nil)
       } else {
         result(FlutterMethodNotImplemented)
       }

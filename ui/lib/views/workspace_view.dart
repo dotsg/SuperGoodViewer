@@ -84,6 +84,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     _showToolbarTemporarily();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _updateTrafficLights();
+      _syncWindowTitle();
     });
     widget.controller.addListener(_onControllerChanged);
     NativeCliService.channel.setMethodCallHandler(_handleNativeMethodCall);
@@ -93,6 +94,23 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         widget.controller.openFile(filePath);
       }
     });
+  }
+
+  String? _lastSyncedTitle;
+
+  void _syncWindowTitle() {
+    final appTitle = widget.controller.strings.appTitle;
+    final docTitle = widget.controller.documentTitle;
+    final fullTitle = (docTitle.isNotEmpty && docTitle != 'Welcome' && docTitle != 'SuperGoodViewer Demo')
+        ? '$docTitle - $appTitle'
+        : appTitle;
+
+    if (_lastSyncedTitle != fullTitle) {
+      _lastSyncedTitle = fullTitle;
+      try {
+        _windowChannel.invokeMethod('setWindowTitle', fullTitle);
+      } catch (_) {}
+    }
   }
 
   void _initWindowChannel() {
@@ -145,6 +163,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         _toggleFullScreen();
       }
     }
+    _syncWindowTitle();
   }
 
   @override

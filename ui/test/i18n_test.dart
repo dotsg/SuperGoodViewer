@@ -6,7 +6,9 @@ import 'package:sogoodviewer/i18n/locales.dart';
 import 'package:sogoodviewer/i18n/strings_en.dart';
 import 'package:sogoodviewer/i18n/strings_zh_hans.dart';
 import 'package:sogoodviewer/i18n/strings_zh_hant.dart';
+import 'package:flutter/services.dart';
 import 'package:sogoodviewer/views/settings_dialog.dart';
+import 'package:sogoodviewer/views/workspace_view.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -229,5 +231,45 @@ void main() {
       expect(find.text('General'), findsWidgets);
       expect(find.text('Display Language'), findsWidgets);
     });
+
+    testWidgets('WorkspaceView synchronizes window title to platform channel on language change and document open', (tester) async {
+      final List<String> windowTitles = [];
+      const windowChannel = MethodChannel('com.sogoodviewer.window');
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(windowChannel, (call) async {
+        if (call.method == 'setWindowTitle') {
+          windowTitles.add(call.arguments as String);
+          return null;
+        }
+        if (call.method == 'isFullScreen') return false;
+        return null;
+      });
+      addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(windowChannel, null));
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WorkspaceView(controller: controller),
+        ),
+      );
+      await tester.pump();
+
+      // Initial title should be Simplified Chinese appTitle
+      expect(windowTitles, contains('超好读'));
+
+      // Switch language to English
+      controller.setLanguage('en');
+      await tester.pump();
+
+      expect(windowTitles.last, 'SuperGoodViewer');
+
+      // Switch language to Traditional Chinese
+      controller.setLanguage('zhHant');
+      await tester.pump();
+
+      expect(windowTitles.last, '超好讀');
+    });
   });
 }
+
