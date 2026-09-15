@@ -74,7 +74,12 @@ void main() {
     expect(sharp, isTrue);
     expect(loaded, isTrue, reason: 'Completion must also work with previews disabled');
     final renders = page.renderControl.requestedRegions;
-    expect(renders.every((r) => r.width! <= 516 && r.height! <= 516), isTrue);
+    expect(renders.every((r) => r.width! <= 2048 && r.height! <= 516), isTrue);
+    expect(
+      renders.every((r) => r.x == 0 && r.width == r.fullWidth),
+      isTrue,
+      reason: 'Narrow long pages use full-width raster strips without virtual PDF pages',
+    );
     expect(renders.every((r) => r.fullHeight == 80000), isTrue, reason: 'Tiles must use Retina resolution');
     expect(
       renders.any((r) => r.y > controller.visibleRect.bottom * 2),
@@ -97,6 +102,27 @@ void main() {
       expect(renders.where((r) => r == cached).length, 1, reason: 'Previously cached tiles must not be rerendered');
     }
     expect(renderedBeforeScroll.length, greaterThan(1));
+    final beforeZoom = renders.length;
+    controller.goToPosition(documentOffset: const Offset(0, 10), zoom: 3);
+    await advance(tester, 80);
+    expect(sharp, isTrue);
+    final zoomRenders = renders.skip(beforeZoom).toList();
+    expect(zoomRenders, isNotEmpty);
+    expect(
+      zoomRenders.every((r) => r.width! <= 516 && r.height! <= 516),
+      isTrue,
+      reason: 'Zooming past the strip width limit must switch to square tiles',
+    );
+    controller.goToPosition(documentOffset: const Offset(0, 10), zoom: 1);
+    await advance(tester, 30);
+    expect(sharp, isTrue);
+    for (final cached in renderedBeforeScroll) {
+      expect(
+        renders.where((r) => r == cached).length,
+        1,
+        reason: 'Returning from squares to strips must reuse the earlier scale',
+      );
+    }
     await tester.pumpWidget(const SizedBox.shrink());
     await advance(tester, 2);
     expect(tester.takeException(), isNull);
@@ -118,41 +144,48 @@ void main() {
       backgroundColor: 0xffffffff,
     ))!;
     addTearDown(full.dispose);
-    final regions = RasterTileRegion.covering(1, rect, rect, scale).toList();
-    // Check both sides of horizontal/vertical boundaries and the last edge tile.
-    for (final region in [regions.first, regions[1], regions[3], regions.last]) {
-      final tile = (await page.render(
-        x: region.x,
-        y: region.y,
-        width: region.width,
-        height: region.height,
-        fullWidth: page.width * scale,
-        fullHeight: page.height * scale,
-        backgroundColor: 0xffffffff,
-      ))!;
-      try {
-        final startRow = region.coreY - region.y;
-        final startColumn = region.coreX - region.x;
-        final rows = 512.clamp(0, full.height - region.coreY);
-        final columns = 512.clamp(0, full.width - region.coreX);
-        var deltaSum = 0, largeDeltas = 0;
-        for (var row = 0; row < rows; row++) {
-          final start = ((region.coreY + row) * full.width + region.coreX) * 4;
-          final tileStart = ((startRow + row) * tile.width + startColumn) * 4;
-          for (var col = 0; col < columns * 4; col++) {
-            final delta = (tile.pixels[tileStart + col] - full.pixels[start + col]).abs();
-            deltaSum += delta;
-            if (delta > 32) largeDeltas++;
+    for (final grid in [
+      RasterTileRegion.defaultGrid,
+      (width: 1024, height: 1024),
+      (width: (page.width * scale).ceil(), height: 512),
+    ]) {
+      final regions = RasterTileRegion.covering(1, rect, rect, scale, grid: grid).toList();
+      // Check both sides of horizontal/vertical boundaries and the last edge tile.
+      for (final index in {0, 1, 3, regions.length - 1}.where((i) => i < regions.length)) {
+        final region = regions[index];
+        final tile = (await page.render(
+          x: region.x,
+          y: region.y,
+          width: region.width,
+          height: region.height,
+          fullWidth: page.width * scale,
+          fullHeight: page.height * scale,
+          backgroundColor: 0xffffffff,
+        ))!;
+        try {
+          final startRow = region.coreY - region.y;
+          final startColumn = region.coreX - region.x;
+          final rows = grid.height.clamp(0, full.height - region.coreY);
+          final columns = grid.width.clamp(0, full.width - region.coreX);
+          var deltaSum = 0, largeDeltas = 0;
+          for (var row = 0; row < rows; row++) {
+            final start = ((region.coreY + row) * full.width + region.coreX) * 4;
+            final tileStart = ((startRow + row) * tile.width + startColumn) * 4;
+            for (var col = 0; col < columns * 4; col++) {
+              final delta = (tile.pixels[tileStart + col] - full.pixels[start + col]).abs();
+              deltaSum += delta;
+              if (delta > 32) largeDeltas++;
+            }
           }
+          final channels = rows * columns * 4;
+          // Native PDFium's translated text antialiasing can differ at a few
+          // glyph pixels. This tolerance rejects coordinate/scale errors without
+          // requiring byte-identical antialiasing (observed mean delta < 0.007).
+          expect(deltaSum / channels, lessThan(0.05));
+          expect(largeDeltas / channels, lessThan(0.0005));
+        } finally {
+          tile.dispose();
         }
-        final channels = rows * columns * 4;
-        // Native PDFium's translated text antialiasing can differ at a few
-        // glyph pixels. This tolerance rejects coordinate/scale errors without
-        // requiring byte-identical antialiasing (observed mean delta < 0.007).
-        expect(deltaSum / channels, lessThan(0.05));
-        expect(largeDeltas / channels, lessThan(0.0005));
-      } finally {
-        tile.dispose();
       }
     }
   });

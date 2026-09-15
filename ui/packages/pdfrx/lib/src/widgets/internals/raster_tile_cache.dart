@@ -5,27 +5,43 @@ import 'dart:ui';
 import 'package:pdfrx_engine/pdfrx_engine.dart';
 
 /// A stable grid in physical pixels, independent of the scrolling viewport.
-typedef RasterTileKey = ({int page, Rect pageRect, double scale, int column, int row});
+typedef RasterTileKey = ({int page, Rect pageRect, double scale, int column, int row, RasterTileGrid grid});
+
+/// Grid dimensions are physical pixels, and remain stable while scrolling.
+typedef RasterTileGrid = ({int width, int height});
 
 class RasterTileRegion {
   RasterTileRegion(this.key);
 
   final RasterTileKey key;
   static const size = 512;
+  static const RasterTileGrid defaultGrid = (width: size, height: size);
   static const gutter = 2;
-  int get coreX => key.column * size;
-  int get coreY => key.row * size;
+
+  /// Narrow continuous pages benefit from fewer native render calls. Bound
+  /// strip width to limit per-job memory and retain small tiles when zoomed in.
+  /// This depends only on page geometry and scale, never the current viewport.
+  static RasterTileGrid gridFor(Rect pageRect, double scale) {
+    final physicalWidth = pageRect.width * scale;
+    if (physicalWidth.isFinite && physicalWidth > 0 && physicalWidth <= 2048 && pageRect.height >= pageRect.width * 2) {
+      return (width: physicalWidth.ceil(), height: size);
+    }
+    return defaultGrid;
+  }
+
+  int get coreX => key.column * key.grid.width;
+  int get coreY => key.row * key.grid.height;
   int get x => math.max(0, coreX - gutter);
   int get y => math.max(0, coreY - gutter);
   // Render a gutter on every edge so texture filtering does not sample
   // outside the bitmap when adjacent tiles are composited.
-  int get width => math.min(coreX + size + gutter, (key.pageRect.width * key.scale).ceil()) - x;
-  int get height => math.min(coreY + size + gutter, (key.pageRect.height * key.scale).ceil()) - y;
+  int get width => math.min(coreX + key.grid.width + gutter, (key.pageRect.width * key.scale).ceil()) - x;
+  int get height => math.min(coreY + key.grid.height + gutter, (key.pageRect.height * key.scale).ceil()) - y;
   Rect get coreRect => Rect.fromLTWH(
     key.pageRect.left + coreX / key.scale,
     key.pageRect.top + coreY / key.scale,
-    size / key.scale,
-    size / key.scale,
+    key.grid.width / key.scale,
+    key.grid.height / key.scale,
   ).intersect(key.pageRect);
   Rect get rect => Rect.fromLTWH(
     key.pageRect.left + x / key.scale,
@@ -34,18 +50,33 @@ class RasterTileRegion {
     height / key.scale,
   );
 
-  static Iterable<RasterTileRegion> covering(int page, Rect pageRect, Rect target, double scale) sync* {
+  static Iterable<RasterTileRegion> covering(
+    int page,
+    Rect pageRect,
+    Rect target,
+    double scale, {
+    RasterTileGrid? grid,
+  }) sync* {
     if (!scale.isFinite || scale <= 0 || !pageRect.isFinite || !target.isFinite) return;
+    final selectedGrid = grid ?? gridFor(pageRect, scale);
+    if (selectedGrid.width <= 0 || selectedGrid.height <= 0) return;
     final area = pageRect.intersect(target);
     if (area.isEmpty) return;
     final local = area.shift(-pageRect.topLeft);
-    final left = (local.left * scale / size).floor();
-    final top = (local.top * scale / size).floor();
-    final right = (local.right * scale / size).ceil();
-    final bottom = (local.bottom * scale / size).ceil();
+    final left = (local.left * scale / selectedGrid.width).floor();
+    final top = (local.top * scale / selectedGrid.height).floor();
+    final right = (local.right * scale / selectedGrid.width).ceil();
+    final bottom = (local.bottom * scale / selectedGrid.height).ceil();
     for (var row = top; row < bottom; row++) {
       for (var column = left; column < right; column++) {
-        yield RasterTileRegion((page: page, pageRect: pageRect, scale: scale, column: column, row: row));
+        yield RasterTileRegion((
+          page: page,
+          pageRect: pageRect,
+          scale: scale,
+          column: column,
+          row: row,
+          grid: selectedGrid,
+        ));
       }
     }
   }

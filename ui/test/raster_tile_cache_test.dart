@@ -13,8 +13,14 @@ Image image() {
   return result;
 }
 
-RasterTileRegion region(int row) =>
-    RasterTileRegion((page: 1, pageRect: const Rect.fromLTWH(0, 0, 720, 40000), scale: 2, column: 0, row: row));
+RasterTileRegion region(int row) => RasterTileRegion((
+  page: 1,
+  pageRect: const Rect.fromLTWH(0, 0, 720, 40000),
+  scale: 2,
+  column: 0,
+  row: row,
+  grid: RasterTileRegion.defaultGrid,
+));
 
 Future<void> drain() => Future<void>.delayed(Duration.zero);
 
@@ -23,11 +29,41 @@ void main() {
 
   test('scrolling within a grid cell preserves physical tile identities', () {
     const page = Rect.fromLTWH(0, 0, 720, 40000);
-    final first = RasterTileRegion.covering(1, page, const Rect.fromLTWH(0, 10, 720, 600), 2).toList();
-    final shifted = RasterTileRegion.covering(1, page, const Rect.fromLTWH(0, 11, 720, 600), 2).toList();
+    final first = RasterTileRegion.covering(
+      1,
+      page,
+      const Rect.fromLTWH(0, 10, 720, 600),
+      2,
+      grid: RasterTileRegion.defaultGrid,
+    ).toList();
+    final shifted = RasterTileRegion.covering(
+      1,
+      page,
+      const Rect.fromLTWH(0, 11, 720, 600),
+      2,
+      grid: RasterTileRegion.defaultGrid,
+    ).toList();
     expect(shifted.map((r) => r.key), first.map((r) => r.key));
     expect(first.every((r) => r.width <= 516 && r.height <= 516), isTrue);
     expect(first.first.rect.overlaps(first[1].rect), isTrue, reason: 'Filtering edges must overlap');
+  });
+
+  test('narrow long pages use stable strips and zoomed pages retain bounded square tiles', () {
+    const page = Rect.fromLTWH(20, 30, 800, 40000);
+    const viewport = Rect.fromLTWH(20, 1000, 800, 600);
+    final strips = RasterTileRegion.covering(1, page, viewport, 2).toList();
+    expect(strips.every((r) => r.key.column == 0 && r.width == 1600 && r.height <= 516), isTrue);
+    final moved = RasterTileRegion.covering(1, page, viewport.translate(1, 1), 2).toList();
+    expect(moved.map((r) => r.key), strips.map((r) => r.key));
+    expect(strips.first.coreRect.bottom, strips[1].coreRect.top);
+    expect(strips.first.rect.overlaps(strips[1].rect), isTrue);
+
+    final zoomed = RasterTileRegion.covering(1, page, viewport, 4).toList();
+    expect(zoomed.every((r) => r.width <= 516 && r.height <= 516), isTrue);
+    expect(RasterTileRegion.gridFor(const Rect.fromLTWH(0, 0, 595, 842), 2), RasterTileRegion.defaultGrid);
+    // Alternate grid strategies must not alias cached images at the same scale.
+    final square = RasterTileRegion.covering(1, page, viewport, 2, grid: RasterTileRegion.defaultGrid).first;
+    expect(square.key, isNot(strips.first.key));
   });
 
   test('in-flight tile is retained while viewport priority changes', () async {
