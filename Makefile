@@ -4,7 +4,7 @@ else
   FLUTTER ?= flutter
 endif
 
-.PHONY: all build build-core build-core-universal build-app build-windows build-windows-arm64 test test-core test-app bench benchmark clean run-macos run-windows dmg package-windows package-windows-arm64
+.PHONY: all build build-core build-core-universal build-app build-windows build-windows-arm64 build-linux test test-core test-app bench benchmark clean run-macos run-windows run-linux dmg package-windows package-windows-arm64 package-linux
 
 all: build test
 
@@ -84,6 +84,23 @@ run-windows: build-core
 	@mkdir -p ui/build/windows/x64/runner/Debug
 	@cp core/target/release/sogood_core.dll ui/build/windows/x64/runner/Debug/ 2>/dev/null || true
 	@cd ui && $(FLUTTER) run -d windows
+
+build-linux: build-core
+	@echo "==> Building Flutter Desktop Linux app..."
+	@cd ui && $(FLUTTER) build linux --release
+	@echo "==> Linux build complete! Output: ui/build/linux/x64/release/bundle/"
+
+run-linux: build-core
+	@echo "==> Launching SuperGoodViewer in dev mode (Linux)..."
+	@mkdir -p ui/build/linux/x64/debug/bundle/lib
+	@cp core/target/release/libsogood_core.so ui/build/linux/x64/debug/bundle/lib/ 2>/dev/null || true
+	@cd ui && $(FLUTTER) run -d linux
+
+package-linux: build-linux
+	@echo "==> Packaging Linux portable release..."
+	@mkdir -p dist
+	@tar -czvf dist/SuperGoodViewer-linux-x64.tar.gz -C ui/build/linux/x64/release/bundle .
+	@echo "==> Package created: dist/SuperGoodViewer-linux-x64.tar.gz"
 
 clean:
 	@echo "==> Cleaning artifacts..."

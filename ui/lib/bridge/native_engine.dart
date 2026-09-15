@@ -153,9 +153,11 @@ class NativeEngine {
         p.join(currentDir, 'test', libName),
         p.join(currentDir, 'macos', libName),
         p.join(currentDir, 'windows', libName),
+        p.join(currentDir, 'linux', libName),
         p.join(currentDir, 'ui', 'test', libName),
         p.join(currentDir, 'ui', 'macos', libName),
         p.join(currentDir, 'ui', 'windows', libName),
+        p.join(currentDir, 'ui', 'linux', libName),
         // When running from repo root or ui dir
         p.join(currentDir, '..', 'core', 'target', 'release', libName),
         p.join(currentDir, 'core', 'target', 'release', libName),
