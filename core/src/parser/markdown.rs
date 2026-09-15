@@ -441,11 +441,147 @@ impl<'a> HtmlTranspiler<'a> {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct DocumentFrontmatter {
+    pub marp: bool,
+    pub size: Option<String>,
+    pub theme: Option<String>,
+    pub paginate: Option<bool>,
+    pub header: Option<String>,
+    pub footer: Option<String>,
+    pub page_format: Option<String>,
+}
+
+pub fn extract_frontmatter(content: &str) -> (DocumentFrontmatter, &str) {
+    let trimmed = content.trim_start();
+    if !trimmed.starts_with("---") {
+        return (DocumentFrontmatter::default(), content);
+    }
+
+    let rest = &trimmed[3..];
+    let first_nl = match rest.find('\n') {
+        Some(idx) => idx,
+        None => return (DocumentFrontmatter::default(), content),
+    };
+    if !rest[..first_nl].trim().is_empty() {
+        return (DocumentFrontmatter::default(), content);
+    }
+
+    let after_first_line = &rest[first_nl + 1..];
+    let mut closing_idx = None;
+    let mut byte_pos = 0;
+    for line in after_first_line.split_inclusive('\n') {
+        let line_trimmed = line.trim();
+        if line_trimmed == "---" {
+            closing_idx = Some(byte_pos);
+            break;
+        }
+        byte_pos += line.len();
+    }
+
+    let closing_pos = match closing_idx {
+        Some(pos) => pos,
+        None => return (DocumentFrontmatter::default(), content),
+    };
+
+    let yaml_block = &after_first_line[..closing_pos];
+    let after_closing = &after_first_line[closing_pos..];
+    let body_start = match after_closing.find('\n') {
+        Some(nl) => &after_closing[nl + 1..],
+        None => "",
+    };
+
+    let mut fm = DocumentFrontmatter::default();
+    for line in yaml_block.lines() {
+        let trimmed_line = line.trim();
+        if trimmed_line.is_empty() || trimmed_line.starts_with('#') {
+            continue;
+        }
+        if let Some((k, v)) = trimmed_line.split_once(':') {
+            let key = k.trim().to_lowercase();
+            let val = v.trim().trim_matches('"').trim_matches('\'').trim();
+            match key.as_str() {
+                "marp" => {
+                    fm.marp = val.eq_ignore_ascii_case("true") || val.eq_ignore_ascii_case("yes");
+                }
+                "size" => {
+                    fm.size = Some(val.to_string());
+                }
+                "theme" => {
+                    fm.theme = Some(val.to_string());
+                }
+                "paginate" => {
+                    fm.paginate = Some(val.eq_ignore_ascii_case("true") || val.eq_ignore_ascii_case("yes"));
+                }
+                "header" => {
+                    fm.header = Some(val.to_string());
+                }
+                "footer" => {
+                    fm.footer = Some(val.to_string());
+                }
+                "page_format" | "page-format" => {
+                    fm.page_format = Some(val.to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    (fm, body_start)
+}
+
+fn format_slot_to_typst(template: &str, safe_title: &str, text_color: &str) -> String {
+    if template.trim().is_empty() {
+        return "[]".to_string();
+    }
+    let safe_template = escape_typst_text(template);
+    let with_title = safe_template.replace("{title}", safe_title);
+    let with_page = with_title.replace("{page}", "#page-num");
+    let with_total = with_page.replace("{total}", "#total-pages");
+    format!("[#text(fill: {}, size: 9pt)[{}]]", text_color, with_total)
+}
+
 pub fn convert_markdown_to_typst(
     markdown: &str,
     title: &str,
     options: &RenderOptions,
 ) -> ParsedDocument {
+    let (frontmatter, markdown_body) = extract_frontmatter(markdown);
+
+    let is_marp = frontmatter.marp || options.marp_enabled.unwrap_or(false);
+    let raw_format = if let Some(ref pf) = frontmatter.page_format {
+        pf.as_str()
+    } else if is_marp {
+        if let Some(ref s) = frontmatter.size {
+            if s == "4:3" || s == "4_3" {
+                "slide_4_3"
+            } else {
+                "slide_16_9"
+            }
+        } else {
+            "slide_16_9"
+        }
+    } else if let Some(ref pf) = options.page_format {
+        pf.as_str()
+    } else if options.mode == "fluid" {
+        "fluid"
+    } else {
+        "a4"
+    };
+
+    let normalized_format = match raw_format {
+        "fluid" => "fluid",
+        "a4" | "a4_portrait" | "a4Portrait" | "portrait" => "a4",
+        "a4_landscape" | "a4Landscape" | "landscape" => "a4_landscape",
+        "slide_16_9" | "slide16x9" | "16:9" | "16_9" => "slide_16_9",
+        "slide_4_3" | "slide4x3" | "4:3" | "4_3" => "slide_4_3",
+        _ => if options.mode == "fluid" { "fluid" } else { "a4" },
+    };
+
+    let is_fluid = normalized_format == "fluid";
+    let is_slide = normalized_format == "slide_16_9" || normalized_format == "slide_4_3";
+    let is_slide_mode = is_slide || is_marp;
+
     let mut virtual_files = HashMap::new();
     let mut out = String::with_capacity(markdown.len() * 2);
 
@@ -471,17 +607,37 @@ pub fn convert_markdown_to_typst(
         ("rgb(\"#f1f5f9\")", "rgb(\"#cbd5e1\")", "rgb(\"#334155\")")
     };
 
-    let is_fluid = options.mode == "fluid";
-    let page_width = if is_fluid {
-        format!("{}pt", options.viewport_width)
-    } else {
-        "595.28pt".to_string()
-    };
-    let page_height = if is_fluid { "auto".to_string() } else { "841.89pt".to_string() };
-    let page_margin = if is_fluid {
-        "(x: 24pt, top: 0pt, bottom: 56pt)"
-    } else {
-        "(x: 2cm, top: 2.5cm, bottom: 2.5cm)"
+    let (page_width, page_height, page_margin) = match normalized_format {
+        "fluid" => (
+            format!("{}pt", options.viewport_width),
+            "auto".to_string(),
+            "(x: 24pt, top: 0pt, bottom: 56pt)".to_string(),
+        ),
+        "a4" => (
+            "595.28pt".to_string(),
+            "841.89pt".to_string(),
+            "(x: 2cm, top: 2.5cm, bottom: 2.5cm)".to_string(),
+        ),
+        "a4_landscape" => (
+            "841.89pt".to_string(),
+            "595.28pt".to_string(),
+            "(x: 2.5cm, top: 2cm, bottom: 2cm)".to_string(),
+        ),
+        "slide_16_9" => (
+            "960pt".to_string(),
+            "540pt".to_string(),
+            "(x: 48pt, top: 36pt, bottom: 36pt)".to_string(),
+        ),
+        "slide_4_3" => (
+            "960pt".to_string(),
+            "720pt".to_string(),
+            "(x: 48pt, top: 40pt, bottom: 40pt)".to_string(),
+        ),
+        _ => (
+            "595.28pt".to_string(),
+            "841.89pt".to_string(),
+            "(x: 2cm, top: 2.5cm, bottom: 2.5cm)".to_string(),
+        ),
     };
 
     out.push_str(&format!(
@@ -494,22 +650,107 @@ pub fn convert_markdown_to_typst(
 "##
     ));
 
+    let safe_title = escape_typst_text(title);
+
     if !is_fluid {
-        out.push_str(&format!(
-            r##"  header: context {{
+        let skip_first = options.skip_first_page_header_footer.unwrap_or(true);
+        let show_header_rule = options.show_header_rule.unwrap_or(false);
+        let show_footer_rule = options.show_footer_rule.unwrap_or(false);
+
+        // Header slots
+        let default_header_right = if is_slide {
+            frontmatter.header.as_deref().unwrap_or("")
+        } else {
+            frontmatter.header.as_deref().unwrap_or("{title}")
+        };
+        let h_left = options.header_left.as_deref().unwrap_or("");
+        let h_center = options.header_center.as_deref().unwrap_or("");
+        let h_right = options.header_right.as_deref().unwrap_or(default_header_right);
+
+        let has_header = !h_left.is_empty() || !h_center.is_empty() || !h_right.is_empty() || show_header_rule;
+
+        if has_header {
+            let slot_left = format_slot_to_typst(h_left, &safe_title, header_color);
+            let slot_center = format_slot_to_typst(h_center, &safe_title, header_color);
+            let slot_right = format_slot_to_typst(h_right, &safe_title, header_color);
+            let rule = if show_header_rule {
+                format!("\n      v(-4pt)\n      line(length: 100%, stroke: 0.3pt + {header_color})")
+            } else {
+                "".to_string()
+            };
+            let cond = if skip_first { "if page-num > 1" } else { "if true" };
+            out.push_str(&format!(
+                r##"  header: context {{
     let page-num = counter(page).get().first()
-    if page-num > 1 {{
-      align(right, text(fill: {header_color}, size: 9pt)[{safe_title}])
+    let total-pages = counter(page).final().first()
+    {cond} {{
+      grid(
+        columns: (1fr, 1fr, 1fr),
+        align: (left + horizon, center + horizon, right + horizon),
+        {slot_left},
+        {slot_center},
+        {slot_right},
+      ){rule}
     }}
   }},
-  footer: context {{
+"##
+            ));
+        }
+
+        // Footer slots
+        let default_footer_center = if is_slide {
+            ""
+        } else {
+            frontmatter.footer.as_deref().unwrap_or("{page}")
+        };
+        let default_footer_right = if is_slide {
+            if frontmatter.paginate.unwrap_or(true) {
+                "{page}"
+            } else {
+                ""
+            }
+        } else {
+            ""
+        };
+        let default_footer_left = if is_slide {
+            frontmatter.footer.as_deref().unwrap_or("")
+        } else {
+            ""
+        };
+
+        let f_left = options.footer_left.as_deref().unwrap_or(default_footer_left);
+        let f_center = options.footer_center.as_deref().unwrap_or(default_footer_center);
+        let f_right = options.footer_right.as_deref().unwrap_or(default_footer_right);
+
+        let has_footer = !f_left.is_empty() || !f_center.is_empty() || !f_right.is_empty() || show_footer_rule;
+
+        if has_footer {
+            let slot_left = format_slot_to_typst(f_left, &safe_title, header_color);
+            let slot_center = format_slot_to_typst(f_center, &safe_title, header_color);
+            let slot_right = format_slot_to_typst(f_right, &safe_title, header_color);
+            let rule = if show_footer_rule {
+                format!("line(length: 100%, stroke: 0.3pt + {header_color})\n      v(4pt)\n      ")
+            } else {
+                "".to_string()
+            };
+            let cond = if skip_first { "if page-num > 1" } else { "if true" };
+            out.push_str(&format!(
+                r##"  footer: context {{
     let page-num = counter(page).get().first()
-    align(center, text(fill: {header_color}, size: 9pt)[#page-num])
+    let total-pages = counter(page).final().first()
+    {cond} {{
+      {rule}grid(
+        columns: (1fr, 1fr, 1fr),
+        align: (left + horizon, center + horizon, right + horizon),
+        {slot_left},
+        {slot_center},
+        {slot_right},
+      )
+    }}
   }},
-"##,
-            header_color = header_color,
-            safe_title = escape_typst_text(title)
-        ));
+"##
+            ));
+        }
     }
     let body_fonts_default = [
         "Inter",
@@ -670,7 +911,11 @@ pub fn convert_markdown_to_typst(
 )
 
 "##,
-        font_size = options.font_size,
+        font_size = if is_slide_mode && options.font_size <= 12.0 {
+            16.0
+        } else {
+            options.font_size
+        },
         text_color = text_color,
         code_bg = code_bg,
         code_border = code_border,
@@ -695,7 +940,7 @@ pub fn convert_markdown_to_typst(
     parser_opts.insert(Options::ENABLE_HEADING_ATTRIBUTES);
     parser_opts.insert(Options::ENABLE_GFM);
 
-    let parser = Parser::new_ext(markdown, parser_opts);
+    let parser = Parser::new_ext(markdown_body, parser_opts);
 
     let mut in_code_block = false;
     let mut code_block_lang = String::new();
@@ -1005,7 +1250,11 @@ pub fn convert_markdown_to_typst(
                 out.push_str(&transpile_latex_math(&latex, true));
             }
             Event::Rule => {
-                out.push_str(&format!("\n#line(length: 100%, stroke: 0.5pt + {rule_color})\n\n"));
+                if is_slide_mode {
+                    out.push_str("\n#pagebreak()\n\n");
+                } else {
+                    out.push_str(&format!("\n#line(length: 100%, stroke: 0.5pt + {rule_color})\n\n"));
+                }
             }
             Event::TaskListMarker(checked) => {
                 if checked {
@@ -1332,5 +1581,101 @@ Local image with dark border:
 
         // Clean up temp_dir
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_frontmatter_extraction() {
+        let md = r#"---
+marp: true
+theme: gaia
+size: 16:9
+paginate: true
+header: "Company Confidential"
+footer: "All Rights Reserved"
+page_format: slide_16_9
+---
+
+# Hello Marp
+
+This is slide content.
+"#;
+        let (fm, body) = extract_frontmatter(md);
+        assert!(fm.marp);
+        assert_eq!(fm.theme.as_deref(), Some("gaia"));
+        assert_eq!(fm.size.as_deref(), Some("16:9"));
+        assert_eq!(fm.paginate, Some(true));
+        assert_eq!(fm.header.as_deref(), Some("Company Confidential"));
+        assert_eq!(fm.footer.as_deref(), Some("All Rights Reserved"));
+        assert_eq!(fm.page_format.as_deref(), Some("slide_16_9"));
+        assert!(body.trim_start().starts_with("# Hello Marp"));
+    }
+
+    #[test]
+    fn test_marp_presentation_compiles_to_pdf() {
+        let md = r#"---
+marp: true
+size: 16:9
+paginate: true
+header: "SuperGoodViewer Tech Talk"
+footer: "Slide"
+---
+
+# Title Slide: Architecture Overview
+Speaker: SuperGoodViewer Team
+
+---
+
+# Second Slide: High Performance
+- Pure Rust Typst Core
+- Google PDFium Hardware Rasterization
+- 0ms PDF Export
+
+---
+
+# Third Slide: Mathematical Rigor
+$ E = m c^2 $
+$ integral_0^1 x^2 dif x = 1/3 $
+"#;
+        let options = RenderOptions::default();
+        let parsed = convert_markdown_to_typst(md, "Tech Talk", &options);
+
+        // Check Typst dimensions
+        assert!(parsed.typst_source.contains("width: 960pt"));
+        assert!(parsed.typst_source.contains("height: 540pt"));
+        // Check rule turns into pagebreak in slide mode
+        assert!(parsed.typst_source.contains("#pagebreak()"));
+
+        let res = crate::compiler::engine::compile_typst_to_pdf(&parsed.typst_source, ".", parsed.virtual_files);
+        assert!(res.is_ok(), "Slide compilation failed: {:?}", res.err());
+        let pdf = res.unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
+        assert!(pdf.len() > 1000);
+    }
+
+    #[test]
+    fn test_a4_landscape_and_custom_header_footer() {
+        let md = r#"# Data Report
+A table with wide metrics.
+"#;
+        let mut options = RenderOptions::default();
+        options.page_format = Some("a4_landscape".to_string());
+        options.header_left = Some("Confidential Report".to_string());
+        options.header_right = Some("{title}".to_string());
+        options.footer_center = Some("Page {page} of {total}".to_string());
+        options.show_header_rule = Some(true);
+        options.show_footer_rule = Some(true);
+
+        let parsed = convert_markdown_to_typst(md, "Q3 Metrics", &options);
+        assert!(parsed.typst_source.contains("width: 841.89pt"));
+        assert!(parsed.typst_source.contains("height: 595.28pt"));
+        assert!(parsed.typst_source.contains("Confidential Report"));
+        assert!(parsed.typst_source.contains("Q3 Metrics"));
+        assert!(parsed.typst_source.contains("#page-num"));
+        assert!(parsed.typst_source.contains("#total-pages"));
+
+        let res = crate::compiler::engine::compile_typst_to_pdf(&parsed.typst_source, ".", parsed.virtual_files);
+        assert!(res.is_ok(), "A4 Landscape compilation failed: {:?}", res.err());
+        let pdf = res.unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
     }
 }

@@ -30,10 +30,18 @@ class ShortcutService extends ChangeNotifier {
     // 视图模式与显示
     AppShortcutAction(
       id: 'toggleMode',
-      name: '切换 A4 / 流式视图',
+      name: '切换版式 / 视图模式',
       category: '视图模式',
-      description: '在自适应屏幕长卷轴与标准 A4 出版预览之间切换',
-      defaultKey: LogicalKeyboardKey.keyF, // 主键默认为 F (Cmd+F / Ctrl+F)
+      description: '在自适应长卷轴、A4 纵向/横向与 16:9/4:3 幻灯片版式之间切换',
+      defaultKey: LogicalKeyboardKey.keyM, // 主键默认为 M (Cmd+M / Ctrl+M)
+    ),
+    AppShortcutAction(
+      id: 'togglePresentation',
+      name: '全屏单页演示 (PPT)',
+      category: '视图模式',
+      description: '进入或退出全屏单页幻灯片演示模式，方便演讲展示',
+      defaultKey: LogicalKeyboardKey.keyP,
+      hasShift: true, // 主键默认为 Cmd+Shift+P / Ctrl+Shift+P (亦支持 F5 / Cmd+Enter)
     ),
     AppShortcutAction(
       id: 'toggleTheme',
@@ -58,6 +66,13 @@ class ShortcutService extends ChangeNotifier {
     ),
 
     // 文档与文件操作
+    AppShortcutAction(
+      id: 'findInDocument',
+      name: '查找文档内容',
+      category: '文档文件',
+      description: '在当前文档中搜索关键词或大纲章节',
+      defaultKey: LogicalKeyboardKey.keyF, // 主键默认为 F (Cmd+F / Ctrl+F)
+    ),
     AppShortcutAction(
       id: 'exportPdf',
       name: '导出为出版级 PDF',
@@ -363,6 +378,8 @@ class ShortcutService extends ChangeNotifier {
     required VoidCallback onFitPage,
     required VoidCallback onToggleToolbar,
     required VoidCallback onFontSettings,
+    VoidCallback? onTogglePresentation,
+    VoidCallback? onFindInDocument,
     VoidCallback? onPreferences,
     VoidCallback? onKeyboardShortcuts,
   }) {
@@ -383,6 +400,8 @@ class ShortcutService extends ChangeNotifier {
     }
 
     addAction('toggleMode', onToggleMode);
+    addAction('togglePresentation', onTogglePresentation);
+    addAction('findInDocument', onFindInDocument);
     addAction('exportPdf', onExportPdf);
     addAction('openFile', onOpenFile);
     addAction('toggleSidebar', onToggleSidebar);

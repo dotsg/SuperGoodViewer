@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -866,9 +867,24 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   int get pageNumber => _pdfController.isReady ? (_pdfController.pageNumber ?? 1) : 1;
   int get pageCount => _pdfController.isReady ? _pdfController.pageCount : 1;
 
+  final List<PdfTextSearcher?> _textSearchers = [null, null];
+  bool _isSearchOpen = false;
+  late final TextEditingController _searchFieldController;
+  late final FocusNode _searchFocusNode;
+  int _searchMatchIndex = 0;
+  int _searchTotalMatches = 0;
+  bool _isSearchingText = false;
+
+  PdfTextSearcher? get _activeSearcher => _textSearchers[_activeSlot];
+  bool get isSearchOpen => _isSearchOpen;
+  bool get isSearchFocused => _isSearchOpen && _searchFocusNode.hasFocus;
+
   @override
   void initState() {
     super.initState();
+    _searchFieldController = TextEditingController();
+    _searchFocusNode = FocusNode(onKeyEvent: _handleSearchKeyEvent);
+
     _slotBytes[0] = widget.pdfBytes;
     _slotDocHash[0] = widget.pdfBytes?.hashCode ?? 0;
     _activeSlot = 0;
@@ -885,6 +901,16 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   void _onViewerChanged0() => _onPdfViewerChanged(0);
   void _onViewerChanged1() => _onPdfViewerChanged(1);
 
+  void _onSearchUpdated() {
+    if (!mounted) return;
+    final searcher = _activeSearcher;
+    setState(() {
+      _isSearchingText = searcher?.isSearching ?? false;
+      _searchTotalMatches = searcher?.matches.length ?? 0;
+      _searchMatchIndex = (searcher?.currentIndex != null) ? searcher!.currentIndex! + 1 : 0;
+    });
+  }
+
   @override
   void dispose() {
     _cleanupTimer?.cancel();
@@ -892,6 +918,12 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     _directReloadWatchdogTimer?.cancel();
     _controllers[0].removeListener(_onViewerChanged0);
     _controllers[1].removeListener(_onViewerChanged1);
+    for (final s in _textSearchers) {
+      s?.removeListener(_onSearchUpdated);
+      s?.dispose();
+    }
+    _searchFieldController.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
@@ -965,6 +997,14 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       _activeSlot = slotIndex;
       _pendingSlot = null;
     });
+    if (_isSearchOpen && _searchFieldController.text.trim().isNotEmpty) {
+      _activeSearcher?.startTextSearch(
+        _searchFieldController.text.trim(),
+        caseInsensitive: true,
+        goToFirstMatch: false,
+        searchImmediately: true,
+      );
+    }
     _cleanupTimer?.cancel();
     _cleanupTimer = Timer(const Duration(milliseconds: 500), () {
       if (mounted && _pendingSlot == null) {
@@ -979,16 +1019,23 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final queued = _queuedBytes;
     _queuedBytes = null;
     if (queued != null && queued.isNotEmpty && queued.hashCode != _slotDocHash[_activeSlot]) {
-      final nextSlot = 1 - _activeSlot;
-      _mountGeneration++;
-      _pendingSlot = nextSlot;
-      _pendingViewerReady = false;
-      _pendingImageLoaded = false;
-      _slotBytes[nextSlot] = queued;
-      _slotDocHash[nextSlot] = queued.hashCode;
-      _startPendingWatchdog();
-      setState(() {});
+      _loadQueuedBytes(queued);
+    } else {
+      widget.controller.renderOptionsChanged = false;
+      widget.controller.finishReloading();
     }
+  }
+
+  void _loadQueuedBytes(Uint8List queued) {
+    final nextSlot = 1 - _activeSlot;
+    _mountGeneration++;
+    _pendingSlot = nextSlot;
+    _pendingViewerReady = false;
+    _pendingImageLoaded = false;
+    _slotBytes[nextSlot] = queued;
+    _slotDocHash[nextSlot] = queued.hashCode;
+    _startPendingWatchdog();
+    setState(() {});
   }
 
   @override
@@ -999,7 +1046,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     // Frame A: User changes font/size/theme/mode -> notifyListeners() rebuilds with new options but old bytes.
     // Frame B: Async compilation finishes -> notifyListeners() rebuilds with new bytes.
     // Therefore, option/mode change detection MUST run unconditionally outside the byte hash guard.
+    final pageFormatChanged = widget.renderOptions.effectivePageFormat != oldWidget.renderOptions.effectivePageFormat;
     final optionsChanged = widget.renderOptions != oldWidget.renderOptions ||
+        pageFormatChanged ||
         widget.isTwoPage != oldWidget.isTwoPage ||
         widget.documentTitle != oldWidget.documentTitle;
     if (optionsChanged) {
@@ -1007,6 +1056,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     }
 
     if (widget.renderOptions.mode != oldWidget.renderOptions.mode ||
+        pageFormatChanged ||
         widget.isTwoPage != oldWidget.isTwoPage ||
         widget.documentTitle != oldWidget.documentTitle) {
       _modeOrDocChanged = true;
@@ -1767,13 +1817,20 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       bytes,
       initialPageNumber: effectiveFluid ? 1 : widget.controller.lastPageNumber.clamp(1, 999999),
       key: ValueKey(
-        'slot_${slotIndex}_${_slotDocHash[slotIndex]}_${widget.renderOptions.mode}_${widget.isTwoPage}_$isPdfDoc',
+        'slot_${slotIndex}_${_slotDocHash[slotIndex]}_${widget.renderOptions.mode}_${widget.renderOptions.effectivePageFormat}_${widget.isTwoPage}_$isPdfDoc',
       ),
       sourceName: '${widget.documentTitle}_slot_${slotIndex}_${_slotDocHash[slotIndex]}',
       controller: ctrl,
       params: PdfViewerParams(
         backgroundColor: canvasBg,
         enableTiledRendering: true,
+        pagePaintCallbacks: [
+          (canvas, pageRect, page) {
+            _textSearchers[slotIndex]?.pageTextMatchPaintCallback(canvas, pageRect, page);
+          },
+        ],
+        matchTextColor: isDark ? const Color(0x77FBC02D) : const Color(0x66FFEB3B),
+        activeMatchTextColor: isDark ? const Color(0xBBFF9800) : const Color(0x99FF9800),
         onVisiblePagesRendered: (ready) {
           if (!isCurrentSlot()) return;
           if (slotIndex == _pendingSlot) {
@@ -1883,6 +1940,17 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         },
         onViewerReady: (document, controller) {
           if (!isCurrentSlot()) return;
+          _textSearchers[slotIndex]?.removeListener(_onSearchUpdated);
+          _textSearchers[slotIndex]?.dispose();
+          _textSearchers[slotIndex] = PdfTextSearcher(controller)..addListener(_onSearchUpdated);
+          if (_isSearchOpen && _searchFieldController.text.trim().isNotEmpty) {
+            _textSearchers[slotIndex]?.startTextSearch(
+              _searchFieldController.text.trim(),
+              caseInsensitive: true,
+              goToFirstMatch: false,
+              searchImmediately: true,
+            );
+          }
           if (widget.controller.isPdfDocument) {
             final srcPath = widget.controller.currentFilePath;
             document.loadOutline().then((outlines) {
@@ -2108,7 +2176,226 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         child: SizedBox.expand(
           child: Stack(
             fit: StackFit.expand,
-            children: children,
+            children: [
+              ...children,
+              if (_isSearchOpen)
+                Positioned(
+                  top: 52,
+                  right: 24,
+                  child: _buildSearchBar(context, isDark),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void openSearch() {
+    _isSearchOpen = true;
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _searchFocusNode.requestFocus();
+        _searchFieldController.selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: _searchFieldController.text.length,
+        );
+      }
+    });
+  }
+
+  void closeSearch() {
+    if (!_isSearchOpen) return;
+    _isSearchOpen = false;
+    _searchFieldController.clear();
+    for (final s in _textSearchers) {
+      s?.resetTextSearch();
+    }
+    setState(() {
+      _searchMatchIndex = 0;
+      _searchTotalMatches = 0;
+      _isSearchingText = false;
+    });
+  }
+
+  void searchNext() async {
+    final searcher = _activeSearcher;
+    if (searcher == null) return;
+    if (searcher.matches.isEmpty) {
+      if (_searchFieldController.text.trim().isNotEmpty) {
+        searcher.startTextSearch(
+          _searchFieldController.text.trim(),
+          caseInsensitive: true,
+          goToFirstMatch: true,
+          searchImmediately: true,
+        );
+      }
+      return;
+    }
+    final curr = searcher.currentIndex ?? -1;
+    if (curr + 1 >= searcher.matches.length) {
+      await searcher.goToMatchOfIndex(0);
+    } else {
+      await searcher.goToNextMatch();
+    }
+  }
+
+  void searchPrev() async {
+    final searcher = _activeSearcher;
+    if (searcher == null || searcher.matches.isEmpty) return;
+    final curr = searcher.currentIndex ?? 0;
+    if (curr <= 0) {
+      await searcher.goToMatchOfIndex(searcher.matches.length - 1);
+    } else {
+      await searcher.goToPrevMatch();
+    }
+  }
+
+  void _onSearchQueryChanged(String query) {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) {
+      for (final s in _textSearchers) {
+        s?.resetTextSearch();
+      }
+      setState(() {
+        _searchTotalMatches = 0;
+        _searchMatchIndex = 0;
+        _isSearchingText = false;
+      });
+    } else {
+      _activeSearcher?.startTextSearch(
+        trimmed,
+        caseInsensitive: true,
+        goToFirstMatch: true,
+        searchImmediately: false,
+      );
+    }
+  }
+
+  KeyEventResult _handleSearchKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent || event is KeyRepeatEvent) {
+      if (event.logicalKey == LogicalKeyboardKey.escape) {
+        closeSearch();
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.enter) {
+        if (HardwareKeyboard.instance.isShiftPressed) {
+          searchPrev();
+        } else {
+          searchNext();
+        }
+        return KeyEventResult.handled;
+      }
+    }
+    // Return skipRemainingHandlers so ancestor shortcuts (such as Space for next page,
+    // Arrow keys, Home/End) do not intercept keystrokes while the search box is active,
+    // while still allowing the TextField and IME to receive keystrokes and candidate selection.
+    return KeyEventResult.skipRemainingHandlers;
+  }
+
+  Widget _buildSearchBar(BuildContext context, bool isDark) {
+    final bgColor = isDark ? const Color(0xEE242424) : const Color(0xEEF6F6F6);
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final hintColor = isDark ? Colors.white38 : Colors.black45;
+    final borderColor = isDark ? Colors.white.withValues(alpha: 0.12) : Colors.black.withValues(alpha: 0.1);
+    final iconColor = isDark ? Colors.white70 : Colors.black54;
+
+    String matchInfo;
+    if (_searchFieldController.text.isEmpty) {
+      matchInfo = '';
+    } else if (_isSearchingText) {
+      matchInfo = '搜索中...';
+    } else if (_searchTotalMatches == 0) {
+      matchInfo = '无匹配';
+    } else {
+      matchInfo = '$_searchMatchIndex / $_searchTotalMatches';
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: borderColor, width: 0.8),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.4 : 0.12),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.search, size: 16, color: hintColor),
+              const SizedBox(width: 6),
+              SizedBox(
+                width: 170,
+                child: TextField(
+                  controller: _searchFieldController,
+                  focusNode: _searchFocusNode,
+                  style: TextStyle(fontSize: 13, color: textColor),
+                  decoration: InputDecoration(
+                    hintText: '查找文档内容...',
+                    hintStyle: TextStyle(fontSize: 12.5, color: hintColor),
+                    isDense: true,
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 6),
+                  ),
+                  onChanged: _onSearchQueryChanged,
+                  onSubmitted: (_) => searchNext(),
+                ),
+              ),
+              if (matchInfo.isNotEmpty) ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Text(
+                    matchInfo,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: _searchTotalMatches == 0 && _searchFieldController.text.isNotEmpty
+                          ? Colors.redAccent
+                          : hintColor,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(width: 2),
+              IconButton(
+                icon: Icon(Icons.keyboard_arrow_up, size: 17, color: iconColor),
+                tooltip: '上一个 (Shift+Enter)',
+                splashRadius: 14,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                onPressed: _searchTotalMatches > 0 ? searchPrev : null,
+              ),
+              IconButton(
+                icon: Icon(Icons.keyboard_arrow_down, size: 17, color: iconColor),
+                tooltip: '下一个 (Enter)',
+                splashRadius: 14,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                onPressed: _searchTotalMatches > 0 ? searchNext : null,
+              ),
+              const SizedBox(width: 4),
+              Container(width: 1, height: 14, color: borderColor),
+              const SizedBox(width: 4),
+              IconButton(
+                icon: Icon(Icons.close, size: 15, color: iconColor),
+                tooltip: '关闭 (Esc)',
+                splashRadius: 14,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                onPressed: closeSearch,
+              ),
+            ],
           ),
         ),
       ),

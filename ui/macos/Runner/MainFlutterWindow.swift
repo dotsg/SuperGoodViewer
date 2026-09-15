@@ -5,6 +5,9 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
   private var windowChannel: FlutterMethodChannel?
 
   func windowDidEnterFullScreen(_ notification: Notification) {
+    self.standardWindowButton(.closeButton)?.isHidden = false
+    self.standardWindowButton(.miniaturizeButton)?.isHidden = false
+    self.standardWindowButton(.zoomButton)?.isHidden = false
     windowChannel?.invokeMethod("onFullScreenChanged", arguments: true)
   }
 
@@ -57,7 +60,8 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
         self?.zoom(nil)
         result(nil)
       } else if call.method == "setTrafficLightsVisible" {
-        let visible = (call.arguments as? Bool) ?? true
+        let isFs = self?.styleMask.contains(.fullScreen) ?? false
+        let visible = isFs ? true : ((call.arguments as? Bool) ?? true)
         self?.standardWindowButton(.closeButton)?.isHidden = !visible
         self?.standardWindowButton(.miniaturizeButton)?.isHidden = !visible
         self?.standardWindowButton(.zoomButton)?.isHidden = !visible

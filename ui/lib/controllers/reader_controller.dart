@@ -81,6 +81,7 @@ class ReaderController extends ChangeNotifier {
   final ShortcutService shortcutService = ShortcutService();
 
   bool _isTwoPage = false;
+  bool _isPresentationMode = false;
   List<OutlineItem> _outlineItems = [];
   OutlineItem? _requestedJumpItem;
   bool renderOptionsChanged = false;
@@ -103,6 +104,7 @@ class ReaderController extends ChangeNotifier {
   List<String> get recentFiles => List.unmodifiable(_recentFiles);
   Map<String, dynamic> get fontReport => _fontReport;
   bool get isTwoPage => _isTwoPage;
+  bool get isPresentationMode => _isPresentationMode;
   List<OutlineItem> get outlineItems => _outlineItems;
   OutlineItem? get requestedJumpItem => _requestedJumpItem;
   bool get isPdfDocument =>
@@ -273,6 +275,7 @@ class ReaderController extends ChangeNotifier {
       final savedCodeFont = prefs['codeFont'] as String?;
       final savedZoom = (prefs['lastZoom'] as num?)?.toDouble();
       final savedHistory = prefs['fileHistory'] as Map<String, dynamic>?;
+      final savedPageFormat = prefs['pageFormat'] as String?;
 
       if (recent != null && recent.isNotEmpty) {
         _recentFiles.clear();
@@ -283,10 +286,12 @@ class ReaderController extends ChangeNotifier {
           savedMode != null ||
           savedFontSize != null ||
           savedBodyFont != null ||
-          savedCodeFont != null) {
+          savedCodeFont != null ||
+          savedPageFormat != null) {
         _renderOptions = _renderOptions.copyWith(
           theme: savedTheme ?? _renderOptions.theme,
           mode: savedMode ?? _renderOptions.mode,
+          pageFormat: savedPageFormat ?? _renderOptions.pageFormat,
           fontSize: savedFontSize ?? _renderOptions.fontSize,
           bodyFont: savedBodyFont ?? _renderOptions.bodyFont,
           codeFont: savedCodeFont ?? _renderOptions.codeFont,
@@ -367,6 +372,7 @@ class ReaderController extends ChangeNotifier {
       'recentFiles': List<String>.from(_recentFiles),
       'theme': _renderOptions.theme,
       'mode': _renderOptions.mode,
+      'pageFormat': _renderOptions.effectivePageFormat,
       'isTwoPage': _isTwoPage,
       'autoFitMode': _autoFitMode.name,
       'fontSize': _renderOptions.fontSize,
@@ -771,12 +777,16 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
-  void toggleMode() {
+  void setPageFormat(String format) {
     if (isPdfDocument) return;
+    if (_renderOptions.effectivePageFormat == format) return;
     renderOptionsChanged = true;
     startReloading();
-    final nextMode = _renderOptions.mode == 'fluid' ? 'paged' : 'fluid';
-    _renderOptions = _renderOptions.copyWith(mode: nextMode);
+    final nextMode = format == PageFormat.fluid ? 'fluid' : 'paged';
+    _renderOptions = _renderOptions.copyWith(
+      mode: nextMode,
+      pageFormat: format,
+    );
     _persistDebounced();
     notifyListeners();
     if (_currentFilePath != null) {
@@ -784,11 +794,89 @@ class ReaderController extends ChangeNotifier {
       if (cached != null && cached.isNotEmpty) {
         _currentPdfBytes = cached;
         _errorMessage = null;
-        debugPrint('[ReaderController] Mode toggle cache hit: instant PDF loaded');
+        debugPrint('[ReaderController] PageFormat change cache hit: instant PDF loaded');
         notifyListeners();
         return;
       }
     }
+    compileDocument();
+  }
+
+  void cyclePageFormat() {
+    if (isPdfDocument) return;
+    final current = _renderOptions.effectivePageFormat;
+    final formats = PageFormat.all;
+    final idx = formats.indexOf(current);
+    final nextIdx = (idx == -1 || idx == formats.length - 1) ? 0 : idx + 1;
+    setPageFormat(formats[nextIdx]);
+  }
+
+  void toggleMode() {
+    if (isPdfDocument) return;
+    if (_renderOptions.isFluid) {
+      final target = (_renderOptions.pageFormat == null || _renderOptions.pageFormat == PageFormat.fluid)
+          ? PageFormat.a4Portrait
+          : _renderOptions.pageFormat!;
+      setPageFormat(target);
+    } else {
+      setPageFormat(PageFormat.fluid);
+    }
+  }
+
+  String? _formatBeforePresentation;
+
+  void setPresentationMode(bool value) {
+    if (_isPresentationMode != value) {
+      _isPresentationMode = value;
+      if (value) {
+        if (!isPdfDocument && _renderOptions.isFluid) {
+          _formatBeforePresentation = _renderOptions.effectivePageFormat;
+          setPageFormat(PageFormat.slide16x9);
+        }
+      } else {
+        if (_formatBeforePresentation != null) {
+          final restore = _formatBeforePresentation!;
+          _formatBeforePresentation = null;
+          setPageFormat(restore);
+        }
+      }
+      notifyListeners();
+    }
+  }
+
+  void togglePresentationMode() {
+    setPresentationMode(!_isPresentationMode);
+  }
+
+  void setHeaderFooterOptions({
+    String? headerLeft,
+    String? headerCenter,
+    String? headerRight,
+    String? footerLeft,
+    String? footerCenter,
+    String? footerRight,
+    bool? showHeaderRule,
+    bool? showFooterRule,
+    bool? skipFirstPageHeaderFooter,
+    bool? marpEnabled,
+  }) {
+    if (isPdfDocument) return;
+    renderOptionsChanged = true;
+    startReloading();
+    _renderOptions = _renderOptions.copyWith(
+      headerLeft: headerLeft,
+      headerCenter: headerCenter,
+      headerRight: headerRight,
+      footerLeft: footerLeft,
+      footerCenter: footerCenter,
+      footerRight: footerRight,
+      showHeaderRule: showHeaderRule,
+      showFooterRule: showFooterRule,
+      skipFirstPageHeaderFooter: skipFirstPageHeaderFooter,
+      marpEnabled: marpEnabled,
+    );
+    _persistDebounced();
+    notifyListeners();
     compileDocument();
   }
 

@@ -6,9 +6,11 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../controllers/reader_controller.dart';
+import '../models/render_options.dart';
 import '../services/cli_ipc_service.dart';
 import '../services/native_cli_service.dart';
 import 'pdf_canvas_view.dart';
+import 'presentation_view.dart';
 import 'settings_dialog.dart';
 import 'sidebar_view.dart';
 
@@ -28,6 +30,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   bool _isHoveringToolbar = false;
   Timer? _toolbarTimer;
   final GlobalKey<PdfCanvasViewState> _pdfCanvasKey = GlobalKey<PdfCanvasViewState>();
+  final GlobalKey<PresentationViewState> _presentationKey = GlobalKey<PresentationViewState>();
 
   // Titlebar auto-hide on scroll
   bool _isTitleBarVisible = true;
@@ -43,7 +46,9 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _updateTrafficLights() {
-    final show = _shouldShowTitleBar;
+    // In full screen, macOS handles traffic lights automatically on top hover.
+    // Never hide standard window buttons in full screen mode.
+    final show = _isFullScreen ? true : _shouldShowTitleBar;
     try {
       _windowChannel.invokeMethod('setTrafficLightsVisible', show);
     } catch (_) {}
@@ -303,6 +308,11 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handleNextPage() {
+    if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
+    if (widget.controller.isPresentationMode) {
+      _presentationKey.currentState?.nextPage();
+      return;
+    }
     if (!_isSidebarOpen && !_isHoveringTitleBar && (_isTitleBarVisible || _isAtTop)) {
       setState(() {
         _isAtTop = false;
@@ -318,6 +328,11 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handlePrevPage() {
+    if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
+    if (widget.controller.isPresentationMode) {
+      _presentationKey.currentState?.prevPage();
+      return;
+    }
     if (widget.controller.isFluidLayout) {
       _pdfCanvasKey.currentState?.scrollByDelta(-420);
     } else {
@@ -333,6 +348,11 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handleFirstPage() {
+    if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
+    if (widget.controller.isPresentationMode) {
+      _presentationKey.currentState?.goToPage(1);
+      return;
+    }
     setState(() {
       _isAtTop = true;
       _isTitleBarVisible = true;
@@ -342,6 +362,11 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handleLastPage() {
+    if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
+    if (widget.controller.isPresentationMode) {
+      _presentationKey.currentState?.goToLastPage();
+      return;
+    }
     if (!_isSidebarOpen && !_isHoveringTitleBar) {
       setState(() {
         _isAtTop = false;
@@ -372,6 +397,10 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         setState(() => _isFullScreen = res);
       }
     } catch (_) {}
+  }
+
+  void _handleTogglePresentation() {
+    widget.controller.togglePresentationMode();
   }
 
   void _showZoomHud(String text) {
@@ -461,9 +490,30 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               onFitPage: _handleFitPage,
               onToggleToolbar: _toggleToolbar,
               onFontSettings: () => showSettingsDialog(context, controller, initialTab: SettingsTab.typography),
+              onTogglePresentation: _handleTogglePresentation,
+              onFindInDocument: () => _pdfCanvasKey.currentState?.openSearch(),
               onPreferences: () => showSettingsDialog(context, controller, initialTab: SettingsTab.general),
               onKeyboardShortcuts: () => showSettingsDialog(context, controller, initialTab: SettingsTab.shortcuts),
             ),
+
+            // In-Document Search Shortcuts (Cmd+F / Ctrl+F, Cmd+G / Ctrl+G)
+            const SingleActivator(LogicalKeyboardKey.keyF, meta: true): () =>
+                _pdfCanvasKey.currentState?.openSearch(),
+            const SingleActivator(LogicalKeyboardKey.keyF, control: true): () =>
+                _pdfCanvasKey.currentState?.openSearch(),
+            const SingleActivator(LogicalKeyboardKey.keyG, meta: true): () =>
+                _pdfCanvasKey.currentState?.searchNext(),
+            const SingleActivator(LogicalKeyboardKey.keyG, meta: true, shift: true): () =>
+                _pdfCanvasKey.currentState?.searchPrev(),
+            const SingleActivator(LogicalKeyboardKey.keyG, control: true): () =>
+                _pdfCanvasKey.currentState?.searchNext(),
+            const SingleActivator(LogicalKeyboardKey.keyG, control: true, shift: true): () =>
+                _pdfCanvasKey.currentState?.searchPrev(),
+
+            // Presentation Mode Direct Activators (F5, Cmd+Enter, Ctrl+Enter)
+            const SingleActivator(LogicalKeyboardKey.f5): _handleTogglePresentation,
+            const SingleActivator(LogicalKeyboardKey.enter, meta: true): _handleTogglePresentation,
+            const SingleActivator(LogicalKeyboardKey.enter, control: true): _handleTogglePresentation,
 
             // Zoom Keypad Aliases (Numpad +)
             const SingleActivator(LogicalKeyboardKey.add, meta: true): _handleZoomIn,
@@ -493,7 +543,13 @@ class _WorkspaceViewState extends State<WorkspaceView> {
             const SingleActivator(LogicalKeyboardKey.f11): _toggleFullScreen,
 
             const SingleActivator(LogicalKeyboardKey.escape): () {
-              if (_isToolbarVisible) {
+              if (_pdfCanvasKey.currentState?.isSearchOpen == true) {
+                _pdfCanvasKey.currentState?.closeSearch();
+              } else if (controller.isPresentationMode) {
+                controller.setPresentationMode(false);
+              } else if (_isFullScreen) {
+                _toggleFullScreen();
+              } else if (_isToolbarVisible) {
                 setState(() => _isToolbarVisible = false);
               } else if (_isSidebarOpen) {
                 _setSidebarOpen(false);
@@ -757,8 +813,18 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                           ),
                         ),
                       ),
-                    ],
-                  ),
+
+                    // Full-screen Presentation View (PPT Mode)
+                    if (controller.isPresentationMode && controller.currentPdfBytes != null)
+                      Positioned.fill(
+                        child: PresentationView(
+                          key: _presentationKey,
+                          controller: controller,
+                          onExit: () => controller.setPresentationMode(false),
+                        ),
+                      ),
+                  ],
+                ),
                 ),
               ],
             ),
@@ -948,16 +1014,27 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               ),
               _PillDivider(isDark: isDark),
 
-              // Mode switcher (Fluid vs A4 Paged) - Markdown only
+              // Mode & Layout switcher (Fluid, A4, 16:9, etc.) - Markdown only
               if (!controller.isPdfDocument) ...[
-                _ModePill(
-                  mode: controller.renderOptions.mode,
+                _FormatSelectorPill(
+                  format: controller.renderOptions.effectivePageFormat,
                   shortcutLabel: controller.shortcutService.getShortcutLabel('toggleMode'),
+                  onSelectFormat: controller.setPageFormat,
                   onToggle: controller.toggleMode,
                   isDark: isDark,
                 ),
                 _PillDivider(isDark: isDark),
               ],
+
+              // Full-screen Presentation Mode (PPT) - works for both Markdown and PDF
+              _PillIconButton(
+                icon: Icons.slideshow_rounded,
+                tooltip: '全屏单页演示 (${controller.shortcutService.getShortcutLabel('togglePresentation')} / F5)',
+                isSelected: controller.isPresentationMode,
+                iconSize: 18,
+                onPressed: _handleTogglePresentation,
+              ),
+              _PillDivider(isDark: isDark),
 
               // When in A4 Paged mode or reading a PDF, show Two-Page Spread toggle and Page Navigation
               if (controller.isPdfDocument || !controller.renderOptions.isFluid) ...[
@@ -1103,56 +1180,165 @@ class _PillIconButton extends StatelessWidget {
   }
 }
 
-class _ModePill extends StatelessWidget {
-  final String mode;
+class _FormatSelectorPill extends StatelessWidget {
+  final String format;
+  final ValueChanged<String> onSelectFormat;
   final VoidCallback onToggle;
   final bool isDark;
   final String? shortcutLabel;
 
-  const _ModePill({
-    required this.mode,
+  const _FormatSelectorPill({
+    required this.format,
+    required this.onSelectFormat,
     required this.onToggle,
     required this.isDark,
     this.shortcutLabel,
   });
 
+  IconData _getFormatIcon(String fmt) {
+    switch (fmt) {
+      case PageFormat.fluid:
+        return Icons.view_stream_rounded;
+      case PageFormat.a4Portrait:
+        return Icons.description_outlined;
+      case PageFormat.a4Landscape:
+        return Icons.landscape_outlined;
+      case PageFormat.slide16x9:
+        return Icons.slideshow_rounded;
+      case PageFormat.slide4x3:
+        return Icons.tv_rounded;
+      default:
+        return Icons.auto_stories_rounded;
+    }
+  }
+
+  String _getFormatShortLabel(String fmt) {
+    switch (fmt) {
+      case PageFormat.fluid:
+        return '流式';
+      case PageFormat.a4Portrait:
+        return 'A4';
+      case PageFormat.a4Landscape:
+        return 'A4横向';
+      case PageFormat.slide16x9:
+        return '16:9';
+      case PageFormat.slide4x3:
+        return '4:3';
+      default:
+        return 'A4';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final isFluid = mode == 'fluid';
     final theme = Theme.of(context);
-    final shortcut = shortcutLabel ?? 'Cmd+F';
+    final shortcut = shortcutLabel ?? 'Cmd+M';
 
-    return Tooltip(
-      message: isFluid ? '当前：自适应流式 (点击切换 A4 出版 $shortcut)' : '当前：A4 出版 (点击切换流式 $shortcut)',
-      waitDuration: const Duration(milliseconds: 500),
-      child: GestureDetector(
-        onTap: onToggle,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.primary.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                isFluid ? Icons.view_stream_rounded : Icons.auto_stories_rounded,
-                size: 14,
-                color: theme.colorScheme.primary,
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Tooltip(
+            message: '当前：${PageFormat.getDisplayName(format)} (点击切换 $shortcut)',
+            waitDuration: const Duration(milliseconds: 500),
+            child: InkWell(
+              onTap: onToggle,
+              borderRadius: const BorderRadius.horizontal(left: Radius.circular(12)),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(8, 4, 4, 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _getFormatIcon(format),
+                      size: 14,
+                      color: theme.colorScheme.primary,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      _getFormatShortLabel(format),
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(width: 4),
-              Text(
-                isFluid ? '流式' : 'A4',
-                style: TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
-                  color: theme.colorScheme.primary,
+            ),
+          ),
+          PopupMenuButton<String>(
+            tooltip: '选择版式',
+            initialValue: format,
+            offset: const Offset(0, -230),
+            onSelected: onSelectFormat,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            icon: Icon(
+              Icons.arrow_drop_up_rounded,
+              size: 18,
+              color: theme.colorScheme.primary,
+            ),
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: PageFormat.fluid,
+                child: Row(
+                  children: [
+                    Icon(Icons.view_stream_rounded, size: 16),
+                    SizedBox(width: 8),
+                    Text('自适应流式 (长卷轴)'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: PageFormat.a4Portrait,
+                child: Row(
+                  children: [
+                    Icon(Icons.description_outlined, size: 16),
+                    SizedBox(width: 8),
+                    Text('A4 纵向出版'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: PageFormat.a4Landscape,
+                child: Row(
+                  children: [
+                    Icon(Icons.landscape_outlined, size: 16),
+                    SizedBox(width: 8),
+                    Text('A4 横向出版'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: PageFormat.slide16x9,
+                child: Row(
+                  children: [
+                    Icon(Icons.slideshow_rounded, size: 16),
+                    SizedBox(width: 8),
+                    Text('16:9 幻灯片 (PPT)'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: PageFormat.slide4x3,
+                child: Row(
+                  children: [
+                    Icon(Icons.tv_rounded, size: 16),
+                    SizedBox(width: 8),
+                    Text('4:3 幻灯片 (PPT)'),
+                  ],
                 ),
               ),
             ],
           ),
-        ),
+          const SizedBox(width: 2),
+        ],
       ),
     );
   }

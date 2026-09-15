@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../controllers/reader_controller.dart';
+import '../models/render_options.dart';
 import '../services/document_cache_service.dart';
 import '../services/native_cli_service.dart';
 import '../services/shortcut_service.dart';
@@ -10,6 +11,7 @@ import '../services/shortcut_service.dart';
 /// Available tabs within the unified SettingsDialog.
 enum SettingsTab {
   general,
+  layout,
   typography,
   shortcuts,
   cli,
@@ -56,6 +58,19 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late double _selectedFontSize;
   bool _isScanningFonts = false;
 
+  // Layout & Header/Footer state
+  late String _selectedPageFormat;
+  late TextEditingController _headerLeftController;
+  late TextEditingController _headerCenterController;
+  late TextEditingController _headerRightController;
+  late TextEditingController _footerLeftController;
+  late TextEditingController _footerCenterController;
+  late TextEditingController _footerRightController;
+  late bool _showHeaderRule;
+  late bool _showFooterRule;
+  late bool _skipFirstPage;
+  late bool _marpEnabled;
+
   bool get _hasUnsavedTypographyChanges {
     final opts = widget.controller.renderOptions;
     return _selectedBodyFont != opts.bodyFont ||
@@ -76,6 +91,35 @@ class _SettingsDialogState extends State<SettingsDialog> {
         messenger.showSnackBar(
           const SnackBar(
             content: Text('字体排版设置已保存，正在重新渲染当前文档...'),
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (_) {}
+  }
+
+  void _saveLayout() {
+    widget.controller.setPageFormat(_selectedPageFormat);
+    widget.controller.setHeaderFooterOptions(
+      headerLeft: _headerLeftController.text.trim().isEmpty ? null : _headerLeftController.text.trim(),
+      headerCenter: _headerCenterController.text.trim().isEmpty ? null : _headerCenterController.text.trim(),
+      headerRight: _headerRightController.text.trim().isEmpty ? null : _headerRightController.text.trim(),
+      footerLeft: _footerLeftController.text.trim().isEmpty ? null : _footerLeftController.text.trim(),
+      footerCenter: _footerCenterController.text.trim().isEmpty ? null : _footerCenterController.text.trim(),
+      footerRight: _footerRightController.text.trim().isEmpty ? null : _footerRightController.text.trim(),
+      showHeaderRule: _showHeaderRule,
+      showFooterRule: _showFooterRule,
+      skipFirstPageHeaderFooter: _skipFirstPage,
+      marpEnabled: _marpEnabled,
+    );
+    setState(() {});
+    try {
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      if (messenger != null && Scaffold.maybeOf(context) != null) {
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('版式与页眉页脚设置已保存并应用'),
             behavior: SnackBarBehavior.floating,
             duration: Duration(seconds: 2),
           ),
@@ -114,11 +158,34 @@ class _SettingsDialogState extends State<SettingsDialog> {
   void initState() {
     super.initState();
     _currentTab = widget.initialTab;
-    _selectedBodyFont = widget.controller.renderOptions.bodyFont;
-    _selectedCodeFont = widget.controller.renderOptions.codeFont;
-    _selectedFontSize = widget.controller.renderOptions.fontSize;
+    final opts = widget.controller.renderOptions;
+    _selectedBodyFont = opts.bodyFont;
+    _selectedCodeFont = opts.codeFont;
+    _selectedFontSize = opts.fontSize;
+    _selectedPageFormat = opts.effectivePageFormat;
+    _headerLeftController = TextEditingController(text: opts.headerLeft ?? '');
+    _headerCenterController = TextEditingController(text: opts.headerCenter ?? '');
+    _headerRightController = TextEditingController(text: opts.headerRight ?? '');
+    _footerLeftController = TextEditingController(text: opts.footerLeft ?? '');
+    _footerCenterController = TextEditingController(text: opts.footerCenter ?? '');
+    _footerRightController = TextEditingController(text: opts.footerRight ?? '');
+    _showHeaderRule = opts.showHeaderRule ?? false;
+    _showFooterRule = opts.showFooterRule ?? false;
+    _skipFirstPage = opts.skipFirstPageHeaderFooter ?? true;
+    _marpEnabled = opts.marpEnabled ?? true;
     _loadCacheStats();
     _loadCliStatus();
+  }
+
+  @override
+  void dispose() {
+    _headerLeftController.dispose();
+    _headerCenterController.dispose();
+    _headerRightController.dispose();
+    _footerLeftController.dispose();
+    _footerCenterController.dispose();
+    _footerRightController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadCacheStats() async {
@@ -337,6 +404,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
             isDark: isDark,
           ),
           _buildNavItem(
+            tab: SettingsTab.layout,
+            label: '版式与页眉页脚',
+            icon: Icons.auto_stories_outlined,
+            theme: theme,
+            isDark: isDark,
+          ),
+          _buildNavItem(
             tab: SettingsTab.typography,
             label: '排版与字体',
             icon: Icons.font_download_outlined,
@@ -509,6 +583,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
     switch (tab) {
       case SettingsTab.general:
         return '常规与阅读偏好';
+      case SettingsTab.layout:
+        return '版式形态与页眉页脚定制';
       case SettingsTab.typography:
         return '字体排版与中英文等宽对齐';
       case SettingsTab.shortcuts:
@@ -524,6 +600,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
     switch (tab) {
       case SettingsTab.general:
         return '配置文件外部修改自动重载与阅读历史记录';
+      case SettingsTab.layout:
+        return '配置文档长卷/出版A4/16:9/4:3幻灯片版式与三插槽页眉页脚';
       case SettingsTab.typography:
         return '定制正文与等宽字体，支持全角半角 1:2 等宽对齐与实时渲染预览';
       case SettingsTab.shortcuts:
@@ -539,6 +617,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
     switch (_currentTab) {
       case SettingsTab.general:
         return _buildGeneralTab(theme, isDark);
+      case SettingsTab.layout:
+        return _buildLayoutTab(theme, isDark);
       case SettingsTab.typography:
         return _buildTypographyTab(theme, isDark);
       case SettingsTab.shortcuts:
@@ -548,6 +628,248 @@ class _SettingsDialogState extends State<SettingsDialog> {
       case SettingsTab.about:
         return _buildAboutTab(theme, isDark);
     }
+  }
+
+  // ==================== LAYOUT TAB ====================
+  Widget _buildLayoutTab(ThemeData theme, bool isDark) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildSectionHeader('页面排版版式 (Page Format)'),
+        const SizedBox(height: 6),
+        Text(
+          '设置文档默认排版形态。演示请选择 16:9 / 4:3 幻灯片，出版阅读请选择 A4 或自适应流式。',
+          style: TextStyle(
+            fontSize: 12,
+            color: isDark ? const Color(0xFF9E9E9E) : const Color(0xFF666666),
+          ),
+        ),
+        const SizedBox(height: 12),
+        ...PageFormat.all.map((fmt) {
+          final isSelected = _selectedPageFormat == fmt;
+          String desc;
+          IconData icon;
+          switch (fmt) {
+            case PageFormat.fluid:
+              desc = '锁定黄金阅读行宽，高度自适应，连续无缝卷轴滚动，适合技术文档与长文';
+              icon = Icons.view_stream_rounded;
+              break;
+            case PageFormat.a4Portrait:
+              desc = '标准 A4 出版纵向 (595.28 × 841.89 pt)，带页眉页脚与孤行控制，适合出版打印';
+              icon = Icons.description_outlined;
+              break;
+            case PageFormat.a4Landscape:
+              desc = '标准 A4 出版横向 (841.89 × 595.28 pt)，适合架构图与横向宽表排版';
+              icon = Icons.landscape_outlined;
+              break;
+            case PageFormat.slide16x9:
+              desc = '16:9 现代宽屏幻灯片 (960 × 540 pt)，大字号，适合高保真 PPT 演播';
+              icon = Icons.slideshow_rounded;
+              break;
+            case PageFormat.slide4x3:
+              desc = '4:3 经典传统幻灯片 (960 × 720 pt)，适合传统投影仪演示与学术报告';
+              icon = Icons.tv_rounded;
+              break;
+            default:
+              desc = '';
+              icon = Icons.auto_stories_rounded;
+          }
+
+          return Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: () => setState(() => _selectedPageFormat = fmt),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? theme.colorScheme.primary.withValues(alpha: 0.1)
+                        : (isDark ? const Color(0xFF222222) : const Color(0xFFF9F9F9)),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: isSelected
+                          ? theme.colorScheme.primary
+                          : (isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5)),
+                      width: isSelected ? 1.5 : 1.0,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
+                        size: 18,
+                        color: isSelected
+                            ? theme.colorScheme.primary
+                            : (isDark ? Colors.white38 : Colors.black38),
+                      ),
+                      const SizedBox(width: 12),
+                      Icon(
+                        icon,
+                        size: 18,
+                        color: isSelected
+                            ? theme.colorScheme.primary
+                            : (isDark ? Colors.white70 : Colors.black54),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              PageFormat.getDisplayName(fmt),
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight:
+                                    isSelected ? FontWeight.w700 : FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              desc,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: isDark
+                                    ? const Color(0xFF888888)
+                                    : const Color(0xFF777777),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        }),
+
+        const SizedBox(height: 18),
+        _buildSectionHeader('页眉与页脚定制 (Header & Footer)'),
+        const SizedBox(height: 6),
+        Text(
+          '支持三插槽定制。可用占位宏：{title} (标题)、{page} (当前页)、{total} (总页数)、{date} (日期)。在流式模式下页眉页脚自动隐藏。',
+          style: TextStyle(
+            fontSize: 12,
+            color: isDark ? const Color(0xFF9E9E9E) : const Color(0xFF666666),
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        SwitchListTile(
+          value: _skipFirstPage,
+          onChanged: (val) => setState(() => _skipFirstPage = val),
+          title: const Text('封面 / 首页隐藏页眉与页脚', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          subtitle: const Text('出版物与 PPT 标题页惯例，第一页不打印页眉页脚', style: TextStyle(fontSize: 11.5)),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+        SwitchListTile(
+          value: _showHeaderRule,
+          onChanged: (val) => setState(() => _showHeaderRule = val),
+          title: const Text('显示页眉下边框细分割线', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+        SwitchListTile(
+          value: _showFooterRule,
+          onChanged: (val) => setState(() => _showFooterRule = val),
+          title: const Text('显示页脚上边框细分割线', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+
+        const SizedBox(height: 12),
+        Text('页眉插槽 (Header Slots)', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: theme.colorScheme.primary)),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _headerLeftController,
+                decoration: const InputDecoration(labelText: '左插槽', hintText: '空或自定义文字', isDense: true, border: OutlineInputBorder()),
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: _headerCenterController,
+                decoration: const InputDecoration(labelText: '中插槽', hintText: '空', isDense: true, border: OutlineInputBorder()),
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: _headerRightController,
+                decoration: const InputDecoration(labelText: '右插槽', hintText: '{title}', isDense: true, border: OutlineInputBorder()),
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 14),
+        Text('页脚插槽 (Footer Slots)', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: theme.colorScheme.primary)),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _footerLeftController,
+                decoration: const InputDecoration(labelText: '左插槽', hintText: '空或版权声明', isDense: true, border: OutlineInputBorder()),
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: _footerCenterController,
+                decoration: const InputDecoration(labelText: '中插槽', hintText: '{page}', isDense: true, border: OutlineInputBorder()),
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: _footerRightController,
+                decoration: const InputDecoration(labelText: '右插槽', hintText: '空或 {page}/{total}', isDense: true, border: OutlineInputBorder()),
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 20),
+        _buildSectionHeader('Marp 幻灯片生态支持 (Marp Directives)'),
+        const SizedBox(height: 6),
+        SwitchListTile(
+          value: _marpEnabled,
+          onChanged: (val) => setState(() => _marpEnabled = val),
+          title: const Text('启用 Marp Frontmatter 与分页语法', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          subtitle: const Text('自动识别 Frontmatter 中的 marp: true, size, paginate, header, footer，并将 --- 自动转换为幻灯片切页', style: TextStyle(fontSize: 11.5)),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+
+        const SizedBox(height: 24),
+        Align(
+          alignment: Alignment.centerRight,
+          child: ElevatedButton.icon(
+            icon: const Icon(Icons.check_circle_outline_rounded, size: 16),
+            label: const Text('保存并应用版式与页眉页脚'),
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            onPressed: _saveLayout,
+          ),
+        ),
+      ],
+    );
   }
 
   // ==================== 1. GENERAL TAB ====================
