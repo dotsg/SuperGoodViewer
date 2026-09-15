@@ -254,4 +254,109 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 1));
   });
+
+  testWidgets('Repeated Space does not compound key-repeat acceleration', (tester) async {
+    const windowChannel = MethodChannel('com.sogoodviewer.window');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(windowChannel, (_) async => null);
+    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(windowChannel, null));
+
+    final controller = ReaderController(autoRestorePreferences: false);
+    addTearDown(controller.dispose);
+    await controller.openFile(multipagePdfFile.path);
+    controller.setPageFormat(PageFormat.a4Portrait);
+
+    await tester.pumpWidget(MaterialApp(home: WorkspaceView(controller: controller)));
+
+    Future<void> advance([int frames = 30]) async {
+      for (var i = 0; i < frames; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 2)));
+      }
+    }
+
+    await advance(60);
+    final canvas = tester.state<PdfCanvasViewState>(find.byType(PdfCanvasView));
+    expect(canvas.isReady, isTrue);
+
+    // Zoom in so the page no longer fits and Space scrolls rather than flips.
+    await canvas.pdfController.setZoom(Offset.zero, 1.5, duration: Duration.zero);
+    await advance(20);
+    expect(canvas.isCurrentPageFittingViewport, isFalse);
+
+    final startTop = canvas.pdfController.visibleRect.top;
+    final step = canvas.pdfController.visibleRect.height * 0.85;
+
+    // Two presses with no time in between: the arrow-key acceleration would
+    // scale the second one by up to 3.5x, skipping screens of unread content.
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    await advance(60);
+
+    final travelled = canvas.pdfController.visibleRect.top - startTop;
+    expect(
+      travelled,
+      closeTo(step * 2, step * 0.2),
+      reason: 'Two screen scrolls must travel two screens, not an accelerated multiple',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('Space scrolls rather than flipping while the viewport straddles two pages', (tester) async {
+    const windowChannel = MethodChannel('com.sogoodviewer.window');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(windowChannel, (_) async => null);
+    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(windowChannel, null));
+
+    final controller = ReaderController(autoRestorePreferences: false);
+    addTearDown(controller.dispose);
+    await controller.openFile(multipagePdfFile.path);
+    controller.setPageFormat(PageFormat.a4Portrait);
+
+    // Large enough that a whole A4 page fits the viewport with slack to spare.
+    tester.view.physicalSize = const Size(1200, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(MaterialApp(home: WorkspaceView(controller: controller)));
+
+    Future<void> advance([int frames = 30]) async {
+      for (var i = 0; i < frames; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 2)));
+      }
+    }
+
+    await advance(60);
+    final canvas = tester.state<PdfCanvasViewState>(find.byType(PdfCanvasView));
+    expect(canvas.isReady, isTrue);
+    expect(canvas.isCurrentPageFittingViewport, isTrue);
+
+    // Pan down a little: the page still fits the viewport, but the viewport now
+    // straddles the gap, so part of it has not been read yet.
+    await canvas.scrollByDelta(120);
+    await advance(30);
+    expect(
+      canvas.isCurrentPageFittingViewport,
+      isFalse,
+      reason: 'A page that fits but is not contained must not count as fitting',
+    );
+
+    final beforeTop = canvas.pdfController.visibleRect.top;
+    final page2Top = canvas.pdfController.layout.pageLayouts[1].top;
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    await advance(40);
+
+    final afterTop = canvas.pdfController.visibleRect.top;
+    expect(afterTop, greaterThan(beforeTop), reason: 'Space must still move the view forward');
+    expect(
+      afterTop,
+      isNot(closeTo(page2Top, 2.0)),
+      reason: 'Space must scroll past the unread remainder, not snap to the next page top',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+  });
 }

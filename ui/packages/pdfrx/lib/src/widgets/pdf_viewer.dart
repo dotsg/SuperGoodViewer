@@ -1160,6 +1160,36 @@ class _PdfViewerState extends State<PdfViewer>
   /// Last page number that is explicitly requested to go to.
   int? _gotoTargetPageNumber;
 
+  /// Incremented by every explicit navigation entry point. A navigation that
+  /// awaits an animation compares the value it captured against this field to
+  /// detect that a later navigation superseded it: [_goTo]'s future also
+  /// completes when its animation is cancelled, not only when it finishes.
+  int _navGeneration = 0;
+
+  /// Whether [pageNumber] occupies enough of the viewport to be called the
+  /// current page. Measured against the smaller of the page and the viewport so
+  /// that the test still holds when zoomed deep inside a single page, where the
+  /// page-relative ratio used by [_guessCurrentPageNumber] is necessarily small.
+  bool _isPageOnScreen(int pageNumber) {
+    final layout = _layout;
+    if (layout == null || _viewSize == null) return false;
+    final index = pageNumber - 1;
+    if (index < 0 || index >= layout.pageLayouts.length) return false;
+    final pageRect = layout.pageLayouts[index];
+    final visibleRect = _visibleRect;
+    final isHorizontal = layout.documentSize.width > layout.documentSize.height;
+    final double overlap;
+    final double extent;
+    if (isHorizontal) {
+      overlap = min(pageRect.right, visibleRect.right) - max(pageRect.left, visibleRect.left);
+      extent = min(pageRect.width, visibleRect.width);
+    } else {
+      overlap = min(pageRect.bottom, visibleRect.bottom) - max(pageRect.top, visibleRect.top);
+      extent = min(pageRect.height, visibleRect.height);
+    }
+    return extent > 0 && overlap / extent >= 0.5;
+  }
+
   bool _onKey(PdfViewerKeyHandlerParams params, LogicalKeyboardKey key, bool isRealKeyPress) {
     final result = widget.params.onKey?.call(params, key, isRealKeyPress);
     if (result != null) {
@@ -2686,6 +2716,7 @@ class _PdfViewerState extends State<PdfViewer>
       targetPageNumber = pageNumber;
     }
     _gotoTargetPageNumber = pageNumber;
+    _navGeneration++;
 
     await _goTo(
       _calcMatrixForClampedToNearestBoundary(
@@ -2714,6 +2745,7 @@ class _PdfViewerState extends State<PdfViewer>
     if (targetPageNumber != null) {
       _gotoTargetPageNumber = targetPageNumber;
     }
+    final generation = ++_navGeneration;
 
     zoom = zoom ?? _currentZoom;
     final tx = -documentOffset.dx * zoom;
@@ -2724,7 +2756,11 @@ class _PdfViewerState extends State<PdfViewer>
     _adjustBoundaryMargins(_viewSize!, zoom);
     final clamped = _calcMatrixForClampedToNearestBoundary(m, viewSize: _viewSize!);
     await _goTo(clamped, duration: duration);
-    if (targetPageNumber != null) {
+    // The destination is clamped to the document bounds, so the target page may
+    // not have ended up on screen at all; and an interrupted animation resolves
+    // the same future as a completed one. Only commit the page number when this
+    // navigation is still the current one and its page really is in view.
+    if (targetPageNumber != null && generation == _navGeneration && _isPageOnScreen(targetPageNumber)) {
       _setCurrentPageNumber(targetPageNumber);
     }
   }
@@ -2736,6 +2772,7 @@ class _PdfViewerState extends State<PdfViewer>
     Duration duration = const Duration(milliseconds: 200),
   }) async {
     _gotoTargetPageNumber = pageNumber;
+    _navGeneration++;
     await _goTo(
       _calcMatrixForRectInsidePage(pageNumber: pageNumber, rect: rect, anchor: anchor),
       duration: duration,

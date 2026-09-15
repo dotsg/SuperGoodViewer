@@ -624,7 +624,12 @@ class SuperGoodScrollInteractionDelegate implements PdfViewerScrollInteractionDe
   /// Smoothly scrolls the canvas by a logical screen delta (e.g. from keyboard arrow keys or page navigation).
   /// Unlike goToPosition, modifying the matrix directly preserves existing rendered bitmap tiles and
   /// prevents white blank flashing or flickering.
-  void scrollByScreenDelta(Offset delta) {
+  ///
+  /// [accelerate] drives the key-repeat acceleration below, which is tuned for the
+  /// small line-scroll delta of the arrow keys. Deltas that are already a full
+  /// screen high must pass `false`: multiplying one by up to 3.5x would skip
+  /// several screens of unread content per keypress.
+  void scrollByScreenDelta(Offset delta, {bool accelerate = true}) {
     final controller = _controller;
     final vsync = _vsync;
     if (controller == null || !controller.isReady || vsync == null) {
@@ -646,7 +651,12 @@ class SuperGoodScrollInteractionDelegate implements PdfViewerScrollInteractionDe
     // scale delta with smooth physics acceleration
     final now = DateTime.now();
     double multiplier = 1.0;
-    if (_lastPanEventTime != null) {
+    if (!accelerate) {
+      // Neither consume nor leave behind an acceleration streak, so an
+      // unaccelerated scroll cannot boost a following arrow key either.
+      _currentMultiplier = 1.0;
+      _lastPanEventTime = null;
+    } else if (_lastPanEventTime != null) {
       final intervalMs = now.difference(_lastPanEventTime!).inMicroseconds / 1000.0;
       if (intervalMs < 140.0) {
         final freqFactor = (140.0 - intervalMs) / 140.0;
@@ -659,7 +669,7 @@ class SuperGoodScrollInteractionDelegate implements PdfViewerScrollInteractionDe
     } else {
       _currentMultiplier = 1.0;
     }
-    _lastPanEventTime = now;
+    if (accelerate) _lastPanEventTime = now;
 
     final effectiveDelta = delta * _currentMultiplier;
     _panTarget = _panTarget! + effectiveDelta;
@@ -1483,6 +1493,61 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     }
   }
 
+  /// Bounding box of the page at [index], or of the whole spread it starts in
+  /// when [isTwoPage] is set.
+  Rect _spreadRectAt(PdfPageLayout layout, int index, bool isTwoPage) {
+    final rect = layout.pageLayouts[index];
+    if (isTwoPage && index + 1 < layout.pageLayouts.length) {
+      return rect.expandToInclude(layout.pageLayouts[index + 1]);
+    }
+    return rect;
+  }
+
+  /// Maps the viewport's offset from the edge of the page it currently sits on
+  /// onto a page of [targetExtent], along one axis.
+  double _mapAxis({
+    required double relStart,
+    required double currentExtent,
+    required double targetExtent,
+    required double viewportExtent,
+  }) {
+    // How far past the end of its own page the viewport already sits. Document
+    // margins legitimately put it slightly outside, and that is worth keeping:
+    // clamping it away would nudge the view sideways on every single flip.
+    final currentMax = math.max(0.0, currentExtent - viewportExtent);
+    final overhang = math.max(0.0, relStart - currentMax);
+    // Refuse to scroll further past the target's far edge than that. Without
+    // this, flipping onto a shorter page (a document mixing page sizes) lands
+    // the viewport over the *following* page while the indicator names this one.
+    final targetMax = math.max(0.0, targetExtent - viewportExtent);
+    return math.min(relStart, targetMax + overhang);
+  }
+
+  /// Document offset that lands [visibleRect] on [targetRect] the way it
+  /// currently sits on [currentRect], so a page flip keeps the reader where they
+  /// were within the page instead of jumping to its top-left corner.
+  ///
+  /// Both rects are the page's -- or, in two-page mode, the whole spread's --
+  /// own bounds rather than absolute document coordinates, because
+  /// `_layoutA4Pages` centres each row on its own width: an absolute left edge
+  /// drifts whenever the row width changes, such as the trailing single-page
+  /// spread of an odd-page document.
+  Offset _preservedOffset(Rect currentRect, Rect targetRect, Rect visibleRect) {
+    final relX = _mapAxis(
+      relStart: visibleRect.left - currentRect.left,
+      currentExtent: currentRect.width,
+      targetExtent: targetRect.width,
+      viewportExtent: visibleRect.width,
+    );
+    final relY = _mapAxis(
+      relStart: visibleRect.top - currentRect.top,
+      currentExtent: currentRect.height,
+      targetExtent: targetRect.height,
+      viewportExtent: visibleRect.height,
+    );
+    return Offset(targetRect.left + relX, targetRect.top + relY);
+  }
+
   Future<void> nextPage({bool preserveOffset = true}) async {
     if (!_pdfController.isReady) return;
     final pCount = _pdfController.pageCount;
@@ -1506,15 +1571,11 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         final currentIdx = isTwoPage ? ((currentPage - 1) ~/ 2) * 2 : currentPage - 1;
         final targetIdx = isTwoPage ? ((targetPage - 1) ~/ 2) * 2 : targetPage - 1;
         if (currentIdx < layout.pageLayouts.length && targetIdx < layout.pageLayouts.length) {
-          final currentRect = layout.pageLayouts[currentIdx];
-          final targetRect = layout.pageLayouts[targetIdx];
+          final currentRect = _spreadRectAt(layout, currentIdx, isTwoPage);
+          final targetRect = _spreadRectAt(layout, targetIdx, isTwoPage);
 
           final visibleRect = _pdfController.visibleRect;
-          final relX = visibleRect.left - currentRect.left;
-          final relY = visibleRect.top - currentRect.top;
-
-          final targetX = isTwoPage ? visibleRect.left : (targetRect.left + relX);
-          final targetOffset = Offset(targetX, targetRect.top + relY);
+          final targetOffset = _preservedOffset(currentRect, targetRect, visibleRect);
           await _pdfController.goToPosition(
             documentOffset: targetOffset,
             zoom: currentZoom,
@@ -1554,15 +1615,11 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         final currentIdx = isTwoPage ? ((currentPage - 1) ~/ 2) * 2 : currentPage - 1;
         final targetIdx = isTwoPage ? ((targetPage - 1) ~/ 2) * 2 : targetPage - 1;
         if (currentIdx < layout.pageLayouts.length && targetIdx < layout.pageLayouts.length) {
-          final currentRect = layout.pageLayouts[currentIdx];
-          final targetRect = layout.pageLayouts[targetIdx];
+          final currentRect = _spreadRectAt(layout, currentIdx, isTwoPage);
+          final targetRect = _spreadRectAt(layout, targetIdx, isTwoPage);
 
           final visibleRect = _pdfController.visibleRect;
-          final relX = visibleRect.left - currentRect.left;
-          final relY = visibleRect.top - currentRect.top;
-
-          final targetX = isTwoPage ? visibleRect.left : (targetRect.left + relX);
-          final targetOffset = Offset(targetX, targetRect.top + relY);
+          final targetOffset = _preservedOffset(currentRect, targetRect, visibleRect);
           await _pdfController.goToPosition(
             documentOffset: targetOffset,
             zoom: currentZoom,
@@ -1589,14 +1646,16 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final isTwoPage = widget.controller.isTwoPage && !widget.controller.isFluidLayout;
     final currentIdx = isTwoPage ? ((currentPage - 1) ~/ 2) * 2 : currentPage - 1;
     if (currentIdx < 0 || currentIdx >= layout.pageLayouts.length) return false;
-    final currentRect = layout.pageLayouts[currentIdx];
+    final currentRect = _spreadRectAt(layout, currentIdx, isTwoPage);
     final visibleRect = _pdfController.visibleRect;
-    var pageHeight = currentRect.height;
-    if (isTwoPage && currentIdx + 1 < layout.pageLayouts.length) {
-      final secondRect = layout.pageLayouts[currentIdx + 1];
-      pageHeight = math.max(pageHeight, secondRect.height);
-    }
-    return pageHeight <= visibleRect.height + 4.0;
+    // Tolerance is in document units, so scale it to stay ~4 screen pixels
+    // regardless of zoom.
+    final zoom = currentZoom;
+    final tolerance = zoom > 0 ? 4.0 / zoom : 4.0;
+    // Fitting is not enough: the layout is a continuous stack, so after free
+    // panning the viewport can straddle two pages while the page still fits.
+    // Flipping from there would skip the part the reader has not seen yet.
+    return currentRect.top >= visibleRect.top - tolerance && currentRect.bottom <= visibleRect.bottom + tolerance;
   }
 
   Future<void> scrollScreenDown() async {
@@ -1606,7 +1665,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final screenH = h * zoom;
     final screenStep = (screenH > 0 ? screenH * 0.85 : 420.0).clamp(40.0, 4000.0);
     final step = zoom > 0 ? screenStep / zoom : screenStep;
-    await scrollByDelta(step);
+    await scrollByDelta(step, accelerate: false);
   }
 
   Future<void> scrollScreenUp() async {
@@ -1616,7 +1675,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final screenH = h * zoom;
     final screenStep = (screenH > 0 ? screenH * 0.85 : 420.0).clamp(40.0, 4000.0);
     final step = zoom > 0 ? screenStep / zoom : screenStep;
-    await scrollByDelta(-step);
+    await scrollByDelta(-step, accelerate: false);
   }
 
   Future<void> goToPageNumber(int pageNumber) async {
@@ -1630,13 +1689,13 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     );
   }
 
-  Future<void> scrollByDelta(double deltaY) async {
+  Future<void> scrollByDelta(double deltaY, {bool accelerate = true}) async {
     final delegate = _scrollDelegates[_activeSlot];
     if (delegate != null && _pdfController.isReady) {
       final zoom = currentZoom;
       // In screen coordinates, scrolling DOWN (deltaY > 0) translates the viewport UP (negative Y)
       final screenDeltaY = -deltaY * zoom;
-      delegate.scrollByScreenDelta(Offset(0, screenDeltaY));
+      delegate.scrollByScreenDelta(Offset(0, screenDeltaY), accelerate: accelerate);
       return;
     }
 

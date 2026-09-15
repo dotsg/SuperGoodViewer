@@ -21,8 +21,10 @@ Local changes:
   updated from current page center to viewport center (`targetRect.center`). Original
   partial rendering remains available for non-tiled viewers and the selection magnifier;
   optional `targetPageNumber` parameter added to `goToPosition` to preserve page tracking
-  during intra-page offset and two-page spread navigation; `layoutOrNull` safe getter added
-  to `PdfViewerController`; visible tiles in tiled rendering filtered by exact `coreRect`
+  during intra-page offset and two-page spread navigation, committed only when the target page
+  is actually on screen and the navigation has not been superseded (`_goTo` resolves its future
+  on cancellation as well as completion, and the destination matrix is clamped to the document
+  bounds); `layoutOrNull` safe getter added to `PdfViewerController`; visible tiles in tiled rendering filtered by exact `coreRect`
   bounds rather than gutter-expanded `rect` to prevent gutter overlaps from delaying `rasterReady`.
 - `lib/src/widgets/pdf_viewer_params.dart`: `enableTiledRendering` and
   `onVisiblePagesRendered`, included in parameter equality/hash.
