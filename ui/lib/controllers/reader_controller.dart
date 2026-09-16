@@ -445,9 +445,11 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
+  final bool autoRestorePreferences;
+
   ReaderController({
     String? initialFilePath,
-    bool autoRestorePreferences = true,
+    this.autoRestorePreferences = true,
     String? defaultLanguage,
   }) {
     if (defaultLanguage != null) {

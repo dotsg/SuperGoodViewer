@@ -8,6 +8,9 @@ import '../models/render_options.dart';
 import '../services/document_cache_service.dart';
 import '../services/native_cli_service.dart';
 import '../services/shortcut_service.dart';
+import '../services/update_service.dart';
+import '../services/preferences_service.dart';
+import 'update_dialog.dart';
 
 /// Available tabs within the unified SettingsDialog.
 enum SettingsTab {
@@ -194,6 +197,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
   bool _isLoadingCache = true;
   bool _isClearingCache = false;
 
+  // Auto-update state
+  bool _isCheckingUpdate = false;
+  String? _updateStatusMessage;
+  bool _autoCheckUpdates = true;
+
   @override
   void initState() {
     super.initState();
@@ -223,6 +231,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
     _loadCacheStats();
     _loadCliStatus();
+
+    final prefs = PreferencesService.loadSync();
+    _autoCheckUpdates = prefs[UpdateService.prefAutoCheck] as bool? ?? true;
   }
 
   void _onLayoutFieldChanged() {
@@ -2634,17 +2645,98 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 ),
               ),
               const SizedBox(height: 4),
-              Text(
-                '${s.aboutVersion(SettingsDialog.appVersion)} (Build 2026.09)',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: isDark ? Colors.white54 : Colors.black45,
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '${s.aboutVersion(SettingsDialog.appVersion)} (Build 2026.09)',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isDark ? Colors.white54 : Colors.black45,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  if (_isCheckingUpdate)
+                    const SizedBox(
+                      width: 13,
+                      height: 13,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    InkWell(
+                      borderRadius: BorderRadius.circular(4),
+                      onTap: _handleManualCheckUpdate,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.refresh_rounded, size: 13, color: theme.colorScheme.primary),
+                            const SizedBox(width: 4),
+                            Text(
+                              s.checkForUpdates,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: theme.colorScheme.primary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              if (_updateStatusMessage != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  _updateStatusMessage!,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: _updateStatusMessage!.contains(s.upToDate) ? Colors.green : Colors.orange,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+
+        // Auto check updates toggle card
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF9F9F9),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.system_update_alt_rounded, size: 18, color: theme.colorScheme.primary),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  s.autoCheckUpdates,
+                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500),
+                ),
+              ),
+              Transform.scale(
+                scale: 0.8,
+                child: Switch.adaptive(
+                  value: _autoCheckUpdates,
+                  onChanged: (val) {
+                    setState(() => _autoCheckUpdates = val);
+                    PreferencesService.saveKey(UpdateService.prefAutoCheck, val);
+                  },
                 ),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 14),
 
         // Engine highlights card
         Container(
@@ -2756,5 +2848,39 @@ class _SettingsDialogState extends State<SettingsDialog> {
         fontWeight: FontWeight.bold,
       ),
     );
+  }
+
+  Future<void> _handleManualCheckUpdate() async {
+    if (_isCheckingUpdate) return;
+    setState(() {
+      _isCheckingUpdate = true;
+      _updateStatusMessage = widget.controller.strings.checkingForUpdates;
+    });
+
+    try {
+      final info = await UpdateService.instance.checkUpdate(
+        currentVersion: SettingsDialog.appVersion,
+        isManual: true,
+      );
+
+      if (!mounted) return;
+      setState(() => _isCheckingUpdate = false);
+
+      if (info.hasUpdate) {
+        setState(() => _updateStatusMessage = null);
+        await UpdateDialog.show(context, widget.controller, info);
+      } else {
+        setState(() {
+          _updateStatusMessage = widget.controller.strings.upToDate;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isCheckingUpdate = false;
+          _updateStatusMessage = '${widget.controller.strings.updateFailed}: $e';
+        });
+      }
+    }
   }
 }

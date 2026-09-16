@@ -557,4 +557,30 @@ class ZhHantStrings extends ZhHansStrings {
   String get aboutGithub => 'GitHub 開源專案';
   @override
   String get aboutLicense => '開源協議: Apache 2.0';
+
+  // --- Auto Update ---
+  @override
+  String get checkForUpdates => '檢查更新';
+  @override
+  String get checkingForUpdates => '正在檢查更新...';
+  @override
+  String get upToDate => '目前已是最新版本';
+  @override
+  String get updateAvailable => '發現新版本';
+  @override
+  String get updateNow => '立即更新';
+  @override
+  String get downloadingUpdate => '正在下載更新...';
+  @override
+  String get restartToUpdate => '立即重啟以完成更新';
+  @override
+  String get skipThisVersion => '忽略此版本';
+  @override
+  String get remindMeLater => '稍後提醒';
+  @override
+  String get viewOnWeb => '在網頁查看';
+  @override
+  String get autoCheckUpdates => '啟動時自動檢查更新';
+  @override
+  String get updateFailed => '檢查或下載更新失敗';
 }

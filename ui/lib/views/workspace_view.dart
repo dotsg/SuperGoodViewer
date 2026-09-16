@@ -17,6 +17,8 @@ import 'pdf_canvas_view.dart';
 import 'presentation_view.dart';
 import 'settings_dialog.dart';
 import 'sidebar_view.dart';
+import 'update_dialog.dart';
+import '../services/update_service.dart';
 
 class WorkspaceView extends StatefulWidget {
   final ReaderController controller;
@@ -66,6 +68,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   bool _isZoomHudVisible = false;
   String _zoomHudText = '100%';
   Timer? _zoomHudTimer;
+  Timer? _updateCheckTimer;
 
   bool _isFullScreen = false;
   static const _windowChannel = MethodChannel('com.sogoodviewer.window');
@@ -92,6 +95,26 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     CliIpcService.start((filePath) {
       if (mounted) {
         widget.controller.openFile(filePath);
+      }
+    });
+    _scheduleStartupUpdateCheck();
+  }
+
+  void _scheduleStartupUpdateCheck() {
+    if (!widget.controller.autoRestorePreferences) return;
+
+    _updateCheckTimer = Timer(const Duration(seconds: 5), () async {
+      if (!mounted) return;
+      try {
+        final info = await UpdateService.instance.checkUpdate(
+          currentVersion: SettingsDialog.appVersion,
+          isManual: false,
+        );
+        if (info.hasUpdate && mounted) {
+          UpdateDialog.show(context, widget.controller, info);
+        }
+      } catch (e) {
+        debugPrint('[UpdateService] Startup check skipped or failed: $e');
       }
     });
   }
@@ -176,6 +199,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     _toolbarTimer?.cancel();
     _zoomHudTimer?.cancel();
     _titleBarHoverTimer?.cancel();
+    _updateCheckTimer?.cancel();
     super.dispose();
   }
 
