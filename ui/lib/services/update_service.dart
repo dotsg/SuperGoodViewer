@@ -206,8 +206,12 @@ class UpdateService {
     String url,
     String targetFileName, {
     required void Function(int received, int total) onProgress,
-    void Function()? onCancel,
+    UpdateCancellationToken? cancelToken,
   }) async {
+    if (cancelToken?.isCancelled == true) {
+      throw UpdateCancelledException('Update download was cancelled before starting');
+    }
+
     final client = HttpClient();
     client.connectionTimeout = const Duration(seconds: 15);
 
@@ -215,10 +219,35 @@ class UpdateService {
     final targetFile = File(p.join(tempDir.path, targetFileName));
     final sink = targetFile.openWrite();
 
+    StreamSubscription<List<int>>? subscription;
+    final completer = Completer<void>();
+
+    void onCancel() {
+      try {
+        subscription?.cancel();
+      } catch (_) {}
+      try {
+        client.close(force: true);
+      } catch (_) {}
+      if (!completer.isCompleted) {
+        completer.completeError(UpdateCancelledException('Update download was cancelled'));
+      }
+    }
+
+    cancelToken?.addListener(onCancel);
+
     try {
+      if (cancelToken?.isCancelled == true) {
+        throw UpdateCancelledException('Update download was cancelled');
+      }
+
       final request = await client.getUrl(Uri.parse(url));
       request.headers.set(HttpHeaders.userAgentHeader, 'SuperGoodViewer-Updater');
       final response = await request.close();
+
+      if (cancelToken?.isCancelled == true) {
+        throw UpdateCancelledException('Update download was cancelled');
+      }
 
       if (response.statusCode != 200) {
         throw HttpException('Failed to download update, server responded with ${response.statusCode}');
@@ -227,22 +256,47 @@ class UpdateService {
       final totalBytes = response.contentLength;
       int receivedBytes = 0;
 
-      await for (final chunk in response) {
-        sink.add(chunk);
-        receivedBytes += chunk.length;
-        onProgress(receivedBytes, totalBytes);
-      }
+      subscription = response.listen(
+        (chunk) {
+          sink.add(chunk);
+          receivedBytes += chunk.length;
+          onProgress(receivedBytes, totalBytes);
+        },
+        onError: (e, st) {
+          if (!completer.isCompleted) {
+            completer.completeError(e, st);
+          }
+        },
+        onDone: () {
+          if (!completer.isCompleted) {
+            completer.complete();
+          }
+        },
+        cancelOnError: true,
+      );
+
+      await completer.future;
 
       await sink.flush();
       await sink.close();
       return targetFile.path;
     } catch (e) {
-      await sink.close();
-      if (targetFile.existsSync()) {
-        targetFile.deleteSync();
-      }
+      try {
+        await sink.close();
+      } catch (_) {}
+      try {
+        if (targetFile.existsSync()) {
+          targetFile.deleteSync();
+        }
+      } catch (_) {}
+      try {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      } catch (_) {}
       rethrow;
     } finally {
+      cancelToken?.removeListener(onCancel);
       client.close(force: true);
     }
   }
@@ -310,20 +364,36 @@ class UpdateService {
         throw Exception('Failed to stage update files: ${cpResult.stderr}');
       }
 
-      // 4. Detach DMG
+      // 4. Detach DMG and cleanup mount point
       await Process.run('hdiutil', ['detach', tempMountDir.path, '-force']);
+      try {
+        if (tempMountDir.existsSync()) {
+          tempMountDir.deleteSync(recursive: true);
+        }
+      } catch (_) {}
 
       // 5. Strip quarantine attribute to avoid Gatekeeper warning
       await Process.run('xattr', ['-cr', stagedAppPath]);
 
-      // 6. Spawn detached shell script to wait for old PID, replace, and relaunch
+      // 6. Spawn detached shell script to wait for old PID, backup, replace, and relaunch
       final currentPid = pid;
       final script = '''
-while kill -0 $currentPid 2>/dev/null; do sleep 0.2; done
-rm -rf "$targetAppPath"
-mv "$stagedAppPath" "$targetAppPath"
-open "$targetAppPath"
-rm -rf "${stagingDir.path}"
+while kill -0 $currentPid 2>/dev/null; do sleep 0.1; done
+BACKUP_APP="$targetAppPath.backup.\$\$"
+if [ -d "$targetAppPath" ]; then
+  mv "$targetAppPath" "\$BACKUP_APP"
+fi
+if mv "$stagedAppPath" "$targetAppPath"; then
+  rm -rf "\$BACKUP_APP"
+  open "$targetAppPath"
+  rm -rf "${stagingDir.path}"
+else
+  if [ -d "\$BACKUP_APP" ]; then
+    mv "\$BACKUP_APP" "$targetAppPath"
+    open "$targetAppPath"
+  fi
+  rm -rf "${stagingDir.path}"
+fi
 ''';
 
       await Process.start(
@@ -338,6 +408,16 @@ rm -rf "${stagingDir.path}"
       try {
         await Process.run('hdiutil', ['detach', tempMountDir.path, '-force']);
       } catch (_) {}
+      try {
+        if (tempMountDir.existsSync()) {
+          tempMountDir.deleteSync(recursive: true);
+        }
+      } catch (_) {}
+      try {
+        if (stagingDir.existsSync()) {
+          stagingDir.deleteSync(recursive: true);
+        }
+      } catch (_) {}
       rethrow;
     }
   }
@@ -346,62 +426,125 @@ rm -rf "${stagingDir.path}"
     final appDir = File(Platform.resolvedExecutable).parent.path;
     final stagingDir = Directory.systemTemp.createTempSync('sgv_staging_');
 
-    // Extract zip via PowerShell Expand-Archive
-    final extractResult = await Process.run('powershell', [
-      '-NoProfile',
-      '-Command',
-      'Expand-Archive -Path "$zipPath" -DestinationPath "${stagingDir.path}" -Force',
-    ]);
+    try {
+      // Extract zip via PowerShell Expand-Archive
+      final extractResult = await Process.run('powershell', [
+        '-NoProfile',
+        '-Command',
+        'Expand-Archive -Path "$zipPath" -DestinationPath "${stagingDir.path}" -Force',
+      ]);
 
-    if (extractResult.exitCode != 0) {
-      throw Exception('Failed to extract Windows update package: ${extractResult.stderr}');
+      if (extractResult.exitCode != 0) {
+        throw Exception('Failed to extract Windows update package: ${extractResult.stderr}');
+      }
+
+      // Spawn detached powershell to wait for old PID, replace, and restart
+      final currentPid = pid;
+      final psCommand =
+          'Wait-Process -Id $currentPid -ErrorAction SilentlyContinue; '
+          'Start-Sleep -Milliseconds 200; '
+          'Copy-Item -Path "${stagingDir.path}\\*" -Destination "$appDir" -Recurse -Force; '
+          'Start-Process "$appDir\\SuperGoodViewer.exe"; '
+          'Remove-Item "${stagingDir.path}" -Recurse -Force';
+
+      await Process.start(
+        'powershell',
+        ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', psCommand],
+        mode: ProcessStartMode.detached,
+      );
+
+      exit(0);
+    } catch (e) {
+      try {
+        if (stagingDir.existsSync()) {
+          stagingDir.deleteSync(recursive: true);
+        }
+      } catch (_) {}
+      rethrow;
     }
-
-    // Spawn detached powershell to replace and restart
-    final psCommand =
-        'Start-Sleep -Milliseconds 600; '
-        'Copy-Item -Path "${stagingDir.path}\\*" -Destination "$appDir" -Recurse -Force; '
-        'Start-Process "$appDir\\SuperGoodViewer.exe"; '
-        'Remove-Item "${stagingDir.path}" -Recurse -Force';
-
-    await Process.start(
-      'powershell',
-      ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', psCommand],
-      mode: ProcessStartMode.detached,
-    );
-
-    exit(0);
   }
 
   Future<void> _installAndRestartLinux(String tarGzPath) async {
-    final appDir = File(Platform.resolvedExecutable).parent.path;
+    final exePath = Platform.resolvedExecutable;
+    final appDir = File(exePath).parent.path;
     final stagingDir = Directory.systemTemp.createTempSync('sgv_staging_');
 
-    // Extract tar.gz
-    final tarResult = await Process.run('tar', [
-      '-xzf',
-      tarGzPath,
-      '-C',
-      stagingDir.path,
-    ]);
+    try {
+      // Extract tar.gz
+      final tarResult = await Process.run('tar', [
+        '-xzf',
+        tarGzPath,
+        '-C',
+        stagingDir.path,
+      ]);
 
-    if (tarResult.exitCode != 0) {
-      throw Exception('Failed to extract Linux update package: ${tarResult.stderr}');
-    }
+      if (tarResult.exitCode != 0) {
+        throw Exception('Failed to extract Linux update package: ${tarResult.stderr}');
+      }
 
-    final script = '''
-sleep 0.6
+      final currentPid = pid;
+      final script = '''
+while kill -0 $currentPid 2>/dev/null; do sleep 0.1; done
 cp -rf "${stagingDir.path}"/* "$appDir"/
-"$appDir/SuperGoodViewer" &
+chmod +x "$exePath"
+"$exePath" &
 rm -rf "${stagingDir.path}"
 ''';
 
-    await Process.start(
-      '/bin/sh',
-      ['-c', script],
-      mode: ProcessStartMode.detached,
-    );
+      await Process.start(
+        '/bin/sh',
+        ['-c', script],
+        mode: ProcessStartMode.detached,
+      );
 
-    exit(0);
+      exit(0);
+    } catch (e) {
+      try {
+        if (stagingDir.existsSync()) {
+          stagingDir.deleteSync(recursive: true);
+        }
+      } catch (_) {}
+      rethrow;
+    }
+  }
+}
+
+/// Exception thrown when an update download is cancelled by the user.
+class UpdateCancelledException implements Exception {
+  final String message;
+  UpdateCancelledException([this.message = 'Update download cancelled']);
+
+  @override
+  String toString() => message;
+}
+
+/// Token used to cancel in-flight update downloads.
+class UpdateCancellationToken {
+  bool _isCancelled = false;
+  final List<void Function()> _listeners = [];
+
+  bool get isCancelled => _isCancelled;
+
+  void cancel() {
+    if (_isCancelled) return;
+    _isCancelled = true;
+    for (final listener in List<void Function()>.from(_listeners)) {
+      try {
+        listener();
+      } catch (_) {}
+    }
+    _listeners.clear();
+  }
+
+  void addListener(void Function() listener) {
+    if (_isCancelled) {
+      listener();
+      return;
+    }
+    _listeners.add(listener);
+  }
+
+  void removeListener(void Function() listener) {
+    _listeners.remove(listener);
   }
 }

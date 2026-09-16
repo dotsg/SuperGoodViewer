@@ -9,6 +9,7 @@ enum _UpdateState {
   idle,
   downloading,
   readyToRestart,
+  installing,
   error,
 }
 
@@ -46,6 +47,14 @@ class _UpdateDialogState extends State<UpdateDialog> {
   String _progressText = '';
   String _errorMessage = '';
   String? _downloadedFilePath;
+  UpdateCancellationToken? _cancelToken;
+  bool _isInstalling = false;
+
+  @override
+  void dispose() {
+    _cancelToken?.cancel();
+    super.dispose();
+  }
 
   Future<void> _startDownload() async {
     final assetUrl = widget.info.assetUrl;
@@ -60,6 +69,9 @@ class _UpdateDialogState extends State<UpdateDialog> {
       return;
     }
 
+    final token = UpdateCancellationToken();
+    _cancelToken = token;
+
     setState(() {
       _state = _UpdateState.downloading;
       _progress = 0.0;
@@ -70,6 +82,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
       final path = await UpdateService.instance.downloadUpdateAsset(
         assetUrl,
         assetName,
+        cancelToken: token,
         onProgress: (received, total) {
           if (!mounted) return;
           if (total > 0) {
@@ -96,6 +109,9 @@ class _UpdateDialogState extends State<UpdateDialog> {
           _state = _UpdateState.readyToRestart;
         });
       }
+    } on UpdateCancelledException {
+      // User cancelled download, don't set error state
+      return;
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -103,11 +119,28 @@ class _UpdateDialogState extends State<UpdateDialog> {
           _errorMessage = e.toString();
         });
       }
+    } finally {
+      if (_cancelToken == token) {
+        _cancelToken = null;
+      }
+    }
+  }
+
+  void _cancelDownload() {
+    _cancelToken?.cancel();
+    _cancelToken = null;
+    if (mounted) {
+      Navigator.of(context).pop();
     }
   }
 
   Future<void> _applyAndRestart() async {
-    if (_downloadedFilePath == null) return;
+    if (_isInstalling || _downloadedFilePath == null) return;
+    setState(() {
+      _isInstalling = true;
+      _state = _UpdateState.installing;
+    });
+
     try {
       await UpdateService.instance.installAndRestart(
         downloadedFilePath: _downloadedFilePath!,
@@ -115,6 +148,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
     } catch (e) {
       if (mounted) {
         setState(() {
+          _isInstalling = false;
           _state = _UpdateState.error;
           _errorMessage = '安装更新时出错: $e';
         });
@@ -132,10 +166,17 @@ class _UpdateDialogState extends State<UpdateDialog> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       elevation: 16,
       backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-      child: Container(
-        width: 520,
-        constraints: const BoxConstraints(maxHeight: 580),
-        padding: const EdgeInsets.all(24),
+      child: PopScope(
+        canPop: _state != _UpdateState.installing,
+        onPopInvokedWithResult: (didPop, result) {
+          if (didPop && _state == _UpdateState.downloading) {
+            _cancelToken?.cancel();
+          }
+        },
+        child: Container(
+          width: 520,
+          constraints: const BoxConstraints(maxHeight: 580),
+          padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -311,6 +352,37 @@ class _UpdateDialogState extends State<UpdateDialog> {
                 ),
               ),
               const SizedBox(height: 14),
+            ] else if (_state == _UpdateState.installing) ...[
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary.withValues(alpha: isDark ? 0.15 : 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: theme.colorScheme.primary.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        s.installingUpdate,
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
             ] else if (_state == _UpdateState.error) ...[
               Container(
                 padding: const EdgeInsets.all(10),
@@ -384,13 +456,13 @@ class _UpdateDialogState extends State<UpdateDialog> {
                 ] else if (_state == _UpdateState.downloading) ...[
                   const Spacer(),
                   OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: _cancelDownload,
                     child: Text(s.cancel, style: const TextStyle(fontSize: 12)),
                   ),
                 ] else if (_state == _UpdateState.readyToRestart) ...[
                   const Spacer(),
                   TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: _isInstalling ? null : () => Navigator.of(context).pop(),
                     child: Text(s.remindMeLater, style: const TextStyle(fontSize: 12)),
                   ),
                   const SizedBox(width: 8),
@@ -401,7 +473,24 @@ class _UpdateDialogState extends State<UpdateDialog> {
                       s.restartToUpdate,
                       style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
                     ),
-                    onPressed: _applyAndRestart,
+                    onPressed: _isInstalling ? null : _applyAndRestart,
+                  ),
+                ] else if (_state == _UpdateState.installing) ...[
+                  const Spacer(),
+                  FilledButton.icon(
+                    onPressed: null,
+                    icon: const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white70,
+                      ),
+                    ),
+                    label: Text(
+                      s.installingUpdate,
+                      style: const TextStyle(fontSize: 12.5),
+                    ),
                   ),
                 ] else if (_state == _UpdateState.error) ...[
                   OutlinedButton.icon(
@@ -431,6 +520,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }

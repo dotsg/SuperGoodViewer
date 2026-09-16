@@ -580,4 +580,6 @@ class ZhHansStrings implements AppStrings {
   String get autoCheckUpdates => '启动时自动检查更新';
   @override
   String get updateFailed => '检查或下载更新失败';
+  @override
+  String get installingUpdate => '正在准备更新并重启...';
 }

@@ -258,4 +258,5 @@ abstract class AppStrings {
   String get viewOnWeb;
   String get autoCheckUpdates;
   String get updateFailed;
+  String get installingUpdate;
 }

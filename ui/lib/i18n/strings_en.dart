@@ -609,4 +609,6 @@ class EnStrings implements AppStrings {
   String get autoCheckUpdates => 'Automatically check for updates on startup';
   @override
   String get updateFailed => 'Failed to check or download update';
+  @override
+  String get installingUpdate => 'Preparing update and restarting...';
 }

@@ -583,4 +583,6 @@ class ZhHantStrings extends ZhHansStrings {
   String get autoCheckUpdates => '啟動時自動檢查更新';
   @override
   String get updateFailed => '檢查或下載更新失敗';
+  @override
+  String get installingUpdate => '正在準備更新並重啟...';
 }
