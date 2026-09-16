@@ -85,6 +85,7 @@ class ReaderController extends ChangeNotifier {
   final ShortcutService shortcutService = ShortcutService();
 
   bool _isTwoPage = false;
+  bool _isSidebarOpen = false;
   bool _isPresentationMode = false;
   List<OutlineItem> _outlineItems = [];
   OutlineItem? _requestedJumpItem;
@@ -121,6 +122,7 @@ class ReaderController extends ChangeNotifier {
   List<String> get recentFiles => List.unmodifiable(_recentFiles);
   Map<String, dynamic> get fontReport => _fontReport;
   bool get isTwoPage => _isTwoPage;
+  bool get isSidebarOpen => _isSidebarOpen;
   bool get isPresentationMode => _isPresentationMode;
   List<OutlineItem> get outlineItems => _outlineItems;
   OutlineItem? get requestedJumpItem => _requestedJumpItem;
@@ -256,6 +258,18 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
+  void toggleSidebar() {
+    setSidebarOpen(!_isSidebarOpen);
+  }
+
+  void setSidebarOpen(bool value) {
+    if (_isSidebarOpen != value) {
+      _isSidebarOpen = value;
+      _persistPreferences();
+      notifyListeners();
+    }
+  }
+
   void setAutoFitMode(AutoFitMode mode) {
     if (_autoFitMode != mode) {
       _autoFitMode = mode;
@@ -293,6 +307,7 @@ class ReaderController extends ChangeNotifier {
       final savedTheme = prefs['theme'] as String?;
       final savedMode = prefs['mode'] as String?;
       final savedTwoPage = prefs['isTwoPage'] as bool?;
+      final savedSidebarOpen = prefs['isSidebarOpen'] as bool?;
       final savedAutoFit = prefs['autoFitMode'] as String?;
       final recent = (prefs['recentFiles'] as List<dynamic>?)?.cast<String>();
       final savedFontSize = (prefs['fontSize'] as num?)?.toDouble();
@@ -374,6 +389,9 @@ class ReaderController extends ChangeNotifier {
       if (savedTwoPage != null) {
         _isTwoPage = savedTwoPage;
       }
+      if (savedSidebarOpen != null) {
+        _isSidebarOpen = savedSidebarOpen;
+      }
       if (savedAutoFit != null) {
         _autoFitMode = AutoFitMode.values.firstWhere(
           (m) => m.name == savedAutoFit,
@@ -449,6 +467,7 @@ class ReaderController extends ChangeNotifier {
       'pageFormat': _renderOptions.effectivePageFormat,
       'lastPagedFormat': _lastPagedFormat,
       'isTwoPage': _isTwoPage,
+      'isSidebarOpen': _isSidebarOpen,
       'autoFitMode': _autoFitMode.name,
       'fontSize': _renderOptions.fontSize,
       'bodyFont': _renderOptions.bodyFont,

@@ -29,7 +29,7 @@ class WorkspaceView extends StatefulWidget {
 
 class _WorkspaceViewState extends State<WorkspaceView> {
   // Zen Mode: clean reading canvas by default, toolbar visible until scroll
-  bool _isSidebarOpen = false;
+  bool get _isSidebarOpen => widget.controller.isSidebarOpen;
   bool _isToolbarVisible = true;
   bool _isHoveringToolbar = false;
   Timer? _toolbarTimer;
@@ -164,6 +164,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       }
     }
     _syncWindowTitle();
+    _updateTrafficLights();
   }
 
   @override
@@ -251,12 +252,12 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
   void _setSidebarOpen(bool open) {
     if (_isSidebarOpen != open) {
-      setState(() {
-        _isSidebarOpen = open;
-        if (!open && !_isAtTop && !_isHoveringTitleBar) {
+      if (!open && !_isAtTop && !_isHoveringTitleBar) {
+        setState(() {
           _isTitleBarVisible = false;
-        }
-      });
+        });
+      }
+      widget.controller.setSidebarOpen(open);
       _updateTrafficLights();
     }
   }
