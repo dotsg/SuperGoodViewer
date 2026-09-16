@@ -355,21 +355,36 @@ class UpdateService {
     return '''
 while kill -0 $currentPid 2>/dev/null; do sleep 0.1; done
 BACKUP_APP="$targetAppPath.backup.\$\$"
+BACKUP_CREATED=0
+
 if [ -d "$targetAppPath" ]; then
-  mv "$targetAppPath" "\$BACKUP_APP"
+  if mv "$targetAppPath" "\$BACKUP_APP"; then
+    BACKUP_CREATED=1
+  else
+    rm -rf "\$BACKUP_APP"
+    if [ -d "$targetAppPath" ]; then
+      open "$targetAppPath"
+    fi
+    rm -rf "$stagingDirPath"
+    exit 1
+  fi
 fi
-if [ ! -d "$targetAppPath" ] && mv "$stagedAppPath" "$targetAppPath"; then
-  rm -rf "\$BACKUP_APP"
+
+if mv "$stagedAppPath" "$targetAppPath"; then
+  if [ \$BACKUP_CREATED -eq 1 ]; then
+    rm -rf "\$BACKUP_APP"
+  fi
   open "$targetAppPath"
   rm -rf "$stagingDirPath"
 else
   rm -rf "$targetAppPath"
-  if [ -d "\$BACKUP_APP" ]; then
+  if [ \$BACKUP_CREATED -eq 1 ] && [ -d "\$BACKUP_APP" ]; then
     if mv "\$BACKUP_APP" "$targetAppPath"; then
       open "$targetAppPath"
     fi
   fi
   rm -rf "$stagingDirPath"
+  exit 1
 fi
 ''';
   }

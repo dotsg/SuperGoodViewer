@@ -431,7 +431,7 @@ exec /bin/mv "\$@"
         },
       );
 
-      expect(result.exitCode, 0, reason: 'Script stderr: ${result.stderr}');
+      expect(result.exitCode, isNot(0));
 
       // Verify targetAppPath was restored to original 1.0.7
       expect(Directory(targetAppPath).existsSync(), isTrue);
@@ -442,6 +442,82 @@ exec /bin/mv "\$@"
 
       // Verify stagingDir was cleaned up
       expect(Directory(stagingDirPath).existsSync(), isFalse);
+    });
+
+    test('buildMacOSUpdateScript preserves original app and aborts when initial backup fails', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('macos_script_test_backup_fail_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final targetAppPath = '${testDir.path}/SuperGoodViewer.app';
+      final stagedAppPath = '${testDir.path}/staging/SuperGoodViewer.app';
+      final stagingDirPath = '${testDir.path}/staging';
+
+      // 1. Target app exists with version 1.0.7
+      final targetDir = Directory(targetAppPath)..createSync(recursive: true);
+      File('${targetDir.path}/version.txt').writeAsStringSync('1.0.7');
+
+      // 2. Staged app exists with version 1.0.8
+      final stagedDir = Directory(stagedAppPath)..createSync(recursive: true);
+      File('${stagedDir.path}/version.txt').writeAsStringSync('1.0.8');
+
+      // Create dummy bin directory with mock `open` and mock `mv`
+      final binDir = Directory('${testDir.path}/bin')..createSync();
+      final openLog = File('${testDir.path}/open.log');
+      final openMock = File('${binDir.path}/open');
+      openMock.writeAsStringSync('''#!/bin/sh
+echo "\$@" >> "${openLog.path}"
+exit 0
+''');
+      Process.runSync('chmod', ['+x', openMock.path]);
+
+      // Mock `mv`: fails when attempting to backup targetAppPath
+      final mvMock = File('${binDir.path}/mv');
+      mvMock.writeAsStringSync('''#!/bin/sh
+if [ "\$1" = "$targetAppPath" ]; then
+  exit 1
+fi
+exec /bin/mv "\$@"
+''');
+      Process.runSync('chmod', ['+x', mvMock.path]);
+
+      final dummyProcess = await Process.start('true', []);
+      final dummyPid = dummyProcess.pid;
+      await dummyProcess.exitCode;
+
+      final script = UpdateService.buildMacOSUpdateScript(
+        currentPid: dummyPid,
+        targetAppPath: targetAppPath,
+        stagedAppPath: stagedAppPath,
+        stagingDirPath: stagingDirPath,
+      );
+
+      final result = await Process.run(
+        '/bin/sh',
+        ['-c', script],
+        environment: {
+          'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}',
+        },
+      );
+
+      // Script should exit with non-zero failure code
+      expect(result.exitCode, isNot(0));
+
+      // Original targetAppPath MUST be preserved and untouched!
+      expect(Directory(targetAppPath).existsSync(), isTrue);
+      expect(File('$targetAppPath/version.txt').readAsStringSync(), '1.0.7');
+
+      // Staging directory should be cleaned up
+      expect(Directory(stagingDirPath).existsSync(), isFalse);
+
+      // Original app should be relaunched
+      expect(openLog.existsSync(), isTrue);
+      expect(openLog.readAsStringSync(), contains(targetAppPath));
     });
 
     test('buildMacOSUpdateScript succeeds and moves staged app when move is successful', () async {
