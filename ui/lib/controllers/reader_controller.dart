@@ -24,6 +24,7 @@ class OutlineItem {
   final String anchor;
   final int lineNumber;
   final int? pageNumber;
+  final double? docY;
 
   const OutlineItem({
     required this.title,
@@ -31,6 +32,7 @@ class OutlineItem {
     required this.anchor,
     required this.lineNumber,
     this.pageNumber,
+    this.docY,
   });
 
   OutlineItem copyWith({
@@ -39,6 +41,7 @@ class OutlineItem {
     String? anchor,
     int? lineNumber,
     int? pageNumber,
+    double? docY,
   }) {
     return OutlineItem(
       title: title ?? this.title,
@@ -46,6 +49,7 @@ class OutlineItem {
       anchor: anchor ?? this.anchor,
       lineNumber: lineNumber ?? this.lineNumber,
       pageNumber: pageNumber ?? this.pageNumber,
+      docY: docY ?? this.docY,
     );
   }
 
@@ -58,13 +62,14 @@ class OutlineItem {
           level == other.level &&
           anchor == other.anchor &&
           lineNumber == other.lineNumber &&
-          pageNumber == other.pageNumber;
+          pageNumber == other.pageNumber &&
+          docY == other.docY;
 
   @override
-  int get hashCode => Object.hash(title, level, anchor, lineNumber, pageNumber);
+  int get hashCode => Object.hash(title, level, anchor, lineNumber, pageNumber, docY);
 
   @override
-  String toString() => 'OutlineItem(H$level: $title, line: $lineNumber, page: $pageNumber)';
+  String toString() => 'OutlineItem(H$level: $title, line: $lineNumber, page: $pageNumber, docY: $docY)';
 }
 
 enum AutoFitMode {
@@ -201,30 +206,51 @@ class ReaderController extends ChangeNotifier {
     });
   }
 
-  void updateActiveOutline({int? pageNumber, double? scrollRatio}) {
+  void updateActiveOutline({int? pageNumber, double? scrollRatio, double? scrollOffset}) {
     if (_isActiveOutlineLocked) return;
     if (_outlineItems.isEmpty) {
       setActiveOutlineIndex(-1);
       return;
     }
 
+    final effectiveOffset = scrollOffset ?? _lastScrollOffset;
     final effectivePage = pageNumber ?? _lastPageNumber;
     final effectiveRatio = scrollRatio ?? _lastScrollRatio;
 
-    // Check if any items have pageNumber
-    final hasPageNumbers = _outlineItems.any((item) => item.pageNumber != null);
-
+    final hasDocY = _outlineItems.any((item) => item.docY != null);
     int targetIndex = 0;
 
-    if (hasPageNumbers && !isFluidLayout) {
-      final maxPage = _isTwoPage ? effectivePage + 1 : effectivePage;
+    if (hasDocY) {
+      // Anchored strictly to the TOP of the reading viewport:
+      // A chapter is active when its heading coordinate has reached or passed the top of the reading view.
+      // Small buffer (12.0) ensures that when jumping to a chapter (with 8px top breathing room),
+      // the chapter heading is immediately active without flickering.
+      const double topBuffer = 12.0;
+      final thresholdY = effectiveOffset + topBuffer;
+
+      for (int i = 0; i < _outlineItems.length; i++) {
+        final y = _outlineItems[i].docY;
+        if (y != null && y <= thresholdY) {
+          targetIndex = i;
+        } else if (y != null && y > thresholdY) {
+          break;
+        }
+      }
+
+      // If user has scrolled all the way to the very bottom of the document, activate the last chapter
+      if (effectiveRatio >= 0.98) {
+        targetIndex = _outlineItems.length - 1;
+      }
+    } else if (_outlineItems.any((item) => item.pageNumber != null) && !isFluidLayout) {
+      // Fallback for paged documents without docY: anchor strictly to the page at the TOP of the viewport
       for (int i = 0; i < _outlineItems.length; i++) {
         final p = _outlineItems[i].pageNumber;
-        if (p != null && p <= maxPage) {
+        if (p != null && p <= effectivePage) {
           targetIndex = i;
         }
       }
     } else {
+      // Fallback for documents without PDF outline positions
       if (effectiveRatio <= 0.005) {
         targetIndex = 0;
       } else if (effectiveRatio >= 0.98) {
@@ -248,23 +274,35 @@ class ReaderController extends ChangeNotifier {
     setActiveOutlineIndex(targetIndex);
   }
 
-  void syncOutlinesPageNumbers(Map<String, int> pageMap) {
-    if (_outlineItems.isEmpty || pageMap.isEmpty) return;
+  void syncOutlinesDestinations(Map<String, ({int? pageNumber, double? docY})> destMap, {List<double>? orderedDocYs}) {
+    if (_outlineItems.isEmpty || (destMap.isEmpty && (orderedDocYs == null || orderedDocYs.isEmpty))) return;
     bool changed = false;
-    final updated = _outlineItems.map((item) {
-      final p = pageMap[item.title.trim()];
-      if (p != null && item.pageNumber != p) {
+    final updated = <OutlineItem>[];
+    for (int i = 0; i < _outlineItems.length; i++) {
+      final item = _outlineItems[i];
+      final meta = destMap[item.title.trim()];
+      final listY = (orderedDocYs != null && i < orderedDocYs.length) ? orderedDocYs[i] : null;
+      final p = meta?.pageNumber;
+      final y = meta?.docY ?? listY;
+      if ((p != null && item.pageNumber != p) || (y != null && item.docY != y)) {
         changed = true;
-        return item.copyWith(pageNumber: p);
+        updated.add(item.copyWith(pageNumber: p, docY: y));
+      } else {
+        updated.add(item);
       }
-      return item;
-    }).toList();
+    }
 
     if (changed) {
       _outlineItems = List.unmodifiable(updated);
       updateActiveOutline();
       notifyListeners();
     }
+  }
+
+  void syncOutlinesPageNumbers(Map<String, int> pageMap) {
+    syncOutlinesDestinations(
+      pageMap.map((key, val) => MapEntry(key, (pageNumber: val, docY: null))),
+    );
   }
 
   void jumpToOutline(OutlineItem item) {
@@ -660,7 +698,7 @@ class ReaderController extends ChangeNotifier {
       }
       _updateCurrentFileHistory();
       _persistDebounced();
-      updateActiveOutline(scrollRatio: ratio);
+      updateActiveOutline(scrollRatio: ratio, scrollOffset: offset ?? _lastScrollOffset);
     }
   }
 

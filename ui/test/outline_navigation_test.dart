@@ -307,5 +307,45 @@ void main() {
       // boundaryTop (72.0) allows visible.top to reach -72.0, so -40.0 is never clamped away
       expect(-boundaryTop, lessThanOrEqualTo(targetY));
     });
+
+    test('updateActiveOutline strictly anchors to the top of the reading view using docY', () {
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      controller.setOutlinesForTesting([
+        const OutlineItem(title: 'Chapter 1: Intro', level: 1, anchor: 'c1', lineNumber: 1, docY: 0.0),
+        const OutlineItem(title: 'Chapter 2: Core Concept', level: 1, anchor: 'c2', lineNumber: 50, docY: 1200.0),
+        const OutlineItem(title: 'Chapter 3: Architecture', level: 1, anchor: 'c3', lineNumber: 120, docY: 2800.0),
+        const OutlineItem(title: 'Chapter 4: Conclusion', level: 1, anchor: 'c4', lineNumber: 200, docY: 4200.0),
+      ]);
+
+      expect(controller.activeOutlineIndex, 0);
+
+      // User is scrolling down, but Chapter 2 (docY = 1200) has NOT reached the top yet.
+      // Even if Chapter 2 is visible near the bottom of an 800px-high screen,
+      // the active chapter must REMAIN Chapter 1 (top of viewport is reading Chapter 1).
+      controller.updateScrollRatio(0.15, offset: 600.0);
+      expect(controller.activeOutlineIndex, 0);
+
+      // Now Chapter 2 scrolls to the top of the reading view (offset >= 1200)
+      controller.updateScrollRatio(0.28, offset: 1210.0);
+      expect(controller.activeOutlineIndex, 1);
+
+      // Continue reading Chapter 2 (offset = 2000.0) -> stays on Chapter 2
+      controller.updateScrollRatio(0.45, offset: 2000.0);
+      expect(controller.activeOutlineIndex, 1);
+
+      // Chapter 3 reaches the top -> smoothly switches to Chapter 3
+      controller.updateScrollRatio(0.65, offset: 2820.0);
+      expect(controller.activeOutlineIndex, 2);
+
+      // User clicks Chapter 2 in sidebar -> jumps to 1200.0 -> Chapter 2 is active
+      controller.jumpToOutline(controller.outlineItems[1]);
+      expect(controller.activeOutlineIndex, 1);
+
+      // User scrolls down after jump (offset = 1300.0) -> NO JUMP, naturally stays on Chapter 2!
+      controller.updateScrollRatio(0.30, offset: 1300.0);
+      expect(controller.activeOutlineIndex, 1);
+    });
   });
 }

@@ -2351,16 +2351,36 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             if (widget.controller.currentFilePath != srcPath) {
               return;
             }
+            final destMap = <String, ({int? pageNumber, double? docY})>{};
+            final orderedDocYs = <double>[];
+            void extractNodes(List<PdfOutlineNode> list) {
+              for (final n in list) {
+                final dest = n.dest;
+                final offset = dest != null ? _calcDestDocumentOffsetFor(controller, dest) : null;
+                final pageNum = dest?.pageNumber;
+                final docY = offset?.dy;
+                if (docY != null) orderedDocYs.add(docY);
+                if (pageNum != null || docY != null) {
+                  destMap[n.title.trim()] = (pageNumber: pageNum, docY: docY);
+                }
+                if (n.children.isNotEmpty) extractNodes(n.children);
+              }
+            }
+            extractNodes(outlines);
+
             if (widget.controller.isPdfDocument) {
               final items = <OutlineItem>[];
               void traverse(List<PdfOutlineNode> nodes, int level) {
                 for (final node in nodes) {
+                  final dest = node.dest;
+                  final offset = dest != null ? _calcDestDocumentOffsetFor(controller, dest) : null;
                   items.add(OutlineItem(
                     title: node.title,
                     level: level,
                     anchor: node.title,
                     lineNumber: 0,
-                    pageNumber: node.dest?.pageNumber,
+                    pageNumber: dest?.pageNumber,
+                    docY: offset?.dy,
                   ));
                   if (node.children.isNotEmpty) {
                     traverse(node.children, level + 1);
@@ -2369,18 +2389,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
               }
               traverse(outlines, 1);
               widget.controller.setPdfOutlines(items, targetFilePath: srcPath);
-            } else if (!widget.controller.isFluidLayout && outlines.isNotEmpty) {
-              final pageMap = <String, int>{};
-              void extractNodes(List<PdfOutlineNode> list) {
-                for (final n in list) {
-                  if (n.dest?.pageNumber != null) {
-                    pageMap[n.title.trim()] = n.dest!.pageNumber;
-                  }
-                  if (n.children.isNotEmpty) extractNodes(n.children);
-                }
-              }
-              extractNodes(outlines);
-              widget.controller.syncOutlinesPageNumbers(pageMap);
+            } else if (outlines.isNotEmpty) {
+              widget.controller.syncOutlinesDestinations(destMap, orderedDocYs: orderedDocYs);
             }
           }).catchError((e) {
             debugPrint('[PdfCanvasView] Failed to load PDF outline: $e');
