@@ -12,7 +12,6 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:vector_math/vector_math_64.dart' as vec;
 import '../controllers/reader_controller.dart';
 import '../models/render_options.dart';
-import '../services/startup_metrics.dart';
 
 const List<double> kZoomLadder = [
   0.25, 0.33, 0.50, 0.67, 0.75, 0.80, 0.90, 1.00,
@@ -111,6 +110,7 @@ class SuperGoodSizeDelegateProvider extends PdfViewerSizeDelegateProvider {
   final bool isTwoPage;
   final double minScale;
   final double maxScale;
+  final double topInset;
 
   const SuperGoodSizeDelegateProvider({
     required this.readerController,
@@ -118,6 +118,7 @@ class SuperGoodSizeDelegateProvider extends PdfViewerSizeDelegateProvider {
     required this.isTwoPage,
     this.minScale = 0.35,
     this.maxScale = 5.0,
+    this.topInset = 0.0,
   });
 
   @override
@@ -127,6 +128,7 @@ class SuperGoodSizeDelegateProvider extends PdfViewerSizeDelegateProvider {
         isTwoPage: isTwoPage,
         minScale: minScale,
         maxScale: maxScale,
+        topInset: topInset,
       );
 
   @override
@@ -137,10 +139,11 @@ class SuperGoodSizeDelegateProvider extends PdfViewerSizeDelegateProvider {
           other.isFluid == isFluid &&
           other.isTwoPage == isTwoPage &&
           other.minScale == minScale &&
-          other.maxScale == maxScale;
+          other.maxScale == maxScale &&
+          other.topInset == topInset;
 
   @override
-  int get hashCode => Object.hash(readerController, isFluid, isTwoPage, minScale, maxScale);
+  int get hashCode => Object.hash(readerController, isFluid, isTwoPage, minScale, maxScale, topInset);
 }
 
 typedef SoGoodSizeDelegateProvider = SuperGoodSizeDelegateProvider;
@@ -152,6 +155,7 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
   final bool isTwoPage;
   final double minScale;
   final double maxScale;
+  final double topInset;
 
   PdfViewerController? _controller;
 
@@ -161,6 +165,7 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
     required this.isTwoPage,
     required this.minScale,
     required this.maxScale,
+    this.topInset = 0.0,
   });
 
   @override
@@ -294,6 +299,10 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
         } else {
           final center = Offset(docWidth / 2, 0);
           controller.setZoom(center, initialZoom, duration: Duration.zero);
+          final topDocOffset = initialZoom > 0 ? topInset / initialZoom : 0.0;
+          if (topDocOffset > 0) {
+            controller.goToPosition(documentOffset: Offset(0, -topDocOffset), duration: Duration.zero);
+          }
         }
       } else {
         final targetPage = readerController.lastPageNumber.clamp(1, layout.pageLayouts.length);
@@ -307,6 +316,10 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
         final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
         final center = Offset(docWidth / 2, 0);
         controller.setZoom(center, initialZoom, duration: Duration.zero);
+        final topDocOffset = initialZoom > 0 ? topInset / initialZoom : 0.0;
+        if (topDocOffset > 0) {
+          controller.goToPosition(documentOffset: Offset(0, -topDocOffset), duration: Duration.zero);
+        }
       } else {
         if (isTwoPage && layout.pageLayouts.length > 1) {
           final spreadCenter = Offset(layout.documentSize.width / 2, layout.pageLayouts.first.center.dy);
@@ -1294,11 +1307,85 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
   void _restoreScroll() => _restoreScrollFor(_pdfController);
 
+  Offset? _calcDestDocumentOffsetFor(PdfViewerController ctrl, PdfDest? dest) {
+    if (dest == null || !ctrl.isReady) return null;
+    final layout = ctrl.layoutOrNull;
+    if (layout == null || layout.pageLayouts.isEmpty) return null;
+    final pageIndex = dest.pageNumber - 1;
+    if (pageIndex < 0 || pageIndex >= layout.pageLayouts.length) return null;
+
+    final pageRect = layout.pageLayouts[pageIndex];
+    final pages = ctrl.document.pages;
+    if (pageIndex >= pages.length) return null;
+    final page = pages[pageIndex];
+
+    double calcX(double? x) => page.width > 0 ? ((x ?? 0) / page.width * pageRect.width) : 0.0;
+    double calcY(double? y) => page.height > 0 ? ((page.height - (y ?? 0)) / page.height * pageRect.height) : 0.0;
+
+    final params = dest.params;
+    switch (dest.command) {
+      case PdfDestCommand.xyz:
+        final relY = (params != null && params.length >= 2 && params[1] != null) ? calcY(params[1]) : 0.0;
+        return Offset(pageRect.left, pageRect.top + relY);
+      case PdfDestCommand.fitH:
+      case PdfDestCommand.fitBH:
+        final relY = (params != null && params.isNotEmpty && params[0] != null) ? calcY(params[0]) : 0.0;
+        return Offset(pageRect.left, pageRect.top + relY);
+      case PdfDestCommand.fitV:
+      case PdfDestCommand.fitBV:
+        final relX = (params != null && params.isNotEmpty && params[0] != null) ? calcX(params[0]) : 0.0;
+        return Offset(pageRect.left + relX, pageRect.top);
+      case PdfDestCommand.fitR:
+        if (params != null && params.length >= 4 && params[3] != null) {
+          return Offset(pageRect.left, pageRect.top + calcY(params[3]));
+        }
+        return pageRect.topLeft;
+      case PdfDestCommand.fit:
+      case PdfDestCommand.fitB:
+      default:
+        return pageRect.topLeft;
+    }
+  }
+
+  Future<bool> _goToDestWithTopInset(PdfViewerController ctrl, PdfDest dest) async {
+    if (!ctrl.isReady) return false;
+    final destOffset = _calcDestDocumentOffsetFor(ctrl, dest);
+    if (destOffset != null) {
+      final zoom = ctrl.currentZoom;
+      const breathingPadding = 8.0;
+      final effectiveTopInset = widget.topInset > 0 ? (widget.topInset + breathingPadding) : 0.0;
+      final topDocOffset = zoom > 0 ? effectiveTopInset / zoom : 0.0;
+      final targetY = destOffset.dy - topDocOffset;
+      await ctrl.goToPosition(
+        documentOffset: Offset(destOffset.dx, targetY),
+        duration: const Duration(milliseconds: 200),
+        targetPageNumber: dest.pageNumber,
+      );
+      return true;
+    }
+    return await ctrl.goToDest(dest);
+  }
+
   Future<void> jumpToOutline(OutlineItem item) async {
     if (!_pdfController.isReady) return;
     final zoom = _pdfController.currentZoom;
-    final topDocOffset = zoom > 0 ? widget.topInset / zoom : 0.0;
+    const breathingPadding = 8.0;
+    final effectiveTopInset = widget.topInset > 0 ? (widget.topInset + breathingPadding) : 0.0;
+    final topDocOffset = zoom > 0 ? effectiveTopInset / zoom : 0.0;
 
+    // 1. Try resolving exact destination from PDF outline tree (both fluid & paged layouts)
+    try {
+      final outlines = await _pdfController.document.loadOutline();
+      final targetNode = _findOutlineNode(outlines, item);
+      if (targetNode?.dest != null) {
+        final success = await _goToDestWithTopInset(_pdfController, targetNode!.dest!);
+        if (success) return;
+      }
+    } catch (e) {
+      debugPrint('[PdfCanvasView] Failed to jump via outline dest: $e');
+    }
+
+    // 2. Fallback: If item has an explicit page number (e.g. in paged mode or pure PDF outline)
     if (item.pageNumber != null) {
       final pageCount = _pdfController.pageCount;
       final targetPage = item.pageNumber!.clamp(1, pageCount);
@@ -1320,15 +1407,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       );
       return;
     }
-    try {
-      final outlines = await _pdfController.document.loadOutline();
-      final targetNode = _findOutlineNode(outlines, item.title);
-      if (targetNode?.dest != null) {
-        await _pdfController.goToDest(targetNode!.dest);
-        return;
-      }
-    } catch (_) {}
 
+    // 3. Fallback: Approximate position based on markdown line number ratio
     final totalLines = math.max(1, widget.controller.currentMarkdown.split('\n').length);
     final ratio = ((item.lineNumber - 1) / totalLines).clamp(0.0, 1.0);
 
@@ -1362,16 +1442,42 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     }
   }
 
-  PdfOutlineNode? _findOutlineNode(List<PdfOutlineNode> nodes, String title) {
-    for (final node in nodes) {
-      final t = node.title.trim();
-      final q = title.trim();
-      if (t == q || t.contains(q) || q.contains(t)) {
+  PdfOutlineNode? _findOutlineNode(List<PdfOutlineNode> nodes, OutlineItem item) {
+    // Collect all nodes in pre-order traversal
+    final flatNodes = <PdfOutlineNode>[];
+    void collect(List<PdfOutlineNode> list) {
+      for (final n in list) {
+        flatNodes.add(n);
+        if (n.children.isNotEmpty) collect(n.children);
+      }
+    }
+    collect(nodes);
+
+    // 1. If outline list lengths match, check corresponding index first
+    final itemIndex = widget.controller.outlineItems.indexOf(item);
+    if (itemIndex >= 0 && itemIndex < flatNodes.length) {
+      final candidate = flatNodes[itemIndex];
+      if (candidate.title.trim().toLowerCase() == item.title.trim().toLowerCase()) {
+        return candidate;
+      }
+    }
+
+    // 2. Exact title match
+    final q = item.title.trim().toLowerCase();
+    for (final node in flatNodes) {
+      if (node.title.trim().toLowerCase() == q) {
         return node;
       }
-      final child = _findOutlineNode(node.children, title);
-      if (child != null) return child;
     }
+
+    // 3. Substring match
+    for (final node in flatNodes) {
+      final t = node.title.trim().toLowerCase();
+      if (t.contains(q) || q.contains(t)) {
+        return node;
+      }
+    }
+
     return null;
   }
 
@@ -2147,8 +2253,18 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         ),
         margin: effectiveFluid ? 0.0 : 10.0,
         boundaryMargin: effectiveFluid
-            ? const EdgeInsets.only(top: 48, bottom: 24, left: 0, right: 0)
-            : const EdgeInsets.only(top: 48, bottom: 16, left: 8, right: 8),
+            ? EdgeInsets.only(
+                top: widget.topInset > 0 ? math.max(72.0, widget.topInset + 40.0) : 48.0,
+                bottom: 24,
+                left: 0,
+                right: 0,
+              )
+            : EdgeInsets.only(
+                top: widget.topInset > 0 ? math.max(72.0, widget.topInset + 40.0) : 48.0,
+                bottom: 16,
+                left: 8,
+                right: 8,
+              ),
         maxImageBytesCachedOnMemory: effectiveFluid ? 256 * 1024 * 1024 : 64 * 1024 * 1024,
         onePassRenderingSizeThreshold: effectiveFluid ? 4000.0 : 2000.0,
         getPageRenderingScale: (context, page, controller, estimatedScale) {
@@ -2191,6 +2307,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           isTwoPage: widget.isTwoPage,
           minScale: effectiveFluid ? 0.35 : 0.2,
           maxScale: 5.0,
+          topInset: widget.topInset,
         ),
         zoomStepsDelegateProvider: SuperGoodZoomStepsDelegateProvider(
           isFluid: effectiveFluid,
@@ -2257,7 +2374,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
               void extractNodes(List<PdfOutlineNode> list) {
                 for (final n in list) {
                   if (n.dest?.pageNumber != null) {
-                    pageMap[n.title.trim()] = n.dest!.pageNumber!;
+                    pageMap[n.title.trim()] = n.dest!.pageNumber;
                   }
                   if (n.children.isNotEmpty) extractNodes(n.children);
                 }
@@ -2301,7 +2418,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           linkColor: Colors.transparent,
           onLinkTap: (link) async {
             if (link.dest != null) {
-              await ctrl.goToDest(link.dest);
+              await _goToDestWithTopInset(ctrl, link.dest!);
             } else if (link.url != null) {
               final uri = link.url!;
 

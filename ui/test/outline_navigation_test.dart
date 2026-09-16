@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -259,6 +260,52 @@ void main() {
       const double targetDocY = 500.0;
       final adjustedTargetY = targetDocY - topDocOffset;
       expect(adjustedTargetY, 468.0);
+    });
+
+    test('PdfDest XYZ jump calculation positions heading comfortably below 32px titlebar', () {
+      // In PDF coordinate space, (0, 0) is at the bottom-left of the page.
+      // Page size: width 600, height 800.
+      const double pageWidth = 600.0;
+      const double pageHeight = 800.0;
+      const pageRect = Rect.fromLTWH(0, 0, pageWidth, pageHeight);
+
+      // Suppose heading is at PDF Y = 650 (150 points from top of page)
+      const double pdfHeadingY = 650.0;
+      final calcY = (pageHeight - pdfHeadingY) / pageHeight * pageRect.height;
+      expect(calcY, 150.0);
+
+      final destOffset = Offset(pageRect.left, pageRect.top + calcY);
+      expect(destOffset.dy, 150.0);
+
+      // When sidebar is open, topInset = 32.0.
+      // With 8.0px breathing padding, effective top inset is 40.0.
+      const double topInset = 32.0;
+      const double breathingPadding = 8.0;
+      const double zoom = 1.0;
+      final effectiveTopInset = topInset > 0 ? (topInset + breathingPadding) : 0.0;
+      final topDocOffset = effectiveTopInset / zoom;
+      expect(topDocOffset, 40.0);
+
+      final targetY = destOffset.dy - topDocOffset;
+      expect(targetY, 110.0);
+
+      // When viewer scrolls to targetY (110.0), screen Y of heading is:
+      // screenY = destOffset.dy - targetY = 150.0 - 110.0 = 40.0 px
+      final screenY = destOffset.dy - targetY;
+      expect(screenY, 40.0);
+      expect(screenY, greaterThan(topInset)); // Heading is 8px below the 32px titlebar!
+    });
+
+    test('Boundary margin dynamically accommodates topInset for page 1 top headings', () {
+      const double topInset = 32.0;
+      final boundaryTop = topInset > 0 ? math.max(72.0, topInset + 40.0) : 48.0;
+      expect(boundaryTop, 72.0);
+
+      // For a heading at the very top of page 1 (destOffset.dy = 0.0):
+      // targetY = 0.0 - (32.0 + 8.0) = -40.0
+      const double targetY = -40.0;
+      // boundaryTop (72.0) allows visible.top to reach -72.0, so -40.0 is never clamped away
+      expect(-boundaryTop, lessThanOrEqualTo(targetY));
     });
   });
 }

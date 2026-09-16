@@ -310,9 +310,11 @@ class _SidebarViewState extends State<SidebarView> {
           borderRadius: BorderRadius.circular(6),
           hoverColor: isDark ? Colors.white.withValues(alpha: 0.04) : Colors.black.withValues(alpha: 0.04),
           onTap: () {
-            widget.controller.setActiveOutlineIndex(index);
-            widget.onJumpToOutline?.call(item);
             widget.controller.jumpToOutline(item);
+            if (widget.onJumpToOutline != null) {
+              widget.onJumpToOutline!(item);
+              widget.controller.clearJumpRequest();
+            }
           },
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 150),
