@@ -264,10 +264,94 @@ void main() {
           'https://example.com/test.bin',
           'test.bin',
           cancelToken: cancelToken,
-          onProgress: (_, __) {},
+          onProgress: (_, _) {},
         ),
         throwsA(isA<UpdateCancelledException>()),
       );
+    });
+
+    test('downloadUpdateAsset cancels cleanly before response headers arrive', () async {
+      await HttpOverrides.runWithHttpOverrides(() async {
+        final requestReceived = Completer<void>();
+        final allowHeaders = Completer<void>();
+
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        server.idleTimeout = Duration.zero;
+        addTearDown(() => server.close(force: true));
+
+        server.listen((HttpRequest req) async {
+          requestReceived.complete();
+          try {
+            await allowHeaders.future;
+            req.response.statusCode = 200;
+            req.response.contentLength = 1000;
+            req.response.add(List.filled(1000, 42));
+            await req.response.close();
+          } catch (_) {}
+        });
+
+        final service = UpdateService();
+        final cancelToken = UpdateCancellationToken();
+
+        final downloadFuture = service.downloadUpdateAsset(
+          'http://127.0.0.1:${server.port}/test_file.bin',
+          'test_file.bin',
+          cancelToken: cancelToken,
+          onProgress: (_, _) {},
+        );
+
+        await requestReceived.future;
+        // Cancel while client is awaiting response headers
+        cancelToken.cancel();
+        if (!allowHeaders.isCompleted) {
+          allowHeaders.complete();
+        }
+
+        await expectLater(
+          downloadFuture,
+          throwsA(isA<UpdateCancelledException>()),
+        );
+      }, _RealHttpOverrides());
+    });
+
+    test('downloadUpdateAsset cancels cleanly while stream is in progress', () async {
+      await HttpOverrides.runWithHttpOverrides(() async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        server.idleTimeout = Duration.zero;
+        addTearDown(() => server.close(force: true));
+
+        server.listen((HttpRequest req) async {
+          try {
+            req.response.statusCode = 200;
+            req.response.contentLength = 100000;
+            for (int i = 0; i < 20; i++) {
+              req.response.add(List.filled(5000, 42));
+              await req.response.flush();
+              await Future<void>.delayed(const Duration(milliseconds: 10));
+            }
+            await req.response.close();
+          } catch (_) {}
+        });
+
+        final service = UpdateService();
+        final cancelToken = UpdateCancellationToken();
+
+        final downloadFuture = service.downloadUpdateAsset(
+          'http://127.0.0.1:${server.port}/test_file_stream.bin',
+          'test_file_stream.bin',
+          cancelToken: cancelToken,
+          onProgress: (received, total) {
+            if (received > 0 && !cancelToken.isCancelled) {
+              cancelToken.cancel();
+            }
+          },
+        );
+
+        await expectLater(
+          downloadFuture,
+          throwsA(isA<UpdateCancelledException>()),
+        );
+      }, _RealHttpOverrides());
     });
   });
 
@@ -287,6 +371,134 @@ void main() {
       final dir = File(exe).parent.path;
       expect(exe.isNotEmpty, isTrue);
       expect(dir.isNotEmpty, isTrue);
+    });
+
+    test('buildMacOSUpdateScript cleans up partial directory and restores backup on failed staged move', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('macos_script_test_rollback_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final targetAppPath = '${testDir.path}/SuperGoodViewer.app';
+      final stagedAppPath = '${testDir.path}/staging/SuperGoodViewer.app';
+      final stagingDirPath = '${testDir.path}/staging';
+
+      // 1. Initial state: target app exists with version 1.0.7
+      final targetDir = Directory(targetAppPath)..createSync(recursive: true);
+      File('${targetDir.path}/version.txt').writeAsStringSync('1.0.7');
+
+      // 2. Staged app exists with version 1.0.8
+      final stagedDir = Directory(stagedAppPath)..createSync(recursive: true);
+      File('${stagedDir.path}/version.txt').writeAsStringSync('1.0.8');
+
+      // Create dummy bin directory with mock `open` and mock `mv`
+      final binDir = Directory('${testDir.path}/bin')..createSync();
+      final openMock = File('${binDir.path}/open');
+      openMock.writeAsStringSync('#!/bin/sh\nexit 0\n');
+      Process.runSync('chmod', ['+x', openMock.path]);
+
+      // Mock `mv`: simulates partial failure across filesystems when moving stagedAppPath to targetAppPath
+      final mvMock = File('${binDir.path}/mv');
+      mvMock.writeAsStringSync('''#!/bin/sh
+if [ "\$1" = "$stagedAppPath" ]; then
+  mkdir -p "$targetAppPath/corrupted_part"
+  exit 1
+fi
+exec /bin/mv "\$@"
+''');
+      Process.runSync('chmod', ['+x', mvMock.path]);
+
+      final dummyProcess = await Process.start('true', []);
+      final dummyPid = dummyProcess.pid;
+      await dummyProcess.exitCode;
+
+      final script = UpdateService.buildMacOSUpdateScript(
+        currentPid: dummyPid,
+        targetAppPath: targetAppPath,
+        stagedAppPath: stagedAppPath,
+        stagingDirPath: stagingDirPath,
+      );
+
+      final result = await Process.run(
+        '/bin/sh',
+        ['-c', script],
+        environment: {
+          'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}',
+        },
+      );
+
+      expect(result.exitCode, 0, reason: 'Script stderr: ${result.stderr}');
+
+      // Verify targetAppPath was restored to original 1.0.7
+      expect(Directory(targetAppPath).existsSync(), isTrue);
+      expect(File('$targetAppPath/version.txt').readAsStringSync(), '1.0.7');
+
+      // Verify partial corrupted files are cleaned up and NOT containing backup nested inside
+      expect(Directory('$targetAppPath/corrupted_part').existsSync(), isFalse);
+
+      // Verify stagingDir was cleaned up
+      expect(Directory(stagingDirPath).existsSync(), isFalse);
+    });
+
+    test('buildMacOSUpdateScript succeeds and moves staged app when move is successful', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('macos_script_test_success_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final targetAppPath = '${testDir.path}/SuperGoodViewer.app';
+      final stagedAppPath = '${testDir.path}/staging/SuperGoodViewer.app';
+      final stagingDirPath = '${testDir.path}/staging';
+
+      // 1. Initial state: target app exists with version 1.0.7
+      final targetDir = Directory(targetAppPath)..createSync(recursive: true);
+      File('${targetDir.path}/version.txt').writeAsStringSync('1.0.7');
+
+      // 2. Staged app exists with version 1.0.8
+      final stagedDir = Directory(stagedAppPath)..createSync(recursive: true);
+      File('${stagedDir.path}/version.txt').writeAsStringSync('1.0.8');
+
+      // Create dummy bin directory with mock `open`
+      final binDir = Directory('${testDir.path}/bin')..createSync();
+      final openMock = File('${binDir.path}/open');
+      openMock.writeAsStringSync('#!/bin/sh\nexit 0\n');
+      Process.runSync('chmod', ['+x', openMock.path]);
+
+      final dummyProcess = await Process.start('true', []);
+      final dummyPid = dummyProcess.pid;
+      await dummyProcess.exitCode;
+
+      final script = UpdateService.buildMacOSUpdateScript(
+        currentPid: dummyPid,
+        targetAppPath: targetAppPath,
+        stagedAppPath: stagedAppPath,
+        stagingDirPath: stagingDirPath,
+      );
+
+      final result = await Process.run(
+        '/bin/sh',
+        ['-c', script],
+        environment: {
+          'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}',
+        },
+      );
+
+      expect(result.exitCode, 0, reason: 'Script stderr: ${result.stderr}');
+
+      // Verify targetAppPath now contains 1.0.8
+      expect(Directory(targetAppPath).existsSync(), isTrue);
+      expect(File('$targetAppPath/version.txt').readAsStringSync(), '1.0.8');
+
+      // Verify stagingDir was cleaned up
+      expect(Directory(stagingDirPath).existsSync(), isFalse);
     });
   });
 
@@ -453,3 +665,5 @@ class _MockUpdateService extends UpdateService {
     onInstall?.call();
   }
 }
+
+class _RealHttpOverrides extends HttpOverrides {}

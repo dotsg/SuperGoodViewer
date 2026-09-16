@@ -219,10 +219,15 @@ class UpdateService {
     final targetFile = File(p.join(tempDir.path, targetFileName));
     final sink = targetFile.openWrite();
 
+    HttpClientRequest? currentRequest;
     StreamSubscription<List<int>>? subscription;
     final completer = Completer<void>();
+    completer.future.ignore(); // Prevent unhandled exception if completed with error before await
 
     void onCancel() {
+      try {
+        currentRequest?.abort();
+      } catch (_) {}
       try {
         subscription?.cancel();
       } catch (_) {}
@@ -242,7 +247,13 @@ class UpdateService {
       }
 
       final request = await client.getUrl(Uri.parse(url));
+      currentRequest = request;
       request.headers.set(HttpHeaders.userAgentHeader, 'SuperGoodViewer-Updater');
+
+      if (cancelToken?.isCancelled == true) {
+        throw UpdateCancelledException('Update download was cancelled');
+      }
+
       final response = await request.close();
 
       if (cancelToken?.isCancelled == true) {
@@ -264,7 +275,11 @@ class UpdateService {
         },
         onError: (e, st) {
           if (!completer.isCompleted) {
-            completer.completeError(e, st);
+            if (cancelToken?.isCancelled == true) {
+              completer.completeError(UpdateCancelledException('Update download was cancelled'));
+            } else {
+              completer.completeError(e, st);
+            }
           }
         },
         onDone: () {
@@ -294,6 +309,9 @@ class UpdateService {
           tempDir.deleteSync(recursive: true);
         }
       } catch (_) {}
+      if (cancelToken?.isCancelled == true) {
+        throw UpdateCancelledException('Update download was cancelled');
+      }
       rethrow;
     } finally {
       cancelToken?.removeListener(onCancel);
@@ -325,6 +343,35 @@ class UpdateService {
     } else if (Platform.isLinux) {
       await _installAndRestartLinux(downloadedFilePath);
     }
+  }
+
+  @visibleForTesting
+  static String buildMacOSUpdateScript({
+    required int currentPid,
+    required String targetAppPath,
+    required String stagedAppPath,
+    required String stagingDirPath,
+  }) {
+    return '''
+while kill -0 $currentPid 2>/dev/null; do sleep 0.1; done
+BACKUP_APP="$targetAppPath.backup.\$\$"
+if [ -d "$targetAppPath" ]; then
+  mv "$targetAppPath" "\$BACKUP_APP"
+fi
+if [ ! -d "$targetAppPath" ] && mv "$stagedAppPath" "$targetAppPath"; then
+  rm -rf "\$BACKUP_APP"
+  open "$targetAppPath"
+  rm -rf "$stagingDirPath"
+else
+  rm -rf "$targetAppPath"
+  if [ -d "\$BACKUP_APP" ]; then
+    if mv "\$BACKUP_APP" "$targetAppPath"; then
+      open "$targetAppPath"
+    fi
+  fi
+  rm -rf "$stagingDirPath"
+fi
+''';
   }
 
   Future<void> _installAndRestartMacOS(String dmgPath) async {
@@ -377,24 +424,12 @@ class UpdateService {
 
       // 6. Spawn detached shell script to wait for old PID, backup, replace, and relaunch
       final currentPid = pid;
-      final script = '''
-while kill -0 $currentPid 2>/dev/null; do sleep 0.1; done
-BACKUP_APP="$targetAppPath.backup.\$\$"
-if [ -d "$targetAppPath" ]; then
-  mv "$targetAppPath" "\$BACKUP_APP"
-fi
-if mv "$stagedAppPath" "$targetAppPath"; then
-  rm -rf "\$BACKUP_APP"
-  open "$targetAppPath"
-  rm -rf "${stagingDir.path}"
-else
-  if [ -d "\$BACKUP_APP" ]; then
-    mv "\$BACKUP_APP" "$targetAppPath"
-    open "$targetAppPath"
-  fi
-  rm -rf "${stagingDir.path}"
-fi
-''';
+      final script = buildMacOSUpdateScript(
+        currentPid: currentPid,
+        targetAppPath: targetAppPath,
+        stagedAppPath: stagedAppPath,
+        stagingDirPath: stagingDir.path,
+      );
 
       await Process.start(
         '/bin/sh',
