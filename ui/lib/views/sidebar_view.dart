@@ -357,8 +357,8 @@ class _SidebarViewState extends State<SidebarView> {
                   ),
                 ),
 
-                // Page number (if present)
-                if (item.pageNumber != null) ...[
+                // Page number (if present, only relevant for paged/PDF layouts)
+                if (!widget.controller.isFluidLayout && item.pageNumber != null) ...[
                   const SizedBox(width: 6),
                   Text(
                     '${item.pageNumber}',

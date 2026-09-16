@@ -2351,13 +2351,14 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             if (widget.controller.currentFilePath != srcPath) {
               return;
             }
+            final isFluidDoc = widget.controller.isFluidLayout;
             final destMap = <String, ({int? pageNumber, double? docY})>{};
             final orderedDocYs = <double>[];
             void extractNodes(List<PdfOutlineNode> list) {
               for (final n in list) {
                 final dest = n.dest;
                 final offset = dest != null ? _calcDestDocumentOffsetFor(controller, dest) : null;
-                final pageNum = dest?.pageNumber;
+                final pageNum = isFluidDoc ? null : dest?.pageNumber;
                 final docY = offset?.dy;
                 if (docY != null) orderedDocYs.add(docY);
                 if (pageNum != null || docY != null) {

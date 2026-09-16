@@ -171,9 +171,9 @@ void main() {
       addTearDown(controller.dispose);
 
       final items = [
-        const OutlineItem(title: 'Main Title', level: 1, anchor: 'main', lineNumber: 1),
-        const OutlineItem(title: 'Sub Heading', level: 2, anchor: 'sub', lineNumber: 20),
-        const OutlineItem(title: 'Deep Section', level: 3, anchor: 'deep', lineNumber: 50),
+        const OutlineItem(title: 'Main Title', level: 1, anchor: 'main', lineNumber: 1, pageNumber: 1),
+        const OutlineItem(title: 'Sub Heading', level: 2, anchor: 'sub', lineNumber: 20, pageNumber: 1),
+        const OutlineItem(title: 'Deep Section', level: 3, anchor: 'deep', lineNumber: 50, pageNumber: 1),
       ];
       controller.setOutlinesForTesting(items);
 
@@ -196,6 +196,9 @@ void main() {
       expect(find.text('H2'), findsNothing);
       expect(find.text('H3'), findsNothing);
       expect(find.text('P1'), findsNothing);
+
+      // In fluid mode (default), page numbers like '1' must NOT be rendered next to outline items
+      expect(find.descendant(of: find.byType(ListView), matching: find.text('1')), findsNothing);
 
       // All titles must be visible
       expect(find.text('Main Title'), findsOneWidget);
