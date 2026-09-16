@@ -33,6 +33,36 @@ class OutlineItem {
     this.pageNumber,
   });
 
+  OutlineItem copyWith({
+    String? title,
+    int? level,
+    String? anchor,
+    int? lineNumber,
+    int? pageNumber,
+  }) {
+    return OutlineItem(
+      title: title ?? this.title,
+      level: level ?? this.level,
+      anchor: anchor ?? this.anchor,
+      lineNumber: lineNumber ?? this.lineNumber,
+      pageNumber: pageNumber ?? this.pageNumber,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OutlineItem &&
+          runtimeType == other.runtimeType &&
+          title == other.title &&
+          level == other.level &&
+          anchor == other.anchor &&
+          lineNumber == other.lineNumber &&
+          pageNumber == other.pageNumber;
+
+  @override
+  int get hashCode => Object.hash(title, level, anchor, lineNumber, pageNumber);
+
   @override
   String toString() => 'OutlineItem(H$level: $title, line: $lineNumber, page: $pageNumber)';
 }
@@ -88,6 +118,10 @@ class ReaderController extends ChangeNotifier {
   bool _isSidebarOpen = false;
   bool _isPresentationMode = false;
   List<OutlineItem> _outlineItems = [];
+  int _activeOutlineIndex = -1;
+  final ValueNotifier<int> activeOutlineNotifier = ValueNotifier<int>(-1);
+  Timer? _activeOutlineLockTimer;
+  bool _isActiveOutlineLocked = false;
   OutlineItem? _requestedJumpItem;
   bool renderOptionsChanged = false;
 
@@ -125,6 +159,7 @@ class ReaderController extends ChangeNotifier {
   bool get isSidebarOpen => _isSidebarOpen;
   bool get isPresentationMode => _isPresentationMode;
   List<OutlineItem> get outlineItems => _outlineItems;
+  int get activeOutlineIndex => _activeOutlineIndex;
   OutlineItem? get requestedJumpItem => _requestedJumpItem;
   bool get isPdfDocument =>
       _isRawPdf || (_currentFilePath?.toLowerCase().endsWith('.pdf') ?? false);
@@ -151,7 +186,93 @@ class ReaderController extends ChangeNotifier {
     return maxScroll != null ? raw.clamp(0.0, maxScroll) : raw;
   }
 
+  void setActiveOutlineIndex(int index) {
+    if (_activeOutlineIndex != index) {
+      _activeOutlineIndex = index;
+      activeOutlineNotifier.value = index;
+    }
+  }
+
+  void _lockActiveOutline() {
+    _isActiveOutlineLocked = true;
+    _activeOutlineLockTimer?.cancel();
+    _activeOutlineLockTimer = Timer(const Duration(milliseconds: 350), () {
+      _isActiveOutlineLocked = false;
+    });
+  }
+
+  void updateActiveOutline({int? pageNumber, double? scrollRatio}) {
+    if (_isActiveOutlineLocked) return;
+    if (_outlineItems.isEmpty) {
+      setActiveOutlineIndex(-1);
+      return;
+    }
+
+    final effectivePage = pageNumber ?? _lastPageNumber;
+    final effectiveRatio = scrollRatio ?? _lastScrollRatio;
+
+    // Check if any items have pageNumber
+    final hasPageNumbers = _outlineItems.any((item) => item.pageNumber != null);
+
+    int targetIndex = 0;
+
+    if (hasPageNumbers && !isFluidLayout) {
+      final maxPage = _isTwoPage ? effectivePage + 1 : effectivePage;
+      for (int i = 0; i < _outlineItems.length; i++) {
+        final p = _outlineItems[i].pageNumber;
+        if (p != null && p <= maxPage) {
+          targetIndex = i;
+        }
+      }
+    } else {
+      if (effectiveRatio <= 0.005) {
+        targetIndex = 0;
+      } else if (effectiveRatio >= 0.98) {
+        targetIndex = _outlineItems.length - 1;
+      } else {
+        final totalLines = math.max(1, _currentMarkdown.split('\n').length);
+        for (int i = 0; i < _outlineItems.length; i++) {
+          final item = _outlineItems[i];
+          if (item.lineNumber > 0) {
+            final itemRatio = (item.lineNumber - 1) / totalLines;
+            if (itemRatio <= effectiveRatio + 0.015) {
+              targetIndex = i;
+            } else {
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    setActiveOutlineIndex(targetIndex);
+  }
+
+  void syncOutlinesPageNumbers(Map<String, int> pageMap) {
+    if (_outlineItems.isEmpty || pageMap.isEmpty) return;
+    bool changed = false;
+    final updated = _outlineItems.map((item) {
+      final p = pageMap[item.title.trim()];
+      if (p != null && item.pageNumber != p) {
+        changed = true;
+        return item.copyWith(pageNumber: p);
+      }
+      return item;
+    }).toList();
+
+    if (changed) {
+      _outlineItems = List.unmodifiable(updated);
+      updateActiveOutline();
+      notifyListeners();
+    }
+  }
+
   void jumpToOutline(OutlineItem item) {
+    final idx = _outlineItems.indexOf(item);
+    if (idx >= 0) {
+      setActiveOutlineIndex(idx);
+      _lockActiveOutline();
+    }
     _requestedJumpItem = item;
     notifyListeners();
   }
@@ -235,6 +356,14 @@ class ReaderController extends ChangeNotifier {
     if (!isPdfDocument) return;
     if (targetFilePath != null && _currentFilePath != targetFilePath) return;
     _outlineItems = List.unmodifiable(items);
+    updateActiveOutline();
+    notifyListeners();
+  }
+
+  @visibleForTesting
+  void setOutlinesForTesting(List<OutlineItem> items) {
+    _outlineItems = List.unmodifiable(items);
+    updateActiveOutline();
     notifyListeners();
   }
 
@@ -531,6 +660,7 @@ class ReaderController extends ChangeNotifier {
       }
       _updateCurrentFileHistory();
       _persistDebounced();
+      updateActiveOutline(scrollRatio: ratio);
     }
   }
 
@@ -541,6 +671,7 @@ class ReaderController extends ChangeNotifier {
       _lastPageNumber = pageNumber;
       _updateCurrentFileHistory();
       _persistDebounced();
+      updateActiveOutline(pageNumber: pageNumber);
     }
   }
 
@@ -1303,6 +1434,7 @@ graph LR
       }
     }
     _outlineItems = List.unmodifiable(items);
+    updateActiveOutline();
   }
 
   static final _unicodeAlphaNumRegex = RegExp(r'[\p{L}\p{N}]', unicode: true);
@@ -1416,6 +1548,8 @@ graph LR
   @override
   void dispose() {
     _isDisposed = true;
+    _activeOutlineLockTimer?.cancel();
+    activeOutlineNotifier.dispose();
     shortcutService.removeListener(_persistDebounced);
     shortcutService.removeListener(notifyListeners);
     _reloadingSafetyTimer?.cancel();

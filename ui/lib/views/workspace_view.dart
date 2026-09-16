@@ -821,6 +821,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                     // Pure Edge-to-Edge PDF Canvas (always fills 100% of workspace, zero layout shifting)
                     PdfCanvasView(
                       key: _pdfCanvasKey,
+                      topInset: _shouldShowTitleBar ? 32.0 : 0.0,
                       pdfBytes: controller.currentPdfBytes,
                       documentTitle: controller.documentTitle,
                       renderOptions: controller.renderOptions,

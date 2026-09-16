@@ -208,7 +208,7 @@ void main() {
       expect(find.text('1 / 1'), findsOneWidget);
     });
 
-    testWidgets('SidebarView displays PDF icon in recent files and P1 badge for outlines', (tester) async {
+    testWidgets('SidebarView displays PDF icon in recent files and page number for outlines', (tester) async {
       final controller = ReaderController(autoRestorePreferences: false);
       addTearDown(controller.dispose);
 
@@ -232,8 +232,9 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 800));
 
-      // Outline badge should display P1 instead of H1
-      expect(find.text('P1'), findsOneWidget);
+      // Outline should display clean typography with page number, without P1 badge
+      expect(find.text('P1'), findsNothing);
+      expect(find.descendant(of: find.byType(ListView), matching: find.text('1')), findsOneWidget);
       expect(find.text('Introduction'), findsOneWidget);
 
       // Switch to Recent Files tab (tab index 1)
