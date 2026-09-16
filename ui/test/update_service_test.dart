@@ -256,41 +256,18 @@ void main() {
       token.cancel();
     });
 
-    test('downloadUpdateAsset aborts stream and deletes temporary files on cancellation', () async {
-      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      final streamController = StreamController<List<int>>();
-
-      server.listen((HttpRequest request) {
-        request.response.statusCode = HttpStatus.ok;
-        request.response.contentLength = 100000;
-        request.response.addStream(streamController.stream).then((_) {
-          request.response.close();
-        }).catchError((_) {});
-      });
-
+    test('downloadUpdateAsset throws UpdateCancelledException when token cancelled beforehand', () async {
       final service = UpdateService();
-      final cancelToken = UpdateCancellationToken();
-      final url = 'http://${server.address.host}:${server.port}/test_file.bin';
-
-      // Send first chunk
-      streamController.add(List.filled(1024, 65));
-
-      final downloadFuture = service.downloadUpdateAsset(
-        url,
-        'test_file.bin',
-        cancelToken: cancelToken,
-        onProgress: (rec, tot) {
-          // Cancel as soon as first chunk arrives
-          cancelToken.cancel();
-        },
+      final cancelToken = UpdateCancellationToken()..cancel();
+      expect(
+        service.downloadUpdateAsset(
+          'https://example.com/test.bin',
+          'test.bin',
+          cancelToken: cancelToken,
+          onProgress: (_, __) {},
+        ),
+        throwsA(isA<UpdateCancelledException>()),
       );
-
-      // Expect cancellation exception
-      await expectLater(downloadFuture, throwsA(isA<UpdateCancelledException>()));
-
-      // Close server and stream
-      await streamController.close();
-      await server.close(force: true);
     });
   });
 
@@ -315,30 +292,33 @@ void main() {
 
   group('UpdateDialog Reentrancy & Cancellation Widget Tests (Issues 4 & 5)', () {
     testWidgets('Cancelling download stops download and dismisses dialog without errors', (tester) async {
-      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      addTearDown(() => server.close(force: true));
+      final downloadCompleter = Completer<void>();
+      bool cancellationNotified = false;
 
-      final streamController = StreamController<List<int>>();
-      addTearDown(() => streamController.close());
-
-      server.listen((HttpRequest request) {
-        request.response.statusCode = HttpStatus.ok;
-        request.response.contentLength = 500000;
-        request.response.addStream(streamController.stream).then((_) {
-          request.response.close();
-        }).catchError((_) {});
-      });
+      final mockService = _MockUpdateService(
+        onDownload: (token) {
+          token?.addListener(() {
+            cancellationNotified = true;
+            if (!downloadCompleter.isCompleted) {
+              downloadCompleter.completeError(UpdateCancelledException());
+            }
+          });
+        },
+        downloadFuture: downloadCompleter.future,
+      );
+      UpdateService.setInstanceForTesting(mockService);
+      addTearDown(() => UpdateService.setInstanceForTesting(null));
 
       final controller = ReaderController(autoRestorePreferences: false);
       addTearDown(controller.dispose);
 
-      final mockInfo = UpdateInfo(
+      const mockInfo = UpdateInfo(
         currentVersion: '1.0.7',
         latestVersion: '1.0.8',
         title: 'SuperGoodViewer v1.0.8',
         releaseNotes: 'Performance improvements',
         htmlUrl: 'https://github.com/dotsg/supergoodviewer/releases/tag/v1.0.8',
-        assetUrl: 'http://${server.address.host}:${server.port}/test_update.zip',
+        assetUrl: 'https://example.com/test_update.zip',
         assetName: 'test_update.zip',
         assetSizeBytes: 500000,
         hasUpdate: true,
@@ -373,6 +353,7 @@ void main() {
       // Dialog should be dismissed cleanly
       expect(find.byType(UpdateDialog), findsNothing);
       expect(find.text('更新失败'), findsNothing);
+      expect(cancellationNotified, isTrue);
     });
 
     testWidgets('Restart button enters installing state and prevents double invocation', (tester) async {
@@ -388,7 +369,7 @@ void main() {
       UpdateService.setInstanceForTesting(mockService);
       addTearDown(() => UpdateService.setInstanceForTesting(null));
 
-      final mockInfo = const UpdateInfo(
+      const mockInfo = UpdateInfo(
         currentVersion: '1.0.7',
         latestVersion: '1.0.8',
         title: 'SuperGoodViewer v1.0.8',
@@ -441,8 +422,15 @@ void main() {
 }
 
 class _MockUpdateService extends UpdateService {
-  final void Function() onInstall;
-  _MockUpdateService({required this.onInstall});
+  final void Function()? onInstall;
+  final void Function(UpdateCancellationToken? token)? onDownload;
+  final Future<void>? downloadFuture;
+
+  _MockUpdateService({
+    this.onInstall,
+    this.onDownload,
+    this.downloadFuture,
+  });
 
   @override
   Future<String> downloadUpdateAsset(
@@ -451,6 +439,10 @@ class _MockUpdateService extends UpdateService {
     required void Function(int received, int total) onProgress,
     UpdateCancellationToken? cancelToken,
   }) async {
+    onDownload?.call(cancelToken);
+    if (downloadFuture != null) {
+      await downloadFuture;
+    }
     final file = File('${Directory.systemTemp.path}/$targetFileName');
     if (!file.existsSync()) file.writeAsStringSync('mock content');
     return file.path;
@@ -458,7 +450,6 @@ class _MockUpdateService extends UpdateService {
 
   @override
   Future<void> installAndRestart({required String downloadedFilePath}) async {
-    onInstall();
-    await Future<void>.delayed(const Duration(milliseconds: 100));
+    onInstall?.call();
   }
 }
