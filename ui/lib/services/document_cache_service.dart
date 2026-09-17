@@ -8,7 +8,7 @@ import '../models/render_options.dart';
 /// Enables 0ms instantaneous document open on cold start and document switching.
 class DocumentCacheService {
   // Bump when renderer changes must invalidate previously compiled PDFs.
-  static const _renderCacheVersion = 1;
+  static const _renderCacheVersion = 3;
   static Directory? _customCacheDirForTesting;
   static Directory? _cachedDir;
 
