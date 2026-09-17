@@ -17,6 +17,8 @@ import 'pdf_canvas_view.dart';
 import 'presentation_view.dart';
 import 'settings_dialog.dart';
 import 'sidebar_view.dart';
+import 'update_dialog.dart';
+import '../services/update_service.dart';
 
 class WorkspaceView extends StatefulWidget {
   final ReaderController controller;
@@ -29,7 +31,7 @@ class WorkspaceView extends StatefulWidget {
 
 class _WorkspaceViewState extends State<WorkspaceView> {
   // Zen Mode: clean reading canvas by default, toolbar visible until scroll
-  bool _isSidebarOpen = false;
+  bool get _isSidebarOpen => widget.controller.isSidebarOpen;
   bool _isToolbarVisible = true;
   bool _isHoveringToolbar = false;
   Timer? _toolbarTimer;
@@ -66,6 +68,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   bool _isZoomHudVisible = false;
   String _zoomHudText = '100%';
   Timer? _zoomHudTimer;
+  Timer? _updateCheckTimer;
 
   bool _isFullScreen = false;
   static const _windowChannel = MethodChannel('com.sogoodviewer.window');
@@ -92,6 +95,26 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     CliIpcService.start((filePath) {
       if (mounted) {
         widget.controller.openFile(filePath);
+      }
+    });
+    _scheduleStartupUpdateCheck();
+  }
+
+  void _scheduleStartupUpdateCheck() {
+    if (!widget.controller.autoRestorePreferences) return;
+
+    _updateCheckTimer = Timer(const Duration(seconds: 5), () async {
+      if (!mounted) return;
+      try {
+        final info = await UpdateService.instance.checkUpdate(
+          currentVersion: SettingsDialog.appVersion,
+          isManual: false,
+        );
+        if (info.hasUpdate && mounted) {
+          UpdateDialog.show(context, widget.controller, info);
+        }
+      } catch (e) {
+        debugPrint('[UpdateService] Startup check skipped or failed: $e');
       }
     });
   }
@@ -164,6 +187,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       }
     }
     _syncWindowTitle();
+    _updateTrafficLights();
   }
 
   @override
@@ -175,6 +199,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     _toolbarTimer?.cancel();
     _zoomHudTimer?.cancel();
     _titleBarHoverTimer?.cancel();
+    _updateCheckTimer?.cancel();
     super.dispose();
   }
 
@@ -251,12 +276,12 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
   void _setSidebarOpen(bool open) {
     if (_isSidebarOpen != open) {
-      setState(() {
-        _isSidebarOpen = open;
-        if (!open && !_isAtTop && !_isHoveringTitleBar) {
+      if (!open && !_isAtTop && !_isHoveringTitleBar) {
+        setState(() {
           _isTitleBarVisible = false;
-        }
-      });
+        });
+      }
+      widget.controller.setSidebarOpen(open);
       _updateTrafficLights();
     }
   }
@@ -820,6 +845,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                     // Pure Edge-to-Edge PDF Canvas (always fills 100% of workspace, zero layout shifting)
                     PdfCanvasView(
                       key: _pdfCanvasKey,
+                      topInset: _shouldShowTitleBar ? 32.0 : 0.0,
                       pdfBytes: controller.currentPdfBytes,
                       documentTitle: controller.documentTitle,
                       renderOptions: controller.renderOptions,

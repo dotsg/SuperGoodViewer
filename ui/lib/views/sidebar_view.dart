@@ -24,6 +24,66 @@ class SidebarView extends StatefulWidget {
 
 class _SidebarViewState extends State<SidebarView> {
   int _selectedTab = 0; // 0: 大纲目录, 1: 最近文件
+  final ScrollController _outlineScrollController = ScrollController();
+  final Map<int, GlobalKey> _itemKeys = {};
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.activeOutlineNotifier.addListener(_onActiveOutlineChanged);
+    _scrollToActiveOutline();
+  }
+
+  @override
+  void didUpdateWidget(SidebarView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.activeOutlineNotifier.removeListener(_onActiveOutlineChanged);
+      widget.controller.activeOutlineNotifier.addListener(_onActiveOutlineChanged);
+      _itemKeys.clear();
+      _scrollToActiveOutline();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.activeOutlineNotifier.removeListener(_onActiveOutlineChanged);
+    _outlineScrollController.dispose();
+    super.dispose();
+  }
+
+  void _onActiveOutlineChanged() {
+    _scrollToActiveOutline();
+  }
+
+  void _scrollToActiveOutline() {
+    if (!mounted || _selectedTab != 0) return;
+    final activeIndex = widget.controller.activeOutlineIndex;
+    if (activeIndex < 0) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_outlineScrollController.hasClients) return;
+      final key = _itemKeys[activeIndex];
+      final ctx = key?.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(
+          ctx,
+          alignment: 0.35,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeInOut,
+        );
+      } else {
+        const estimatedHeight = 36.0;
+        final maxScroll = _outlineScrollController.position.maxScrollExtent;
+        final target = (activeIndex * estimatedHeight - 120.0).clamp(0.0, maxScroll);
+        _outlineScrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeInOut,
+        );
+      }
+    });
+  }
 
   Future<void> _pickAndOpenFile(BuildContext context) async {
     final result = await FilePicker.platform.pickFiles(
@@ -140,68 +200,183 @@ class _SidebarViewState extends State<SidebarView> {
       );
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      itemCount: items.length,
-      itemBuilder: (context, index) {
-        final item = items[index];
-        final indent = ((item.level - 1) * 12.0).clamp(0.0, 48.0);
-        return Padding(
-          padding: EdgeInsets.only(left: indent, bottom: 2),
-          child: Material(
-            color: Colors.transparent,
-            borderRadius: BorderRadius.circular(6),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(6),
-              onTap: () {
-                widget.onJumpToOutline?.call(item);
-                widget.controller.jumpToOutline(item);
-              },
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      margin: const EdgeInsets.only(top: 2, right: 6),
-                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                      decoration: BoxDecoration(
-                        color: item.level == 1
-                            ? theme.colorScheme.primary.withValues(alpha: 0.15)
-                            : (isDark ? const Color(0xFF333333) : const Color(0xFFE8E8E8)),
-                        borderRadius: BorderRadius.circular(3),
-                      ),
-                      child: Text(
-                        item.pageNumber != null ? 'P${item.pageNumber}' : 'H${item.level}',
-                        style: TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                          color: (item.pageNumber != null || item.level == 1)
-                              ? theme.colorScheme.primary
-                              : theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: Text(
-                        item.title,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: item.level == 1 ? FontWeight.w600 : FontWeight.normal,
-                          color: isDark ? const Color(0xFFCCCCCC) : const Color(0xFF222222),
-                          height: 1.3,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
+    return ValueListenableBuilder<int>(
+      valueListenable: widget.controller.activeOutlineNotifier,
+      builder: (context, activeIndex, _) {
+        return ListView.builder(
+          controller: _outlineScrollController,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          itemCount: items.length,
+          itemBuilder: (context, index) {
+            final item = items[index];
+            final isActive = index == activeIndex;
+            final key = _itemKeys.putIfAbsent(index, () => GlobalKey());
+
+            return _buildOutlineItem(
+              key: key,
+              item: item,
+              index: index,
+              isActive: isActive,
+              theme: theme,
+              isDark: isDark,
+            );
+          },
         );
       },
+    );
+  }
+
+  Widget _buildOutlineItem({
+    required Key key,
+    required OutlineItem item,
+    required int index,
+    required bool isActive,
+    required ThemeData theme,
+    required bool isDark,
+  }) {
+    // Proportional indentation:
+    // Level 1: 0px (flush)
+    // Level 2: 12px
+    // Level 3: 22px
+    // Level 4: 30px
+    // Level 5+: up to 38px
+    final double indent;
+    switch (item.level) {
+      case 1:
+        indent = 0.0;
+        break;
+      case 2:
+        indent = 12.0;
+        break;
+      case 3:
+        indent = 22.0;
+        break;
+      case 4:
+        indent = 30.0;
+        break;
+      default:
+        indent = ((item.level - 1) * 8.0).clamp(0.0, 38.0);
+    }
+
+    final double fontSize;
+    final FontWeight fontWeight;
+    final Color textColor;
+
+    if (isActive) {
+      textColor = theme.colorScheme.primary;
+      switch (item.level) {
+        case 1:
+          fontSize = 12.5;
+          fontWeight = FontWeight.w700;
+          break;
+        case 2:
+          fontSize = 12.0;
+          fontWeight = FontWeight.w600;
+          break;
+        default:
+          fontSize = 11.5;
+          fontWeight = FontWeight.w600;
+          break;
+      }
+    } else {
+      switch (item.level) {
+        case 1:
+          fontSize = 12.5;
+          fontWeight = FontWeight.w600;
+          textColor = isDark ? const Color(0xFFE2E8F0) : const Color(0xFF1E293B);
+          break;
+        case 2:
+          fontSize = 12.0;
+          fontWeight = FontWeight.w500;
+          textColor = isDark ? const Color(0xFFCBD5E1) : const Color(0xFF334155);
+          break;
+        default:
+          fontSize = 11.5;
+          fontWeight = FontWeight.w400;
+          textColor = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+          break;
+      }
+    }
+
+    final activeBgColor = theme.colorScheme.primary.withValues(alpha: isDark ? 0.16 : 0.08);
+
+    return Padding(
+      key: key,
+      padding: EdgeInsets.only(left: indent, bottom: 2),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(6),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(6),
+          hoverColor: isDark ? Colors.white.withValues(alpha: 0.04) : Colors.black.withValues(alpha: 0.04),
+          onTap: () {
+            widget.controller.jumpToOutline(item);
+            if (widget.onJumpToOutline != null) {
+              widget.onJumpToOutline!(item);
+              widget.controller.clearJumpRequest();
+            }
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            decoration: BoxDecoration(
+              color: isActive ? activeBgColor : Colors.transparent,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              children: [
+                // Left active accent indicator bar
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  width: isActive ? 3.0 : 0.0,
+                  height: isActive ? 14.0 : 0.0,
+                  margin: EdgeInsets.only(right: isActive ? 6.0 : 0.0),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primary,
+                    borderRadius: BorderRadius.circular(1.5),
+                  ),
+                ),
+
+                // Title
+                Expanded(
+                  child: Tooltip(
+                    message: item.title,
+                    waitDuration: const Duration(milliseconds: 600),
+                    child: Text(
+                      item.title,
+                      style: TextStyle(
+                        fontSize: fontSize,
+                        fontWeight: fontWeight,
+                        color: textColor,
+                        height: 1.3,
+                        letterSpacing: item.level == 1 ? -0.1 : 0.0,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+
+                // Page number (if present, only relevant for paged/PDF layouts)
+                if (!widget.controller.isFluidLayout && item.pageNumber != null) ...[
+                  const SizedBox(width: 6),
+                  Text(
+                    '${item.pageNumber}',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                      color: isActive
+                          ? theme.colorScheme.primary.withValues(alpha: 0.9)
+                          : theme.colorScheme.onSurface.withValues(alpha: 0.35),
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -518,7 +693,10 @@ class _SidebarViewState extends State<SidebarView> {
                         icon: Icons.format_list_bulleted_rounded,
                         count: controller.outlineItems.length,
                         isSelected: _selectedTab == 0,
-                        onTap: () => setState(() => _selectedTab = 0),
+                        onTap: () {
+                          setState(() => _selectedTab = 0);
+                          _scrollToActiveOutline();
+                        },
                         isDark: isDark,
                         theme: theme,
                       ),

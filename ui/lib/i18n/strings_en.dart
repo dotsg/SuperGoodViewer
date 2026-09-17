@@ -583,4 +583,32 @@ class EnStrings implements AppStrings {
   String get aboutGithub => 'GitHub Open Source Project';
   @override
   String get aboutLicense => 'License: Apache 2.0';
+
+  // --- Auto Update ---
+  @override
+  String get checkForUpdates => 'Check for Updates';
+  @override
+  String get checkingForUpdates => 'Checking for updates...';
+  @override
+  String get upToDate => 'SuperGoodViewer is up to date';
+  @override
+  String get updateAvailable => 'Update Available';
+  @override
+  String get updateNow => 'Update Now';
+  @override
+  String get downloadingUpdate => 'Downloading update...';
+  @override
+  String get restartToUpdate => 'Restart to Update';
+  @override
+  String get skipThisVersion => 'Skip This Version';
+  @override
+  String get remindMeLater => 'Remind Me Later';
+  @override
+  String get viewOnWeb => 'View on Web';
+  @override
+  String get autoCheckUpdates => 'Automatically check for updates on startup';
+  @override
+  String get updateFailed => 'Failed to check or download update';
+  @override
+  String get installingUpdate => 'Preparing update and restarting...';
 }

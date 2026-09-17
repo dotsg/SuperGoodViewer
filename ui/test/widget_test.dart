@@ -290,6 +290,22 @@ void main() {
 
       // Sidebar is hidden again
       expect(find.byType(SidebarView), findsNothing);
+      expect(controller.isSidebarOpen, isFalse);
+    });
+
+    testWidgets('renders with sidebar open initially if controller.isSidebarOpen is true', (tester) async {
+      final controller = ReaderController();
+      controller.setSidebarOpen(true);
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WorkspaceView(controller: controller),
+        ),
+      );
+
+      // Sidebar should be rendered initially because preference restored it as open
+      expect(find.byType(SidebarView), findsOneWidget);
+      expect(find.text('大纲目录'), findsOneWidget);
     });
 
     testWidgets('mode and page zoom controls render and trigger actions', (tester) async {

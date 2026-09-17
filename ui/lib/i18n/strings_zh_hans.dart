@@ -554,4 +554,32 @@ class ZhHansStrings implements AppStrings {
   String get aboutGithub => 'GitHub 开源项目';
   @override
   String get aboutLicense => '开源协议: Apache 2.0';
+
+  // --- Auto Update ---
+  @override
+  String get checkForUpdates => '检查更新';
+  @override
+  String get checkingForUpdates => '正在检查更新...';
+  @override
+  String get upToDate => '当前已是最新版本';
+  @override
+  String get updateAvailable => '发现新版本';
+  @override
+  String get updateNow => '立即更新';
+  @override
+  String get downloadingUpdate => '正在下载更新...';
+  @override
+  String get restartToUpdate => '立即重启以完成更新';
+  @override
+  String get skipThisVersion => '忽略此版本';
+  @override
+  String get remindMeLater => '稍后提醒';
+  @override
+  String get viewOnWeb => '在网页查看';
+  @override
+  String get autoCheckUpdates => '启动时自动检查更新';
+  @override
+  String get updateFailed => '检查或下载更新失败';
+  @override
+  String get installingUpdate => '正在准备更新并重启...';
 }

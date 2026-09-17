@@ -266,7 +266,6 @@ void main() {
       expect(controller.renderOptions.showHeaderRule, isTrue);
       expect(controller.renderOptions.marpEnabled, isTrue);
 
-      // Verify clearing header and footer slots
       controller.setHeaderFooterOptions(
         headerLeft: null,
         footerRight: null,
@@ -275,7 +274,51 @@ void main() {
       expect(controller.renderOptions.headerLeft, isNull);
       expect(controller.renderOptions.footerRight, isNull);
     });
+
+    test('ReaderController detects Marp frontmatter on openFile and allows manual format override', () async {
+      final tempDir = await Directory.systemTemp.createTemp('marp_detect_test_');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+
+      final marpFile = File('${tempDir.path}/test_slide.md');
+      await marpFile.writeAsString('''---
+marp: true
+size: 16:9
+---
+# Slide 1
+---
+# Slide 2
+''');
+
+      final regularFile = File('${tempDir.path}/test_regular.md');
+      await regularFile.writeAsString('''# Regular Document
+Some regular content without frontmatter.
+''');
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      // 1. Open regular document: should stay in default fluid format
+      await controller.openFile(regularFile.path);
+      expect(controller.renderOptions.effectivePageFormat, PageFormat.fluid);
+      expect(controller.renderOptions.isFluid, isTrue);
+
+      // 2. Open Marp document: should auto-detect and switch to slide16x9
+      await controller.openFile(marpFile.path);
+      expect(controller.renderOptions.effectivePageFormat, PageFormat.slide16x9);
+      expect(controller.renderOptions.isSlide, isTrue);
+
+      // 3. User manually switches Marp document to A4 Portrait: should succeed!
+      controller.setPageFormat(PageFormat.a4Portrait);
+      expect(controller.renderOptions.effectivePageFormat, PageFormat.a4Portrait);
+      expect(controller.renderOptions.isA4, isTrue);
+
+      // 4. User manually switches Marp document to Fluid: should succeed!
+      controller.setPageFormat(PageFormat.fluid);
+      expect(controller.renderOptions.effectivePageFormat, PageFormat.fluid);
+      expect(controller.renderOptions.isFluid, isTrue);
+    });
   });
+
 
   group('PresentationView Widget Tests', () {
     testWidgets('renders presentation view HUD and responds to navigation, screen blanking and exit', (tester) async {

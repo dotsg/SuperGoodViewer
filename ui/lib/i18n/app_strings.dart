@@ -244,4 +244,19 @@ abstract class AppStrings {
   String get aboutFramework;
   String get aboutGithub;
   String get aboutLicense;
+
+  // --- Auto Update ---
+  String get checkForUpdates;
+  String get checkingForUpdates;
+  String get upToDate;
+  String get updateAvailable;
+  String get updateNow;
+  String get downloadingUpdate;
+  String get restartToUpdate;
+  String get skipThisVersion;
+  String get remindMeLater;
+  String get viewOnWeb;
+  String get autoCheckUpdates;
+  String get updateFailed;
+  String get installingUpdate;
 }

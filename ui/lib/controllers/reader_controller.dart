@@ -24,6 +24,7 @@ class OutlineItem {
   final String anchor;
   final int lineNumber;
   final int? pageNumber;
+  final double? docY;
 
   const OutlineItem({
     required this.title,
@@ -31,10 +32,44 @@ class OutlineItem {
     required this.anchor,
     required this.lineNumber,
     this.pageNumber,
+    this.docY,
   });
 
+  OutlineItem copyWith({
+    String? title,
+    int? level,
+    String? anchor,
+    int? lineNumber,
+    int? pageNumber,
+    double? docY,
+  }) {
+    return OutlineItem(
+      title: title ?? this.title,
+      level: level ?? this.level,
+      anchor: anchor ?? this.anchor,
+      lineNumber: lineNumber ?? this.lineNumber,
+      pageNumber: pageNumber ?? this.pageNumber,
+      docY: docY ?? this.docY,
+    );
+  }
+
   @override
-  String toString() => 'OutlineItem(H$level: $title, line: $lineNumber, page: $pageNumber)';
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OutlineItem &&
+          runtimeType == other.runtimeType &&
+          title == other.title &&
+          level == other.level &&
+          anchor == other.anchor &&
+          lineNumber == other.lineNumber &&
+          pageNumber == other.pageNumber &&
+          docY == other.docY;
+
+  @override
+  int get hashCode => Object.hash(title, level, anchor, lineNumber, pageNumber, docY);
+
+  @override
+  String toString() => 'OutlineItem(H$level: $title, line: $lineNumber, page: $pageNumber, docY: $docY)';
 }
 
 enum AutoFitMode {
@@ -85,8 +120,13 @@ class ReaderController extends ChangeNotifier {
   final ShortcutService shortcutService = ShortcutService();
 
   bool _isTwoPage = false;
+  bool _isSidebarOpen = false;
   bool _isPresentationMode = false;
   List<OutlineItem> _outlineItems = [];
+  int _activeOutlineIndex = -1;
+  final ValueNotifier<int> activeOutlineNotifier = ValueNotifier<int>(-1);
+  Timer? _activeOutlineLockTimer;
+  bool _isActiveOutlineLocked = false;
   OutlineItem? _requestedJumpItem;
   bool renderOptionsChanged = false;
 
@@ -121,8 +161,10 @@ class ReaderController extends ChangeNotifier {
   List<String> get recentFiles => List.unmodifiable(_recentFiles);
   Map<String, dynamic> get fontReport => _fontReport;
   bool get isTwoPage => _isTwoPage;
+  bool get isSidebarOpen => _isSidebarOpen;
   bool get isPresentationMode => _isPresentationMode;
   List<OutlineItem> get outlineItems => _outlineItems;
+  int get activeOutlineIndex => _activeOutlineIndex;
   OutlineItem? get requestedJumpItem => _requestedJumpItem;
   bool get isPdfDocument =>
       _isRawPdf || (_currentFilePath?.toLowerCase().endsWith('.pdf') ?? false);
@@ -149,7 +191,126 @@ class ReaderController extends ChangeNotifier {
     return maxScroll != null ? raw.clamp(0.0, maxScroll) : raw;
   }
 
+  void setActiveOutlineIndex(int index) {
+    if (_activeOutlineIndex != index) {
+      _activeOutlineIndex = index;
+      activeOutlineNotifier.value = index;
+    }
+  }
+
+  void _lockActiveOutline() {
+    _isActiveOutlineLocked = true;
+    _activeOutlineLockTimer?.cancel();
+    _activeOutlineLockTimer = Timer(const Duration(milliseconds: 350), () {
+      _isActiveOutlineLocked = false;
+    });
+  }
+
+  void updateActiveOutline({int? pageNumber, double? scrollRatio, double? scrollOffset}) {
+    if (_isActiveOutlineLocked) return;
+    if (_outlineItems.isEmpty) {
+      setActiveOutlineIndex(-1);
+      return;
+    }
+
+    final effectiveOffset = scrollOffset ?? _lastScrollOffset;
+    final effectivePage = pageNumber ?? _lastPageNumber;
+    final effectiveRatio = scrollRatio ?? _lastScrollRatio;
+
+    final hasDocY = _outlineItems.any((item) => item.docY != null);
+    int targetIndex = 0;
+
+    if (hasDocY) {
+      // Anchored strictly to the TOP of the reading viewport:
+      // A chapter is active when its heading coordinate has reached or passed the top of the reading view.
+      // Small buffer (12.0) ensures that when jumping to a chapter (with 8px top breathing room),
+      // the chapter heading is immediately active without flickering.
+      const double topBuffer = 12.0;
+      final thresholdY = effectiveOffset + topBuffer;
+
+      for (int i = 0; i < _outlineItems.length; i++) {
+        final y = _outlineItems[i].docY;
+        if (y != null && y <= thresholdY) {
+          targetIndex = i;
+        } else if (y != null && y > thresholdY) {
+          break;
+        }
+      }
+
+      // If user has scrolled all the way to the very bottom of the document, activate the last chapter
+      if (effectiveRatio >= 0.98) {
+        targetIndex = _outlineItems.length - 1;
+      }
+    } else if (_outlineItems.any((item) => item.pageNumber != null) && !isFluidLayout) {
+      // Fallback for paged documents without docY: anchor strictly to the page at the TOP of the viewport
+      for (int i = 0; i < _outlineItems.length; i++) {
+        final p = _outlineItems[i].pageNumber;
+        if (p != null && p <= effectivePage) {
+          targetIndex = i;
+        }
+      }
+    } else {
+      // Fallback for documents without PDF outline positions
+      if (effectiveRatio <= 0.005) {
+        targetIndex = 0;
+      } else if (effectiveRatio >= 0.98) {
+        targetIndex = _outlineItems.length - 1;
+      } else {
+        final totalLines = math.max(1, _currentMarkdown.split('\n').length);
+        for (int i = 0; i < _outlineItems.length; i++) {
+          final item = _outlineItems[i];
+          if (item.lineNumber > 0) {
+            final itemRatio = (item.lineNumber - 1) / totalLines;
+            if (itemRatio <= effectiveRatio + 0.015) {
+              targetIndex = i;
+            } else {
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    setActiveOutlineIndex(targetIndex);
+  }
+
+  void syncOutlinesDestinations(Map<String, ({int? pageNumber, double? docY})> destMap, {List<double>? orderedDocYs}) {
+    if (_outlineItems.isEmpty || (destMap.isEmpty && (orderedDocYs == null || orderedDocYs.isEmpty))) return;
+    bool changed = false;
+    final updated = <OutlineItem>[];
+    for (int i = 0; i < _outlineItems.length; i++) {
+      final item = _outlineItems[i];
+      final meta = destMap[item.title.trim()];
+      final listY = (orderedDocYs != null && i < orderedDocYs.length) ? orderedDocYs[i] : null;
+      final p = meta?.pageNumber;
+      final y = meta?.docY ?? listY;
+      if ((p != null && item.pageNumber != p) || (y != null && item.docY != y)) {
+        changed = true;
+        updated.add(item.copyWith(pageNumber: p, docY: y));
+      } else {
+        updated.add(item);
+      }
+    }
+
+    if (changed) {
+      _outlineItems = List.unmodifiable(updated);
+      updateActiveOutline();
+      notifyListeners();
+    }
+  }
+
+  void syncOutlinesPageNumbers(Map<String, int> pageMap) {
+    syncOutlinesDestinations(
+      pageMap.map((key, val) => MapEntry(key, (pageNumber: val, docY: null))),
+    );
+  }
+
   void jumpToOutline(OutlineItem item) {
+    final idx = _outlineItems.indexOf(item);
+    if (idx >= 0) {
+      setActiveOutlineIndex(idx);
+      _lockActiveOutline();
+    }
     _requestedJumpItem = item;
     notifyListeners();
   }
@@ -233,6 +394,14 @@ class ReaderController extends ChangeNotifier {
     if (!isPdfDocument) return;
     if (targetFilePath != null && _currentFilePath != targetFilePath) return;
     _outlineItems = List.unmodifiable(items);
+    updateActiveOutline();
+    notifyListeners();
+  }
+
+  @visibleForTesting
+  void setOutlinesForTesting(List<OutlineItem> items) {
+    _outlineItems = List.unmodifiable(items);
+    updateActiveOutline();
     notifyListeners();
   }
 
@@ -256,6 +425,18 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
+  void toggleSidebar() {
+    setSidebarOpen(!_isSidebarOpen);
+  }
+
+  void setSidebarOpen(bool value) {
+    if (_isSidebarOpen != value) {
+      _isSidebarOpen = value;
+      _persistPreferences();
+      notifyListeners();
+    }
+  }
+
   void setAutoFitMode(AutoFitMode mode) {
     if (_autoFitMode != mode) {
       _autoFitMode = mode;
@@ -264,9 +445,11 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
+  final bool autoRestorePreferences;
+
   ReaderController({
     String? initialFilePath,
-    bool autoRestorePreferences = true,
+    this.autoRestorePreferences = true,
     String? defaultLanguage,
   }) {
     if (defaultLanguage != null) {
@@ -293,6 +476,7 @@ class ReaderController extends ChangeNotifier {
       final savedTheme = prefs['theme'] as String?;
       final savedMode = prefs['mode'] as String?;
       final savedTwoPage = prefs['isTwoPage'] as bool?;
+      final savedSidebarOpen = prefs['isSidebarOpen'] as bool?;
       final savedAutoFit = prefs['autoFitMode'] as String?;
       final recent = (prefs['recentFiles'] as List<dynamic>?)?.cast<String>();
       final savedFontSize = (prefs['fontSize'] as num?)?.toDouble();
@@ -374,6 +558,9 @@ class ReaderController extends ChangeNotifier {
       if (savedTwoPage != null) {
         _isTwoPage = savedTwoPage;
       }
+      if (savedSidebarOpen != null) {
+        _isSidebarOpen = savedSidebarOpen;
+      }
       if (savedAutoFit != null) {
         _autoFitMode = AutoFitMode.values.firstWhere(
           (m) => m.name == savedAutoFit,
@@ -449,6 +636,7 @@ class ReaderController extends ChangeNotifier {
       'pageFormat': _renderOptions.effectivePageFormat,
       'lastPagedFormat': _lastPagedFormat,
       'isTwoPage': _isTwoPage,
+      'isSidebarOpen': _isSidebarOpen,
       'autoFitMode': _autoFitMode.name,
       'fontSize': _renderOptions.fontSize,
       'bodyFont': _renderOptions.bodyFont,
@@ -512,6 +700,7 @@ class ReaderController extends ChangeNotifier {
       }
       _updateCurrentFileHistory();
       _persistDebounced();
+      updateActiveOutline(scrollRatio: ratio, scrollOffset: offset ?? _lastScrollOffset);
     }
   }
 
@@ -522,6 +711,7 @@ class ReaderController extends ChangeNotifier {
       _lastPageNumber = pageNumber;
       _updateCurrentFileHistory();
       _persistDebounced();
+      updateActiveOutline(pageNumber: pageNumber);
     }
   }
 
@@ -606,6 +796,17 @@ class ReaderController extends ChangeNotifier {
       }
       _currentMarkdown = content;
       _extractOutline(_currentMarkdown);
+
+      final frontmatterFormat = _detectFrontmatterPageFormat(content);
+      if (frontmatterFormat != null) {
+        _renderOptions = _renderOptions.copyWith(
+          pageFormat: frontmatterFormat,
+          mode: frontmatterFormat == PageFormat.fluid ? 'fluid' : 'paged',
+        );
+        if (frontmatterFormat != PageFormat.fluid) {
+          _lastPagedFormat = frontmatterFormat;
+        }
+      }
 
       if (!preservePosition) {
         final history = _fileHistory[filePath];
@@ -1273,6 +1474,7 @@ graph LR
       }
     }
     _outlineItems = List.unmodifiable(items);
+    updateActiveOutline();
   }
 
   static final _unicodeAlphaNumRegex = RegExp(r'[\p{L}\p{N}]', unicode: true);
@@ -1314,9 +1516,80 @@ graph LR
     return slug;
   }
 
+  String? _detectFrontmatterPageFormat(String markdown) {
+    if (!(_renderOptions.marpEnabled ?? true)) return null;
+    final trimmed = markdown.trimLeft();
+    if (!trimmed.startsWith('---')) return null;
+    final rest = trimmed.substring(3);
+    final firstNl = rest.indexOf('\n');
+    if (firstNl == -1 || rest.substring(0, firstNl).trim().isNotEmpty) return null;
+    final afterFirstLine = rest.substring(firstNl + 1);
+    final endIdx = afterFirstLine.indexOf('\n---');
+    if (endIdx == -1) return null;
+    final yaml = afterFirstLine.substring(0, endIdx);
+
+    bool isMarp = false;
+    String? size;
+    String? pageFormat;
+
+    for (final line in yaml.split('\n')) {
+      final lineTrimmed = line.trim();
+      if (lineTrimmed.isEmpty || lineTrimmed.startsWith('#')) continue;
+      final colonIdx = lineTrimmed.indexOf(':');
+      if (colonIdx == -1) continue;
+      final key = lineTrimmed.substring(0, colonIdx).trim().toLowerCase();
+      final val = lineTrimmed.substring(colonIdx + 1).replaceAll(RegExp(r'''^['"]|['"]$'''), '').trim();
+
+      if (key == 'marp') {
+        isMarp = val.toLowerCase() == 'true' || val.toLowerCase() == 'yes';
+      } else if (key == 'size') {
+        size = val;
+      } else if (key == 'page_format' || key == 'page-format') {
+        pageFormat = val;
+      }
+    }
+
+    if (pageFormat != null) {
+      switch (pageFormat.toLowerCase()) {
+        case 'fluid':
+          return PageFormat.fluid;
+        case 'a4':
+        case 'a4_portrait':
+        case 'a4portrait':
+        case 'portrait':
+          return PageFormat.a4Portrait;
+        case 'a4_landscape':
+        case 'a4landscape':
+        case 'landscape':
+          return PageFormat.a4Landscape;
+        case 'slide_16_9':
+        case 'slide16x9':
+        case '16:9':
+        case '16_9':
+          return PageFormat.slide16x9;
+        case 'slide_4_3':
+        case 'slide4x3':
+        case '4:3':
+        case '4_3':
+          return PageFormat.slide4x3;
+      }
+    }
+
+    if (isMarp) {
+      if (size == '4:3' || size == '4_3') {
+        return PageFormat.slide4x3;
+      }
+      return PageFormat.slide16x9;
+    }
+
+    return null;
+  }
+
   @override
   void dispose() {
     _isDisposed = true;
+    _activeOutlineLockTimer?.cancel();
+    activeOutlineNotifier.dispose();
     shortcutService.removeListener(_persistDebounced);
     shortcutService.removeListener(notifyListeners);
     _reloadingSafetyTimer?.cancel();

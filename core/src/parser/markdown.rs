@@ -12,6 +12,12 @@ pub struct ParsedDocument {
     pub virtual_files: HashMap<PathBuf, Bytes>,
 }
 
+struct ImageParagraph {
+    output_start: usize,
+    image_count: usize,
+    has_other_content: bool,
+}
+
 /// Escapes characters that have special syntactic meaning in Typst markup
 fn escape_typst_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -319,6 +325,7 @@ fn render_html_image(
 struct HtmlTranspiler<'a> {
     center_depth: usize,
     is_dark: bool,
+    is_fluid: bool,
     badge_bg: &'a str,
     badge_stroke: &'a str,
     badge_fg: &'a str,
@@ -328,6 +335,7 @@ struct HtmlTranspiler<'a> {
 impl<'a> HtmlTranspiler<'a> {
     fn new(
         is_dark: bool,
+        is_fluid: bool,
         badge_bg: &'a str,
         badge_stroke: &'a str,
         badge_fg: &'a str,
@@ -336,6 +344,7 @@ impl<'a> HtmlTranspiler<'a> {
         Self {
             center_depth: 0,
             is_dark,
+            is_fluid,
             badge_bg,
             badge_stroke,
             badge_fg,
@@ -370,14 +379,50 @@ impl<'a> HtmlTranspiler<'a> {
         let lower = tag.to_lowercase();
         let trimmed_lower = lower.trim();
         if trimmed_lower.starts_with("<!--") {
+            if !self.is_fluid
+                && (trimmed_lower.contains("pagebreak")
+                    || trimmed_lower.contains("page-break")
+                    || trimmed_lower.contains("newpage")
+                    || trimmed_lower.contains("<!-- break")
+                    || trimmed_lower.contains("<!--break"))
+            {
+                out.push_str("\n#pagebreak()\n\n");
+            }
             return;
         }
+
+        // Manual page break support in paged modes (A4, Slide, etc.)
+        if !self.is_fluid {
+            if trimmed_lower.starts_with("<pagebreak")
+                || trimmed_lower.starts_with("<page-break")
+                || (trimmed_lower.starts_with("<div")
+                    && (lower.contains("page-break")
+                        || lower.contains("pagebreak")
+                        || lower.contains("break-after")
+                        || lower.contains("break-before")))
+                || (trimmed_lower.starts_with("<hr")
+                    && (lower.contains("page-break")
+                        || lower.contains("pagebreak")
+                        || lower.contains("break-after")
+                        || lower.contains("break-before")))
+                || (trimmed_lower.starts_with("<p")
+                    && (lower.contains("page-break")
+                        || lower.contains("pagebreak")
+                        || lower.contains("break-after")
+                        || lower.contains("break-before")))
+            {
+                out.push_str("\n#pagebreak()\n\n");
+                return;
+            }
+        }
+
         if trimmed_lower.starts_with("<img") {
             let rendered = render_html_image(
                 tag,
                 self.center_depth > 0,
                 self.is_dark,
                 self.badge_bg,
+
                 self.badge_stroke,
                 self.badge_fg,
                 self.custom_cache,
@@ -551,8 +596,10 @@ pub fn convert_markdown_to_typst(
 ) -> ParsedDocument {
     let (frontmatter, markdown_body) = extract_frontmatter(markdown);
 
-    let is_marp = frontmatter.marp || options.marp_enabled.unwrap_or(false);
-    let raw_format = if let Some(ref pf) = frontmatter.page_format {
+    let is_marp = frontmatter.marp && options.marp_enabled.unwrap_or(true);
+    let raw_format = if let Some(ref pf) = options.page_format {
+        pf.as_str()
+    } else if let Some(ref pf) = frontmatter.page_format {
         pf.as_str()
     } else if is_marp {
         if let Some(ref s) = frontmatter.size {
@@ -564,8 +611,6 @@ pub fn convert_markdown_to_typst(
         } else {
             "slide_16_9"
         }
-    } else if let Some(ref pf) = options.page_format {
-        pf.as_str()
     } else if options.mode == "fluid" {
         "fluid"
     } else {
@@ -583,7 +628,8 @@ pub fn convert_markdown_to_typst(
 
     let is_fluid = normalized_format == "fluid";
     let is_slide = normalized_format == "slide_16_9" || normalized_format == "slide_4_3";
-    let is_slide_mode = is_slide || is_marp;
+    let is_slide_mode = is_slide;
+
 
     let mut virtual_files = HashMap::new();
     let mut out = String::with_capacity(markdown.len() * 2);
@@ -952,16 +998,37 @@ pub fn convert_markdown_to_typst(
     let mut list_depth: usize = 0;
     let mut link_stack: Vec<bool> = Vec::new();
     let mut current_image: Option<(String, String)> = None;
+    let mut image_paragraph: Option<ImageParagraph> = None;
     let mut current_heading: Option<(HeadingLevel, String)> = None;
     let mut registered_slugs: HashSet<String> = HashSet::new();
     let mut referenced_anchors: HashSet<String> = HashSet::new();
     let custom_cache = options.image_cache_dir.as_deref().map(Path::new);
-    let mut html_transpiler = HtmlTranspiler::new(is_dark, badge_bg, badge_stroke, badge_fg, custom_cache);
+    let mut html_transpiler = HtmlTranspiler::new(is_dark, is_fluid, badge_bg, badge_stroke, badge_fg, custom_cache);
 
     for event in parser {
+        // Only a paragraph containing one image (optionally linked/formatted)
+        // gets the reader's centered figure style. Image alt text is not prose.
+        if let Some(paragraph) = image_paragraph.as_mut() {
+            if current_image.is_none() {
+                match &event {
+                    Event::Start(Tag::Image { .. }) => paragraph.image_count += 1,
+                    Event::Start(Tag::Link { .. } | Tag::Emphasis | Tag::Strong | Tag::Strikethrough)
+                    | Event::End(TagEnd::Link | TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough | TagEnd::Paragraph)
+                    | Event::SoftBreak => {}
+                    Event::Text(text) if text.trim().is_empty() => {}
+                    _ => paragraph.has_other_content = true,
+                }
+            }
+        }
         match event {
             Event::Start(tag) => match tag {
-                Tag::Paragraph => {}
+                Tag::Paragraph => {
+                    image_paragraph = Some(ImageParagraph {
+                        output_start: out.len(),
+                        image_count: 0,
+                        has_other_content: false,
+                    });
+                }
                 Tag::Heading { level, .. } => {
                     let prefix = match level {
                         HeadingLevel::H1 => "= ",
@@ -1050,8 +1117,9 @@ pub fn convert_markdown_to_typst(
                 Tag::Link { dest_url, .. } => {
                     let dest = dest_url.trim();
                     if dest.is_empty() {
+                        // Keep the content, but emit no Typst wrapper for an empty link.
+                        // Bare brackets in markup are visible characters, not a content block.
                         link_stack.push(false);
-                        out.push('[');
                     } else if dest.starts_with('#') {
                         link_stack.push(true);
                         let anchor = dest[1..].trim();
@@ -1104,6 +1172,12 @@ pub fn convert_markdown_to_typst(
             },
             Event::End(tag_end) => match tag_end {
                 TagEnd::Paragraph => {
+                    if let Some(paragraph) = image_paragraph.take() {
+                        if paragraph.image_count == 1 && !paragraph.has_other_content {
+                            out.insert_str(paragraph.output_start, "#align(center)[");
+                            out.push(']');
+                        }
+                    }
                     out.push_str("\n\n");
                 }
                 TagEnd::Heading(_) => {
@@ -1157,8 +1231,9 @@ pub fn convert_markdown_to_typst(
                 TagEnd::Strong => out.push('*'),
                 TagEnd::Strikethrough => out.push(']'),
                 TagEnd::Link => {
-                    link_stack.pop();
-                    out.push(']');
+                    if link_stack.pop() == Some(true) {
+                        out.push(']');
+                    }
                 }
                 TagEnd::Image => {
                     if let Some((url, alt_raw)) = current_image.take() {
@@ -1184,7 +1259,9 @@ pub fn convert_markdown_to_typst(
                                 ("none", "4pt")
                             };
                             let escaped_target_path = escape_typst_string(&target_path);
-                            out.push_str(&format!("\n#align(center)[#block(radius: {img_radius}, stroke: {img_stroke}, clip: true)[#image(\"{escaped_target_path}\")]]\n\n"));
+                            // Markdown images are inline content. Paragraph boundaries and
+                            // explicit hard breaks, rather than image loading, control wrapping.
+                            out.push_str(&format!("#box(radius: {img_radius}, stroke: {img_stroke}, clip: true)[#image(\"{escaped_target_path}\")]"));
                         } else {
                             // Remote image not yet cached: render elegant clickable placeholder badge
                             if in_link {
@@ -1229,8 +1306,14 @@ pub fn convert_markdown_to_typst(
                 } else if in_code_block {
                     code_block_content.push_str(&text);
                 } else {
-                    out.push_str(&escape_typst_text(&text));
+                    let trimmed = text.trim();
+                    if !is_fluid && (trimmed == "\\newpage" || trimmed == "\\pagebreak") {
+                        out.push_str("\n#pagebreak()\n\n");
+                    } else {
+                        out.push_str(&escape_typst_text(&text));
+                    }
                 }
+
             }
             Event::Code(code) => {
                 if let Some((_, ref mut h_text)) = current_heading {
@@ -1408,6 +1491,146 @@ Some body text with "quotes" inside.
         assert!(parsed.typst_source.contains("height: 5pt"));
         let res = crate::compiler::engine::compile_typst_to_pdf(&parsed.typst_source, "..", parsed.virtual_files);
         assert!(res.is_ok(), "Trailing dot dimension failed to compile: {:?}", res.err());
+    }
+
+    #[test]
+    fn test_empty_links_preserve_content_without_brackets() {
+        let options = RenderOptions::default();
+        for (linked, content) in [
+            ("[text]()", "text"),
+            ("[**bold**](   )", "**bold**"),
+            ("[![Logo](docs/images/app_logo.png)]()", "![Logo](docs/images/app_logo.png)"),
+            ("[![Badge](https://example.invalid/badge.svg)]()", "![Badge](https://example.invalid/badge.svg)"),
+            ("[empty]() [valid](https://example.com) [last]()", "empty [valid](https://example.com) last"),
+            (r"[\[literal\]]()", r"\[literal\]"),
+        ] {
+            let actual = convert_markdown_to_typst(linked, "Test", &options);
+            let expected = convert_markdown_to_typst(content, "Test", &options);
+            assert_eq!(actual.typst_source, expected.typst_source, "Input: {linked}");
+        }
+    }
+
+    #[test]
+    fn test_markdown_images_follow_paragraph_line_breaks() {
+        use typst::layout::{Frame, FrameItem, Point, Size};
+
+        fn collect_images(frame: &Frame, origin: Point, positions: &mut Vec<(Point, Size)>) {
+            for (position, item) in frame.items() {
+                let position = origin + *position;
+                match item {
+                    FrameItem::Group(group) => collect_images(&group.frame, position, positions),
+                    FrameItem::Image(_, size, _) => positions.push((position, *size)),
+                    _ => {}
+                }
+            }
+        }
+
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="20"><rect width="80" height="20" fill="#abcdef"/></svg>"##;
+        let readme_badges = include_str!("../../../README.md")
+            .lines()
+            .filter(|line| line.starts_with("[!["))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let cache_dir = std::env::temp_dir().join(format!("sgv_badge_layout_{}", std::process::id()));
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        for event in Parser::new(&readme_badges) {
+            if let Event::Start(Tag::Image { dest_url, .. }) = event {
+                std::fs::write(cache_dir.join(url_to_cache_filename(&dest_url)), svg).unwrap();
+            }
+        }
+
+        for (theme, page_format) in [("light", "fluid"), ("dark", "fluid"), ("light", "a4"), ("dark", "a4")] {
+            for (markdown, width, same_line, image_count, centered) in [
+                (readme_badges.as_str(), 800.0, true, 4, false),
+                (readme_badges.lines().next().unwrap(), 800.0, true, 1, true),
+                ("![a](badge.svg)\n![b](badge.svg)", 800.0, true, 2, false),
+                ("[![a](badge.svg)]() [![b](badge.svg)](https://example.com)", 800.0, true, 2, false),
+                ("![a](badge.svg)  \n![b](badge.svg)", 800.0, false, 2, false),
+                ("![a](badge.svg)\n\n![b](badge.svg)", 800.0, false, 2, true),
+                ("![a](badge.svg) ![b](badge.svg)", 160.0, false, 2, false),
+                ("![a](badge.svg)", 800.0, true, 1, true),
+                ("Before\n\n[![**alt**](badge.svg)](https://example.com)\n\nAfter", 800.0, true, 1, true),
+                ("[![a](badge.svg)]()", 800.0, true, 1, true),
+                ("Before ![a](badge.svg) after", 800.0, true, 1, false),
+                ("![a](badge.svg)\ncaption", 800.0, true, 1, false),
+                ("![a](badge.svg)  \ncaption", 800.0, true, 1, false),
+                ("- ![a](badge.svg) text\n- ![b](badge.svg)", 800.0, false, 2, false),
+                ("| Picture | Text |\n| --- | --- |\n| ![a](badge.svg) | Caption |", 800.0, true, 1, false),
+            ] {
+                if page_format != "fluid" && width < 800.0 {
+                    continue; // Viewport width only controls the fluid page size.
+                }
+                let options = RenderOptions {
+                    theme: theme.to_string(),
+                    page_format: Some(page_format.to_string()),
+                    viewport_width: width,
+                    image_cache_dir: Some(cache_dir.to_string_lossy().into_owned()),
+                    ..RenderOptions::default()
+                };
+                let mut parsed = convert_markdown_to_typst(markdown, "Badges", &options);
+                parsed.virtual_files.insert(PathBuf::from("badge.svg"), Bytes::new(svg.to_vec()));
+                let world = crate::compiler::world::MemoryWorld::new_with_cache_dir(
+                    &parsed.typst_source, ".", parsed.virtual_files, Some(cache_dir.clone()),
+                );
+                let document = typst::compile(&world).output.unwrap();
+                typst_pdf::pdf(&document, &typst_pdf::PdfOptions::default()).unwrap();
+                assert_eq!(document.pages().len(), 1);
+                let mut positions = Vec::new();
+                collect_images(&document.pages()[0].frame, Point::zero(), &mut positions);
+                assert_eq!(positions.len(), image_count);
+                for (position, size) in &positions {
+                    let centered_x = (document.pages()[0].frame.size().x - size.x) / 2.0;
+                    if centered {
+                        assert!((position.x - centered_x).to_pt().abs() < 0.01,
+                            "Standalone image should be centered: {markdown}");
+                    } else {
+                        assert!(position.x < centered_x, "Inline image should follow paragraph flow: {markdown}");
+                    }
+                }
+                for pair in positions.windows(2) {
+                    if same_line {
+                        assert_eq!(pair[0].0.y, pair[1].0.y, "Unexpected line break: {markdown}");
+                        assert!(pair[0].0.x < pair[1].0.x);
+                    } else {
+                        assert!(pair[0].0.y < pair[1].0.y, "Expected line break: {markdown}");
+                    }
+                }
+            }
+        }
+        std::fs::remove_dir_all(cache_dir).unwrap();
+    }
+
+    #[test]
+    fn test_readme_badges_render_without_stray_brackets() {
+        use typst::layout::{Frame, FrameItem};
+
+        fn collect_text(frame: &Frame, text: &mut String) {
+            for (_, item) in frame.items() {
+                match item {
+                    FrameItem::Group(group) => collect_text(&group.frame, text),
+                    FrameItem::Text(run) => text.push_str(&run.text),
+                    _ => {}
+                }
+            }
+        }
+
+        let badges = include_str!("../../../README.md")
+            .lines()
+            .filter(|line| line.starts_with("[!["))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(badges.contains("]()"), "README must exercise empty badge links");
+        let parsed = convert_markdown_to_typst(&badges, "README", &RenderOptions::default());
+        let world = crate::compiler::world::MemoryWorld::new(
+            &parsed.typst_source, "..", parsed.virtual_files,
+        );
+        let document = typst::compile(&world).output.unwrap();
+        typst_pdf::pdf(&document, &typst_pdf::PdfOptions::default()).unwrap();
+        let mut text = String::new();
+        for page in document.pages() {
+            collect_text(&page.frame, &mut text);
+        }
+        assert!(!text.contains(['[', ']']), "Unexpected visible brackets: {text}");
     }
 
     #[test]
@@ -1708,5 +1931,84 @@ Body text with unmatched brackets: array[0] and single ] and single [ and traili
         let pdf = res.unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
     }
-}
 
+    #[test]
+    fn test_a4_manual_page_breaks_and_css_directives() {
+        let md = r#"# Page One Content
+Here is the first page.
+
+<div style="page-break-after: always; break-after: page;"></div>
+
+# Page Two Content
+Here is the second page.
+
+<!-- pagebreak -->
+
+# Page Three Content
+Here is the third page.
+
+<pagebreak />
+
+# Page Four Content
+Here is the fourth page.
+
+\newpage
+
+# Page Five Content
+Here is the fifth page.
+"#;
+        let mut options = RenderOptions::default();
+        options.page_format = Some("a4".to_string());
+
+        let parsed = convert_markdown_to_typst(md, "A4 Manual Pagination", &options);
+        // Should contain 4 #pagebreak() calls
+        assert_eq!(parsed.typst_source.matches("#pagebreak()").count(), 4);
+        assert!(parsed.typst_source.contains("width: 595.28pt"));
+
+        let res = crate::compiler::engine::compile_typst_to_pdf(&parsed.typst_source, ".", parsed.virtual_files);
+        assert!(res.is_ok(), "A4 manual pagebreak document failed to compile: {:?}", res.err());
+        let pdf = res.unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
+
+        // When in fluid mode, manual pagebreaks should be safely ignored so continuous scroll isn't split
+        let mut fluid_options = RenderOptions::default();
+        fluid_options.page_format = Some("fluid".to_string());
+        let fluid_parsed = convert_markdown_to_typst(md, "Fluid No Pagebreak", &fluid_options);
+        assert_eq!(fluid_parsed.typst_source.matches("#pagebreak()").count(), 0);
+    }
+
+    #[test]
+    fn test_marp_layout_override_and_marp_enabled_setting() {
+        // Document without marp: true, but marp_enabled is true
+        let normal_md = r#"# Normal Document
+---
+Some section after horizontal rule.
+"#;
+        let mut normal_opts = RenderOptions::default();
+        normal_opts.marp_enabled = Some(true);
+        normal_opts.page_format = Some("a4".to_string());
+
+        let normal_parsed = convert_markdown_to_typst(normal_md, "Normal Doc", &normal_opts);
+        // A4 format should NOT be forced to slide_16_9 even if marp_enabled is true
+        assert!(normal_parsed.typst_source.contains("width: 595.28pt"));
+        // Rule should be a line, not a pagebreak
+        assert!(normal_parsed.typst_source.contains("#line("));
+        assert!(!normal_parsed.typst_source.contains("#pagebreak()"));
+
+        // Marp document with marp: true, but user explicitly chose a4 in UI
+        let marp_md = r#"---
+marp: true
+size: 16:9
+---
+# Slide 1
+---
+# Slide 2
+"#;
+        let mut override_opts = RenderOptions::default();
+        override_opts.page_format = Some("a4".to_string()); // User overrides layout to A4
+
+        let marp_override_parsed = convert_markdown_to_typst(marp_md, "Marp as A4", &override_opts);
+        assert!(marp_override_parsed.typst_source.contains("width: 595.28pt"));
+        assert!(!marp_override_parsed.typst_source.contains("width: 960pt"));
+    }
+}

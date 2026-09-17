@@ -125,5 +125,32 @@ void main() {
       controller.dispose();
       await PreferencesService.pendingSave;
     });
+
+    test('persists and restores sidebar open state across sessions', () async {
+      final controller1 = ReaderController(autoRestorePreferences: false);
+      expect(controller1.isSidebarOpen, isFalse);
+      controller1.setSidebarOpen(true);
+      expect(controller1.isSidebarOpen, isTrue);
+
+      controller1.dispose();
+      await PreferencesService.pendingSave;
+
+      final prefs = PreferencesService.loadSync();
+      expect(prefs['isSidebarOpen'], isTrue);
+
+      final controller2 = ReaderController(autoRestorePreferences: true);
+      expect(controller2.isSidebarOpen, isTrue);
+
+      controller2.setSidebarOpen(false);
+      controller2.dispose();
+      await PreferencesService.pendingSave;
+
+      final prefs2 = PreferencesService.loadSync();
+      expect(prefs2['isSidebarOpen'], isFalse);
+
+      final controller3 = ReaderController(autoRestorePreferences: true);
+      expect(controller3.isSidebarOpen, isFalse);
+      controller3.dispose();
+    });
   });
 }

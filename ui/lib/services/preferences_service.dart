@@ -82,14 +82,7 @@ class PreferencesService {
   }
 
   static Future<void> save(Map<String, dynamic> prefs) async {
-    // Snapshot and serialize immediately so caller modifications don't race
-    final String jsonStr;
-    try {
-      jsonStr = json.encode(prefs);
-    } catch (e) {
-      debugPrint('PreferencesService.save serialization error: $e');
-      return;
-    }
+    final incoming = Map<String, dynamic>.from(prefs);
 
     final prev = _pendingSave;
     final completer = Completer<void>();
@@ -99,6 +92,15 @@ class PreferencesService {
       if (prev != null) {
         await prev.catchError((_) {});
       }
+      final merged = {...loadSync(), ...incoming};
+      final String jsonStr;
+      try {
+        jsonStr = json.encode(merged);
+      } catch (e) {
+        debugPrint('PreferencesService.save serialization error: $e');
+        return;
+      }
+
       final file = await _getConfigFile();
       final tmpFile = File('${file.path}.tmp');
       await tmpFile.writeAsString(jsonStr, flush: true);
@@ -115,8 +117,6 @@ class PreferencesService {
   }
 
   static Future<void> saveKey(String key, dynamic value) async {
-    final prefs = await load();
-    prefs[key] = value;
-    await save(prefs);
+    await save({key: value});
   }
 }
