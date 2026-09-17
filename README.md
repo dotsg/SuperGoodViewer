@@ -6,7 +6,7 @@
 </div>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Release: v1.0.6](https://img.shields.io/badge/Release-v1.0.6-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
+[![Release: v1.0.7](https://img.shields.io/badge/Release-v1.0.7-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
 [![CI Status](https://img.shields.io/badge/CI-Passing-brightgreen.svg)]()
 [![Platform: macOS | Windows | Linux](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)]()
 
@@ -194,6 +194,25 @@ sgv -h
 ---
 
 ## 📝 更新日志 (Changelog)
+
+### v1.0.7 (2026-09)
+- **内置自动更新器与就地重启 (In-App Auto Updater)**：
+  - 自动检查 GitHub Releases 最新版本，支持后台流式下载更新包与一键原地重启；
+  - 完善的跨平台原子替换与回滚保护：macOS 备份失败时安全终止并不删除原应用，移动失败时自动回滚；跨版本更新保持用户偏好设置，Linux 重启二进制检测与并发防重入等。
+- **A4 与分页模式排版增强 (Manual Page Breaks & CSS Directives)**：
+  - 支持 HTML 分页标记（`<div style="page-break-after: always; break-after: page;"></div>`、`<pagebreak />`、`<!-- pagebreak -->` 与 `\newpage`）；
+  - 流式排版智能忽略手动分页以保持连续平滑滚动体验；
+  - 修复 Marp 幻灯片布局误判问题，确保普通文档不会被强制套用 16:9 比例，优先尊重用户选择的页面规格。
+- **侧边栏与目录大纲定位优化 (Sidebar & Outline Navigation)**：
+  - 修复 32px 顶部沉浸式标题栏偏移补偿，大纲章节跳转及初始载入精准对齐阅读区顶部；
+  - 大纲高亮检测严格锚定阅读视区顶部，匹配跳转目标；
+  - 流式视图下自动隐藏大纲页码（因流式文档连续无固定分页）；
+  - 跨会话持久化记录侧边栏展开/折叠状态。
+- **排版转译与空链接括号修复**：
+  - 修复 Markdown 中空链接（如 `[text]()` 或无目标徽标）在 Typst Markup 模式下泄漏外层方括号的问题；
+  - 引入渲染缓存版本机制（v1），自动失效并重新渲染旧版含括号的 PDF 缓存。
+- **键盘导航优化**：
+  - 修复双页铺展模式下特定情况键盘翻页事件拦截问题。
 
 ### v1.0.6 (2026-09)
 - **Linux 平台原生桌面与 CLI 支持**：
