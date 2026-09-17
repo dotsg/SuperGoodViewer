@@ -68,6 +68,21 @@ void main() {
       expect(cachedAfterEdit, isNull);
     });
 
+    test('ignores PDFs from the unversioned renderer cache', () async {
+      const options = RenderOptions();
+      await DocumentCacheService.saveCachedPdf(sampleMdFile.path, options, dummyPdfHeader);
+      final cacheFile = tempDir.listSync().whereType<File>().singleWhere(
+        (file) => file.path.endsWith('.pdf'),
+      );
+      final legacyName = p.basename(cacheFile.path).replaceFirst(RegExp(r'_v\d+_'), '_');
+      expect(legacyName, isNot(p.basename(cacheFile.path)));
+      await cacheFile.rename(p.join(tempDir.path, legacyName));
+
+      expect(DocumentCacheService.getCachedPdf(sampleMdFile.path, options), isNull);
+      await DocumentCacheService.saveCachedPdf(sampleMdFile.path, options, dummyPdfHeader);
+      expect(DocumentCacheService.getCachedPdf(sampleMdFile.path, options), dummyPdfHeader);
+    });
+
     test('cache distinguishes different render options (mode, theme, fontSize, viewportWidth)', () async {
       const optionsFluidLight800 = RenderOptions(mode: 'fluid', theme: 'light', viewportWidth: 800.0);
       const optionsFluidLight805 = RenderOptions(mode: 'fluid', theme: 'light', viewportWidth: 805.0); // Within 20pt bucket -> quantizes to 800

@@ -1090,8 +1090,9 @@ pub fn convert_markdown_to_typst(
                 Tag::Link { dest_url, .. } => {
                     let dest = dest_url.trim();
                     if dest.is_empty() {
+                        // Keep the content, but emit no Typst wrapper for an empty link.
+                        // Bare brackets in markup are visible characters, not a content block.
                         link_stack.push(false);
-                        out.push('[');
                     } else if dest.starts_with('#') {
                         link_stack.push(true);
                         let anchor = dest[1..].trim();
@@ -1197,8 +1198,9 @@ pub fn convert_markdown_to_typst(
                 TagEnd::Strong => out.push('*'),
                 TagEnd::Strikethrough => out.push(']'),
                 TagEnd::Link => {
-                    link_stack.pop();
-                    out.push(']');
+                    if link_stack.pop() == Some(true) {
+                        out.push(']');
+                    }
                 }
                 TagEnd::Image => {
                     if let Some((url, alt_raw)) = current_image.take() {
@@ -1454,6 +1456,56 @@ Some body text with "quotes" inside.
         assert!(parsed.typst_source.contains("height: 5pt"));
         let res = crate::compiler::engine::compile_typst_to_pdf(&parsed.typst_source, "..", parsed.virtual_files);
         assert!(res.is_ok(), "Trailing dot dimension failed to compile: {:?}", res.err());
+    }
+
+    #[test]
+    fn test_empty_links_preserve_content_without_brackets() {
+        let options = RenderOptions::default();
+        for (linked, content) in [
+            ("[text]()", "text"),
+            ("[**bold**](   )", "**bold**"),
+            ("[![Logo](docs/images/app_logo.png)]()", "![Logo](docs/images/app_logo.png)"),
+            ("[![Badge](https://example.invalid/badge.svg)]()", "![Badge](https://example.invalid/badge.svg)"),
+            ("[empty]() [valid](https://example.com) [last]()", "empty [valid](https://example.com) last"),
+            (r"[\[literal\]]()", r"\[literal\]"),
+        ] {
+            let actual = convert_markdown_to_typst(linked, "Test", &options);
+            let expected = convert_markdown_to_typst(content, "Test", &options);
+            assert_eq!(actual.typst_source, expected.typst_source, "Input: {linked}");
+        }
+    }
+
+    #[test]
+    fn test_readme_badges_render_without_stray_brackets() {
+        use typst::layout::{Frame, FrameItem};
+
+        fn collect_text(frame: &Frame, text: &mut String) {
+            for (_, item) in frame.items() {
+                match item {
+                    FrameItem::Group(group) => collect_text(&group.frame, text),
+                    FrameItem::Text(run) => text.push_str(&run.text),
+                    _ => {}
+                }
+            }
+        }
+
+        let badges = include_str!("../../../README.md")
+            .lines()
+            .filter(|line| line.starts_with("[!["))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(badges.contains("]()"), "README must exercise empty badge links");
+        let parsed = convert_markdown_to_typst(&badges, "README", &RenderOptions::default());
+        let world = crate::compiler::world::MemoryWorld::new(
+            &parsed.typst_source, "..", parsed.virtual_files,
+        );
+        let document = typst::compile(&world).output.unwrap();
+        typst_pdf::pdf(&document, &typst_pdf::PdfOptions::default()).unwrap();
+        let mut text = String::new();
+        for page in document.pages() {
+            collect_text(&page.frame, &mut text);
+        }
+        assert!(!text.contains(['[', ']']), "Unexpected visible brackets: {text}");
     }
 
     #[test]
@@ -1835,5 +1887,3 @@ size: 16:9
         assert!(!marp_override_parsed.typst_source.contains("width: 960pt"));
     }
 }
-
-

@@ -7,6 +7,8 @@ import '../models/render_options.dart';
 /// High-performance disk cache for pre-compiled PDF documents.
 /// Enables 0ms instantaneous document open on cold start and document switching.
 class DocumentCacheService {
+  // Bump when renderer changes must invalidate previously compiled PDFs.
+  static const _renderCacheVersion = 1;
   static Directory? _customCacheDirForTesting;
   static Directory? _cachedDir;
 
@@ -60,7 +62,7 @@ class DocumentCacheService {
       hash = (hash * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF;
     }
     final baseName = p.basenameWithoutExtension(filePath).replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
-    return '${baseName}_${hash.toRadixString(16)}.pdf';
+    return '${baseName}_v${_renderCacheVersion}_${hash.toRadixString(16)}.pdf';
   }
 
   /// Fast synchronous lookup for pre-compiled PDF bytes.
