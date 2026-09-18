@@ -319,7 +319,15 @@ pub fn get_default_image_cache_dir() -> PathBuf {
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home).join(".cache/sogoodviewer/remote_images");
+            let primary = PathBuf::from(&home).join(".cache/supergoodviewer/remote_images");
+            if primary.exists() {
+                return primary;
+            }
+            let legacy = PathBuf::from(&home).join(".cache/sogoodviewer/remote_images");
+            if legacy.exists() {
+                return legacy;
+            }
+            return primary;
         }
     }
     PathBuf::from(".cache/remote_images")

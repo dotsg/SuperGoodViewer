@@ -11,7 +11,7 @@ void main() {
   late Directory tempTestDir;
 
   setUpAll(() {
-    tempTestDir = Directory.systemTemp.createTempSync('sogoodviewer_outline_test_');
+    tempTestDir = Directory.systemTemp.createTempSync('supergoodviewer_outline_test_');
     PreferencesService.setConfigFileForTesting(
       File(p.join(tempTestDir.path, 'preferences.json')),
     );

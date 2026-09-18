@@ -32,8 +32,16 @@ if [ "$IS_DARWIN" = true ]; then
     fi
   fi
 else
-  # Linux: find sogoodviewer binary
-  if [ -x "$SCRIPT_DIR/sogoodviewer" ]; then
+  # Linux: find supergoodviewer binary
+  if [ -x "$SCRIPT_DIR/supergoodviewer" ]; then
+    APP_BIN="$SCRIPT_DIR/supergoodviewer"
+  elif [ -x "$SCRIPT_DIR/../supergoodviewer" ]; then
+    APP_BIN="$(cd "$SCRIPT_DIR/.." && pwd)/supergoodviewer"
+  elif command -v supergoodviewer >/dev/null 2>&1; then
+    APP_BIN="$(command -v supergoodviewer)"
+  elif [ -x "/opt/supergoodviewer/supergoodviewer" ]; then
+    APP_BIN="/opt/supergoodviewer/supergoodviewer"
+  elif [ -x "$SCRIPT_DIR/sogoodviewer" ]; then
     APP_BIN="$SCRIPT_DIR/sogoodviewer"
   elif [ -x "$SCRIPT_DIR/../sogoodviewer" ]; then
     APP_BIN="$(cd "$SCRIPT_DIR/.." && pwd)/sogoodviewer"
@@ -42,7 +50,7 @@ else
   elif [ -x "/opt/supergoodviewer/sogoodviewer" ]; then
     APP_BIN="/opt/supergoodviewer/sogoodviewer"
   else
-    APP_BIN="sogoodviewer"
+    APP_BIN="supergoodviewer"
   fi
 fi
 

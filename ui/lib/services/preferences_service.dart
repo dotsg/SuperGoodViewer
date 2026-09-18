@@ -38,7 +38,9 @@ class PreferencesService {
           final appData = Platform.environment['APPDATA'] ?? home;
           appSupportDir = Directory(p.join(appData, 'com.sogood.sogoodviewer'));
         } else {
-          appSupportDir = Directory(p.join(home, '.sogoodviewer'));
+          final primary = Directory(p.join(home, '.supergoodviewer'));
+          final legacy = Directory(p.join(home, '.sogoodviewer'));
+          appSupportDir = legacy.existsSync() && !primary.existsSync() ? legacy : primary;
         }
         if (!appSupportDir.existsSync()) {
           appSupportDir.createSync(recursive: true);
@@ -48,7 +50,9 @@ class PreferencesService {
       }
     } catch (_) {}
 
-    final dir = Directory(p.join(Directory.current.path, '.sogoodviewer'));
+    final primary = Directory(p.join(Directory.current.path, '.supergoodviewer'));
+    final legacy = Directory(p.join(Directory.current.path, '.sogoodviewer'));
+    final dir = legacy.existsSync() && !primary.existsSync() ? legacy : primary;
     _cachedConfigFile = File(p.join(dir.path, _prefFileName));
     return _cachedConfigFile!;
   }

@@ -84,6 +84,7 @@ echo "  -> [WSL] Resolving Linux pub packages..."
 cd ../ui && flutter pub get
 echo "  -> [WSL] Building Flutter Linux..."
 flutter build linux --release
+test -f ui/build/linux/x64/release/bundle/supergoodviewer || { echo "Missing supergoodviewer binary"; exit 1; }
 echo "  -> [WSL] Packaging tar.gz..."
 cd "$wslRoot"
 mkdir -p dist

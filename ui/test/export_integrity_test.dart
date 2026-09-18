@@ -20,7 +20,7 @@ void main() {
   late Directory tempTestDir;
 
   setUpAll(() async {
-    tempTestDir = Directory.systemTemp.createTempSync('sogoodviewer_export_test_');
+    tempTestDir = Directory.systemTemp.createTempSync('supergoodviewer_export_test_');
     PreferencesService.setConfigFileForTesting(
       File(p.join(tempTestDir.path, 'preferences.json')),
     );

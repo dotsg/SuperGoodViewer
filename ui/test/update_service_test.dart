@@ -576,6 +576,96 @@ exec /bin/mv "\$@"
       // Verify stagingDir was cleaned up
       expect(Directory(stagingDirPath).existsSync(), isFalse);
     });
+
+    test('buildLinuxUpdateScript updates app and launches supergoodviewer', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('linux_script_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = '${testDir.path}/app';
+      final stagingDirPath = '${testDir.path}/staging';
+      Directory(appDir).createSync(recursive: true);
+      Directory(stagingDirPath).createSync(recursive: true);
+
+      final oldExe = File('$appDir/supergoodviewer');
+      oldExe.writeAsStringSync('echo "old version"\n');
+      Process.runSync('chmod', ['+x', oldExe.path]);
+
+      final newExe = File('$stagingDirPath/supergoodviewer');
+      newExe.writeAsStringSync('echo "new version"\n');
+      Process.runSync('chmod', ['+x', newExe.path]);
+
+      final dummyProcess = await Process.start('true', []);
+      final dummyPid = dummyProcess.pid;
+      await dummyProcess.exitCode;
+
+      final script = UpdateService.buildLinuxUpdateScript(
+        currentPid: dummyPid,
+        exePath: oldExe.path,
+        appDir: appDir,
+        stagingDirPath: stagingDirPath,
+      );
+
+      final result = await Process.run('/bin/sh', ['-c', script]);
+      expect(result.exitCode, 0, reason: 'Script stderr: ${result.stderr}');
+
+      expect(File('$appDir/supergoodviewer').existsSync(), isTrue);
+      expect(File('$appDir/supergoodviewer').readAsStringSync(), 'echo "new version"\n');
+      expect(Directory(stagingDirPath).existsSync(), isFalse);
+    });
+
+    test('buildLinuxUpdateScript migrates legacy sogoodviewer to supergoodviewer and removes old binary', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('linux_legacy_migration_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = '${testDir.path}/app';
+      final stagingDirPath = '${testDir.path}/staging';
+      Directory(appDir).createSync(recursive: true);
+      Directory(stagingDirPath).createSync(recursive: true);
+
+      // Legacy installation has 'sogoodviewer' binary
+      final legacyExe = File('$appDir/sogoodviewer');
+      legacyExe.writeAsStringSync('echo "legacy sogoodviewer"\n');
+      Process.runSync('chmod', ['+x', legacyExe.path]);
+
+      // New staged package has 'supergoodviewer'
+      final newExe = File('$stagingDirPath/supergoodviewer');
+      newExe.writeAsStringSync('echo "modern supergoodviewer"\n');
+      Process.runSync('chmod', ['+x', newExe.path]);
+
+      final dummyProcess = await Process.start('true', []);
+      final dummyPid = dummyProcess.pid;
+      await dummyProcess.exitCode;
+
+      final script = UpdateService.buildLinuxUpdateScript(
+        currentPid: dummyPid,
+        exePath: legacyExe.path,
+        appDir: appDir,
+        stagingDirPath: stagingDirPath,
+      );
+
+      final result = await Process.run('/bin/sh', ['-c', script]);
+      expect(result.exitCode, 0, reason: 'Script stderr: ${result.stderr}');
+
+      // New binary installed
+      expect(File('$appDir/supergoodviewer').existsSync(), isTrue);
+      expect(File('$appDir/supergoodviewer').readAsStringSync(), 'echo "modern supergoodviewer"\n');
+      // Legacy binary cleaned up
+      expect(File('$appDir/sogoodviewer').existsSync(), isFalse);
+      // Staging directory cleaned up
+      expect(Directory(stagingDirPath).existsSync(), isFalse);
+    });
   });
 
   group('UpdateDialog Reentrancy & Cancellation Widget Tests (Issues 4 & 5)', () {

@@ -210,7 +210,7 @@
 ### 6.1 工程目录结构
 
 ```text
-sogoodviewer/
+SuperGoodViewer/
 ├── core/                         # Rust 核心引擎 (Cargo Workspace)
 │   ├── Cargo.toml
 │   ├── src/

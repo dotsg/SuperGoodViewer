@@ -382,7 +382,7 @@ jobs:
       - name: Package Linux Portable tar.gz
         run: |
           BUNDLE="ui/build/linux/x64/release/bundle"
-          test -f "$BUNDLE/sogoodviewer" || { echo "::error::$BUNDLE/sogoodviewer missing"; exit 1; }
+          test -f "$BUNDLE/supergoodviewer" || { echo "::error::$BUNDLE/supergoodviewer missing"; exit 1; }
           test -f "$BUNDLE/lib/libsogood_core.so" || { echo "::error::$BUNDLE/lib/libsogood_core.so missing"; exit 1; }
           test -f "$BUNDLE/bin/sgv" || { echo "::error::$BUNDLE/bin/sgv missing"; exit 1; }
           test -x "$BUNDLE/bin/sgv" || { echo "::error::$BUNDLE/bin/sgv is not executable"; exit 1; }
@@ -454,4 +454,4 @@ jobs:
             #### 🐧 Linux 用户
             - **Intel / AMD 64位 Linux**：下载 `SuperGoodViewer-${{ env.RELEASE_VERSION }}-linux-x64.tar.gz`
             - **系统要求**：Ubuntu 20.04+、Debian 11+、Fedora、Arch Linux 等主流 64 位发行版（需安装 GTK 3 环境）
-            - **使用方式**：解压 tar.gz 归档至任意目录，运行 `./sogoodviewer` 即可直接启动（绿色免安装）；亦可将解压目录中的 `bin/sgv` 脚本软链接至 `~/.local/bin/sgv`，在终端随时以命令行唤起。
+            - **使用方式**：解压 tar.gz 归档至任意目录，运行 `./supergoodviewer` 即可直接启动（绿色免安装）；亦可将解压目录中的 `bin/sgv` 脚本软链接至 `~/.local/bin/sgv`，在终端随时以命令行唤起。

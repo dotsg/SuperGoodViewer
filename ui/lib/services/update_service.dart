@@ -389,6 +389,29 @@ fi
 ''';
   }
 
+  @visibleForTesting
+  static String buildLinuxUpdateScript({
+    required int currentPid,
+    required String exePath,
+    required String appDir,
+    required String stagingDirPath,
+  }) {
+    return '''
+while kill -0 $currentPid 2>/dev/null; do sleep 0.1; done
+cp -rf "$stagingDirPath"/* "$appDir"/
+TARGET_EXE="$appDir/supergoodviewer"
+if [ ! -f "\$TARGET_EXE" ]; then
+  TARGET_EXE="$exePath"
+fi
+if [ "$exePath" != "\$TARGET_EXE" ] && [ -f "$exePath" ]; then
+  rm -f "$exePath"
+fi
+chmod +x "\$TARGET_EXE"
+"\$TARGET_EXE" &
+rm -rf "$stagingDirPath"
+''';
+  }
+
   Future<void> _installAndRestartMacOS(String dmgPath) async {
     final appPath = resolveMacOSAppBundlePath();
     final targetAppPath = (appPath != null && !appPath.startsWith('/Volumes/'))
@@ -533,13 +556,12 @@ fi
       }
 
       final currentPid = pid;
-      final script = '''
-while kill -0 $currentPid 2>/dev/null; do sleep 0.1; done
-cp -rf "${stagingDir.path}"/* "$appDir"/
-chmod +x "$exePath"
-"$exePath" &
-rm -rf "${stagingDir.path}"
-''';
+      final script = buildLinuxUpdateScript(
+        currentPid: currentPid,
+        exePath: exePath,
+        appDir: appDir,
+        stagingDirPath: stagingDir.path,
+      );
 
       await Process.start(
         '/bin/sh',

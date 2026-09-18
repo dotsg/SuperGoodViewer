@@ -17,7 +17,7 @@ void main() {
   final multipagePdfFile = File('packages/pdfrx/test/assets/multipage40.pdf').absolute;
 
   setUpAll(() async {
-    tempTestDir = Directory.systemTemp.createTempSync('sogoodviewer_e2e_test_');
+    tempTestDir = Directory.systemTemp.createTempSync('supergoodviewer_e2e_test_');
     PreferencesService.setConfigFileForTesting(
       File(p.join(tempTestDir.path, 'preferences.json')),
     );
