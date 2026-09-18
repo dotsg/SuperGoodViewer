@@ -398,17 +398,25 @@ fi
   }) {
     return '''
 while kill -0 $currentPid 2>/dev/null; do sleep 0.1; done
-cp -rf "$stagingDirPath"/* "$appDir"/
-TARGET_EXE="$appDir/supergoodviewer"
-if [ ! -f "\$TARGET_EXE" ]; then
-  TARGET_EXE="$exePath"
+set -e
+if cp -rf "$stagingDirPath"/* "$appDir"/; then
+  TARGET_EXE="$appDir/supergoodviewer"
+  if [ ! -f "\$TARGET_EXE" ]; then
+    TARGET_EXE="$exePath"
+  fi
+  chmod +x "\$TARGET_EXE"
+  if [ "$exePath" != "\$TARGET_EXE" ] && [ -x "\$TARGET_EXE" ] && [ -f "$exePath" ]; then
+    rm -f "$exePath"
+  fi
+  "\$TARGET_EXE" &
+  rm -rf "$stagingDirPath"
+else
+  if [ -x "$exePath" ]; then
+    "$exePath" &
+  fi
+  rm -rf "$stagingDirPath"
+  exit 1
 fi
-if [ "$exePath" != "\$TARGET_EXE" ] && [ -f "$exePath" ]; then
-  rm -f "$exePath"
-fi
-chmod +x "\$TARGET_EXE"
-"\$TARGET_EXE" &
-rm -rf "$stagingDirPath"
 ''';
   }
 

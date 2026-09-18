@@ -666,6 +666,56 @@ exec /bin/mv "\$@"
       // Staging directory cleaned up
       expect(Directory(stagingDirPath).existsSync(), isFalse);
     });
+
+    test('buildLinuxUpdateScript preserves legacy binary if payload copy fails', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('linux_copy_fail_test_');
+      addTearDown(() {
+        try {
+          Process.runSync('chmod', ['-R', '777', testDir.path]);
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = '${testDir.path}/app';
+      final stagingDirPath = '${testDir.path}/staging';
+      Directory(appDir).createSync(recursive: true);
+      Directory(stagingDirPath).createSync(recursive: true);
+
+      final legacyExe = File('$appDir/sogoodviewer');
+      legacyExe.writeAsStringSync('echo "legacy sogoodviewer"\n');
+      Process.runSync('chmod', ['+x', legacyExe.path]);
+
+      // Stage new binary
+      final newExe = File('$stagingDirPath/supergoodviewer');
+      newExe.writeAsStringSync('echo "modern supergoodviewer"\n');
+
+      // Create conflicting file/dir to make cp fail
+      final conflictDir = Directory('$stagingDirPath/conflict_dir')..createSync();
+      File('${conflictDir.path}/file.txt').writeAsStringSync('payload');
+      final conflictFile = File('$appDir/conflict_dir')..writeAsStringSync('blocker');
+      Process.runSync('chmod', ['444', conflictFile.path]);
+      Process.runSync('chmod', ['555', appDir]);
+
+      final dummyProcess = await Process.start('true', []);
+      final dummyPid = dummyProcess.pid;
+      await dummyProcess.exitCode;
+
+      final script = UpdateService.buildLinuxUpdateScript(
+        currentPid: dummyPid,
+        exePath: legacyExe.path,
+        appDir: appDir,
+        stagingDirPath: stagingDirPath,
+      );
+
+      final result = await Process.run('/bin/sh', ['-c', script]);
+      expect(result.exitCode, isNot(0));
+
+      // Legacy executable MUST be preserved!
+      expect(File(legacyExe.path).existsSync(), isTrue);
+      expect(File(legacyExe.path).readAsStringSync(), 'echo "legacy sogoodviewer"\n');
+    });
   });
 
   group('UpdateDialog Reentrancy & Cancellation Widget Tests (Issues 4 & 5)', () {

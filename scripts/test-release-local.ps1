@@ -84,9 +84,9 @@ echo "  -> [WSL] Resolving Linux pub packages..."
 cd ../ui && flutter pub get
 echo "  -> [WSL] Building Flutter Linux..."
 flutter build linux --release
-test -f ui/build/linux/x64/release/bundle/supergoodviewer || { echo "Missing supergoodviewer binary"; exit 1; }
 echo "  -> [WSL] Packaging tar.gz..."
 cd "$wslRoot"
+test -f ui/build/linux/x64/release/bundle/supergoodviewer || { echo "Missing supergoodviewer binary"; exit 1; }
 mkdir -p dist
 tar -czvf "dist/SuperGoodViewer-$Version-linux-x64.tar.gz" -C ui/build/linux/x64/release/bundle .
 "@
