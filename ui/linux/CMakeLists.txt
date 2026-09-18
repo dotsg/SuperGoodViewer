@@ -114,10 +114,17 @@ if(EXISTS "${SOGOOD_CORE_LIB}")
     COMPONENT Runtime)
 endif()
 
-# Bundle sgv CLI script
+# Bundle sgv CLI script and sgv-cli binary
 set(SGV_CLI_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../bin/sgv")
 if(EXISTS "${SGV_CLI_SCRIPT}")
   install(PROGRAMS "${SGV_CLI_SCRIPT}"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}/bin"
+    COMPONENT Runtime)
+endif()
+
+set(SGV_CLI_BIN "${CMAKE_CURRENT_SOURCE_DIR}/../../core/target/release/sgv-cli")
+if(EXISTS "${SGV_CLI_BIN}")
+  install(PROGRAMS "${SGV_CLI_BIN}"
     DESTINATION "${CMAKE_INSTALL_PREFIX}/bin"
     COMPONENT Runtime)
 endif()

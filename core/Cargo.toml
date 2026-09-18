@@ -7,6 +7,14 @@ edition = "2024"
 name = "sogood_core"
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "sgv-cli"
+path = "src/bin/sgv_cli.rs"
+
+[[bin]]
+name = "benchmark"
+path = "src/bin/benchmark.rs"
+
 [dependencies]
 typst = "0.15.1"
 typst-layout = "0.15.1"

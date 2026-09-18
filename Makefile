@@ -13,34 +13,41 @@ build: build-core-universal build-app
 	@echo "==> Packaging universal dylib into macOS App Bundle..."
 	@mkdir -p ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Frameworks/
 	@cp core/target/universal/release/libsogood_core.dylib ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Frameworks/
-	@echo "==> Packaging CLI script into macOS App Bundle..."
+	@echo "==> Packaging CLI scripts and tools into macOS App Bundle..."
 	@mkdir -p ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/
 	@cp ui/bin/sgv ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv
+	@cp core/target/universal/release/sgv-cli ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv-cli
 	@chmod +x ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv
+	@chmod +x ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv-cli
 	@echo "==> Re-signing macOS App Bundle..."
 	@codesign --force --deep --sign - ui/build/macos/Build/Products/Release/SuperGoodViewer.app
 	@echo "==> Build complete! Output: ui/build/macos/Build/Products/Release/SuperGoodViewer.app"
 
 # Host-architecture only -- fast path for local development (run-macos, tests).
 build-core:
-	@echo "==> Building Rust sogood_core (release, host arch)..."
-	@cd core && cargo build --release --lib
+	@echo "==> Building Rust sogood_core & sgv-cli (release, host arch)..."
+	@cd core && cargo build --release --lib --bin sgv-cli
 
-# Universal (arm64 + x86_64) dylib. Flutter emits a universal Runner/engine for
+# Universal (arm64 + x86_64) binaries. Flutter emits a universal Runner/engine for
 # release macOS builds, so an arm64-only dylib makes dlopen fail on Intel Macs
 # with "Invalid arguments" (incompatible architecture).
 build-core-universal:
-	@echo "==> Building Rust sogood_core (release, arm64 + x86_64)..."
+	@echo "==> Building Rust sogood_core & sgv-cli (release, arm64 + x86_64)..."
 	@rustup target add aarch64-apple-darwin x86_64-apple-darwin
-	@cd core && cargo build --release --lib --target aarch64-apple-darwin
-	@cd core && cargo build --release --lib --target x86_64-apple-darwin
-	@echo "==> Merging into a universal binary with lipo..."
+	@cd core && cargo build --release --lib --bin sgv-cli --target aarch64-apple-darwin
+	@cd core && cargo build --release --lib --bin sgv-cli --target x86_64-apple-darwin
+	@echo "==> Merging into universal binaries with lipo..."
 	@mkdir -p core/target/universal/release
 	@lipo -create \
 		core/target/aarch64-apple-darwin/release/libsogood_core.dylib \
 		core/target/x86_64-apple-darwin/release/libsogood_core.dylib \
 		-output core/target/universal/release/libsogood_core.dylib
+	@lipo -create \
+		core/target/aarch64-apple-darwin/release/sgv-cli \
+		core/target/x86_64-apple-darwin/release/sgv-cli \
+		-output core/target/universal/release/sgv-cli
 	@lipo -info core/target/universal/release/libsogood_core.dylib
+	@lipo -info core/target/universal/release/sgv-cli
 
 build-app:
 	@echo "==> Building Flutter Desktop macOS app..."
@@ -52,7 +59,7 @@ test: test-core build-core test-app
 
 test-core:
 	@echo "==> Running Rust core unit & integration tests..."
-	@cd core && cargo test --lib -- --nocapture
+	@cd core && cargo test --lib --bin sgv-cli -- --nocapture
 
 test-app:
 	@echo "==> Running Flutter static analysis and tests..."
@@ -79,6 +86,7 @@ build-windows: build-core
 	@echo "==> Injecting Rust DLL & CLI script into Windows bundle..."
 	@mkdir -p ui/build/windows/x64/runner/Release
 	@cp core/target/release/sogood_core.dll ui/build/windows/x64/runner/Release/
+	@cp core/target/release/sgv-cli.exe ui/build/windows/x64/runner/Release/
 	@cp ui/bin/sgv.cmd ui/build/windows/x64/runner/Release/
 	@cp ui/bin/sgv.ps1 ui/build/windows/x64/runner/Release/
 	@echo "==> Windows build complete! Output: ui/build/windows/x64/runner/Release/"
@@ -92,6 +100,10 @@ run-windows: build-core
 build-linux: build-core
 	@echo "==> Building Flutter Desktop Linux app..."
 	@cd ui && $(FLUTTER) build linux --release
+	@echo "==> Injecting CLI tools into Linux bundle..."
+	@mkdir -p ui/build/linux/x64/release/bundle/bin
+	@cp core/target/release/sgv-cli ui/build/linux/x64/release/bundle/bin/
+	@chmod +x ui/build/linux/x64/release/bundle/bin/sgv-cli
 	@echo "==> Linux build complete! Output: ui/build/linux/x64/release/bundle/"
 
 run-linux: build-core
@@ -117,14 +129,15 @@ package-windows: build-windows
 	@echo "==> Package created: dist/SuperGoodViewer-windows-x64.zip"
 
 build-windows-arm64:
-	@echo "==> Building Rust sogood_core for aarch64-pc-windows-msvc..."
-	@cd core && cargo build --release --lib --target aarch64-pc-windows-msvc
+	@echo "==> Building Rust sogood_core & sgv-cli for aarch64-pc-windows-msvc..."
+	@cd core && cargo build --release --lib --bin sgv-cli --target aarch64-pc-windows-msvc
 	@echo "==> Configuring and building Flutter Windows ARM64 target..."
 	@cd ui && $(FLUTTER) build windows --config-only
 	@cmake -S ui/windows -B ui/build/windows_arm64 -A ARM64 -DFLUTTER_TARGET_PLATFORM=windows-arm64 -DCMAKE_DISABLE_FIND_PACKAGE_JNI=TRUE
 	@cmake --build ui/build/windows_arm64 --config Release --target INSTALL
 	@echo "==> Injecting Rust ARM64 DLL & CLI scripts into Windows ARM64 bundle..."
 	@cp core/target/aarch64-pc-windows-msvc/release/sogood_core.dll ui/build/windows_arm64/runner/Release/
+	@cp core/target/aarch64-pc-windows-msvc/release/sgv-cli.exe ui/build/windows_arm64/runner/Release/
 	@cp ui/bin/sgv.cmd ui/build/windows_arm64/runner/Release/
 	@cp ui/bin/sgv.ps1 ui/build/windows_arm64/runner/Release/
 	@echo "==> Windows ARM64 build complete! Output: ui/build/windows_arm64/runner/Release/"

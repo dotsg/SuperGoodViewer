@@ -36,10 +36,10 @@ if (-not (Test-Path $distDir)) {
 Write-Host "`n[2/4] Simulating Windows x64 Release Build..." -ForegroundColor Yellow
 $swWin = [System.Diagnostics.Stopwatch]::StartNew()
 
-# Build Rust core (use --lib to build dylib without unnecessary benchmarks)
-Write-Host "  -> Building Rust sogood_core (Release --lib)..."
+# Build Rust core (use --lib --bin sgv-cli)
+Write-Host "  -> Building Rust sogood_core & sgv-cli (Release)..."
 Set-Location "$root\core"
-cargo build --release --lib
+cargo build --release --lib --bin sgv-cli
 if ($LASTEXITCODE -ne 0) { throw "Cargo build failed" }
 
 # Build Flutter Desktop Windows
@@ -53,6 +53,7 @@ if ($LASTEXITCODE -ne 0) { throw "Flutter windows build failed" }
 Write-Host "  -> Injecting artifacts & packaging ZIP..."
 $winBuildDir = "$root\ui\build\windows\x64\runner\Release"
 Copy-Item "$root\core\target\release\sogood_core.dll" -Destination $winBuildDir -Force
+Copy-Item "$root\core\target\release\sgv-cli.exe" -Destination $winBuildDir -Force
 Copy-Item "$root\ui\bin\sgv.cmd" -Destination $winBuildDir -Force
 Copy-Item "$root\ui\bin\sgv.ps1" -Destination $winBuildDir -Force
 
@@ -63,6 +64,7 @@ Compress-Archive -Path "$winBuildDir\*" -DestinationPath $winZip
 # Verification
 if (-not (Test-Path "$winBuildDir\SuperGoodViewer.exe")) { throw "Missing SuperGoodViewer.exe" }
 if (-not (Test-Path "$winBuildDir\sogood_core.dll")) { throw "Missing sogood_core.dll" }
+if (-not (Test-Path "$winBuildDir\sgv-cli.exe")) { throw "Missing sgv-cli.exe" }
 if (-not (Test-Path "$winBuildDir\sgv.cmd")) { throw "Missing sgv.cmd" }
 $swWin.Stop()
 $winSize = (Get-Item $winZip).Length / 1MB
@@ -78,15 +80,20 @@ $wslCmd = @"
 set -e
 cd "$wslRoot"
 export PATH="/usr/local/bin:/opt/flutter/bin:`$PATH"
-echo "  -> [WSL] Building Rust sogood_core (--lib)..."
-cd core && cargo build --release --lib
+echo "  -> [WSL] Building Rust sogood_core & sgv-cli..."
+cd core && cargo build --release --lib --bin sgv-cli
 echo "  -> [WSL] Resolving Linux pub packages..."
 cd ../ui && flutter pub get
 echo "  -> [WSL] Building Flutter Linux..."
 flutter build linux --release
+echo "  -> [WSL] Injecting sgv-cli into Linux bundle..."
+mkdir -p "$wslRoot/ui/build/linux/x64/release/bundle/bin"
+cp "$wslRoot/core/target/release/sgv-cli" "$wslRoot/ui/build/linux/x64/release/bundle/bin/"
+chmod +x "$wslRoot/ui/build/linux/x64/release/bundle/bin/sgv-cli"
 echo "  -> [WSL] Packaging tar.gz..."
 cd "$wslRoot"
 test -f ui/build/linux/x64/release/bundle/supergoodviewer || { echo "Missing supergoodviewer binary"; exit 1; }
+test -f ui/build/linux/x64/release/bundle/bin/sgv-cli || { echo "Missing sgv-cli binary"; exit 1; }
 mkdir -p dist
 tar -czvf "dist/SuperGoodViewer-$Version-linux-x64.tar.gz" -C ui/build/linux/x64/release/bundle .
 "@

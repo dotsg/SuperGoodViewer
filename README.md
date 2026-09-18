@@ -159,6 +159,26 @@ sgv
 sgv -h
 ```
 
+### 3. 无头静默导出 PDF (`sgv export`)
+支持 AI 编码工具（如 Claude Code, Cursor, 脚本）或终端用户直接将 Markdown 批量导出为出版级 PDF，完全后台静默执行、不弹出任何窗口、支持 stdin 管道：
+
+```bash
+# 导出单个文档为 PDF（默认输出 README.pdf）
+sgv export README.md
+
+# 指定输出文件路径与页面版式（支持 a4, a4-landscape, fluid, slide）
+sgv export report.md -o output.pdf --format a4
+
+# 导出为 16:9 演示幻灯片 PDF
+sgv export deck.md -o slides.pdf --format slide
+
+# 批量导出整个目录（保留子目录层级）
+sgv export ./docs -o ./dist
+
+# 从标准输入 (stdin) 管道读取并导出
+cat draft.md | sgv export - -o draft.pdf
+```
+
 ---
 
 ## ⌨️ 常用快捷键指南

@@ -1016,8 +1016,8 @@ if [ -f "$appDir/.sgv_journal" ]; then
   if [ -n "\$PREV_PID" ] && [ "\$PREV_PID" -gt 1 ] 2>/dev/null; then
     if kill -0 "\$PREV_PID" 2>/dev/null; then
       if [ -d "/proc/\$PREV_PID" ] && [ -f "/proc/\$PREV_PID/cmdline" ]; then
-        if { grep -q -a -F "$appDir" "/proc/\$PREV_PID/cmdline" 2>/dev/null || \
-             grep -q -a -F "\$REAL_APP_DIR" "/proc/\$PREV_PID/cmdline" 2>/dev/null; } && \
+        if { grep -q -a -F "$appDir" "/proc/\$PREV_PID/cmdline" 2>/dev/null ||
+             grep -q -a -F "\$REAL_APP_DIR" "/proc/\$PREV_PID/cmdline" 2>/dev/null; } &&
            grep -q -a -E "supergoodviewer|sogoodviewer" "/proc/\$PREV_PID/cmdline" 2>/dev/null; then
           IS_PREV_ALIVE=1
         fi
@@ -1101,8 +1101,8 @@ if [ -f "$appDir/.sgv_journal" ]; then
       if mv "\$p" "$appDir/\$n" 2>/dev/null; then
         if [ -n "\$PREV_INSTALLED" ] && [ -f "\$PREV_INSTALLED" ]; then
           if grep -q -F -x "\$n" "\$PREV_INSTALLED" 2>/dev/null; then
-            grep -v -F -x "\$n" "\$PREV_INSTALLED" > "\$PREV_INSTALLED.tmp.\$\$" 2>/dev/null && \
-              mv -f "\$PREV_INSTALLED.tmp.\$\$" "\$PREV_INSTALLED" 2>/dev/null || \
+            grep -v -F -x "\$n" "\$PREV_INSTALLED" > "\$PREV_INSTALLED.tmp.\$\$" 2>/dev/null &&
+              mv -f "\$PREV_INSTALLED.tmp.\$\$" "\$PREV_INSTALLED" 2>/dev/null ||
               rm -f "\$PREV_INSTALLED.tmp.\$\$" 2>/dev/null
           fi
         fi
@@ -1135,8 +1135,8 @@ for d in "$appDir"/.sgv_new.* "$appDir"/.sgv_backup.* "$appDir"/.sgv_installed.*
   if [ -n "\$d_pid" ] && [ "\$d_pid" -gt 1 ] 2>/dev/null; then
     if kill -0 "\$d_pid" 2>/dev/null; then
       if [ -d "/proc/\$d_pid" ] && [ -f "/proc/\$d_pid/cmdline" ]; then
-        if { grep -q -a -F "$appDir" "/proc/\$d_pid/cmdline" 2>/dev/null || \
-             grep -q -a -F "\$REAL_APP_DIR" "/proc/\$d_pid/cmdline" 2>/dev/null; } && \
+        if { grep -q -a -F "$appDir" "/proc/\$d_pid/cmdline" 2>/dev/null ||
+             grep -q -a -F "\$REAL_APP_DIR" "/proc/\$d_pid/cmdline" 2>/dev/null; } &&
            grep -q -a -E "supergoodviewer|sogoodviewer" "/proc/\$d_pid/cmdline" 2>/dev/null; then
           IS_D_ALIVE=1
         fi
@@ -1224,8 +1224,8 @@ rollback() {
       else
         if [ -f "\$INSTALLED_LIST" ]; then
           if grep -q -F -x "\$n" "\$INSTALLED_LIST" 2>/dev/null; then
-            grep -v -F -x "\$n" "\$INSTALLED_LIST" > "\$INSTALLED_LIST.tmp.\$\$" 2>/dev/null && \
-              mv -f "\$INSTALLED_LIST.tmp.\$\$" "\$INSTALLED_LIST" 2>/dev/null || \
+            grep -v -F -x "\$n" "\$INSTALLED_LIST" > "\$INSTALLED_LIST.tmp.\$\$" 2>/dev/null &&
+              mv -f "\$INSTALLED_LIST.tmp.\$\$" "\$INSTALLED_LIST" 2>/dev/null ||
               rm -f "\$INSTALLED_LIST.tmp.\$\$" 2>/dev/null
           fi
         fi

@@ -109,6 +109,20 @@ static FlValue* install_cli() {
   unlink(symlink_path);
 
   if (symlink(target, symlink_path) == 0) {
+    // Optionally also link sgv-cli binary if available adjacent to sgv
+    gchar* target_dir = g_path_get_dirname(target);
+    gchar* cli_bin_target = g_build_filename(target_dir, "sgv-cli", nullptr);
+    const gchar* home = g_get_home_dir();
+    gchar* cli_bin_symlink = g_build_filename(home, ".local", "bin", "sgv-cli", nullptr);
+
+    if (g_file_test(cli_bin_target, G_FILE_TEST_EXISTS)) {
+      unlink(cli_bin_symlink);
+      symlink(cli_bin_target, cli_bin_symlink);
+    }
+    g_free(target_dir);
+    g_free(cli_bin_target);
+    g_free(cli_bin_symlink);
+
     fl_value_set_string_take(map, "status", fl_value_new_string("success"));
     fl_value_set_string_take(map, "path", fl_value_new_string(symlink_path));
   } else {
@@ -126,6 +140,12 @@ static FlValue* uninstall_cli() {
   gchar* symlink_path = get_linux_user_cli_symlink();
   unlink(symlink_path);
   unlink("/usr/local/bin/sgv");
+
+  const gchar* home = g_get_home_dir();
+  gchar* cli_bin_symlink = g_build_filename(home, ".local", "bin", "sgv-cli", nullptr);
+  unlink(cli_bin_symlink);
+  unlink("/usr/local/bin/sgv-cli");
+  g_free(cli_bin_symlink);
 
   fl_value_set_string_take(map, "status", fl_value_new_string("success"));
   g_free(symlink_path);

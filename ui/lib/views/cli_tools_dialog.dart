@@ -132,12 +132,13 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
       backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 520),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
               // Header
               Row(
                 children: [
@@ -327,15 +328,22 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
               const SizedBox(height: 8),
               _CommandRow(
                 command: 'sgv README.md',
-                description: '打开当前目录下的 Markdown 文档',
+                description: '在阅读器中打开 Markdown 文档',
                 onCopy: () => _copyCommand('sgv README.md'),
                 isDark: isDark,
               ),
               const SizedBox(height: 6),
               _CommandRow(
-                command: Platform.isWindows ? 'sgv .\\notes\\todo.md' : 'sgv ~/notes/todo.md',
-                description: '支持绝对路径与相对路径',
-                onCopy: () => _copyCommand(Platform.isWindows ? 'sgv .\\notes\\todo.md' : 'sgv ~/notes/todo.md'),
+                command: 'sgv export README.md -o output.pdf',
+                description: '无头导出单篇 Markdown 为出版级 PDF',
+                onCopy: () => _copyCommand('sgv export README.md -o output.pdf'),
+                isDark: isDark,
+              ),
+              const SizedBox(height: 6),
+              _CommandRow(
+                command: Platform.isWindows ? 'sgv export .\\docs -o .\\dist' : 'sgv export ./docs -o ./dist',
+                description: '批量将目录下全部 Markdown 导出为 PDF',
+                onCopy: () => _copyCommand(Platform.isWindows ? 'sgv export .\\docs -o .\\dist' : 'sgv export ./docs -o ./dist'),
                 isDark: isDark,
               ),
               const SizedBox(height: 6),
@@ -363,7 +371,8 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
           ),
         ),
       ),
-    );
+    ),
+  );
   }
 }
 

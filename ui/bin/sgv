@@ -264,20 +264,93 @@ else
   fi
 fi
 
-# 3. Handle help and flags
+# 3. Locate headless export CLI binary
+CLI_BIN=""
+if [ -x "$SCRIPT_DIR/sgv-cli" ]; then
+  CLI_BIN="$SCRIPT_DIR/sgv-cli"
+elif [ -x "$SCRIPT_DIR/../bin/sgv-cli" ]; then
+  CLI_BIN="$SCRIPT_DIR/../bin/sgv-cli"
+elif [ -x "$APP_DIR/Contents/Resources/bin/sgv-cli" ]; then
+  CLI_BIN="$APP_DIR/Contents/Resources/bin/sgv-cli"
+elif [ -x "$APP_DIR/Contents/MacOS/sgv-cli" ]; then
+  CLI_BIN="$APP_DIR/Contents/MacOS/sgv-cli"
+elif [ -n "$APP_BIN" ] && [ -x "$(dirname "$APP_BIN")/bin/sgv-cli" ]; then
+  CLI_BIN="$(dirname "$APP_BIN")/bin/sgv-cli"
+elif [ -n "$APP_BIN" ] && [ -x "$(dirname "$APP_BIN")/sgv-cli" ]; then
+  CLI_BIN="$(dirname "$APP_BIN")/sgv-cli"
+elif [ -x "$SCRIPT_DIR/../../core/target/release/sgv-cli" ]; then
+  CLI_BIN="$SCRIPT_DIR/../../core/target/release/sgv-cli"
+elif [ -x "$SCRIPT_DIR/../../core/target/debug/sgv-cli" ]; then
+  CLI_BIN="$SCRIPT_DIR/../../core/target/debug/sgv-cli"
+elif command -v sgv-cli >/dev/null 2>&1; then
+  CLI_BIN="$(command -v sgv-cli)"
+fi
+
+# 4. Check for export mode or flags
+IS_EXPORT=false
+if [ "$1" = "export" ]; then
+  IS_EXPORT=true
+else
+  for arg in "$@"; do
+    case "$arg" in
+      -o | --output | --export | -f | --format | --page-format | --fluid | --theme | --dark | -s | --font-size | --title | -r | --recursive | --no-recursive | --image-cache-dir)
+        IS_EXPORT=true
+        break
+        ;;
+    esac
+  done
+fi
+
+if [ "$IS_EXPORT" = true ]; then
+  if [ -n "$CLI_BIN" ] && [ -x "$CLI_BIN" ]; then
+    exec "$CLI_BIN" "$@"
+  else
+    echo "sgv: error: headless export tool 'sgv-cli' not found" >&2
+    exit 1
+  fi
+fi
+
+# 5. Handle help and flags
 if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-  echo "SuperGoodViewer (超好读) CLI Launcher"
+  echo "SuperGoodViewer (超好读) CLI Launcher & Tool"
   echo ""
   echo "Usage:"
-  echo "  sgv [file.md ...]      Open markdown file(s) in SuperGoodViewer"
-  echo "  sgv                    Launch or focus SuperGoodViewer"
-  echo "  sgv -h, --help         Show this help message"
+  echo "  sgv [file.md ...]               Open markdown file(s) in SuperGoodViewer GUI"
+  echo "  sgv export <path>... [options]  Export markdown file(s) or directory to PDF"
+  echo "  sgv <file.md> -o <output.pdf>   Export single markdown file to PDF"
+  echo "  sgv                             Launch or focus SuperGoodViewer GUI"
+  echo "  sgv -h, --help                  Show this help message"
+  echo ""
+  echo "Export Options:"
+  echo "  -o, --output <path>             Output PDF path or destination directory"
+  echo "  -f, --format <format>           Page layout format: a4, a4-landscape, fluid, slide, slide-4-3"
+  echo "      --fluid                     Shorthand for --format fluid"
+  echo "  -t, --theme <theme>             Theme: light, dark (default: light)"
+  echo "      --dark                      Shorthand for --theme dark"
+  echo "  -s, --font-size <pt>            Font size in points (default: 10.5)"
+  echo "  -r, --recursive                 Recursively scan subdirectories (default: enabled)"
+  echo "      --no-recursive              Do not scan subdirectories"
+  echo ""
+  echo "Examples:"
+  echo "  sgv README.md                             # View in GUI"
+  echo "  sgv export README.md                      # Export to README.pdf"
+  echo "  sgv export ./docs -o ./dist               # Batch export ./docs to ./dist"
+  echo "  cat draft.md | sgv export - -o draft.pdf  # Export from stdin"
   exit 0
+fi
+
+if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
+  if [ -n "$CLI_BIN" ] && [ -x "$CLI_BIN" ]; then
+    exec "$CLI_BIN" --version
+  else
+    echo "SuperGoodViewer CLI Launcher"
+    exit 0
+  fi
 fi
 
 SOCK_FILE="/tmp/sgv_${USER:-user}.sock"
 
-# 4. Open application or files
+# 6. Open application or files
 if [ $# -eq 0 ]; then
   if [ "$IS_DARWIN" = true ]; then
     open -a "$APP_DIR"

@@ -67,14 +67,19 @@ jobs:
         # arm64-only dylib makes dlopen fail on Intel Macs with "Invalid arguments".
         run: |
           cd core
-          cargo build --release --lib --target aarch64-apple-darwin
-          cargo build --release --lib --target x86_64-apple-darwin
+          cargo build --release --lib --bin sgv-cli --target aarch64-apple-darwin
+          cargo build --release --lib --bin sgv-cli --target x86_64-apple-darwin
           mkdir -p target/universal/release
           lipo -create \
             target/aarch64-apple-darwin/release/libsogood_core.dylib \
             target/x86_64-apple-darwin/release/libsogood_core.dylib \
             -output target/universal/release/libsogood_core.dylib
+          lipo -create \
+            target/aarch64-apple-darwin/release/sgv-cli \
+            target/x86_64-apple-darwin/release/sgv-cli \
+            -output target/universal/release/sgv-cli
           lipo -info target/universal/release/libsogood_core.dylib
+          lipo -info target/universal/release/sgv-cli
 
       - name: Build Flutter Desktop App (Release)
         run: |
@@ -95,7 +100,9 @@ jobs:
           echo "$ARCHS" | grep -q arm64 || { echo "::error::libsogood_core.dylib is missing the arm64 slice"; exit 1; }
           mkdir -p "$APP/Contents/Resources/bin/"
           cp ui/bin/sgv "$APP/Contents/Resources/bin/sgv"
+          cp core/target/universal/release/sgv-cli "$APP/Contents/Resources/bin/sgv-cli"
           chmod +x "$APP/Contents/Resources/bin/sgv"
+          chmod +x "$APP/Contents/Resources/bin/sgv-cli"
           # Re-sign app bundle after injecting dylib and CLI script so Gatekeeper doesn't reject modified code
           codesign --force --deep --sign - "$APP"
 
@@ -192,8 +199,9 @@ jobs:
           $buildDir = "ui/build/windows/x64/runner/Release"
           $rustDll = "core/target/release/sogood_core.dll"
 
-          # Copy Rust core dll next to executable
+          # Copy Rust core dll and sgv-cli next to executable
           Copy-Item -Path $rustDll -Destination $buildDir
+          Copy-Item -Path "core/target/release/sgv-cli.exe" -Destination $buildDir
 
           # Copy CLI launcher scripts into package
           Copy-Item -Path "ui/bin/sgv.cmd" -Destination $buildDir
@@ -311,6 +319,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist
           $buildDir = "ui/build/windows_arm64/runner/Release"
           Copy-Item -Path "core/target/aarch64-pc-windows-msvc/release/sogood_core.dll" -Destination $buildDir -Force
+          Copy-Item -Path "core/target/aarch64-pc-windows-msvc/release/sgv-cli.exe" -Destination $buildDir -Force
           Copy-Item -Path "ui/bin/sgv.cmd" -Destination $buildDir -Force
           Copy-Item -Path "ui/bin/sgv.ps1" -Destination $buildDir -Force
           $zipName = "dist/SuperGoodViewer-${{ env.RELEASE_VERSION }}-windows-arm64.zip"
@@ -368,7 +377,7 @@ jobs:
           workspaces: core
           key: linux-x64
 
-      - name: Build Rust sogood_core (Release)
+      - name: Build Rust sogood_core & sgv-cli (Release)
         run: |
           cd core
           cargo build --release
@@ -386,6 +395,10 @@ jobs:
           test -f "$BUNDLE/lib/libsogood_core.so" || { echo "::error::$BUNDLE/lib/libsogood_core.so missing"; exit 1; }
           test -f "$BUNDLE/bin/sgv" || { echo "::error::$BUNDLE/bin/sgv missing"; exit 1; }
           test -x "$BUNDLE/bin/sgv" || { echo "::error::$BUNDLE/bin/sgv is not executable"; exit 1; }
+          cp core/target/release/sgv-cli "$BUNDLE/bin/sgv-cli"
+          chmod +x "$BUNDLE/bin/sgv-cli"
+          test -f "$BUNDLE/bin/sgv-cli" || { echo "::error::$BUNDLE/bin/sgv-cli missing"; exit 1; }
+          test -x "$BUNDLE/bin/sgv-cli" || { echo "::error::$BUNDLE/bin/sgv-cli is not executable"; exit 1; }
           mkdir -p dist
           tar -czvf "dist/SuperGoodViewer-${{ env.RELEASE_VERSION }}-linux-x64.tar.gz" -C "$BUNDLE" .
 
