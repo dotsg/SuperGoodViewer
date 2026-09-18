@@ -40,6 +40,7 @@ else
       JOURNAL_PID=""
       BACKUP_DIR=""
       INSTALLED_LIST=""
+      IS_COMMITTED=0
       while IFS='=' read -r key val || [ -n "$key" ]; do
         case "$key" in
           PID)
@@ -51,6 +52,12 @@ else
             ;;
           BACKUP_DIR) BACKUP_DIR="$val" ;;
           INSTALLED_LIST) INSTALLED_LIST="$val" ;;
+          STATUS)
+            [ "$val" = "COMMITTED" ] && IS_COMMITTED=1
+            ;;
+          COMMITTED)
+            [ "$val" = "1" ] && IS_COMMITTED=1
+            ;;
           /*)
             if [ -z "$BACKUP_DIR" ] && [ -z "$val" ]; then
               BACKUP_DIR="$key"
@@ -144,8 +151,21 @@ else
         continue
       fi
 
+      if [ $IS_COMMITTED -eq 1 ]; then
+        # Transaction committed: the app payload is complete and verified.
+        # Clean up residual backup directory and temporary lists without rolling back.
+        if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
+          rm -rf "$BACKUP_DIR" 2>/dev/null || true
+        fi
+        [ -n "$INSTALLED_LIST" ] && rm -f "$INSTALLED_LIST" 2>/dev/null || true
+        rm -f "$candidate/.sgv_journal" 2>/dev/null || true
+        continue
+      fi
+
       if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
         if [ -n "$INSTALLED_LIST" ] && [ -f "$INSTALLED_LIST" ] && [ -n "$CANDIDATE_REAL" ]; then
+          INSTALLED_TMP="$INSTALLED_LIST.tmp.$$"
+          : > "$INSTALLED_TMP"
           while IFS= read -r n || [ -n "$n" ]; do
             case "$n" in
               "" | /* | . | .. | ./* | ../* | */. | */.. | */./* | */../* ) continue ;;
@@ -169,7 +189,11 @@ else
             elif [ -e "$target" ]; then
               rm -f "$target" 2>/dev/null || true
             fi
+            if [ -e "$target" ] || [ -L "$target" ]; then
+              echo "$n" >> "$INSTALLED_TMP"
+            fi
           done < "$INSTALLED_LIST"
+          mv -f "$INSTALLED_TMP" "$INSTALLED_LIST" 2>/dev/null || true
         fi
 
         RECOVERY_FAILED=0
@@ -193,7 +217,15 @@ else
             RECOVERY_FAILED=1
             continue
           fi
-          if ! mv "$p" "$candidate/$n" 2>/dev/null; then
+          if mv "$p" "$candidate/$n" 2>/dev/null; then
+            if [ -n "$INSTALLED_LIST" ] && [ -f "$INSTALLED_LIST" ]; then
+              if grep -q -F -x "$n" "$INSTALLED_LIST" 2>/dev/null; then
+                grep -v -F -x "$n" "$INSTALLED_LIST" > "$INSTALLED_LIST.tmp.$$" 2>/dev/null && \
+                  mv -f "$INSTALLED_LIST.tmp.$$" "$INSTALLED_LIST" 2>/dev/null || \
+                  rm -f "$INSTALLED_LIST.tmp.$$" 2>/dev/null
+              fi
+            fi
+          else
             RECOVERY_FAILED=1
           fi
         done

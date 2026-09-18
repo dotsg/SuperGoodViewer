@@ -2492,6 +2492,275 @@ exec /bin/mv "\$@"
       UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: appDir);
       expect(File('${appDir.path}/evil.txt').existsSync(), isFalse);
     });
+
+    test('Issue 1: repeated recovery does not delete already-restored files in Dart and Shell', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      // 1. Dart test
+      final dartTestDir = Directory.systemTemp.createTempSync('dart_issue1_test_');
+      addTearDown(() {
+        try {
+          Process.runSync('chmod', ['-R', '777', dartTestDir.path]);
+          dartTestDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final dartAppDir = Directory('${dartTestDir.path}/app')..createSync(recursive: true);
+      File('${dartAppDir.path}/supergoodviewer').writeAsStringSync('binary');
+      final dartDeadPid = findInactivePid();
+      final dartBackup = Directory('${dartAppDir.path}/.sgv_backup.$dartDeadPid')..createSync();
+      File('${dartBackup.path}/restored_a.txt').writeAsStringSync('original a');
+
+      // Create fail_item as directory with a read-only target in appDir so first recovery restores a but fails on b
+      final dartFailDir = Directory('${dartBackup.path}/fail_item')..createSync();
+      File('${dartFailDir.path}/sub.txt').writeAsStringSync('sub');
+      final dartAppFail = Directory('${dartAppDir.path}/fail_item')..createSync();
+      File('${dartAppFail.path}/sub.txt').writeAsStringSync('sub');
+      Process.runSync('chmod', ['555', dartAppFail.path]);
+
+      final dartInstalled = File('${dartAppDir.path}/.sgv_installed.$dartDeadPid');
+      dartInstalled.writeAsStringSync('restored_a.txt\nfail_item\n');
+
+      final dartJournal = File('${dartAppDir.path}/.sgv_journal');
+      dartJournal.writeAsStringSync('PID=$dartDeadPid\nBACKUP_DIR=${dartBackup.path}\nINSTALLED_LIST=${dartInstalled.path}\n');
+
+      // First recovery attempt: restores restored_a.txt, but fail_item fails.
+      UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: dartAppDir);
+
+      expect(File('${dartAppDir.path}/restored_a.txt').existsSync(), isTrue);
+      expect(File('${dartAppDir.path}/restored_a.txt').readAsStringSync(), 'original a');
+      // Notice: restored_a.txt was moved out of backup, so backup no longer has restored_a.txt!
+      expect(File('${dartBackup.path}/restored_a.txt').existsSync(), isFalse);
+
+      // Now run recovery a second time: restored_a.txt MUST NOT be deleted by INSTALLED_LIST!
+      UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: dartAppDir);
+      expect(File('${dartAppDir.path}/restored_a.txt').existsSync(), isTrue);
+      expect(File('${dartAppDir.path}/restored_a.txt').readAsStringSync(), 'original a');
+
+      // 2. Shell test (sgv)
+      final shellTestDir = Directory.systemTemp.createTempSync('shell_issue1_test_');
+      addTearDown(() {
+        try {
+          Process.runSync('chmod', ['-R', '777', shellTestDir.path]);
+          shellTestDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final binDir = Directory('${shellTestDir.path}/bin')..createSync(recursive: true);
+      final sgvFile = File('${binDir.path}/sgv');
+      File('bin/sgv').copySync(sgvFile.path);
+      Process.runSync('chmod', ['+x', sgvFile.path]);
+
+      final unameMock = File('${binDir.path}/uname');
+      unameMock.writeAsStringSync('#!/bin/sh\necho "Linux"\n');
+      Process.runSync('chmod', ['+x', unameMock.path]);
+      final testEnv = {'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}'};
+
+      final shellAppDir = shellTestDir;
+      final shellExe = File('${shellAppDir.path}/supergoodviewer')..writeAsStringSync('#!/bin/sh\nexit 0\n');
+      Process.runSync('chmod', ['+x', shellExe.path]);
+
+      final shellDeadPid = findInactivePid();
+      final shellBackup = Directory('${shellAppDir.path}/.sgv_backup.$shellDeadPid')..createSync();
+      File('${shellBackup.path}/restored_a.txt').writeAsStringSync('original shell a');
+
+      final shellFailDir = Directory('${shellBackup.path}/fail_item')..createSync();
+      File('${shellFailDir.path}/sub.txt').writeAsStringSync('sub');
+      final shellAppFail = Directory('${shellAppDir.path}/fail_item')..createSync();
+      File('${shellAppFail.path}/sub.txt').writeAsStringSync('sub');
+      Process.runSync('chmod', ['555', shellAppFail.path]);
+
+      final shellInstalled = File('${shellAppDir.path}/.sgv_installed.$shellDeadPid');
+      shellInstalled.writeAsStringSync('restored_a.txt\nfail_item\n');
+
+      final shellJournal = File('${shellAppDir.path}/.sgv_journal');
+      shellJournal.writeAsStringSync('PID=$shellDeadPid\nBACKUP_DIR=${shellBackup.path}\nINSTALLED_LIST=${shellInstalled.path}\n');
+
+      // First recovery
+      await Process.run(sgvFile.path, ['-h'], environment: testEnv);
+      expect(File('${shellAppDir.path}/restored_a.txt').existsSync(), isTrue);
+      expect(File('${shellAppDir.path}/restored_a.txt').readAsStringSync(), 'original shell a');
+      expect(File('${shellBackup.path}/restored_a.txt').existsSync(), isFalse);
+
+      // Second recovery: restored_a.txt must NOT be deleted
+      await Process.run(sgvFile.path, ['-h'], environment: testEnv);
+      expect(File('${shellAppDir.path}/restored_a.txt').existsSync(), isTrue);
+      expect(File('${shellAppDir.path}/restored_a.txt').readAsStringSync(), 'original shell a');
+    });
+
+    test('Issue 2: explicit transaction commit prevents rolling back to partial backup in Dart and Shell', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      // 1. Dart test
+      final dartTestDir = Directory.systemTemp.createTempSync('dart_issue2_test_');
+      addTearDown(() {
+        try {
+          dartTestDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final dartAppDir = Directory('${dartTestDir.path}/app')..createSync(recursive: true);
+      File('${dartAppDir.path}/supergoodviewer').writeAsStringSync('new binary');
+      final dataDir = Directory('${dartAppDir.path}/data')..createSync();
+      File('${dataDir.path}/assets.txt').writeAsStringSync('new version data');
+
+      final dartDeadPid = findInactivePid();
+      // Partially deleted backup: does NOT have data/
+      final dartBackup = Directory('${dartAppDir.path}/.sgv_backup.$dartDeadPid')..createSync();
+      File('${dartBackup.path}/supergoodviewer').writeAsStringSync('old binary');
+
+      final dartJournal = File('${dartAppDir.path}/.sgv_journal');
+      dartJournal.writeAsStringSync('PID=$dartDeadPid\nBACKUP_DIR=${dartBackup.path}\nSTATUS=COMMITTED\n');
+
+      UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: dartAppDir);
+
+      // Verify: data/ was NOT wiped, new version data remains intact!
+      expect(File('${dartAppDir.path}/data/assets.txt').existsSync(), isTrue);
+      expect(File('${dartAppDir.path}/data/assets.txt').readAsStringSync(), 'new version data');
+      expect(File('${dartAppDir.path}/supergoodviewer').readAsStringSync(), 'new binary');
+      // Residual backup and journal are deleted
+      expect(dartBackup.existsSync(), isFalse);
+      expect(dartJournal.existsSync(), isFalse);
+
+      // 2. Shell test (sgv)
+      final shellTestDir = Directory.systemTemp.createTempSync('shell_issue2_test_');
+      addTearDown(() {
+        try {
+          shellTestDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final binDir = Directory('${shellTestDir.path}/bin')..createSync(recursive: true);
+      final sgvFile = File('${binDir.path}/sgv');
+      File('bin/sgv').copySync(sgvFile.path);
+      Process.runSync('chmod', ['+x', sgvFile.path]);
+
+      final unameMock = File('${binDir.path}/uname');
+      unameMock.writeAsStringSync('#!/bin/sh\necho "Linux"\n');
+      Process.runSync('chmod', ['+x', unameMock.path]);
+      final testEnv = {'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}'};
+
+      final shellAppDir = shellTestDir;
+      final shellExe = File('${shellAppDir.path}/supergoodviewer')..writeAsStringSync('#!/bin/sh\nexit 0\n');
+      Process.runSync('chmod', ['+x', shellExe.path]);
+      final shellDataDir = Directory('${shellAppDir.path}/data')..createSync();
+      File('${shellDataDir.path}/assets.txt').writeAsStringSync('new version data');
+
+      final shellDeadPid = findInactivePid();
+      final shellBackup = Directory('${shellAppDir.path}/.sgv_backup.$shellDeadPid')..createSync();
+      File('${shellBackup.path}/supergoodviewer').writeAsStringSync('old binary');
+
+      final shellJournal = File('${shellAppDir.path}/.sgv_journal');
+      shellJournal.writeAsStringSync('PID=$shellDeadPid\nBACKUP_DIR=${shellBackup.path}\nSTATUS=COMMITTED\n');
+
+      final shellResult = await Process.run(sgvFile.path, ['-h'], environment: testEnv);
+      expect(shellResult.exitCode, 0);
+
+      // Verify: data/ was NOT wiped!
+      expect(File('${shellAppDir.path}/data/assets.txt').existsSync(), isTrue);
+      expect(File('${shellAppDir.path}/data/assets.txt').readAsStringSync(), 'new version data');
+      expect(shellBackup.existsSync(), isFalse);
+      expect(shellJournal.existsSync(), isFalse);
+    });
+
+    test('Issue 3: recovery entry remains runnable outside transaction replacement scope between phases', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('issue3_recovery_entry_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = '${testDir.path}/app';
+      final binDir = Directory('$appDir/bin')..createSync(recursive: true);
+      final sgvFile = File('${binDir.path}/sgv');
+      File('bin/sgv').copySync(sgvFile.path);
+      Process.runSync('chmod', ['+x', sgvFile.path]);
+
+      // Create CLI symlink pointing to $appDir/bin/sgv
+      final symlinkBin = Directory('${testDir.path}/sysbin')..createSync(recursive: true);
+      final cliSymlink = Link('${symlinkBin.path}/sgv');
+      cliSymlink.createSync(sgvFile.path);
+
+      final oldExe = File('$appDir/supergoodviewer')..writeAsStringSync('#!/bin/sh\necho original_app\n');
+      Process.runSync('chmod', ['+x', oldExe.path]);
+
+      final libDir = Directory('$appDir/lib')..createSync(recursive: true);
+      File('${libDir.path}/libflutter.so').writeAsStringSync('original flutter lib');
+
+      // Staging payload
+      final stagingDirPath = '${testDir.path}/staging';
+      Directory(stagingDirPath).createSync(recursive: true);
+      final stagedExe = File('$stagingDirPath/supergoodviewer')..writeAsStringSync('#!/bin/sh\necho updated_app\n');
+      Process.runSync('chmod', ['+x', stagedExe.path]);
+      final stagedLib = Directory('$stagingDirPath/lib')..createSync(recursive: true);
+      File('${stagedLib.path}/libflutter.so').writeAsStringSync('updated flutter lib');
+      final stagedBin = Directory('$stagingDirPath/bin')..createSync(recursive: true);
+      File('bin/sgv').copySync('${stagedBin.path}/sgv');
+      Process.runSync('chmod', ['+x', '${stagedBin.path}/sgv']);
+
+      // Generate update script and verify Phase 1 excludes bin
+      final dummyProcess = await Process.start('true', []);
+      final dummyPid = dummyProcess.pid;
+      await dummyProcess.exitCode;
+
+      final script = UpdateService.buildLinuxUpdateScript(
+        currentPid: dummyPid,
+        exePath: oldExe.path,
+        appDir: appDir,
+        stagingDirPath: stagingDirPath,
+      );
+
+      expect(script.contains('if [ "\$n" = "bin" ]; then'), isTrue);
+      expect(script.contains('STATUS=COMMITTED'), isTrue);
+
+      // Fault injection: Simulate process interrupted right after Phase 1 (between Phase 1 and Phase 2)
+      // Phase 1 moved supergoodviewer and lib into backup, bin was NOT moved.
+      final deadPid = findInactivePid();
+      final backupDir = Directory('$appDir/.sgv_backup.$deadPid')..createSync();
+      oldExe.renameSync('${backupDir.path}/supergoodviewer');
+      libDir.renameSync('${backupDir.path}/lib');
+
+      // Create the recovery stub that Phase 1 places at $appDir/supergoodviewer
+      final stubExe = File('$appDir/supergoodviewer');
+      stubExe.writeAsStringSync('''#!/bin/sh
+APP_DIR="\$(cd "\$(dirname "\$0")" 2>/dev/null && pwd)"
+if [ -x "\$APP_DIR/bin/sgv" ]; then
+  exec "\$APP_DIR/bin/sgv" "\$@"
+fi
+exit 1
+''');
+      Process.runSync('chmod', ['+x', stubExe.path]);
+
+      final journal = File('$appDir/.sgv_journal');
+      journal.writeAsStringSync('PID=$deadPid\nBACKUP_DIR=${backupDir.path}\n');
+
+      // Verify condition:
+      // 1. $appDir/bin/sgv still exists and symlink cliSymlink is valid!
+      expect(sgvFile.existsSync(), isTrue);
+      expect(cliSymlink.existsSync(), isTrue);
+
+      // 2. $appDir/supergoodviewer exists and is executable!
+      expect(stubExe.existsSync(), isTrue);
+
+      // 3. Executing cliSymlink recovers the app from backup!
+      final unameMock = File('${symlinkBin.path}/uname')..writeAsStringSync('#!/bin/sh\necho "Linux"\n');
+      Process.runSync('chmod', ['+x', unameMock.path]);
+      final testEnv = {'PATH': '${symlinkBin.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}'};
+
+      final recResult = await Process.run(cliSymlink.path, ['-h'], environment: testEnv);
+      expect(recResult.exitCode, 0);
+
+      // Verify the original binary and lib were restored!
+      expect(File('$appDir/supergoodviewer').existsSync(), isTrue);
+      expect(File('$appDir/supergoodviewer').readAsStringSync(), contains('original_app'));
+      expect(File('$appDir/lib/libflutter.so').existsSync(), isTrue);
+      expect(File('$appDir/lib/libflutter.so').readAsStringSync(), 'original flutter lib');
+      expect(backupDir.existsSync(), isFalse);
+      expect(journal.existsSync(), isFalse);
+    });
   });
 
   group('UpdateDialog Reentrancy & Cancellation Widget Tests (Issues 4 & 5)', () {

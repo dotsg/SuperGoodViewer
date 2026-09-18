@@ -401,6 +401,7 @@ class UpdateService {
           int? journalPid;
           String? rawBackupDir;
           String? rawInstalledList;
+          bool isCommitted = false;
 
           final lines = journalFile.readAsLinesSync();
           for (final line in lines) {
@@ -417,6 +418,10 @@ class UpdateService {
               rawBackupDir = trimmed.substring(11).trim();
             } else if (trimmed.startsWith('INSTALLED_LIST=')) {
               rawInstalledList = trimmed.substring(15).trim();
+            } else if (trimmed == 'STATUS=COMMITTED' ||
+                trimmed == 'COMMITTED=1' ||
+                (trimmed.startsWith('STATUS=') && trimmed.substring(7).trim() == 'COMMITTED')) {
+              isCommitted = true;
             } else if (rawBackupDir == null && trimmed.startsWith('/') && !trimmed.contains('=')) {
               // Legacy format: single-line absolute path
               rawBackupDir = trimmed;
@@ -518,14 +523,38 @@ class UpdateService {
             activeBackupDirPath = backupDirPath;
             activeInstalledListPath = installedListPath;
           } else {
-            // Updater process is dead or absent; attempt recovery if backup exists.
-            if (backupDirPath != null) {
+            // Updater process is dead or absent; attempt recovery or residue cleanup.
+            if (isCommitted) {
+              // Transaction committed: app payload is complete and verified.
+              // Clean up residual backup directory and temporary lists without rolling back.
+              if (backupDirPath != null) {
+                try {
+                  final bDir = Directory(backupDirPath);
+                  if (bDir.existsSync()) bDir.deleteSync(recursive: true);
+                } catch (_) {}
+              }
+              if (installedListPath != null) {
+                try {
+                  final iFile = File(installedListPath);
+                  if (iFile.existsSync()) iFile.deleteSync();
+                } catch (_) {}
+              }
+              try {
+                journalFile.deleteSync();
+              } catch (_) {}
+              activeBackupDirPath = null;
+              realBackupDirPath = null;
+              activeInstalledListPath = null;
+              realInstalledListPath = null;
+            } else if (backupDirPath != null) {
               final backupDir = Directory(backupDirPath);
               if (backupDir.existsSync()) {
                 // Only delete partially installed new files recorded in the paired INSTALLED_LIST
                 if (installedListPath != null && File(installedListPath).existsSync()) {
                   try {
-                    for (final line in File(installedListPath).readAsLinesSync()) {
+                    final installedFile = File(installedListPath);
+                    final remainingLines = <String>[];
+                    for (final line in installedFile.readAsLinesSync()) {
                       final trimmed = line.trim();
                       if (trimmed.isEmpty || p.isAbsolute(trimmed)) {
                         continue;
@@ -584,7 +613,14 @@ class UpdateService {
                           }
                         }
                       }
+                      if (link.existsSync() ||
+                          Directory(targetPath).existsSync() ||
+                          File(targetPath).existsSync()) {
+                        remainingLines.add(line);
+                      }
                     }
+                    installedFile.writeAsStringSync(
+                        remainingLines.isEmpty ? '' : '${remainingLines.join('\n')}\n');
                   } catch (_) {}
                 }
 
@@ -638,6 +674,16 @@ class UpdateService {
                       final mvRes = Process.runSync('mv', [entity.path, targetPath]);
                       if (mvRes.exitCode != 0) {
                         allRestored = false;
+                      } else {
+                        if (installedListPath != null && File(installedListPath).existsSync()) {
+                          try {
+                            final iFile = File(installedListPath);
+                            final curLines =
+                                iFile.readAsLinesSync().where((l) => l.trim() != name).toList();
+                            iFile.writeAsStringSync(
+                                curLines.isEmpty ? '' : '${curLines.join('\n')}\n');
+                          } catch (_) {}
+                        }
                       }
                     } catch (_) {
                       allRestored = false;
@@ -704,7 +750,8 @@ class UpdateService {
             name.startsWith('.sgv_installed.') ||
             name.startsWith('.sgv_manifest.') ||
             name.startsWith('.sgv_prune.') ||
-            name.startsWith('.sgv_journal.tmp.')) {
+            name.startsWith('.sgv_journal.tmp.') ||
+            name.startsWith('.sgv_journal.commit.')) {
           String realEntityPath;
           try {
             realEntityPath = entity.resolveSymbolicLinksSync();
@@ -873,6 +920,7 @@ if [ -f "$appDir/.sgv_journal" ]; then
   PREV_PID=""
   PREV_BACKUP=""
   PREV_INSTALLED=""
+  PREV_COMMITTED=0
   while IFS='=' read -r key val || [ -n "\$key" ]; do
     case "\$key" in
       PID)
@@ -884,6 +932,12 @@ if [ -f "$appDir/.sgv_journal" ]; then
         ;;
       BACKUP_DIR) PREV_BACKUP="\$val" ;;
       INSTALLED_LIST) PREV_INSTALLED="\$val" ;;
+      STATUS)
+        [ "\$val" = "COMMITTED" ] && PREV_COMMITTED=1
+        ;;
+      COMMITTED)
+        [ "\$val" = "1" ] && PREV_COMMITTED=1
+        ;;
       /*)
         if [ -z "\$PREV_BACKUP" ] && [ -z "\$val" ]; then
           PREV_BACKUP="\$key"
@@ -982,9 +1036,18 @@ if [ -f "$appDir/.sgv_journal" ]; then
     exit 1
   fi
 
-  if [ -n "\$PREV_BACKUP" ] && [ -d "\$PREV_BACKUP" ]; then
+  if [ \$PREV_COMMITTED -eq 1 ]; then
+    log "Notice: Found committed transaction from previous update, cleaning residues..."
+    if [ -n "\$PREV_BACKUP" ] && [ -d "\$PREV_BACKUP" ]; then
+      rm -rf "\$PREV_BACKUP" 2>/dev/null || true
+    fi
+    [ -n "\$PREV_INSTALLED" ] && rm -f "\$PREV_INSTALLED" 2>/dev/null || true
+    rm -f "$appDir/.sgv_journal" 2>/dev/null || true
+  elif [ -n "\$PREV_BACKUP" ] && [ -d "\$PREV_BACKUP" ]; then
     log "Notice: Found incomplete transaction from previous update, recovering..."
     if [ -n "\$PREV_INSTALLED" ] && [ -f "\$PREV_INSTALLED" ] && [ -n "\$REAL_APP_DIR" ]; then
+      PREV_INST_TMP="\$PREV_INSTALLED.tmp.\$\$"
+      : > "\$PREV_INST_TMP"
       while IFS= read -r n || [ -n "\$n" ]; do
         case "\$n" in
           "" | /* | . | .. | ./* | ../* | */. | */.. | */./* | */../* ) continue ;;
@@ -1008,7 +1071,11 @@ if [ -f "$appDir/.sgv_journal" ]; then
         elif [ -e "\$target" ]; then
           rm -f "\$target" 2>/dev/null || true
         fi
+        if [ -e "\$target" ] || [ -L "\$target" ]; then
+          echo "\$n" >> "\$PREV_INST_TMP"
+        fi
       done < "\$PREV_INSTALLED"
+      mv -f "\$PREV_INST_TMP" "\$PREV_INSTALLED" 2>/dev/null || true
     fi
     PREV_FAILED=0
     for p in "\$PREV_BACKUP"/* "\$PREV_BACKUP"/.*; do
@@ -1031,7 +1098,15 @@ if [ -f "$appDir/.sgv_journal" ]; then
         PREV_FAILED=1
         continue
       fi
-      if ! mv "\$p" "$appDir/\$n" 2>/dev/null; then
+      if mv "\$p" "$appDir/\$n" 2>/dev/null; then
+        if [ -n "\$PREV_INSTALLED" ] && [ -f "\$PREV_INSTALLED" ]; then
+          if grep -q -F -x "\$n" "\$PREV_INSTALLED" 2>/dev/null; then
+            grep -v -F -x "\$n" "\$PREV_INSTALLED" > "\$PREV_INSTALLED.tmp.\$\$" 2>/dev/null && \
+              mv -f "\$PREV_INSTALLED.tmp.\$\$" "\$PREV_INSTALLED" 2>/dev/null || \
+              rm -f "\$PREV_INSTALLED.tmp.\$\$" 2>/dev/null
+          fi
+        fi
+      else
         PREV_FAILED=1
       fi
     done
@@ -1053,7 +1128,7 @@ if [ -f "$appDir/.sgv_journal" ]; then
 fi
 
 # Clean up dead updater artifacts (only if owning PID is not running)
-for d in "$appDir"/.sgv_new.* "$appDir"/.sgv_backup.* "$appDir"/.sgv_installed.* "$appDir"/.sgv_manifest.* "$appDir"/.sgv_prune.* "$appDir"/.sgv_journal.tmp.*; do
+for d in "$appDir"/.sgv_new.* "$appDir"/.sgv_backup.* "$appDir"/.sgv_installed.* "$appDir"/.sgv_manifest.* "$appDir"/.sgv_prune.* "$appDir"/.sgv_journal.tmp.* "$appDir"/.sgv_journal.commit.*; do
   [ -e "\$d" ] || [ -L "\$d" ] || continue
   d_pid="\${d##*.}"
   IS_D_ALIVE=0
@@ -1089,6 +1164,8 @@ rollback() {
   log "Rolling back update..."
   ROLLBACK_FAILED=0
   if [ -f "\$INSTALLED_LIST" ] && [ -n "\$REAL_APP_DIR" ]; then
+    ROLL_INST_TMP="\$INSTALLED_LIST.tmp.\$\$"
+    : > "\$ROLL_INST_TMP"
     while IFS= read -r n || [ -n "\$n" ]; do
       case "\$n" in
         "" | /* | . | .. | ./* | ../* | */. | */.. | */./* | */../* ) continue ;;
@@ -1112,7 +1189,11 @@ rollback() {
       elif [ -e "\$target" ]; then
         rm -f "\$target" 2>/dev/null || true
       fi
+      if [ -e "\$target" ] || [ -L "\$target" ]; then
+        echo "\$n" >> "\$ROLL_INST_TMP"
+      fi
     done < "\$INSTALLED_LIST"
+    mv -f "\$ROLL_INST_TMP" "\$INSTALLED_LIST" 2>/dev/null || true
   fi
 
   if [ -d "\$BACKUP_DIR" ]; then
@@ -1140,6 +1221,14 @@ rollback() {
       if ! mv "\$p" "$appDir/\$n"; then
         notify_error "Failed to restore \$n to $appDir"
         ROLLBACK_FAILED=1
+      else
+        if [ -f "\$INSTALLED_LIST" ]; then
+          if grep -q -F -x "\$n" "\$INSTALLED_LIST" 2>/dev/null; then
+            grep -v -F -x "\$n" "\$INSTALLED_LIST" > "\$INSTALLED_LIST.tmp.\$\$" 2>/dev/null && \
+              mv -f "\$INSTALLED_LIST.tmp.\$\$" "\$INSTALLED_LIST" 2>/dev/null || \
+              rm -f "\$INSTALLED_LIST.tmp.\$\$" 2>/dev/null
+          fi
+        fi
       fi
     done
   fi
@@ -1150,7 +1239,7 @@ rollback() {
     rm -rf "\$BACKUP_DIR" "\$JOURNAL_FILE" "\$INSTALLED_LIST"
   fi
 
-  rm -rf "\$NEW_STAGING" "\$PRUNE_FILE" "\$JOURNAL_FILE.tmp.\$\$"
+  rm -rf "\$NEW_STAGING" "\$PRUNE_FILE" "\$JOURNAL_FILE.tmp.\$\$" "\$JOURNAL_FILE.commit.\$\$"
   cleanup_staging_payload
   if [ -x "$exePath" ]; then
     "$exePath" &
@@ -1234,10 +1323,20 @@ if [ -f "\$PRUNE_FILE" ]; then
   done < "\$PRUNE_FILE"
 fi
 
+# Ensure a runnable recovery entry point exists in $appDir/bin/sgv outside transaction replacement scope
+if [ ! -x "$appDir/bin/sgv" ] && [ -f "\$NEW_STAGING/bin/sgv" ]; then
+  mkdir -p "$appDir/bin" 2>/dev/null || true
+  cp "\$NEW_STAGING/bin/sgv" "$appDir/bin/sgv" 2>/dev/null || true
+  chmod +x "$appDir/bin/sgv" 2>/dev/null || true
+fi
+
 # 6. Phase 1: Backup existing entries that match new payload
 for p in "\$NEW_STAGING"/* "\$NEW_STAGING"/.*; do
   n="\${p##*/}"
   if [ "\$n" = "." ] || [ "\$n" = ".." ] || [ "\$n" = "*" ] || { [ ! -e "\$p" ] && [ ! -L "\$p" ]; }; then
+    continue
+  fi
+  if [ "\$n" = "bin" ]; then
     continue
   fi
   if [ -e "$appDir/\$n" ] || [ -L "$appDir/\$n" ]; then
@@ -1248,10 +1347,37 @@ for p in "\$NEW_STAGING"/* "\$NEW_STAGING"/.*; do
   fi
 done
 
+# If supergoodviewer was moved to backup, retain an executable recovery entry stub
+if [ -f "\$BACKUP_DIR/supergoodviewer" ] && [ ! -e "$appDir/supergoodviewer" ]; then
+  cat << 'EOF' > "$appDir/supergoodviewer"
+#!/bin/sh
+APP_DIR="\$(cd "\$(dirname "\$0")" 2>/dev/null && pwd)"
+if [ -x "\$APP_DIR/bin/sgv" ]; then
+  exec "\$APP_DIR/bin/sgv" "\$@"
+fi
+if [ -f "\$APP_DIR/.sgv_journal" ]; then
+  BACKUP=""
+  while IFS='=' read -r k v || [ -n "\$k" ]; do
+    [ "\$k" = "BACKUP_DIR" ] && BACKUP="\$v"
+  done < "\$APP_DIR/.sgv_journal"
+  if [ -n "\$BACKUP" ] && [ -f "\$BACKUP/supergoodviewer" ]; then
+    rm -f "\$APP_DIR/supergoodviewer" 2>/dev/null || true
+    mv "\$BACKUP/supergoodviewer" "\$APP_DIR/supergoodviewer" 2>/dev/null || true
+    [ -f "\$APP_DIR/supergoodviewer" ] && exec "\$APP_DIR/supergoodviewer" "\$@"
+  fi
+fi
+exit 1
+EOF
+  chmod +x "$appDir/supergoodviewer" 2>/dev/null || true
+fi
+
 # 7. Phase 2: Move new entries into appDir
 for p in "\$NEW_STAGING"/* "\$NEW_STAGING"/.*; do
   n="\${p##*/}"
   if [ "\$n" = "." ] || [ "\$n" = ".." ] || [ "\$n" = "*" ] || { [ ! -e "\$p" ] && [ ! -L "\$p" ]; }; then
+    continue
+  fi
+  if [ "\$n" = "bin" ]; then
     continue
   fi
   if ! mv "\$p" "$appDir/\$n"; then
@@ -1268,7 +1394,7 @@ if [ ! -x "$appDir/supergoodviewer" ]; then
   rollback
 fi
 
-# 9. Success: write new manifest, clean up, launch new binary
+# 9. Success: write new manifest, commit transaction, clean up, launch new binary
 NEW_MANIFEST="$appDir/.sgv_manifest.\$\$"
 : > "\$NEW_MANIFEST"
 for p in "$stagingDirPath"/* "$stagingDirPath"/.*; do
@@ -1280,7 +1406,23 @@ for p in "$stagingDirPath"/* "$stagingDirPath"/.*; do
 done
 mv "\$NEW_MANIFEST" "\$MANIFEST_FILE"
 
-rm -rf "\$BACKUP_DIR" "\$NEW_STAGING" "\$INSTALLED_LIST" "\$PRUNE_FILE" "\$JOURNAL_FILE"
+# Atomic transaction commit: mark STATUS=COMMITTED before removing backups
+COMMIT_TMP="\$JOURNAL_FILE.commit.\$\$"
+{
+  echo "PID=\$\$"
+  echo "BACKUP_DIR=\$BACKUP_DIR"
+  echo "INSTALLED_LIST=\$INSTALLED_LIST"
+  echo "STATUS=COMMITTED"
+} > "\$COMMIT_TMP"
+mv -f "\$COMMIT_TMP" "\$JOURNAL_FILE"
+
+if [ -d "\$NEW_STAGING/bin" ]; then
+  mkdir -p "$appDir/bin" 2>/dev/null || true
+  cp -a "\$NEW_STAGING/bin/." "$appDir/bin/" 2>/dev/null || true
+  chmod +x "$appDir/bin"/* 2>/dev/null || true
+fi
+
+rm -rf "\$BACKUP_DIR" "\$NEW_STAGING" "\$INSTALLED_LIST" "\$PRUNE_FILE" "\$COMMIT_TMP" "\$JOURNAL_FILE"
 cleanup_staging_payload
 log "SuperGoodViewer update installed successfully."
 "$appDir/supergoodviewer" &
