@@ -6,6 +6,7 @@ import 'i18n/app_localizations.dart';
 import 'i18n/locales.dart';
 import 'views/workspace_view.dart';
 import 'services/startup_metrics.dart';
+import 'services/update_service.dart';
 
 void main(List<String> args) {
   StartupMetrics.begin();
@@ -44,6 +45,7 @@ class _SuperGoodViewerAppState extends State<SuperGoodViewerApp> {
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       StartupMetrics.markFirstFrame();
+      UpdateService.cleanupStaleUpdateArtifactsAsync();
     });
   }
 

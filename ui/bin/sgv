@@ -32,6 +32,184 @@ if [ "$IS_DARWIN" = true ]; then
     fi
   fi
 else
+  # Linux: recover interrupted updates if a journal exists in candidate directories
+  for candidate in "$SCRIPT_DIR" "$SCRIPT_DIR/.." "/opt/supergoodviewer"; do
+    [ -d "$candidate" ] || continue
+    candidate="$(cd "$candidate" 2>/dev/null && pwd)" || continue
+    if [ -f "$candidate/.sgv_journal" ]; then
+      JOURNAL_PID=""
+      BACKUP_DIR=""
+      INSTALLED_LIST=""
+      while IFS='=' read -r key val || [ -n "$key" ]; do
+        case "$key" in
+          PID)
+            case "$val" in
+              *[!0-9]* | "" | 0* | 1) ;;
+              [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*) ;;
+              *) JOURNAL_PID="$val" ;;
+            esac
+            ;;
+          BACKUP_DIR) BACKUP_DIR="$val" ;;
+          INSTALLED_LIST) INSTALLED_LIST="$val" ;;
+          /*)
+            if [ -z "$BACKUP_DIR" ] && [ -z "$val" ]; then
+              BACKUP_DIR="$key"
+            fi
+            ;;
+        esac
+      done < "$candidate/.sgv_journal"
+
+      # Validate that BACKUP_DIR and INSTALLED_LIST are legitimate entries inside $candidate
+      CANDIDATE_REAL="$(cd "$candidate" 2>/dev/null && pwd -P)"
+      case "$BACKUP_DIR" in
+        /*)
+          b_name="${BACKUP_DIR##*/}"
+          b_parent="${BACKUP_DIR%/*}"
+          [ -z "$b_parent" ] && b_parent="/"
+          b_parent_real="$(cd "$b_parent" 2>/dev/null && pwd -P)" || b_parent_real=""
+          case "$b_name" in
+            .sgv_backup.*[!0-9]* | .sgv_backup.) BACKUP_DIR="" ;;
+            .sgv_backup.[0-9]*) ;;
+            *) BACKUP_DIR="" ;;
+          esac
+          if [ -n "$BACKUP_DIR" ]; then
+            if [ "$b_parent_real" != "$CANDIDATE_REAL" ] || [ -L "$BACKUP_DIR" ]; then
+              BACKUP_DIR=""
+            elif [ -d "$BACKUP_DIR" ]; then
+              b_real="$(cd "$BACKUP_DIR" 2>/dev/null && pwd -P)" || b_real=""
+              if [ "$b_real" != "$CANDIDATE_REAL/$b_name" ]; then
+                BACKUP_DIR=""
+              fi
+            fi
+          fi
+          ;;
+        *)
+          BACKUP_DIR=""
+          ;;
+      esac
+
+      case "$INSTALLED_LIST" in
+        /*)
+          i_name="${INSTALLED_LIST##*/}"
+          i_parent="${INSTALLED_LIST%/*}"
+          [ -z "$i_parent" ] && i_parent="/"
+          i_parent_real="$(cd "$i_parent" 2>/dev/null && pwd -P)" || i_parent_real=""
+          case "$i_name" in
+            .sgv_installed.*[!0-9]* | .sgv_installed.) INSTALLED_LIST="" ;;
+            .sgv_installed.[0-9]*) ;;
+            *) INSTALLED_LIST="" ;;
+          esac
+          if [ -n "$INSTALLED_LIST" ]; then
+            if [ "$i_parent_real" != "$CANDIDATE_REAL" ] || [ -L "$INSTALLED_LIST" ]; then
+              INSTALLED_LIST=""
+            elif [ -e "$INSTALLED_LIST" ] && [ ! -f "$INSTALLED_LIST" ]; then
+              INSTALLED_LIST=""
+            fi
+          fi
+          ;;
+        *)
+          INSTALLED_LIST=""
+          ;;
+      esac
+
+      if [ -z "$JOURNAL_PID" ] && [ -n "$BACKUP_DIR" ]; then
+        b_ext="${BACKUP_DIR##*.}"
+        case "$b_ext" in
+          *[!0-9]* | "" | 0* | 1) ;;
+          [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*) ;;
+          *) JOURNAL_PID="$b_ext" ;;
+        esac
+      fi
+      if [ -z "$INSTALLED_LIST" ] && [ -n "$JOURNAL_PID" ] && [ -f "$candidate/.sgv_installed.$JOURNAL_PID" ] && [ ! -L "$candidate/.sgv_installed.$JOURNAL_PID" ]; then
+        INSTALLED_LIST="$candidate/.sgv_installed.$JOURNAL_PID"
+      fi
+
+      # If the updater process is actively running, do not interfere with the update
+      IS_ALIVE=0
+      if [ -n "$JOURNAL_PID" ] && [ "$JOURNAL_PID" -gt 1 ] 2>/dev/null; then
+        if kill -0 "$JOURNAL_PID" 2>/dev/null; then
+          if [ -d "/proc/$JOURNAL_PID" ] && [ -f "/proc/$JOURNAL_PID/cmdline" ]; then
+            if { grep -q -a -F "$candidate" "/proc/$JOURNAL_PID/cmdline" 2>/dev/null || \
+                 grep -q -a -F "$CANDIDATE_REAL" "/proc/$JOURNAL_PID/cmdline" 2>/dev/null; } && \
+               grep -q -a -E "supergoodviewer|sogoodviewer" "/proc/$JOURNAL_PID/cmdline" 2>/dev/null; then
+              IS_ALIVE=1
+            fi
+          else
+            IS_ALIVE=1
+          fi
+        fi
+      fi
+
+      if [ $IS_ALIVE -eq 1 ]; then
+        continue
+      fi
+
+      if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
+        if [ -n "$INSTALLED_LIST" ] && [ -f "$INSTALLED_LIST" ] && [ -n "$CANDIDATE_REAL" ]; then
+          while IFS= read -r n || [ -n "$n" ]; do
+            case "$n" in
+              "" | /* | . | .. | ./* | ../* | */. | */.. | */./* | */../* ) continue ;;
+            esac
+            target="$candidate/$n"
+            parent="${target%/*}"
+            [ -z "$parent" ] && parent="$candidate"
+            parent_real="$(cd "$parent" 2>/dev/null && pwd -P)" || continue
+            case "$parent_real" in
+              "$CANDIDATE_REAL" | "$CANDIDATE_REAL"/*) ;;
+              *) continue ;;
+            esac
+            if [ -L "$target" ]; then
+              rm -f "$target" 2>/dev/null || true
+            elif [ -d "$target" ]; then
+              rm -rf "$target" 2>/dev/null || true
+              if [ -d "$target" ] && [ ! -L "$target" ]; then
+                chmod -R u+rwx "$target" 2>/dev/null || true
+                rm -rf "$target" 2>/dev/null || true
+              fi
+            elif [ -e "$target" ]; then
+              rm -f "$target" 2>/dev/null || true
+            fi
+          done < "$INSTALLED_LIST"
+        fi
+
+        RECOVERY_FAILED=0
+        for p in "$BACKUP_DIR"/* "$BACKUP_DIR"/.*; do
+          n="${p##*/}"
+          if [ "$n" = "." ] || [ "$n" = ".." ] || [ "$n" = "*" ] || { [ ! -e "$p" ] && [ ! -L "$p" ]; }; then
+            continue
+          fi
+          if [ -L "$candidate/$n" ]; then
+            rm -f "$candidate/$n" 2>/dev/null || true
+          elif [ -d "$candidate/$n" ]; then
+            rm -rf "$candidate/$n" 2>/dev/null || true
+            if [ -d "$candidate/$n" ] && [ ! -L "$candidate/$n" ]; then
+              chmod -R u+rwx "$candidate/$n" 2>/dev/null || true
+              rm -rf "$candidate/$n" 2>/dev/null || true
+            fi
+          elif [ -e "$candidate/$n" ]; then
+            rm -f "$candidate/$n" 2>/dev/null || true
+          fi
+          if [ -e "$candidate/$n" ] || [ -L "$candidate/$n" ]; then
+            RECOVERY_FAILED=1
+            continue
+          fi
+          if ! mv "$p" "$candidate/$n" 2>/dev/null; then
+            RECOVERY_FAILED=1
+          fi
+        done
+
+        if [ $RECOVERY_FAILED -eq 0 ]; then
+          rm -rf "$BACKUP_DIR" "$candidate/.sgv_journal" 2>/dev/null || true
+          [ -n "$INSTALLED_LIST" ] && rm -f "$INSTALLED_LIST" 2>/dev/null || true
+        fi
+      else
+        # Dangling journal: backup directory does not exist and updater is dead
+        rm -f "$candidate/.sgv_journal" 2>/dev/null || true
+        [ -n "$INSTALLED_LIST" ] && rm -f "$INSTALLED_LIST" 2>/dev/null || true
+      fi
+    fi
+  done
+
   # Linux: find binary (prefer adjacent bundle binaries first, then global system PATH)
   if [ -x "$SCRIPT_DIR/supergoodviewer" ]; then
     APP_BIN="$SCRIPT_DIR/supergoodviewer"

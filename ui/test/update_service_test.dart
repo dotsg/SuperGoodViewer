@@ -8,6 +8,29 @@ import 'package:sogoodviewer/services/preferences_service.dart';
 import 'package:sogoodviewer/services/update_service.dart';
 import 'package:sogoodviewer/views/update_dialog.dart';
 
+int _nextTestInactivePid = 8000000;
+
+/// Finds a PID that is verified to NOT belong to any running process on the system.
+int findInactivePid() {
+  for (int attempt = 0; attempt < 200000; attempt++) {
+    if (_nextTestInactivePid > 9900000) {
+      _nextTestInactivePid = 8000000;
+    }
+    final candidate = _nextTestInactivePid++;
+    if (!UpdateService.isUpdaterProcessAlive(candidate)) {
+      try {
+        final res = Process.runSync('kill', ['-0', candidate.toString()]);
+        if (res.exitCode != 0) {
+          return candidate;
+        }
+      } catch (_) {
+        return candidate;
+      }
+    }
+  }
+  throw StateError('Unable to find an inactive PID after scanning range 8000000-9900000');
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -577,7 +600,7 @@ exec /bin/mv "\$@"
       expect(Directory(stagingDirPath).existsSync(), isFalse);
     });
 
-    test('buildLinuxUpdateScript updates app and launches supergoodviewer', () async {
+    test('buildLinuxUpdateScript updates app, preserves non-bundle files, copies dotfiles, and launches supergoodviewer', () async {
       if (!Platform.isMacOS && !Platform.isLinux) return;
 
       final testDir = Directory.systemTemp.createTempSync('linux_script_test_');
@@ -596,9 +619,17 @@ exec /bin/mv "\$@"
       oldExe.writeAsStringSync('echo "old version"\n');
       Process.runSync('chmod', ['+x', oldExe.path]);
 
+      // User file that does not belong to bundle
+      final userNote = File('$appDir/notes.txt');
+      userNote.writeAsStringSync('user notes content');
+
       final newExe = File('$stagingDirPath/supergoodviewer');
       newExe.writeAsStringSync('echo "new version"\n');
       Process.runSync('chmod', ['+x', newExe.path]);
+
+      // Dotfile in staging bundle
+      final dotFile = File('$stagingDirPath/.release_metadata');
+      dotFile.writeAsStringSync('metadata v1.0.8');
 
       final dummyProcess = await Process.start('true', []);
       final dummyPid = dummyProcess.pid;
@@ -616,10 +647,16 @@ exec /bin/mv "\$@"
 
       expect(File('$appDir/supergoodviewer').existsSync(), isTrue);
       expect(File('$appDir/supergoodviewer').readAsStringSync(), 'echo "new version"\n');
+      // Verify non-bundle files were NOT deleted
+      expect(File('$appDir/notes.txt').existsSync(), isTrue);
+      expect(File('$appDir/notes.txt').readAsStringSync(), 'user notes content');
+      // Verify dotfiles were transferred
+      expect(File('$appDir/.release_metadata').existsSync(), isTrue);
+      expect(File('$appDir/.release_metadata').readAsStringSync(), 'metadata v1.0.8');
       expect(Directory(stagingDirPath).existsSync(), isFalse);
     });
 
-    test('buildLinuxUpdateScript migrates legacy sogoodviewer to supergoodviewer and removes old binary', () async {
+    test('buildLinuxUpdateScript migrates legacy sogoodviewer to supergoodviewer, removes old binary, and preserves user files', () async {
       if (!Platform.isMacOS && !Platform.isLinux) return;
 
       final testDir = Directory.systemTemp.createTempSync('linux_legacy_migration_test_');
@@ -638,6 +675,9 @@ exec /bin/mv "\$@"
       final legacyExe = File('$appDir/sogoodviewer');
       legacyExe.writeAsStringSync('echo "legacy sogoodviewer"\n');
       Process.runSync('chmod', ['+x', legacyExe.path]);
+
+      final userConfig = File('$appDir/custom_config.json');
+      userConfig.writeAsStringSync('{"key": "val"}');
 
       // New staged package has 'supergoodviewer'
       final newExe = File('$stagingDirPath/supergoodviewer');
@@ -663,17 +703,19 @@ exec /bin/mv "\$@"
       expect(File('$appDir/supergoodviewer').readAsStringSync(), 'echo "modern supergoodviewer"\n');
       // Legacy binary cleaned up
       expect(File('$appDir/sogoodviewer').existsSync(), isFalse);
+      // User non-bundle file preserved
+      expect(File('$appDir/custom_config.json').existsSync(), isTrue);
+      expect(File('$appDir/custom_config.json').readAsStringSync(), '{"key": "val"}');
       // Staging directory cleaned up
       expect(Directory(stagingDirPath).existsSync(), isFalse);
     });
 
-    test('buildLinuxUpdateScript preserves legacy binary if payload copy fails', () async {
+    test('buildLinuxUpdateScript aborts without mutating appDir when payload is missing supergoodviewer', () async {
       if (!Platform.isMacOS && !Platform.isLinux) return;
 
-      final testDir = Directory.systemTemp.createTempSync('linux_copy_fail_test_');
+      final testDir = Directory.systemTemp.createTempSync('linux_missing_supergoodviewer_');
       addTearDown(() {
         try {
-          Process.runSync('chmod', ['-R', '777', testDir.path]);
           testDir.deleteSync(recursive: true);
         } catch (_) {}
       });
@@ -687,16 +729,8 @@ exec /bin/mv "\$@"
       legacyExe.writeAsStringSync('echo "legacy sogoodviewer"\n');
       Process.runSync('chmod', ['+x', legacyExe.path]);
 
-      // Stage new binary
-      final newExe = File('$stagingDirPath/supergoodviewer');
-      newExe.writeAsStringSync('echo "modern supergoodviewer"\n');
-
-      // Create conflicting file/dir to make cp fail
-      final conflictDir = Directory('$stagingDirPath/conflict_dir')..createSync();
-      File('${conflictDir.path}/file.txt').writeAsStringSync('payload');
-      final conflictFile = File('$appDir/conflict_dir')..writeAsStringSync('blocker');
-      Process.runSync('chmod', ['444', conflictFile.path]);
-      Process.runSync('chmod', ['555', appDir]);
+      // Payload has files, but NOT supergoodviewer (corrupt or misnamed payload)
+      File('$stagingDirPath/corrupt_binary').writeAsStringSync('echo "bad"\n');
 
       final dummyProcess = await Process.start('true', []);
       final dummyPid = dummyProcess.pid;
@@ -712,9 +746,1751 @@ exec /bin/mv "\$@"
       final result = await Process.run('/bin/sh', ['-c', script]);
       expect(result.exitCode, isNot(0));
 
-      // Legacy executable MUST be preserved!
+      // App bundle and legacy executable MUST be preserved completely!
       expect(File(legacyExe.path).existsSync(), isTrue);
       expect(File(legacyExe.path).readAsStringSync(), 'echo "legacy sogoodviewer"\n');
+      // Staging directory must be cleaned up to prevent disk leak
+      expect(Directory(stagingDirPath).existsSync(), isFalse);
+    });
+
+    test('buildLinuxUpdateScript preserves legacy binary and appDir if payload copy fails', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('linux_copy_fail_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = '${testDir.path}/app';
+      final stagingDirPath = '${testDir.path}/staging';
+      final binDir = Directory('${testDir.path}/bin')..createSync(recursive: true);
+      Directory(appDir).createSync(recursive: true);
+      Directory(stagingDirPath).createSync(recursive: true);
+
+      final legacyExe = File('$appDir/sogoodviewer');
+      legacyExe.writeAsStringSync('echo "legacy sogoodviewer"\n');
+      Process.runSync('chmod', ['+x', legacyExe.path]);
+
+      // Stage new binary
+      final newExe = File('$stagingDirPath/supergoodviewer');
+      newExe.writeAsStringSync('echo "modern supergoodviewer"\n');
+
+      // Mock `cp` to simulate an error (e.g. ENOSPC or permission failure) without depending on root/chmod
+      final cpMock = File('${binDir.path}/cp');
+      cpMock.writeAsStringSync('''#!/bin/sh
+exit 1
+''');
+      Process.runSync('chmod', ['+x', cpMock.path]);
+
+      final dummyProcess = await Process.start('true', []);
+      final dummyPid = dummyProcess.pid;
+      await dummyProcess.exitCode;
+
+      final script = UpdateService.buildLinuxUpdateScript(
+        currentPid: dummyPid,
+        exePath: legacyExe.path,
+        appDir: appDir,
+        stagingDirPath: stagingDirPath,
+      );
+
+      final result = await Process.run(
+        '/bin/sh',
+        ['-c', script],
+        environment: {
+          'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}',
+        },
+      );
+      expect(result.exitCode, isNot(0));
+
+      // Legacy executable and appDir MUST be preserved!
+      expect(File(legacyExe.path).existsSync(), isTrue);
+      expect(File(legacyExe.path).readAsStringSync(), 'echo "legacy sogoodviewer"\n');
+      // Staging directory must be cleaned up
+      expect(Directory(stagingDirPath).existsSync(), isFalse);
+    });
+
+    test('buildLinuxUpdateScript succeeds when parent directory of appDir is read-only', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('linux_ro_parent_test_');
+      final parentDir = Directory('${testDir.path}/parent')..createSync(recursive: true);
+      final appDir = '${parentDir.path}/app';
+      final stagingDirPath = '${testDir.path}/staging';
+      Directory(appDir).createSync(recursive: true);
+      Directory(stagingDirPath).createSync(recursive: true);
+
+      addTearDown(() {
+        try {
+          Process.runSync('chmod', ['755', parentDir.path]);
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final oldExe = File('$appDir/supergoodviewer');
+      oldExe.writeAsStringSync('echo "old version"\n');
+      Process.runSync('chmod', ['+x', oldExe.path]);
+
+      final newExe = File('$stagingDirPath/supergoodviewer');
+      newExe.writeAsStringSync('echo "new version"\n');
+      Process.runSync('chmod', ['+x', newExe.path]);
+
+      // Make parent directory read-only to simulate /opt owned by root
+      Process.runSync('chmod', ['555', parentDir.path]);
+
+      final dummyProcess = await Process.start('true', []);
+      final dummyPid = dummyProcess.pid;
+      await dummyProcess.exitCode;
+
+      final script = UpdateService.buildLinuxUpdateScript(
+        currentPid: dummyPid,
+        exePath: oldExe.path,
+        appDir: appDir,
+        stagingDirPath: stagingDirPath,
+      );
+
+      final result = await Process.run('/bin/sh', ['-c', script]);
+      expect(result.exitCode, 0, reason: 'Script stderr: ${result.stderr}');
+
+      expect(File('$appDir/supergoodviewer').existsSync(), isTrue);
+      expect(File('$appDir/supergoodviewer').readAsStringSync(), 'echo "new version"\n');
+      expect(Directory(stagingDirPath).existsSync(), isFalse);
+    });
+
+    test('buildLinuxUpdateScript rolls back and preserves appDir when verification fails', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('linux_verify_fail_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = '${testDir.path}/app';
+      final stagingDirPath = '${testDir.path}/staging';
+      final binDir = Directory('${testDir.path}/bin')..createSync(recursive: true);
+      Directory(appDir).createSync(recursive: true);
+      Directory(stagingDirPath).createSync(recursive: true);
+
+      final legacyExe = File('$appDir/sogoodviewer');
+      legacyExe.writeAsStringSync('echo "legacy sogoodviewer"\n');
+      Process.runSync('chmod', ['+x', legacyExe.path]);
+
+      // Staged binary is not executable
+      final newExe = File('$stagingDirPath/supergoodviewer');
+      newExe.writeAsStringSync('echo "broken supergoodviewer"\n');
+      Process.runSync('chmod', ['-x', newExe.path]);
+
+      // Mock `chmod` to fail so that `chmod +x` cannot make the binary executable
+      final chmodMock = File('${binDir.path}/chmod');
+      chmodMock.writeAsStringSync('''#!/bin/sh
+exit 1
+''');
+      Process.runSync('chmod', ['+x', chmodMock.path]);
+
+      final dummyProcess = await Process.start('true', []);
+      final dummyPid = dummyProcess.pid;
+      await dummyProcess.exitCode;
+
+      final script = UpdateService.buildLinuxUpdateScript(
+        currentPid: dummyPid,
+        exePath: legacyExe.path,
+        appDir: appDir,
+        stagingDirPath: stagingDirPath,
+      );
+
+      final result = await Process.run(
+        '/bin/sh',
+        ['-c', script],
+        environment: {
+          'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}',
+        },
+      );
+      expect(result.exitCode, isNot(0));
+
+      // Should have rolled back: legacy executable restored!
+      expect(File(legacyExe.path).existsSync(), isTrue);
+      expect(File(legacyExe.path).readAsStringSync(), 'echo "legacy sogoodviewer"\n');
+      expect(File('$appDir/supergoodviewer').existsSync(), isFalse);
+      // Staging directory must be cleaned up
+      expect(Directory(stagingDirPath).existsSync(), isFalse);
+    });
+
+    test('buildLinuxUpdateScript preserves dangling symlinks and installs payload symlinks and writes update.log', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('linux_symlink_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = '${testDir.path}/app';
+      final stagingDirPath = '${testDir.path}/staging';
+      Directory(appDir).createSync(recursive: true);
+      Directory(stagingDirPath).createSync(recursive: true);
+
+      final oldExe = File('$appDir/supergoodviewer');
+      oldExe.writeAsStringSync('echo "old version"\n');
+      Process.runSync('chmod', ['+x', oldExe.path]);
+
+      // User dangling symlink in appDir (must NOT be deleted or skipped)
+      Process.runSync('ln', ['-s', 'target_does_not_exist', '$appDir/user_dangling_link']);
+
+      final newExe = File('$stagingDirPath/supergoodviewer');
+      newExe.writeAsStringSync('echo "new version"\n');
+      Process.runSync('chmod', ['+x', newExe.path]);
+
+      // Payload dangling symlink (must be installed into appDir)
+      Process.runSync('ln', ['-s', 'so_lib_missing_until_run', '$stagingDirPath/libcompat.so.1']);
+
+      final dummyProcess = await Process.start('true', []);
+      final dummyPid = dummyProcess.pid;
+      await dummyProcess.exitCode;
+
+      final stateDir = '${testDir.path}/state';
+      final script = UpdateService.buildLinuxUpdateScript(
+        currentPid: dummyPid,
+        exePath: oldExe.path,
+        appDir: appDir,
+        stagingDirPath: stagingDirPath,
+      );
+
+      final result = await Process.run(
+        '/bin/sh',
+        ['-c', script],
+        environment: {
+          'XDG_STATE_HOME': stateDir,
+          'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
+        },
+      );
+      expect(result.exitCode, 0, reason: 'Script stderr: ${result.stderr}');
+
+      expect(File('$appDir/supergoodviewer').existsSync(), isTrue);
+      expect(Link('$appDir/user_dangling_link').existsSync(), isTrue);
+      expect(Link('$appDir/libcompat.so.1').existsSync(), isTrue);
+      expect(File('$stateDir/supergoodviewer/supergoodviewer_update.log').existsSync(), isTrue);
+      expect(File('$appDir/.sgv_manifest').existsSync(), isTrue);
+      expect(File('$appDir/.sgv_manifest').readAsStringSync(), contains('libcompat.so.1'));
+      expect(Directory(stagingDirPath).existsSync(), isFalse);
+    });
+
+    test('buildLinuxUpdateScript prunes obsolete bundle files based on .sgv_manifest even with spaces in filenames', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('linux_manifest_prune_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = '${testDir.path}/app';
+      final stagingDirPath = '${testDir.path}/staging';
+      Directory(appDir).createSync(recursive: true);
+      Directory(stagingDirPath).createSync(recursive: true);
+
+      final oldExe = File('$appDir/supergoodviewer');
+      oldExe.writeAsStringSync('echo "v1.0.8"\n');
+      Process.runSync('chmod', ['+x', oldExe.path]);
+
+      // Obsolete bundle files from v1.0.8 that are dropped in v1.0.9 (including filename with spaces)
+      final obsoleteFile = File('$appDir/deprecated_helper');
+      obsoleteFile.writeAsStringSync('old helper binary');
+      final obsoleteDesktop = File('$appDir/SuperGood Viewer.desktop');
+      obsoleteDesktop.writeAsStringSync('old desktop entry');
+
+      // User note that is NOT in manifest
+      final userNote = File('$appDir/my_notes.txt');
+      userNote.writeAsStringSync('important personal note');
+
+      // Manifest of v1.0.8 listing bundle items
+      File('$appDir/.sgv_manifest').writeAsStringSync('supergoodviewer\ndeprecated_helper\nSuperGood Viewer.desktop\n');
+
+      // Staging payload for v1.0.9 (no longer contains deprecated_helper or desktop entry)
+      final newExe = File('$stagingDirPath/supergoodviewer');
+      newExe.writeAsStringSync('echo "v1.0.9"\n');
+      Process.runSync('chmod', ['+x', newExe.path]);
+
+      final dummyProcess = await Process.start('true', []);
+      final dummyPid = dummyProcess.pid;
+      await dummyProcess.exitCode;
+
+      final script = UpdateService.buildLinuxUpdateScript(
+        currentPid: dummyPid,
+        exePath: oldExe.path,
+        appDir: appDir,
+        stagingDirPath: stagingDirPath,
+      );
+
+      final result = await Process.run('/bin/sh', ['-c', script]);
+      expect(result.exitCode, 0, reason: 'Script stderr: ${result.stderr}');
+
+      expect(File('$appDir/supergoodviewer').readAsStringSync(), 'echo "v1.0.9"\n');
+      // Deprecated helper and desktop entry must be pruned!
+      expect(File('$appDir/deprecated_helper').existsSync(), isFalse);
+      expect(File('$appDir/SuperGood Viewer.desktop').existsSync(), isFalse);
+      // User note must be preserved!
+      expect(File('$appDir/my_notes.txt').existsSync(), isTrue);
+      expect(File('$appDir/my_notes.txt').readAsStringSync(), 'important personal note');
+      expect(Directory(stagingDirPath).existsSync(), isFalse);
+    });
+
+    test('buildLinuxUpdateScript aborts cleanly without mutating appDir when df detects insufficient disk space', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('linux_df_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = '${testDir.path}/app';
+      final stagingDirPath = '${testDir.path}/staging';
+      final binDir = Directory('${testDir.path}/bin')..createSync(recursive: true);
+      Directory(appDir).createSync(recursive: true);
+      Directory(stagingDirPath).createSync(recursive: true);
+
+      final oldExe = File('$appDir/supergoodviewer');
+      oldExe.writeAsStringSync('echo "original"\n');
+      Process.runSync('chmod', ['+x', oldExe.path]);
+
+      final newExe = File('$stagingDirPath/supergoodviewer');
+      newExe.writeAsStringSync('echo "new version"\n');
+
+      // Mock `df` to report only 1 KB available
+      final dfMock = File('${binDir.path}/df');
+      dfMock.writeAsStringSync('''#!/bin/sh
+echo "Filesystem 1024-blocks Used Available Capacity Mounted"
+echo "/dev/mock 100000 99999 1 99% /"
+''');
+      Process.runSync('chmod', ['+x', dfMock.path]);
+
+      final dummyProcess = await Process.start('true', []);
+      final dummyPid = dummyProcess.pid;
+      await dummyProcess.exitCode;
+
+      final script = UpdateService.buildLinuxUpdateScript(
+        currentPid: dummyPid,
+        exePath: oldExe.path,
+        appDir: appDir,
+        stagingDirPath: stagingDirPath,
+      );
+
+      final result = await Process.run(
+        '/bin/sh',
+        ['-c', script],
+        environment: {
+          'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}',
+        },
+      );
+      expect(result.exitCode, isNot(0));
+      expect(File(oldExe.path).readAsStringSync(), 'echo "original"\n');
+      expect(Directory(stagingDirPath).existsSync(), isFalse);
+    });
+
+    test('UpdateService.cleanupStaleUpdateArtifacts sweeps dead directories, protects live updater PID, and recovers journal without nesting', () async {
+      final testDir = Directory.systemTemp.createTempSync('linux_cleanup_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = Directory('${testDir.path}/app')..createSync(recursive: true);
+      File('${appDir.path}/dummy_exe').writeAsStringSync('bin');
+
+      // Simulate stale leftover directory with dead PID (99999999)
+      final deadDir = Directory('${appDir.path}/.sgv_new.99999999')..createSync();
+      File('${deadDir.path}/old.tmp').writeAsStringSync('stale');
+
+      // Simulate active updater directory with live updater process matching appDir and binary name
+      final dummyExe = File('${appDir.path}/supergoodviewer');
+      dummyExe.writeAsStringSync('#!/bin/sh\nsleep 30\n');
+      Process.runSync('chmod', ['+x', dummyExe.path]);
+      final liveProcess = await Process.start(dummyExe.path, []);
+      final livePid = liveProcess.pid;
+      addTearDown(() {
+        try {
+          liveProcess.kill();
+        } catch (_) {}
+      });
+
+      final liveDir = Directory('${appDir.path}/.sgv_backup.$livePid')..createSync();
+      File('${liveDir.path}/active.tmp').writeAsStringSync('active');
+
+      // Setup journal with a directory (data/) waiting in backup to be restored over an existing data/ directory
+      Directory('${appDir.path}/data').createSync(recursive: true);
+      File('${appDir.path}/data/partially_installed.txt').writeAsStringSync('partial');
+      final installedListFile = File('${appDir.path}/.sgv_installed.99999998');
+      installedListFile.writeAsStringSync('data/partially_installed.txt\n');
+
+      final journalFile = File('${appDir.path}/.sgv_journal');
+      final backupDir = Directory('${appDir.path}/.sgv_backup.99999998')..createSync();
+      final backupDataDir = Directory('${backupDir.path}/data')..createSync();
+      File('${backupDataDir.path}/original.txt').writeAsStringSync('original');
+      journalFile.writeAsStringSync('PID=99999998\nBACKUP_DIR=${backupDir.path}\nINSTALLED_LIST=${installedListFile.path}\n');
+
+      // Call cleanupStaleUpdateArtifacts targeting appDir
+      UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: appDir);
+
+      // Verify journal recovered the data directory without creating nested data/data!
+      expect(File('${appDir.path}/data/original.txt').existsSync(), isTrue);
+      expect(File('${appDir.path}/data/original.txt').readAsStringSync(), 'original');
+      expect(File('${appDir.path}/data/partially_installed.txt').existsSync(), isFalse);
+      expect(Directory('${appDir.path}/data/data').existsSync(), isFalse);
+      expect(journalFile.existsSync(), isFalse);
+      expect(installedListFile.existsSync(), isFalse);
+
+      // Verify dead directory was swept
+      expect(deadDir.existsSync(), isFalse);
+
+      // Verify active directory with live PID was NOT deleted!
+      expect(liveDir.existsSync(), isTrue);
+    });
+
+    test('UpdateService.cleanupStaleUpdateArtifacts protects active updater journal and artifacts when PID is alive', () async {
+      final testDir = Directory.systemTemp.createTempSync('linux_active_cleanup_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = Directory('${testDir.path}/app')..createSync(recursive: true);
+      final dummyExe = File('${appDir.path}/supergoodviewer');
+      dummyExe.writeAsStringSync('#!/bin/sh\nsleep 30\n');
+      Process.runSync('chmod', ['+x', dummyExe.path]);
+      final liveProcess = await Process.start(dummyExe.path, []);
+      final livePid = liveProcess.pid;
+      addTearDown(() {
+        try {
+          liveProcess.kill();
+        } catch (_) {}
+      });
+
+      final activeBackupDir = Directory('${appDir.path}/.sgv_backup.$livePid')..createSync();
+      final activeInstalledList = File('${appDir.path}/.sgv_installed.$livePid')..writeAsStringSync('dummy.txt\n');
+      final journalFile = File('${appDir.path}/.sgv_journal');
+      journalFile.writeAsStringSync('PID=$livePid\nBACKUP_DIR=${activeBackupDir.path}\nINSTALLED_LIST=${activeInstalledList.path}\n');
+
+      UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: appDir);
+
+      // Because PID is the running test process, journal and its artifacts must NOT be touched!
+      expect(journalFile.existsSync(), isTrue);
+      expect(activeBackupDir.existsSync(), isTrue);
+      expect(activeInstalledList.existsSync(), isTrue);
+    });
+
+    test('UpdateService.cleanupStaleUpdateArtifacts cleans dangling journal when backupDir does not exist and PID is dead', () async {
+      final testDir = Directory.systemTemp.createTempSync('linux_dangling_cleanup_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = Directory('${testDir.path}/app')..createSync(recursive: true);
+      final journalFile = File('${appDir.path}/.sgv_journal');
+      journalFile.writeAsStringSync('PID=99999998\nBACKUP_DIR=${appDir.path}/.sgv_backup.99999998\n');
+
+      UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: appDir);
+
+      // Dangling journal should be cleaned up
+      expect(journalFile.existsSync(), isFalse);
+    });
+
+    test('UpdateService.cleanupStaleUpdateArtifactsAsync executes asynchronously in an isolate', () async {
+      final testDir = Directory.systemTemp.createTempSync('linux_async_cleanup_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = Directory('${testDir.path}/app')..createSync(recursive: true);
+      final deadDir = Directory('${appDir.path}/.sgv_new.99999999')..createSync();
+      File('${deadDir.path}/dead.tmp').writeAsStringSync('dead');
+
+      await UpdateService.cleanupStaleUpdateArtifactsAsync(targetAppDirPath: appDir.path);
+
+      expect(deadDir.existsSync(), isFalse);
+    });
+
+    test('buildLinuxUpdateScript falls back to cache or tmp when state directory is read-only', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('linux_log_fallback_test_');
+      addTearDown(() {
+        try {
+          Process.runSync('chmod', ['777', '${testDir.path}/state']);
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = '${testDir.path}/app';
+      final stagingDirPath = '${testDir.path}/staging';
+      Directory(appDir).createSync(recursive: true);
+      Directory(stagingDirPath).createSync(recursive: true);
+
+      final stateDir = '${testDir.path}/state';
+      final cacheDir = '${testDir.path}/cache';
+      Directory(stateDir).createSync(recursive: true);
+      Directory(cacheDir).createSync(recursive: true);
+
+      // Make state directory read-only
+      Process.runSync('chmod', ['555', stateDir]);
+
+      final oldExe = File('$appDir/supergoodviewer');
+      oldExe.writeAsStringSync('echo old\n');
+      Process.runSync('chmod', ['+x', oldExe.path]);
+
+      final newExe = File('$stagingDirPath/supergoodviewer');
+      newExe.writeAsStringSync('echo new\n');
+      Process.runSync('chmod', ['+x', newExe.path]);
+
+      final dummyProcess = await Process.start('true', []);
+      final dummyPid = dummyProcess.pid;
+      await dummyProcess.exitCode;
+
+      final script = UpdateService.buildLinuxUpdateScript(
+        currentPid: dummyPid,
+        exePath: oldExe.path,
+        appDir: appDir,
+        stagingDirPath: stagingDirPath,
+      );
+
+      final result = await Process.run(
+        '/bin/sh',
+        ['-c', script],
+        environment: {
+          'XDG_STATE_HOME': stateDir,
+          'XDG_CACHE_HOME': cacheDir,
+          'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
+        },
+      );
+      expect(result.exitCode, 0, reason: 'Script stderr: ${result.stderr}');
+
+      // Log file should have been written to cacheDir since stateDir was read-only
+      expect(File('$cacheDir/supergoodviewer/supergoodviewer_update.log').existsSync(), isTrue);
+    });
+
+    test('ui/bin/sgv protects live updater PID, recovers dead PID journal, and cleans dangling journal', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('sgv_script_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final binDir = Directory('${testDir.path}/bin')..createSync(recursive: true);
+      final sgvFile = File('${binDir.path}/sgv');
+      final originalSgv = File('bin/sgv');
+      originalSgv.copySync(sgvFile.path);
+      Process.runSync('chmod', ['+x', sgvFile.path]);
+
+      // Mock uname to return "Linux" so sgv exercises the Linux branch on any host without backdoors
+      final unameMock = File('${binDir.path}/uname');
+      unameMock.writeAsStringSync('''#!/bin/sh
+echo "Linux"
+''');
+      Process.runSync('chmod', ['+x', unameMock.path]);
+      final testEnv = {'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}'};
+
+      // 1. Live PID test: journal belongs to currently running supergoodviewer process
+      final appDir = testDir;
+      final dummyExe = File('${appDir.path}/supergoodviewer');
+      dummyExe.writeAsStringSync('#!/bin/sh\nsleep 30\n');
+      Process.runSync('chmod', ['+x', dummyExe.path]);
+      final liveProcess = await Process.start(dummyExe.path, []);
+      final livePid = liveProcess.pid;
+      addTearDown(() {
+        try {
+          liveProcess.kill();
+        } catch (_) {}
+      });
+
+      final liveBackupDir = Directory('${appDir.path}/.sgv_backup.$livePid')..createSync();
+      File('${liveBackupDir.path}/active.txt').writeAsStringSync('active');
+      final liveJournalFile = File('${appDir.path}/.sgv_journal');
+      liveJournalFile.writeAsStringSync('PID=$livePid\nBACKUP_DIR=${liveBackupDir.path}\nINSTALLED_LIST=${appDir.path}/.sgv_installed.$livePid\n');
+
+      final liveResult = await Process.run(sgvFile.path, ['-h'], environment: testEnv);
+      expect(liveResult.exitCode, 0);
+      // Live transaction must NOT be touched
+      expect(liveJournalFile.existsSync(), isTrue);
+      expect(liveBackupDir.existsSync(), isTrue);
+
+      // Clean up live transaction manually for next test
+      liveJournalFile.deleteSync();
+      liveBackupDir.deleteSync(recursive: true);
+      liveProcess.kill();
+
+      // 2. Dead PID test: journal belongs to dead PID 99999998
+      Directory('${appDir.path}/data').createSync(recursive: true);
+      File('${appDir.path}/data/installed.txt').writeAsStringSync('new');
+      final deadInstalledList = File('${appDir.path}/.sgv_installed.99999998');
+      deadInstalledList.writeAsStringSync('data/installed.txt\n');
+
+      final deadBackupDir = Directory('${appDir.path}/.sgv_backup.99999998')..createSync();
+      final backupDataDir = Directory('${deadBackupDir.path}/data')..createSync();
+      File('${backupDataDir.path}/restored.txt').writeAsStringSync('restored');
+
+      final deadJournalFile = File('${appDir.path}/.sgv_journal');
+      deadJournalFile.writeAsStringSync('PID=99999998\nBACKUP_DIR=${deadBackupDir.path}\nINSTALLED_LIST=${deadInstalledList.path}\n');
+
+      final deadResult = await Process.run(sgvFile.path, ['-h'], environment: testEnv);
+      expect(deadResult.exitCode, 0);
+
+      // Dead transaction recovered without directory nesting
+      expect(File('${appDir.path}/data/restored.txt').existsSync(), isTrue);
+      expect(File('${appDir.path}/data/installed.txt').existsSync(), isFalse);
+      expect(Directory('${appDir.path}/data/data').existsSync(), isFalse);
+      expect(deadJournalFile.existsSync(), isFalse);
+      expect(deadBackupDir.existsSync(), isFalse);
+      expect(deadInstalledList.existsSync(), isFalse);
+
+      // 3. Dangling journal test: backupDir does not exist
+      final danglingInstalled = File('${appDir.path}/.sgv_installed.99999998')..writeAsStringSync('dummy\n');
+      final danglingJournal = File('${appDir.path}/.sgv_journal');
+      danglingJournal.writeAsStringSync('PID=99999998\nBACKUP_DIR=${appDir.path}/.sgv_backup.99999998\nINSTALLED_LIST=${danglingInstalled.path}\n');
+
+      final danglingResult = await Process.run(sgvFile.path, ['-h'], environment: testEnv);
+      expect(danglingResult.exitCode, 0);
+      expect(danglingJournal.existsSync(), isFalse);
+      expect(danglingInstalled.existsSync(), isFalse);
+    });
+
+    test('isUpdaterProcessAlive guards against invalid PIDs (<= 1 and negatives)', () {
+      expect(UpdateService.isUpdaterProcessAlive(null), isFalse);
+      expect(UpdateService.isUpdaterProcessAlive(0), isFalse);
+      expect(UpdateService.isUpdaterProcessAlive(1), isFalse);
+      expect(UpdateService.isUpdaterProcessAlive(-1), isFalse);
+      expect(UpdateService.isUpdaterProcessAlive(-99), isFalse);
+      expect(UpdateService.isUpdaterProcessAlive(99999998), isFalse);
+    });
+
+    test('buildLinuxUpdateScript recovers legacy single-line journal under dash/POSIX sh', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('linux_legacy_journal_dash_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = '${testDir.path}/app';
+      final stagingDirPath = '${testDir.path}/staging';
+      Directory(appDir).createSync(recursive: true);
+      Directory(stagingDirPath).createSync(recursive: true);
+
+      // Previous interrupted legacy backup
+      final backupDir = Directory('$appDir/.sgv_backup.99999998')..createSync(recursive: true);
+      final backupDataDir = Directory('${backupDir.path}/data')..createSync(recursive: true);
+      File('${backupDataDir.path}/old_doc.txt').writeAsStringSync('legacy content');
+
+      // Partially installed new file in appDir
+      Directory('$appDir/data').createSync(recursive: true);
+      File('$appDir/data/partial_new.txt').writeAsStringSync('partial new');
+
+      // Paired installed list from legacy update
+      final legacyInstalled = File('$appDir/.sgv_installed.99999998');
+      legacyInstalled.writeAsStringSync('data/partial_new.txt\n');
+
+      // Legacy single-line journal format
+      final journalFile = File('$appDir/.sgv_journal');
+      journalFile.writeAsStringSync('${backupDir.path}\n');
+
+      final oldExe = File('$appDir/supergoodviewer');
+      oldExe.writeAsStringSync('echo old\n');
+      Process.runSync('chmod', ['+x', oldExe.path]);
+
+      final newExe = File('$stagingDirPath/supergoodviewer');
+      newExe.writeAsStringSync('echo new\n');
+      Process.runSync('chmod', ['+x', newExe.path]);
+
+      final dummyProcess = await Process.start('true', []);
+      final dummyPid = dummyProcess.pid;
+      await dummyProcess.exitCode;
+
+      final script = UpdateService.buildLinuxUpdateScript(
+        currentPid: dummyPid,
+        exePath: oldExe.path,
+        appDir: appDir,
+        stagingDirPath: stagingDirPath,
+      );
+
+      final shellBin = File('/bin/dash').existsSync() ? '/bin/dash' : '/bin/sh';
+      final result = await Process.run(
+        shellBin,
+        ['-c', script],
+        environment: {
+          'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
+        },
+      );
+      expect(result.exitCode, 0, reason: 'Script stderr: ${result.stderr}');
+
+      // Legacy backup was restored and update succeeded
+      expect(File('$appDir/data/old_doc.txt').existsSync(), isTrue);
+      expect(File('$appDir/supergoodviewer').existsSync(), isTrue);
+      expect(File('$appDir/data/partial_new.txt').existsSync(), isFalse);
+    });
+
+    test('buildLinuxUpdateScript aborts cleanly when writing journal fails', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('linux_journal_fail_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = '${testDir.path}/app';
+      final stagingDirPath = '${testDir.path}/staging';
+      Directory(appDir).createSync(recursive: true);
+      Directory(stagingDirPath).createSync(recursive: true);
+
+      final binDir = Directory('${testDir.path}/bin')..createSync(recursive: true);
+      final mvMock = File('${binDir.path}/mv');
+      mvMock.writeAsStringSync('''#!/bin/sh
+for arg in "\$@"; do
+  if echo "\$arg" | grep -q "\\.sgv_journal"; then
+    exit 1
+  fi
+done
+exec /bin/mv "\$@"
+''');
+      Process.runSync('chmod', ['+x', mvMock.path]);
+
+      final oldExe = File('$appDir/supergoodviewer');
+      oldExe.writeAsStringSync('echo old\n');
+      Process.runSync('chmod', ['+x', oldExe.path]);
+
+      final newExe = File('$stagingDirPath/supergoodviewer');
+      newExe.writeAsStringSync('echo new\n');
+      Process.runSync('chmod', ['+x', newExe.path]);
+
+      final dummyProcess = await Process.start('true', []);
+      final dummyPid = dummyProcess.pid;
+      await dummyProcess.exitCode;
+
+      final script = UpdateService.buildLinuxUpdateScript(
+        currentPid: dummyPid,
+        exePath: oldExe.path,
+        appDir: appDir,
+        stagingDirPath: stagingDirPath,
+      );
+
+      final result = await Process.run(
+        '/bin/sh',
+        ['-c', script],
+        environment: {
+          'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}',
+        },
+      );
+      expect(result.exitCode, isNot(0));
+      expect(File('$appDir/supergoodviewer').readAsStringSync(), 'echo old\n');
+    });
+
+    test('buildLinuxUpdateScript preserves INSTALLED_LIST and BACKUP_DIR when rollback fails', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('linux_rollback_fail_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = '${testDir.path}/app';
+      final stagingDirPath = '${testDir.path}/staging';
+      final binDir = Directory('${testDir.path}/bin')..createSync(recursive: true);
+      Directory(appDir).createSync(recursive: true);
+      Directory(stagingDirPath).createSync(recursive: true);
+
+      final oldExe = File('$appDir/supergoodviewer');
+      oldExe.writeAsStringSync('echo old\n');
+      Process.runSync('chmod', ['+x', oldExe.path]);
+
+      final newExe = File('$stagingDirPath/supergoodviewer');
+      newExe.writeAsStringSync('echo new\n');
+      Process.runSync('chmod', ['-x', newExe.path]); // Not executable to trigger rollback!
+
+      // Mock `chmod` to fail
+      final chmodMock = File('${binDir.path}/chmod');
+      chmodMock.writeAsStringSync('''#!/bin/sh
+exit 1
+''');
+      Process.runSync('chmod', ['+x', chmodMock.path]);
+
+      // Mock mv: succeed first (during backup and phase 2), but fail when moving from BACKUP_DIR back to appDir
+      final mvMock = File('${binDir.path}/mv');
+      mvMock.writeAsStringSync('''#!/bin/sh
+if echo "\$1" | grep -q "\\.sgv_backup\\."; then
+  # Moving from backup to appDir during rollback: fail!
+  exit 1
+fi
+exec /bin/mv "\$@"
+''');
+      Process.runSync('chmod', ['+x', mvMock.path]);
+
+      final dummyProcess = await Process.start('true', []);
+      final dummyPid = dummyProcess.pid;
+      await dummyProcess.exitCode;
+
+      final script = UpdateService.buildLinuxUpdateScript(
+        currentPid: dummyPid,
+        exePath: oldExe.path,
+        appDir: appDir,
+        stagingDirPath: stagingDirPath,
+      );
+
+      final result = await Process.run(
+        '/bin/sh',
+        ['-c', script],
+        environment: {
+          'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}',
+        },
+      );
+      expect(result.exitCode, isNot(0));
+
+      // Check that .sgv_journal exists and contains BACKUP_DIR
+      final journal = File('$appDir/.sgv_journal');
+      expect(journal.existsSync(), isTrue);
+
+      // Check that BACKUP_DIR exists
+      final backupDirs = Directory(appDir).listSync().where((e) => e.path.contains('.sgv_backup.'));
+      expect(backupDirs.isNotEmpty, isTrue);
+
+      // Check that INSTALLED_LIST was preserved because rollback failed!
+      final installedLists = Directory(appDir).listSync().where((e) => e.path.contains('.sgv_installed.'));
+      expect(installedLists.isNotEmpty, isTrue);
+    });
+
+    test('ui/bin/sgv strictly validates path containment and rejects traversal/symlink journals', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('sgv_containment_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final binDir = Directory('${testDir.path}/bin')..createSync(recursive: true);
+      final sgvFile = File('${binDir.path}/sgv');
+      File('bin/sgv').copySync(sgvFile.path);
+      Process.runSync('chmod', ['+x', sgvFile.path]);
+
+      final unameMock = File('${binDir.path}/uname');
+      unameMock.writeAsStringSync('#!/bin/sh\necho "Linux"\n');
+      Process.runSync('chmod', ['+x', unameMock.path]);
+      final testEnv = {'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}'};
+
+      final appDir = testDir;
+      final victimDir = Directory.systemTemp.createTempSync('sgv_victim_dir_');
+      addTearDown(() {
+        try {
+          victimDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+      final victimFile = File('${victimDir.path}/secret.txt')..writeAsStringSync('vital data');
+
+      // 1. Journal with BACKUP_DIR attempting path traversal
+      final traversalJournal = File('${appDir.path}/.sgv_journal');
+      traversalJournal.writeAsStringSync(
+        'PID=99999998\nBACKUP_DIR=${appDir.path}/.sgv_backup.1/../../../victim\n',
+      );
+
+      final result1 = await Process.run(sgvFile.path, ['-h'], environment: testEnv);
+      expect(result1.exitCode, 0);
+      expect(victimFile.existsSync(), isTrue);
+      expect(victimDir.existsSync(), isTrue);
+
+      // 2. Journal with BACKUP_DIR as a symlink pointing to victimDir
+      final symlinkBackup = Link('${appDir.path}/.sgv_backup.99999997');
+      try {
+        symlinkBackup.createSync(victimDir.path);
+      } catch (_) {}
+      if (symlinkBackup.existsSync()) {
+        final symlinkJournal = File('${appDir.path}/.sgv_journal');
+        symlinkJournal.writeAsStringSync(
+          'PID=99999997\nBACKUP_DIR=${symlinkBackup.path}\n',
+        );
+        final result2 = await Process.run(sgvFile.path, ['-h'], environment: testEnv);
+        expect(result2.exitCode, 0);
+        expect(victimFile.existsSync(), isTrue);
+        expect(victimDir.existsSync(), isTrue);
+      }
+
+      // 3. Traversal inside INSTALLED_LIST should be skipped, but double-dot filenames should be deleted
+      final installedList = File('${appDir.path}/.sgv_installed.99999996');
+      final legitimateFileWithDots = File('${appDir.path}/libfoo..so')..writeAsStringSync('new lib');
+      installedList.writeAsStringSync(
+        '..\n'
+        '../victim/secret.txt\n'
+        '/etc/shadow\n'
+        'libfoo..so\n',
+      );
+
+      final validBackupDir = Directory('${appDir.path}/.sgv_backup.99999996')..createSync();
+      File('${validBackupDir.path}/restored.txt').writeAsStringSync('restored');
+
+      final mixedJournal = File('${appDir.path}/.sgv_journal');
+      mixedJournal.writeAsStringSync(
+        'PID=99999996\nBACKUP_DIR=${validBackupDir.path}\nINSTALLED_LIST=${installedList.path}\n',
+      );
+
+      final result3 = await Process.run(sgvFile.path, ['-h'], environment: testEnv);
+      expect(result3.exitCode, 0);
+      // Victim file must NOT be deleted
+      expect(victimFile.existsSync(), isTrue);
+      // Legitimate file with dots in its name MUST be deleted by installed list
+      expect(legitimateFileWithDots.existsSync(), isFalse);
+      // Restored file from backup must exist
+      expect(File('${appDir.path}/restored.txt').existsSync(), isTrue);
+    });
+
+    test('buildLinuxUpdateScript strictly validates path containment and rejects traversal/symlink journals', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('linux_script_containment_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = '${testDir.path}/app';
+      final stagingDirPath = '${testDir.path}/staging';
+      final victimDir = '${testDir.path}/victim';
+      Directory(appDir).createSync(recursive: true);
+      Directory(stagingDirPath).createSync(recursive: true);
+      Directory(victimDir).createSync(recursive: true);
+
+      final victimFile = File('$victimDir/important.txt')..writeAsStringSync('safe');
+
+      final oldExe = File('$appDir/supergoodviewer');
+      oldExe.writeAsStringSync('echo old\n');
+      Process.runSync('chmod', ['+x', oldExe.path]);
+
+      final newExe = File('$stagingDirPath/supergoodviewer');
+      newExe.writeAsStringSync('echo new\n');
+      Process.runSync('chmod', ['+x', newExe.path]);
+
+      // Previous journal with path traversal in PREV_BACKUP
+      final journal = File('$appDir/.sgv_journal');
+      journal.writeAsStringSync('PID=99999998\nBACKUP_DIR=$appDir/.sgv_backup.1/../../../victim\n');
+
+      final dummyProcess = await Process.start('true', []);
+      final dummyPid = dummyProcess.pid;
+      await dummyProcess.exitCode;
+
+      final script = UpdateService.buildLinuxUpdateScript(
+        currentPid: dummyPid,
+        exePath: oldExe.path,
+        appDir: appDir,
+        stagingDirPath: stagingDirPath,
+      );
+
+      final result = await Process.run('/bin/sh', ['-c', script]);
+      expect(result.exitCode, 0, reason: 'Script stderr: ${result.stderr}');
+      expect(victimFile.existsSync(), isTrue);
+      expect(Directory(victimDir).existsSync(), isTrue);
+    });
+
+    test('UpdateService.cleanupStaleUpdateArtifacts strictly validates path containment and rejects traversal/symlink journals', () {
+      final testDir = Directory.systemTemp.createTempSync('dart_cleanup_containment_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = Directory('${testDir.path}/app')..createSync(recursive: true);
+      final victimDir = Directory('${testDir.path}/victim')..createSync(recursive: true);
+      final victimFile = File('${victimDir.path}/data.txt')..writeAsStringSync('vital');
+
+      // Traversal journal
+      final journal = File('${appDir.path}/.sgv_journal');
+      journal.writeAsStringSync('PID=99999998\nBACKUP_DIR=${appDir.path}/.sgv_backup.1/../../../victim\n');
+
+      UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: appDir);
+
+      // Victim must be untouched and dangling journal cleaned
+      expect(victimFile.existsSync(), isTrue);
+      expect(journal.existsSync(), isFalse);
+
+      // Traversal in INSTALLED_LIST should delete legitimate dotfile but NOT victim
+      final installedList = File('${appDir.path}/.sgv_installed.99999997');
+      final dotFile = File('${appDir.path}/libtest..so')..writeAsStringSync('dot');
+      installedList.writeAsStringSync(
+        '..\n'
+        '../victim/data.txt\n'
+        'libtest..so\n',
+      );
+
+      final validBackup = Directory('${appDir.path}/.sgv_backup.99999997')..createSync();
+      File('${validBackup.path}/restored.txt').writeAsStringSync('restored');
+      journal.writeAsStringSync('PID=99999997\nBACKUP_DIR=${validBackup.path}\nINSTALLED_LIST=${installedList.path}\n');
+
+      UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: appDir);
+
+      expect(victimFile.existsSync(), isTrue);
+      expect(dotFile.existsSync(), isFalse);
+      expect(File('${appDir.path}/restored.txt').existsSync(), isTrue);
+    });
+
+    test('isUpdaterProcessAlive matches candidate expectedAppDirs', () {
+      expect(UpdateService.isUpdaterProcessAlive(null), isFalse);
+      expect(UpdateService.isUpdaterProcessAlive(0), isFalse);
+      expect(UpdateService.isUpdaterProcessAlive(1), isFalse);
+      if (Platform.isLinux) {
+        expect(UpdateService.isUpdaterProcessAlive(pid, expectedAppDirs: ['/nonexistent/app/dir']), isFalse);
+      }
+    });
+
+    test('bare dot in INSTALLED_LIST does not wipe application directory in Dart or Shell', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      // 1. Dart test
+      final dartTestDir = Directory.systemTemp.createTempSync('dart_bare_dot_test_');
+      addTearDown(() {
+        try {
+          dartTestDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final dartAppDir = Directory('${dartTestDir.path}/app')..createSync(recursive: true);
+      final dartExe = File('${dartAppDir.path}/supergoodviewer')..writeAsStringSync('binary');
+      final dartKeep = File('${dartAppDir.path}/keep.txt')..writeAsStringSync('keep');
+
+      final dartInstalled = File('${dartAppDir.path}/.sgv_installed.99999995');
+      dartInstalled.writeAsStringSync('.\n./\n');
+
+      final dartBackup = Directory('${dartAppDir.path}/.sgv_backup.99999995')..createSync();
+      File('${dartBackup.path}/restored.txt').writeAsStringSync('restored');
+
+      final dartJournal = File('${dartAppDir.path}/.sgv_journal');
+      dartJournal.writeAsStringSync('PID=99999995\nBACKUP_DIR=${dartBackup.path}\nINSTALLED_LIST=${dartInstalled.path}\n');
+
+      UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: dartAppDir);
+
+      // Entire application directory must NOT be wiped by bare dot!
+      expect(dartExe.existsSync(), isTrue);
+      expect(dartKeep.existsSync(), isTrue);
+      expect(File('${dartAppDir.path}/restored.txt').existsSync(), isTrue);
+
+      // 2. Shell test (sgv)
+      final shellTestDir = Directory.systemTemp.createTempSync('shell_bare_dot_test_');
+      addTearDown(() {
+        try {
+          shellTestDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final binDir = Directory('${shellTestDir.path}/bin')..createSync(recursive: true);
+      final sgvFile = File('${binDir.path}/sgv');
+      File('bin/sgv').copySync(sgvFile.path);
+      Process.runSync('chmod', ['+x', sgvFile.path]);
+
+      final unameMock = File('${binDir.path}/uname');
+      unameMock.writeAsStringSync('#!/bin/sh\necho "Linux"\n');
+      Process.runSync('chmod', ['+x', unameMock.path]);
+      final testEnv = {'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}'};
+
+      final shellAppDir = shellTestDir;
+      final shellExe = File('${shellAppDir.path}/supergoodviewer')..writeAsStringSync('binary');
+      final shellKeep = File('${shellAppDir.path}/keep.txt')..writeAsStringSync('keep');
+
+      final shellInstalled = File('${shellAppDir.path}/.sgv_installed.99999994');
+      shellInstalled.writeAsStringSync('.\n./\n');
+
+      final shellBackup = Directory('${shellAppDir.path}/.sgv_backup.99999994')..createSync();
+      File('${shellBackup.path}/restored.txt').writeAsStringSync('restored');
+
+      final shellJournal = File('${shellAppDir.path}/.sgv_journal');
+      shellJournal.writeAsStringSync('PID=99999994\nBACKUP_DIR=${shellBackup.path}\nINSTALLED_LIST=${shellInstalled.path}\n');
+
+      final result = await Process.run(sgvFile.path, ['-h'], environment: testEnv);
+      expect(result.exitCode, 0);
+
+      expect(shellExe.existsSync(), isTrue);
+      expect(shellKeep.existsSync(), isTrue);
+      expect(File('${shellAppDir.path}/restored.txt').existsSync(), isTrue);
+    });
+
+    test('shared PID validation fixtures tested symmetrically across Dart and Shell', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('shared_pid_fixtures_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final binDir = Directory('${testDir.path}/bin')..createSync(recursive: true);
+      final sgvFile = File('${binDir.path}/sgv');
+      File('bin/sgv').copySync(sgvFile.path);
+      Process.runSync('chmod', ['+x', sgvFile.path]);
+
+      final unameMock = File('${binDir.path}/uname');
+      unameMock.writeAsStringSync('#!/bin/sh\necho "Linux"\n');
+      Process.runSync('chmod', ['+x', unameMock.path]);
+
+      final outsideVictim = File('${testDir.path}/victim.txt')..writeAsStringSync('victim');
+
+      final fixtures = <({
+        String name,
+        String Function(int deadPid) makePidLine,
+      })>[
+        (name: 'PID=0 (non-positive zero)', makePidLine: (d) => 'PID=0\n'),
+        (name: 'PID=1 (init process ID)', makePidLine: (d) => 'PID=1\n'),
+        (name: 'PID=-1 (negative integer)', makePidLine: (d) => 'PID=-1\n'),
+        (name: 'PID=00123 (leading zero)', makePidLine: (d) => 'PID=00123\n'),
+        (name: 'PID=x/../../../victim.txt (path traversal non-numeric)', makePidLine: (d) => 'PID=x/../../../victim.txt\n'),
+        (name: 'PID=1234567890123456789012345 (25-digit integer overflow)', makePidLine: (d) => 'PID=1234567890123456789012345\n'),
+        (name: 'all invalid PID lines (falls back to backup dir PID)', makePidLine: (d) => 'PID=not_a_number\nPID=garbage\n'),
+      ];
+
+      for (int i = 0; i < fixtures.length; i++) {
+        final fix = fixtures[i];
+        final suffix = findInactivePid();
+        final pidLine = fix.makePidLine(suffix);
+
+        // 1. Shell runner
+        final shellAppDir = Directory('${testDir.path}/shell_$i')..createSync(recursive: true);
+        final shellExe = File('${shellAppDir.path}/supergoodviewer')..writeAsStringSync('binary');
+        final shellKeep = File('${shellAppDir.path}/keep.txt')..writeAsStringSync('keep');
+        final shellPartial = File('${shellAppDir.path}/partial.txt')..writeAsStringSync('partial');
+
+        final shellBackup = Directory('${shellAppDir.path}/.sgv_backup.$suffix')..createSync();
+        File('${shellBackup.path}/restored.txt').writeAsStringSync('restored');
+
+        final shellInstalled = File('${shellAppDir.path}/.sgv_installed.$suffix');
+        shellInstalled.writeAsStringSync('partial.txt\n');
+
+        final shellJournal = File('${shellAppDir.path}/.sgv_journal');
+        shellJournal.writeAsStringSync('${pidLine}BACKUP_DIR=${shellBackup.path}\n');
+
+        final localBin = Directory('${shellAppDir.path}/bin')..createSync();
+        final localSgv = File('${localBin.path}/sgv');
+        sgvFile.copySync(localSgv.path);
+        Process.runSync('chmod', ['+x', localSgv.path]);
+        final localUname = File('${localBin.path}/uname');
+        unameMock.copySync(localUname.path);
+        Process.runSync('chmod', ['+x', localUname.path]);
+        final localEnv = {'PATH': '${localBin.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}'};
+
+        final shellResult = await Process.run(localSgv.path, ['-h'], environment: localEnv);
+        expect(shellResult.exitCode, 0, reason: 'Shell failed for fixture ${fix.name}');
+        expect(shellExe.existsSync(), isTrue, reason: 'Exe should exist for fixture ${fix.name}');
+        expect(shellKeep.existsSync(), isTrue, reason: 'Keep should exist for fixture ${fix.name}');
+        expect(shellPartial.existsSync(), isFalse, reason: 'Partial should be deleted for fixture ${fix.name}');
+        expect(File('${shellAppDir.path}/restored.txt').existsSync(), isTrue, reason: 'Restored should exist for fixture ${fix.name}');
+        expect(shellBackup.existsSync(), isFalse, reason: 'Backup should be removed for fixture ${fix.name}');
+        expect(shellJournal.existsSync(), isFalse, reason: 'Journal should be removed for fixture ${fix.name}');
+        expect(outsideVictim.existsSync(), isTrue, reason: 'Victim must be untouched for fixture ${fix.name}');
+
+        // 2. Dart runner
+        final dartAppDir = Directory('${testDir.path}/dart_$i')..createSync(recursive: true);
+        final dartExe = File('${dartAppDir.path}/supergoodviewer')..writeAsStringSync('binary');
+        final dartKeep = File('${dartAppDir.path}/keep.txt')..writeAsStringSync('keep');
+        final dartPartial = File('${dartAppDir.path}/partial.txt')..writeAsStringSync('partial');
+
+        final dartBackup = Directory('${dartAppDir.path}/.sgv_backup.$suffix')..createSync();
+        File('${dartBackup.path}/restored.txt').writeAsStringSync('restored');
+
+        final dartInstalled = File('${dartAppDir.path}/.sgv_installed.$suffix');
+        dartInstalled.writeAsStringSync('partial.txt\n');
+
+        final dartJournal = File('${dartAppDir.path}/.sgv_journal');
+        dartJournal.writeAsStringSync('${pidLine}BACKUP_DIR=${dartBackup.path}\n');
+
+        UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: dartAppDir);
+
+        expect(dartExe.existsSync(), isTrue, reason: 'Dart exe should exist for fixture ${fix.name}');
+        expect(dartKeep.existsSync(), isTrue, reason: 'Dart keep should exist for fixture ${fix.name}');
+        expect(dartPartial.existsSync(), isFalse, reason: 'Dart partial should be deleted for fixture ${fix.name}');
+        expect(File('${dartAppDir.path}/restored.txt').existsSync(), isTrue, reason: 'Dart restored should exist for fixture ${fix.name}');
+        expect(dartBackup.existsSync(), isFalse, reason: 'Dart backup should be removed for fixture ${fix.name}');
+        expect(dartJournal.existsSync(), isFalse, reason: 'Dart journal should be removed for fixture ${fix.name}');
+        expect(outsideVictim.existsSync(), isTrue, reason: 'Dart victim must be untouched for fixture ${fix.name}');
+      }
+    });
+
+    test('failed targetLink deletion aborts move and preserves backup directory and journal in Dart', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('target_link_failure_test_');
+      addTearDown(() {
+        try {
+          Process.runSync('chmod', ['-R', '777', testDir.path]);
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = Directory('${testDir.path}/app')..createSync(recursive: true);
+      final outsideDir = Directory('${testDir.path}/outside_dir')..createSync(recursive: true);
+      File('${outsideDir.path}/victim_file.txt').writeAsStringSync('victim');
+
+      // Create a target symlink pointing to outsideDir
+      final targetLink = Link('${appDir.path}/restored_item');
+      targetLink.createSync(outsideDir.path);
+
+      // Create a backup directory containing an item of the same name
+      final deadPid = findInactivePid();
+      final backup = Directory('${appDir.path}/.sgv_backup.$deadPid')..createSync();
+      final backupSub = Directory('${backup.path}/restored_item')..createSync();
+      File('${backupSub.path}/new_file.txt').writeAsStringSync('new');
+
+      final journal = File('${appDir.path}/.sgv_journal');
+      journal.writeAsStringSync('PID=$deadPid\nBACKUP_DIR=${backup.path}\n');
+
+      // Make appDir read-only so targetLink.deleteSync() fails with permission error
+      Process.runSync('chmod', ['555', appDir.path]);
+
+      UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: appDir);
+
+      // Restore write permissions to inspect and clean up
+      Process.runSync('chmod', ['755', appDir.path]);
+
+      // Since targetLink could not be deleted, it must NOT have moved backupSub into outsideDir!
+      expect(File('${outsideDir.path}/new_file.txt').existsSync(), isFalse);
+      expect(File('${outsideDir.path}/restored_item/new_file.txt').existsSync(), isFalse);
+
+      // Backup directory and journal must be preserved because recovery failed!
+      expect(backup.existsSync(), isTrue);
+      expect(journal.existsSync(), isTrue);
+    });
+
+    test('failed existing target removal aborts move and preserves backup directory and journal in Shell', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('shell_target_failure_test_');
+      addTearDown(() {
+        try {
+          Process.runSync('chmod', ['-R', '777', testDir.path]);
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = Directory('${testDir.path}/app')..createSync(recursive: true);
+      final binDir = Directory('${appDir.path}/bin')..createSync(recursive: true);
+      final sgvFile = File('${binDir.path}/sgv');
+      File('bin/sgv').copySync(sgvFile.path);
+      Process.runSync('chmod', ['+x', sgvFile.path]);
+
+      final unameMock = File('${binDir.path}/uname');
+      unameMock.writeAsStringSync('#!/bin/sh\necho "Linux"\n');
+      Process.runSync('chmod', ['+x', unameMock.path]);
+      final testEnv = {'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}'};
+
+      final exe = File('${appDir.path}/supergoodviewer')..writeAsStringSync('#!/bin/sh\nexit 0\n');
+      Process.runSync('chmod', ['+x', exe.path]);
+
+      final existingDir = Directory('${appDir.path}/restored_item')..createSync();
+      File('${existingDir.path}/existing.txt').writeAsStringSync('old');
+
+      final deadPid = findInactivePid();
+      final backup = Directory('${appDir.path}/.sgv_backup.$deadPid')..createSync();
+      final backupSub = Directory('${backup.path}/restored_item')..createSync();
+      File('${backupSub.path}/new_file.txt').writeAsStringSync('new');
+
+      final journal = File('${appDir.path}/.sgv_journal');
+      journal.writeAsStringSync('PID=$deadPid\nBACKUP_DIR=${backup.path}\n');
+
+      // Make appDir read-only so rm -rf "$candidate/restored_item" fails to unlink
+      Process.runSync('chmod', ['555', appDir.path]);
+
+      final result = await Process.run(sgvFile.path, ['-h'], environment: testEnv);
+
+      // Restore write permissions to inspect
+      Process.runSync('chmod', ['755', appDir.path]);
+
+      expect(result.exitCode, 0);
+
+      // It must NOT have moved backupSub into existingDir (no nested restored_item/restored_item)
+      expect(File('${existingDir.path}/new_file.txt').existsSync(), isFalse);
+      expect(File('${existingDir.path}/restored_item/new_file.txt').existsSync(), isFalse);
+
+      // Backup directory and journal must be preserved because recovery failed!
+      expect(backup.existsSync(), isTrue);
+      expect(journal.existsSync(), isTrue);
+    });
+
+    test('damaged PID= line falls back to BACKUP_DIR suffix and protects live updater in Dart and Shell', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('live_pid_override_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      // 1. Dart test: live updater process running supergoodviewer inside dartAppDir
+      final dartAppDir = Directory('${testDir.path}/dart_app')..createSync(recursive: true);
+      final dartExe = File('${dartAppDir.path}/supergoodviewer')..writeAsStringSync('#!/bin/sh\nsleep 30\n');
+      Process.runSync('chmod', ['+x', dartExe.path]);
+      final dartProcess = await Process.start(dartExe.path, []);
+      final dartLivePid = dartProcess.pid;
+      addTearDown(() {
+        try {
+          dartProcess.kill();
+        } catch (_) {}
+      });
+
+      final dartBackup = Directory('${dartAppDir.path}/.sgv_backup.$dartLivePid')..createSync();
+      File('${dartBackup.path}/restored.txt').writeAsStringSync('restored');
+      final dartJournal = File('${dartAppDir.path}/.sgv_journal');
+      dartJournal.writeAsStringSync('PID=garbage\nBACKUP_DIR=${dartBackup.path}\n');
+
+      UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: dartAppDir);
+
+      // Since PID=garbage is invalid, it falls back to BACKUP_DIR suffix ($dartLivePid) which is alive!
+      expect(dartBackup.existsSync(), isTrue, reason: 'Dart should preserve backup while PID is alive');
+      expect(dartJournal.existsSync(), isTrue, reason: 'Dart should preserve journal while PID is alive');
+      expect(File('${dartAppDir.path}/restored.txt').existsSync(), isFalse);
+
+      // 2. Shell test: live updater process running supergoodviewer inside shellAppDir
+      final shellAppDir = Directory('${testDir.path}/shell_app')..createSync(recursive: true);
+      final binDir = Directory('${shellAppDir.path}/bin')..createSync(recursive: true);
+      final sgvFile = File('${binDir.path}/sgv');
+      File('bin/sgv').copySync(sgvFile.path);
+      Process.runSync('chmod', ['+x', sgvFile.path]);
+
+      final unameMock = File('${binDir.path}/uname');
+      unameMock.writeAsStringSync('#!/bin/sh\necho "Linux"\n');
+      Process.runSync('chmod', ['+x', unameMock.path]);
+      final testEnv = {'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}'};
+
+      final shellExe = File('${shellAppDir.path}/supergoodviewer')..writeAsStringSync('#!/bin/sh\nsleep 30\n');
+      Process.runSync('chmod', ['+x', shellExe.path]);
+      final shellProcess = await Process.start(shellExe.path, []);
+      final shellLivePid = shellProcess.pid;
+      addTearDown(() {
+        try {
+          shellProcess.kill();
+        } catch (_) {}
+      });
+
+      final shellBackup = Directory('${shellAppDir.path}/.sgv_backup.$shellLivePid')..createSync();
+      File('${shellBackup.path}/restored.txt').writeAsStringSync('restored');
+      final shellJournal = File('${shellAppDir.path}/.sgv_journal');
+      shellJournal.writeAsStringSync('PID=garbage\nBACKUP_DIR=${shellBackup.path}\n');
+
+      final shellResult = await Process.run(sgvFile.path, ['-h'], environment: testEnv);
+      expect(shellResult.exitCode, 0);
+
+      // Shell should also preserve backup and journal while PID is alive!
+      expect(shellBackup.existsSync(), isTrue, reason: 'Shell should preserve backup while PID is alive');
+      expect(shellJournal.existsSync(), isTrue, reason: 'Shell should preserve journal while PID is alive');
+      expect(File('${shellAppDir.path}/restored.txt').existsSync(), isFalse);
+    });
+
+    test('earlier valid PID= is preserved when later PID= line is damaged even without BACKUP_DIR in Dart and Shell', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('valid_pid_damaged_later_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      // 1. Dart test: earlier valid PID, damaged later line, NO valid BACKUP_DIR
+      final dartAppDir = Directory('${testDir.path}/dart_app')..createSync(recursive: true);
+      final dartExe = File('${dartAppDir.path}/supergoodviewer')..writeAsStringSync('#!/bin/sh\nsleep 30\n');
+      Process.runSync('chmod', ['+x', dartExe.path]);
+      final dartProcess = await Process.start(dartExe.path, []);
+      final dartLivePid = dartProcess.pid;
+      addTearDown(() {
+        try {
+          dartProcess.kill();
+        } catch (_) {}
+      });
+
+      final dartJournal = File('${dartAppDir.path}/.sgv_journal');
+      dartJournal.writeAsStringSync('PID=$dartLivePid\nPID=corrupted\n');
+
+      UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: dartAppDir);
+
+      // Since PID=$dartLivePid was preserved and is alive, journal must NOT be treated as dangling and deleted!
+      expect(dartJournal.existsSync(), isTrue, reason: 'Dart should preserve journal while PID is alive even if trailing PID line is garbage');
+
+      // 2. Shell test
+      final shellAppDir = Directory('${testDir.path}/shell_app')..createSync(recursive: true);
+      final binDir = Directory('${shellAppDir.path}/bin')..createSync(recursive: true);
+      final sgvFile = File('${binDir.path}/sgv');
+      File('bin/sgv').copySync(sgvFile.path);
+      Process.runSync('chmod', ['+x', sgvFile.path]);
+
+      final unameMock = File('${binDir.path}/uname');
+      unameMock.writeAsStringSync('#!/bin/sh\necho "Linux"\n');
+      Process.runSync('chmod', ['+x', unameMock.path]);
+      final testEnv = {'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}'};
+
+      final shellExe = File('${shellAppDir.path}/supergoodviewer')..writeAsStringSync('#!/bin/sh\nsleep 30\n');
+      Process.runSync('chmod', ['+x', shellExe.path]);
+      final shellProcess = await Process.start(shellExe.path, []);
+      final shellLivePid = shellProcess.pid;
+      addTearDown(() {
+        try {
+          shellProcess.kill();
+        } catch (_) {}
+      });
+
+      final shellJournal = File('${shellAppDir.path}/.sgv_journal');
+      shellJournal.writeAsStringSync('PID=$shellLivePid\nPID=corrupted\n');
+
+      final shellResult = await Process.run(sgvFile.path, ['-h'], environment: testEnv);
+      expect(shellResult.exitCode, 0);
+
+      // Shell should also preserve journal while PID is alive!
+      expect(shellJournal.existsSync(), isTrue, reason: 'Shell should preserve journal while PID is alive even if trailing PID line is garbage');
+    });
+
+    test('recovery unlinks symlink target without chmodding outside directory in Dart and Shell', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('symlink_outside_chmod_test_');
+      addTearDown(() {
+        try {
+          Process.runSync('chmod', ['-R', '777', testDir.path]);
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      // 1. Dart test
+      final dartOutside = Directory('${testDir.path}/dart_outside')..createSync(recursive: true);
+      final dartOutsideFile = File('${dartOutside.path}/victim.txt')..writeAsStringSync('secret');
+      Process.runSync('chmod', ['700', dartOutside.path]);
+      Process.runSync('chmod', ['600', dartOutsideFile.path]);
+
+      final dartAppDir = Directory('${testDir.path}/dart_app')..createSync(recursive: true);
+      // Create a symlink in appDir pointing to outside directory
+      Link('${dartAppDir.path}/shared_lib').createSync(dartOutside.path);
+
+      final dartDeadPid = findInactivePid();
+      final dartBackup = Directory('${dartAppDir.path}/.sgv_backup.$dartDeadPid')..createSync();
+      final dartBackupSub = Directory('${dartBackup.path}/shared_lib')..createSync();
+      File('${dartBackupSub.path}/new_lib.txt').writeAsStringSync('new_lib');
+
+      final dartJournal = File('${dartAppDir.path}/.sgv_journal');
+      dartJournal.writeAsStringSync('PID=$dartDeadPid\nBACKUP_DIR=${dartBackup.path}\n');
+
+      UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: dartAppDir);
+
+      // Verify symlink was unlinked and replaced with restored dir
+      expect(Link('${dartAppDir.path}/shared_lib').existsSync(), isFalse);
+      expect(File('${dartAppDir.path}/shared_lib/new_lib.txt').existsSync(), isTrue);
+
+      final dartStat = Process.runSync('ls', ['-ld', dartOutsideFile.path]).stdout.toString();
+      expect(dartStat.contains('-rw-------'), isTrue, reason: 'Outside file permissions must remain 600, not chmodded to executable');
+
+      // 2. Shell test
+      final shellOutside = Directory('${testDir.path}/shell_outside')..createSync(recursive: true);
+      final shellOutsideFile = File('${shellOutside.path}/victim.txt')..writeAsStringSync('secret');
+      Process.runSync('chmod', ['700', shellOutside.path]);
+      Process.runSync('chmod', ['600', shellOutsideFile.path]);
+
+      final shellAppDir = Directory('${testDir.path}/shell_app')..createSync(recursive: true);
+      final binDir = Directory('${shellAppDir.path}/bin')..createSync(recursive: true);
+      final sgvFile = File('${binDir.path}/sgv');
+      File('bin/sgv').copySync(sgvFile.path);
+      Process.runSync('chmod', ['+x', sgvFile.path]);
+
+      final unameMock = File('${binDir.path}/uname');
+      unameMock.writeAsStringSync('#!/bin/sh\necho "Linux"\n');
+      Process.runSync('chmod', ['+x', unameMock.path]);
+      final testEnv = {'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}'};
+
+      final shellExe = File('${shellAppDir.path}/supergoodviewer')..writeAsStringSync('#!/bin/sh\nexit 0\n');
+      Process.runSync('chmod', ['+x', shellExe.path]);
+
+      Link('${shellAppDir.path}/shared_lib').createSync(shellOutside.path);
+
+      final shellDeadPid = findInactivePid();
+      final shellBackup = Directory('${shellAppDir.path}/.sgv_backup.$shellDeadPid')..createSync();
+      final shellBackupSub = Directory('${shellBackup.path}/shared_lib')..createSync();
+      File('${shellBackupSub.path}/new_lib.txt').writeAsStringSync('new_lib');
+
+      final shellJournal = File('${shellAppDir.path}/.sgv_journal');
+      shellJournal.writeAsStringSync('PID=$shellDeadPid\nBACKUP_DIR=${shellBackup.path}\n');
+
+      final shellResult = await Process.run(sgvFile.path, ['-h'], environment: testEnv);
+      expect(shellResult.exitCode, 0);
+
+      expect(Link('${shellAppDir.path}/shared_lib').existsSync(), isFalse);
+      expect(File('${shellAppDir.path}/shared_lib/new_lib.txt').existsSync(), isTrue);
+
+      final shellStat = Process.runSync('ls', ['-ld', shellOutsideFile.path]).stdout.toString();
+      expect(shellStat.contains('-rw-------'), isTrue, reason: 'Outside file permissions must remain 600 in shell test');
+    });
+
+    test('Dart recovery loop recovers cleanly when existing target is a 0555 read-only directory', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('dart_ro_recovery_test_');
+      addTearDown(() {
+        try {
+          Process.runSync('chmod', ['-R', '777', testDir.path]);
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final appDir = Directory('${testDir.path}/app')..createSync(recursive: true);
+      final roDir = Directory('${appDir.path}/ro_dir')..createSync();
+      File('${roDir.path}/old.txt').writeAsStringSync('old');
+      Process.runSync('chmod', ['555', roDir.path]);
+
+      final deadPid = findInactivePid();
+      final backup = Directory('${appDir.path}/.sgv_backup.$deadPid')..createSync();
+      final backupSub = Directory('${backup.path}/ro_dir')..createSync();
+      File('${backupSub.path}/new.txt').writeAsStringSync('new');
+
+      final journal = File('${appDir.path}/.sgv_journal');
+      journal.writeAsStringSync('PID=$deadPid\nBACKUP_DIR=${backup.path}\n');
+
+      UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: appDir);
+
+      // Verify that ro_dir was replaced and backup was restored
+      expect(File('${appDir.path}/ro_dir/new.txt').existsSync(), isTrue);
+      expect(backup.existsSync(), isFalse);
+      expect(journal.existsSync(), isFalse);
+    });
+
+    test('chmod 000 unreadable directory in INSTALLED_LIST is safely deleted by Dart and Shell', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      // 1. Dart test
+      final dartTestDir = Directory.systemTemp.createTempSync('dart_chmod000_test_');
+      addTearDown(() {
+        try {
+          Process.runSync('chmod', ['-R', '777', dartTestDir.path]);
+          dartTestDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final dartAppDir = Directory('${dartTestDir.path}/app')..createSync(recursive: true);
+      final dartExe = File('${dartAppDir.path}/supergoodviewer')..writeAsStringSync('binary');
+      final dartKeep = File('${dartAppDir.path}/keep.txt')..writeAsStringSync('keep');
+
+      final dartUnreadableDir = Directory('${dartAppDir.path}/unreadable_dir')..createSync();
+      File('${dartUnreadableDir.path}/nested.txt').writeAsStringSync('nested');
+      Process.runSync('chmod', ['000', dartUnreadableDir.path]);
+
+      final dartBackupPid = findInactivePid();
+      final dartBackup = Directory('${dartAppDir.path}/.sgv_backup.$dartBackupPid')..createSync();
+      File('${dartBackup.path}/restored.txt').writeAsStringSync('restored');
+
+      final dartInstalled = File('${dartAppDir.path}/.sgv_installed.$dartBackupPid');
+      dartInstalled.writeAsStringSync('unreadable_dir\n');
+
+      final dartJournal = File('${dartAppDir.path}/.sgv_journal');
+      dartJournal.writeAsStringSync('PID=$dartBackupPid\nBACKUP_DIR=${dartBackup.path}\nINSTALLED_LIST=${dartInstalled.path}\n');
+
+      UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: dartAppDir);
+
+      expect(dartUnreadableDir.existsSync(), isFalse);
+      expect(dartExe.existsSync(), isTrue);
+      expect(dartKeep.existsSync(), isTrue);
+      expect(File('${dartAppDir.path}/restored.txt').existsSync(), isTrue);
+
+      // 2. Shell test
+      final shellTestDir = Directory.systemTemp.createTempSync('shell_chmod000_test_');
+      addTearDown(() {
+        try {
+          Process.runSync('chmod', ['-R', '777', shellTestDir.path]);
+          shellTestDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final shellAppDir = shellTestDir;
+      final shellExe = File('${shellAppDir.path}/supergoodviewer')..writeAsStringSync('binary');
+      final shellKeep = File('${shellAppDir.path}/keep.txt')..writeAsStringSync('keep');
+
+      final binDir = Directory('${shellAppDir.path}/bin')..createSync(recursive: true);
+      final sgvFile = File('${binDir.path}/sgv');
+      File('bin/sgv').copySync(sgvFile.path);
+      Process.runSync('chmod', ['+x', sgvFile.path]);
+
+      final unameMock = File('${binDir.path}/uname');
+      unameMock.writeAsStringSync('#!/bin/sh\necho "Linux"\n');
+      Process.runSync('chmod', ['+x', unameMock.path]);
+      final testEnv = {'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}'};
+
+      final shellUnreadableDir = Directory('${shellAppDir.path}/unreadable_dir')..createSync();
+      File('${shellUnreadableDir.path}/nested.txt').writeAsStringSync('nested');
+      Process.runSync('chmod', ['000', shellUnreadableDir.path]);
+
+      final shellBackupPid = findInactivePid();
+      final shellBackup = Directory('${shellAppDir.path}/.sgv_backup.$shellBackupPid')..createSync();
+      File('${shellBackup.path}/restored.txt').writeAsStringSync('restored');
+
+      final shellInstalled = File('${shellAppDir.path}/.sgv_installed.$shellBackupPid');
+      shellInstalled.writeAsStringSync('unreadable_dir\n');
+
+      final shellJournal = File('${shellAppDir.path}/.sgv_journal');
+      shellJournal.writeAsStringSync('PID=$shellBackupPid\nBACKUP_DIR=${shellBackup.path}\nINSTALLED_LIST=${shellInstalled.path}\n');
+
+      final shellResult = await Process.run(sgvFile.path, ['-h'], environment: testEnv);
+      expect(shellResult.exitCode, 0);
+
+      expect(shellUnreadableDir.existsSync(), isFalse);
+      expect(shellExe.existsSync(), isTrue);
+      expect(shellKeep.existsSync(), isTrue);
+      expect(File('${shellAppDir.path}/restored.txt').existsSync(), isTrue);
+    });
+
+    test('symlink parent directory in INSTALLED_LIST cannot escape appDir in Dart and Shell', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      // 1. Dart test
+      final dartTestDir = Directory.systemTemp.createTempSync('dart_symlink_escape_test_');
+      addTearDown(() {
+        try {
+          dartTestDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final dartVictimDir = Directory.systemTemp.createTempSync('dart_victim_dir_');
+      addTearDown(() {
+        try {
+          dartVictimDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+      final dartVictimFile = File('${dartVictimDir.path}/victim.txt')..writeAsStringSync('victim');
+
+      final dartAppDir = Directory('${dartTestDir.path}/app')..createSync(recursive: true);
+      final dartExe = File('${dartAppDir.path}/supergoodviewer')..writeAsStringSync('binary');
+      final dartKeep = File('${dartAppDir.path}/keep.txt')..writeAsStringSync('keep');
+
+      // Create a directory symlink pointing outside appDir
+      Link('${dartAppDir.path}/sub').createSync(dartVictimDir.path);
+      // Create a leaf symlink pointing directly to the outside victim file
+      Link('${dartAppDir.path}/leaf_link').createSync(dartVictimFile.path);
+
+      final dartBackupPid = findInactivePid();
+      final dartBackup = Directory('${dartAppDir.path}/.sgv_backup.$dartBackupPid')..createSync();
+      File('${dartBackup.path}/restored.txt').writeAsStringSync('restored');
+
+      final dartInstalled = File('${dartAppDir.path}/.sgv_installed.$dartBackupPid');
+      dartInstalled.writeAsStringSync('sub/victim.txt\nleaf_link\n');
+
+      final dartJournal = File('${dartAppDir.path}/.sgv_journal');
+      dartJournal.writeAsStringSync('PID=$dartBackupPid\nBACKUP_DIR=${dartBackup.path}\nINSTALLED_LIST=${dartInstalled.path}\n');
+
+      UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: dartAppDir);
+
+      expect(dartVictimFile.existsSync(), isTrue);
+      expect(Link('${dartAppDir.path}/leaf_link').existsSync(), isFalse);
+      expect(dartVictimFile.existsSync(), isTrue); // still exists after leaf_link was deleted
+      expect(dartExe.existsSync(), isTrue);
+      expect(dartKeep.existsSync(), isTrue);
+      expect(File('${dartAppDir.path}/restored.txt').existsSync(), isTrue);
+
+      // 2. Shell test (sgv)
+      final shellTestDir = Directory.systemTemp.createTempSync('shell_symlink_escape_test_');
+      addTearDown(() {
+        try {
+          shellTestDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final shellVictimDir = Directory.systemTemp.createTempSync('shell_victim_dir_');
+      addTearDown(() {
+        try {
+          shellVictimDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+      final shellVictimFile = File('${shellVictimDir.path}/victim.txt')..writeAsStringSync('victim');
+
+      final binDir = Directory('${shellTestDir.path}/bin')..createSync(recursive: true);
+      final sgvFile = File('${binDir.path}/sgv');
+      File('bin/sgv').copySync(sgvFile.path);
+      Process.runSync('chmod', ['+x', sgvFile.path]);
+
+      final unameMock = File('${binDir.path}/uname');
+      unameMock.writeAsStringSync('#!/bin/sh\necho "Linux"\n');
+      Process.runSync('chmod', ['+x', unameMock.path]);
+      final testEnv = {'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}'};
+
+      final shellAppDir = shellTestDir;
+      final shellExe = File('${shellAppDir.path}/supergoodviewer')..writeAsStringSync('binary');
+      final shellKeep = File('${shellAppDir.path}/keep.txt')..writeAsStringSync('keep');
+
+      Link('${shellAppDir.path}/sub').createSync(shellVictimDir.path);
+      Link('${shellAppDir.path}/leaf_link').createSync(shellVictimFile.path);
+
+      final shellBackupPid = findInactivePid();
+      final shellBackup = Directory('${shellAppDir.path}/.sgv_backup.$shellBackupPid')..createSync();
+      File('${shellBackup.path}/restored.txt').writeAsStringSync('restored');
+
+      final shellInstalled = File('${shellAppDir.path}/.sgv_installed.$shellBackupPid');
+      shellInstalled.writeAsStringSync('sub/victim.txt\nleaf_link\n');
+
+      final shellJournal = File('${shellAppDir.path}/.sgv_journal');
+      shellJournal.writeAsStringSync('PID=$shellBackupPid\nBACKUP_DIR=${shellBackup.path}\nINSTALLED_LIST=${shellInstalled.path}\n');
+
+      final shellResult = await Process.run(sgvFile.path, ['-h'], environment: testEnv);
+      expect(shellResult.exitCode, 0);
+
+      expect(shellVictimFile.existsSync(), isTrue);
+      expect(Link('${shellAppDir.path}/leaf_link').existsSync(), isFalse);
+      expect(shellVictimFile.existsSync(), isTrue);
+      expect(shellExe.existsSync(), isTrue);
+      expect(shellKeep.existsSync(), isTrue);
+      expect(File('${shellAppDir.path}/restored.txt').existsSync(), isTrue);
+    });
+
+    test('backup name with suffix like .sgv_backup.5.evil is rejected by both Dart and Shell', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
+      final testDir = Directory.systemTemp.createTempSync('name_parity_test_');
+      addTearDown(() {
+        try {
+          testDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+
+      final binDir = Directory('${testDir.path}/bin')..createSync(recursive: true);
+      final sgvFile = File('${binDir.path}/sgv');
+      File('bin/sgv').copySync(sgvFile.path);
+      Process.runSync('chmod', ['+x', sgvFile.path]);
+
+      final unameMock = File('${binDir.path}/uname');
+      unameMock.writeAsStringSync('#!/bin/sh\necho "Linux"\n');
+      Process.runSync('chmod', ['+x', unameMock.path]);
+      final testEnv = {'PATH': '${binDir.path}:${Platform.environment['PATH'] ?? '/usr/bin:/bin'}'};
+
+      final deadPid = findInactivePid();
+      final appDir = testDir;
+      final evilBackup = Directory('${appDir.path}/.sgv_backup.$deadPid.evil')..createSync();
+      File('${evilBackup.path}/evil.txt').writeAsStringSync('evil');
+
+      final journal = File('${appDir.path}/.sgv_journal');
+      journal.writeAsStringSync('PID=$deadPid\nBACKUP_DIR=${evilBackup.path}\n');
+
+      // 1. Shell test: evil backup must be rejected, not restored
+      final shellResult = await Process.run(sgvFile.path, ['-h'], environment: testEnv);
+      expect(shellResult.exitCode, 0);
+      expect(File('${appDir.path}/evil.txt').existsSync(), isFalse);
+
+      // 2. Dart test: evil backup must also be rejected
+      journal.writeAsStringSync('PID=$deadPid\nBACKUP_DIR=${evilBackup.path}\n');
+      UpdateService.cleanupStaleUpdateArtifacts(targetAppDir: appDir);
+      expect(File('${appDir.path}/evil.txt').existsSync(), isFalse);
     });
   });
 
