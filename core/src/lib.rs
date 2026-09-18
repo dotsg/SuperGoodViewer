@@ -357,5 +357,135 @@ Paragraph mentioning "quotes" in body.
         let pdf = res.unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
     }
+
+    #[test]
+    fn test_compile_datasheet_register_tables() {
+        // Representative excerpt from hardware datasheets: underscores in
+        // identifiers, @ in headings, HTML <br> inside table cells, and
+        // quoted pin names with a trailing *Note marker.
+        let md = r#"
+## 6.1.4.8 eSPI PC Control 0 (ESPCTRL0)
+
+Supports AW\_FCS hardwired mechanism
+
+## BFNAME@REGNAME
+
+Endless loop to wait for FCEAF@ESGCTRL0 = 1 and Write 1b Clear.
+
+It's allowed to let {VSTBY,VFSPI}={on,off}.
+
+n = 1 ~ 8
+
+//Register Write
+
+| Bit | R/W | Description |
+|-----|-----|-------------|
+| 7 | R/WC | PUT_PC Status<br>3h: Message<br>4h: Message with Data |
+| 5-0 | R | Target RPMC Supported.<br>0h: The slave does not support RPMC. |
+
+| Pin | Signal |
+|-----|--------|
+| 3 | "SSCE1#/CEC1/GPH7' or 'VCORE2" *Note |
+
+## Index: 30h
+
+First index.
+
+## Index: 30h
+
+Second index.
+"#;
+        let options = RenderOptions {
+            mode: "fluid".to_string(),
+            theme: "light".to_string(),
+            viewport_width: 850.0,
+            font_size: 10.5,
+            ..Default::default()
+        };
+        let parsed = convert_markdown_to_typst(md, "IT51378 Excerpt", &options);
+        let res = compile_markdown_to_pdf(md, "IT51378 Excerpt", ".", &options);
+        if let Err(ref e) = res {
+            eprintln!("Datasheet excerpt failed: {e:?}");
+            eprintln!("Generated typst source:\n{}", parsed.typst_source);
+        }
+        assert!(res.is_ok(), "Datasheet excerpt failed to compile: {:?}", res.err());
+        let pdf = res.unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    #[ignore = "set SGV_LARGE_MD to a large Markdown path and run with --ignored"]
+    fn test_compile_large_external_markdown_if_present() {
+        let path = match std::env::var_os("SGV_LARGE_MD") {
+            Some(p) => PathBuf::from(p),
+            None => {
+                eprintln!("Skipping: set SGV_LARGE_MD to a Markdown file path");
+                return;
+            }
+        };
+        if !path.exists() {
+            panic!("SGV_LARGE_MD path does not exist: {}", path.display());
+        }
+        let content = std::fs::read_to_string(&path).expect("Read large markdown");
+        let doc_dir = path.parent().unwrap_or(Path::new("."));
+        let options = RenderOptions {
+            mode: "fluid".to_string(),
+            theme: "light".to_string(),
+            viewport_width: 850.0,
+            font_size: 10.5,
+            ..Default::default()
+        };
+        let start = std::time::Instant::now();
+        let parsed = convert_markdown_to_typst(&content, "Large Markdown", &options);
+        println!(
+            "Converted markdown ({} chars) to typst ({} chars) in {:?}",
+            content.len(),
+            parsed.typst_source.len(),
+            start.elapsed()
+        );
+        let compile_start = std::time::Instant::now();
+        let world = compiler::world::MemoryWorld::new_with_cache_dir(
+            &parsed.typst_source,
+            doc_dir,
+            parsed.virtual_files.clone(),
+            None,
+        );
+        let document = typst::compile(&world).output.unwrap_or_else(|errs| {
+            panic!(
+                "Large markdown compile failed in {:?}: {:?}",
+                compile_start.elapsed(),
+                errs.iter().map(|e| e.message.to_string()).collect::<Vec<_>>()
+            )
+        });
+        let pdf = typst_pdf::pdf(&document, &typst_pdf::PdfOptions::default())
+            .expect("PDF export");
+        println!(
+            "Typst laid out {} page(s) in {:?}",
+            document.pages().len(),
+            compile_start.elapsed()
+        );
+        for (i, page) in document.pages().iter().enumerate() {
+            let size = page.frame.size();
+            if i < 3 {
+                println!(
+                    "page {} size: {:.1}pt x {:.1}pt",
+                    i + 1,
+                    size.x.to_pt(),
+                    size.y.to_pt()
+                );
+            }
+            assert!(
+                size.y.to_pt() <= 14000.5,
+                "fluid page {} is too tall for PDF: {:.1}pt",
+                i + 1,
+                size.y.to_pt()
+            );
+        }
+        assert!(
+            document.pages().len() > 1,
+            "large markdown should paginate in fluid mode"
+        );
+        assert!(pdf.starts_with(b"%PDF-"));
+    }
 }
 
