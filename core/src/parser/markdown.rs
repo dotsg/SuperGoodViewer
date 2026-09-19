@@ -695,6 +695,20 @@ pub fn convert_markdown_to_typst(
         ("rgb(\"#f1f5f9\")", "rgb(\"#cbd5e1\")", "rgb(\"#334155\")")
     };
 
+    let (degraded_math_bg, degraded_math_stroke, degraded_math_fg) = if is_dark {
+        ("rgb(\"#3c1e22\")", "rgb(\"#f85149\")", "rgb(\"#ff7b72\")")
+    } else {
+        ("rgb(\"#fff5f5\")", "rgb(\"#cf222e\")", "rgb(\"#cf222e\")")
+    };
+
+    let body_width_pt: f32 = match normalized_format {
+        "fluid" => (options.viewport_width - 48.0).max(100.0),
+        "a4" => 481.89,
+        "a4_landscape" => 700.16,
+        "slide_16_9" | "slide_4_3" => 864.0,
+        _ => 481.89,
+    };
+
     let (page_width, page_height, page_margin) = match normalized_format {
         "fluid" if is_fluid_sliced => {
             let slice_h = target_fluid_slice.unwrap();
@@ -990,22 +1004,44 @@ pub fn convert_markdown_to_typst(
 #let stackrel(sup, base) = $limits(base)^(sup)$
 #let xrightarrow(it) = $limits(stretch(arrow.r)^#it)$
 #let xleftarrow(it) = $limits(stretch(arrow.l)^#it)$
+#let xleftrightarrow(it) = $limits(stretch(arrow.l.r)^#it)$
 #let overleftrightarrow(it) = $accent(it, \u{{20e1}})$
 #let overleftharpoon(it) = $accent(it, \u{{20d0}})$
 #let overrightharpoon(it) = $accent(it, \u{{20d1}})$
 #let overlinesegment(it) = $accent(it, \u{{20e9}})$
 
+// Extensible over/under braces and brackets
+#let mitexoverbrace = math.overbrace
+#let mitexunderbrace = math.underbrace
+#let mitexoverbracket = math.overbracket
+#let mitexunderbracket = math.underbracket
+
+// Formula-level graceful degradation placeholder
+#let mitexdegraded(raw-latex) = box(
+  stroke: (dash: "densely-dashed", paint: {degraded_math_stroke}, thickness: 0.65pt),
+  fill: {degraded_math_bg},
+  inset: (x: 4pt, y: 2.5pt),
+  radius: 3pt,
+  baseline: 0%,
+  text(fill: {degraded_math_fg}, font: {code_font_str}, size: 0.82em, raw-latex)
+)
+#let mitex-degraded-math = mitexdegraded
+
 // String & dimension helper for mitex arguments
-#let mitex-str(it) = {{
+#let sgvbodywidth = {body_width_pt}pt
+#let sgv-body-width = sgvbodywidth
+#let mitexstr(it) = {{
   if type(it) == str {{
     it
+  }} else if type(it) == length {{
+    repr(it)
   }} else if type(it) == content {{
     if it.has("text") {{
       it.text
     }} else if it.has("children") {{
-      it.children.map(mitex-str).join("")
+      it.children.map(mitexstr).join("")
     }} else if it.has("body") {{
-      mitex-str(it.body)
+      mitexstr(it.body)
     }} else {{
       ""
     }}
@@ -1013,11 +1049,73 @@ pub fn convert_markdown_to_typst(
     ""
   }}
 }}
-#let mitex-len(it, default: 0pt) = {{
+#let mitex-str = mitexstr
+
+// LaTeX color support
+#let mitex-color-map = (
+  "red": rgb("#d73a49"),
+  "blue": rgb("#0366d6"),
+  "green": rgb("#28a745"),
+  "yellow": rgb("#d97706"),
+  "orange": rgb("#d97706"),
+  "purple": rgb("#6f42c1"),
+  "cyan": rgb("#005cc5"),
+  "magenta": rgb("#ea4aaa"),
+  "gray": rgb("#6a737d"),
+  "grey": rgb("#6a737d"),
+  "black": rgb("#000000"),
+  "white": rgb("#ffffff"),
+  "pink": rgb("#ea4aaa"),
+  "teal": rgb("#008080"),
+  "violet": rgb("#6f42c1"),
+  "brown": rgb("#a0522d"),
+  "lime": rgb("#32cd32"),
+  "olive": rgb("#808000"),
+)
+#let colortext(c, it) = {{
+  let c-str = lower(mitexstr(c).replace(" ", "").trim())
+  let is-hex = c-str.starts-with("#") and (c-str.len() == 4 or c-str.len() == 7 or c-str.len() == 9) and c-str.slice(1).clusters().all(ch => ch in ("0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f","A","B","C","D","E","F"))
+  let clr = if c-str in mitex-color-map {{
+    mitex-color-map.at(c-str)
+  }} else if is-hex {{
+    rgb(c-str)
+  }} else {{
+    rgb("#d73a49")
+  }}
+  text(fill: clr, it)
+}}
+#let mitexcolor = colortext
+
+#let mitexlen(it, default: 0pt) = {{
   if type(it) == length or type(it) == relative or type(it) == ratio {{
     return it
   }}
-  let s = mitex-str(it).replace(" ", "").replace("\u{{200b}}", "").trim()
+  let s = mitexstr(it).replace(" ", "").replace("\u{{200b}}", "").trim()
+  if s.ends-with("textwidth") or s.ends-with("linewidth") or s.ends-with("columnwidth") {{
+    let suffix-len = if s.ends-with("columnwidth") {{ 11 }} else {{ 9 }}
+    let num-str = s.slice(0, s.len() - suffix-len).trim()
+    let coeff = if num-str.len() == 0 {{ 1.0 }} else {{
+      let num-chars = num-str.clusters()
+      let i = 0
+      if num-chars.at(0) == "+" or num-chars.at(0) == "-" {{ i += 1 }}
+      let has-dot = false
+      let valid = i < num-chars.len()
+      while i < num-chars.len() {{
+        let c = num-chars.at(i)
+        if c == "." {{
+          if has-dot {{ valid = false; break }}
+          has-dot = true
+        }} else if c in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9") {{
+          // digit ok
+        }} else {{
+          valid = false; break
+        }}
+        i += 1
+      }}
+      if valid {{ float(num-str) }} else {{ 1.0 }}
+    }}
+    return coeff * sgvbodywidth
+  }}
   let chars = s.clusters()
   if chars.len() < 2 {{ return default }}
   let units = (
@@ -1059,17 +1157,18 @@ pub fn convert_markdown_to_typst(
   if not has-digit {{ return default }}
   float(num-str) * unit-mult
 }}
+#let mitex-len = mitexlen
 
 // Spacing & sizing
-#let textwidth = 100%
-#let linewidth = 100%
-#let columnwidth = 100%
+#let textwidth = [textwidth]
+#let linewidth = [linewidth]
+#let columnwidth = [columnwidth]
 #let baselineskip = 1.2em
-#let hspace(it) = h(mitex-len(it, default: 1em))
-#let vspace(it) = v(mitex-len(it, default: 1em))
+#let hspace(it) = h(mitexlen(it, default: 1em))
+#let vspace(it) = v(mitexlen(it, default: 1em))
 #let smash(it) = box(height: 0pt, $it$)
 #let raisebox(sp, it) = {{
-  let dy = mitex-len(sp, default: 0pt)
+  let dy = mitexlen(sp, default: 0pt)
   move(dy: -dy, it)
 }}
 #let atop(a, b) = math.vec(delim: none, a, b)
@@ -1201,7 +1300,11 @@ pub fn convert_markdown_to_typst(
         table_stroke = table_stroke,
         table_header_bg = table_header_bg,
         body_font_str = body_font_str,
-        code_font_str = code_font_str
+        code_font_str = code_font_str,
+        degraded_math_bg = degraded_math_bg,
+        degraded_math_stroke = degraded_math_stroke,
+        degraded_math_fg = degraded_math_fg,
+        body_width_pt = body_width_pt
     ));
 
     if is_fluid {

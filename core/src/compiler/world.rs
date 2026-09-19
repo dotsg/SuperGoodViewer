@@ -264,7 +264,7 @@ pub struct MemoryWorld {
     main_source: Source,
     doc_dir: PathBuf,
     image_cache_dir: Option<PathBuf>,
-    virtual_files: HashMap<PathBuf, Bytes>,
+    virtual_files: std::sync::Arc<HashMap<PathBuf, Bytes>>,
     now: Datetime,
 }
 
@@ -272,7 +272,7 @@ impl MemoryWorld {
     pub fn new(
         source_text: &str,
         doc_dir: impl AsRef<Path>,
-        virtual_files: HashMap<PathBuf, Bytes>,
+        virtual_files: impl Into<std::sync::Arc<HashMap<PathBuf, Bytes>>>,
     ) -> Self {
         Self::new_with_cache_dir(source_text, doc_dir, virtual_files, None)
     }
@@ -280,7 +280,7 @@ impl MemoryWorld {
     pub fn new_with_cache_dir(
         source_text: &str,
         doc_dir: impl AsRef<Path>,
-        virtual_files: HashMap<PathBuf, Bytes>,
+        virtual_files: impl Into<std::sync::Arc<HashMap<PathBuf, Bytes>>>,
         image_cache_dir: Option<PathBuf>,
     ) -> Self {
         let vpath = VirtualPath::new("main.typ").unwrap();
@@ -294,7 +294,7 @@ impl MemoryWorld {
             main_source,
             doc_dir,
             image_cache_dir,
-            virtual_files,
+            virtual_files: virtual_files.into(),
             now: Datetime::from_ymd(2026, 9, 11).unwrap_or_else(|| Datetime::from_ymd(2026, 1, 1).unwrap()),
         }
     }

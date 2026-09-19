@@ -88,6 +88,27 @@ fn preprocess_laps(input: &str) -> String {
     result
 }
 
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        use std::fmt::Write;
+        let _ = write!(&mut s, "{:02x}", b);
+    }
+    s
+}
+
+pub fn hex_decode(s: &str) -> Option<String> {
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(s.len() / 2);
+    for i in (0..s.len()).step_by(2) {
+        let byte = u8::from_str_radix(&s[i..i + 2], 16).ok()?;
+        bytes.push(byte);
+    }
+    String::from_utf8(bytes).ok()
+}
+
 pub fn transpile_latex_math(latex: &str, is_block: bool) -> String {
     let trimmed = latex.trim();
     if trimmed.is_empty() {
@@ -108,21 +129,22 @@ pub fn transpile_latex_math(latex: &str, is_block: bool) -> String {
                 .replace("angle.r", "chevron.r")
                 .replace("dot.circle", "dot.o")
                 .replace("times.circle", "times.o");
+            let hex = hex_encode(trimmed.as_bytes());
             if is_block {
-                format!("$ {} $\n", clean)
+                format!("$ /*sgv-raw:{}*/ {} $\n", hex, clean)
             } else {
-                format!("${}$", clean)
+                format!("$/*sgv-raw:{}*/ {}$", hex, clean)
             }
         }
 
         Err(_err) => {
             // Graceful fallback: escape special Typst string symbols (quotes and backslashes)
-            // so it doesn't crash the document with unexpected tokens or unknown variable errors
+            // and wrap in mitexdegraded for visible styling and error recovery
             let safe_fallback = escape_typst_string(trimmed);
             if is_block {
-                format!("$ \"{}\" $\n", safe_fallback)
+                format!("$ mitexdegraded(\"{}\") $\n", safe_fallback)
             } else {
-                format!("$ \"{}\" $", safe_fallback)
+                format!("$ mitexdegraded(\"{}\") $", safe_fallback)
             }
         }
     }
@@ -136,6 +158,11 @@ mod tests {
     fn test_transpile_simple_math() {
         let res = transpile_latex_math("E = mc^2", false);
         assert!(res.starts_with('$') && res.ends_with('$'));
+        assert!(res.contains("/*sgv-raw:"));
+        let hex_start = res.find("/*sgv-raw:").unwrap() + 10;
+        let hex_end = res.find("*/").unwrap();
+        let decoded = hex_decode(&res[hex_start..hex_end]).unwrap();
+        assert_eq!(decoded, "E = mc^2");
     }
 
     #[test]
@@ -199,12 +226,10 @@ $$ A \hspace{0.5\textwidth} B $$
         assert!((gap_cjk1 - gap_exploit1).abs() < 0.01, "CJK '中' must safely fall back to default length");
         assert!((gap_cjk2 - gap_exploit1).abs() < 0.01, "CJK '1米m' must safely fall back to default length");
 
-        // textwidth formula compiles successfully and produces positive gap
+        // textwidth formula compiles successfully and produces positive gap matching half body width (~376pt)
         let gap_textwidth = (b_runs[5].pos.x - a_runs[5].pos.x).to_pt();
-        assert!(gap_textwidth > 0.0, "textwidth formula must produce valid gap");
+        assert!(gap_textwidth > 200.0, "textwidth formula must produce gap > 200pt, got {:.2}pt", gap_textwidth);
     }
-
-
 
     #[test]
     fn test_transpile_maxwell() {
@@ -587,11 +612,58 @@ $$\big( \Big( \bigg( \Bigg( \bigl( \Bigl( \biggl( \Biggl( \bigm| \Bigm| \biggm| 
         // It must trigger graceful fallback for that equation without crashing document compilation.
         let raw = r"\mathrlap{\invalidcommandhere}";
         let trans = transpile_latex_math(raw, false);
-        assert!(trans.starts_with("$ \"") && trans.ends_with("\" $"), "Invalid lap must fall back to string literal: got {}", trans);
+        assert!(trans.contains("mitexdegraded"), "Invalid lap must fall back to degraded math: got {}", trans);
+        assert!(trans.contains(r#"\\mathrlap{\\invalidcommandhere}"#), "Must retain original LaTeX: got {}", trans);
 
         let md = format!("# Test\n\n$$\n{}\n$$\n", raw);
         let doc = crate::parser::markdown::convert_markdown_to_typst(&md, "Test", &crate::compiler::engine::RenderOptions::default());
         let compiled = crate::compiler::engine::compile_typst_to_document(&doc.typst_source, ".", std::collections::HashMap::new(), None);
         assert!(compiled.is_ok(), "Document compilation must not fail on invalid lap: {:?}", compiled.err());
+    }
+
+    #[test]
+    fn test_extended_latex_structures_authentic_rendering() {
+        let md = r#"
+# Extended LaTeX Macros Authentic Rendering
+
+$$\overbrace{x+y}^{top}$$
+$$\underbrace{x+y}_{bottom}$$
+$$\overbracket{x}$$
+$$\underbracket{x}$$
+$$\xleftrightarrow{f}$$
+$$\textcolor{red}{x}$$
+$$\color{blue}{y}$$
+"#;
+        let doc = crate::parser::markdown::convert_markdown_to_typst(md, "Test", &crate::compiler::engine::RenderOptions::default());
+        // Must compile cleanly
+        let compiled = crate::compiler::engine::compile_typst_to_document(&doc.typst_source, ".", std::collections::HashMap::new(), None);
+        assert!(compiled.is_ok(), "Extended LaTeX macros must compile authentically without errors: {:?}", compiled.err());
+
+        // Must NOT have degraded into mitexdegraded in any equation
+        assert!(
+            !doc.typst_source.contains("$ mitexdegraded(") && !doc.typst_source.contains("$mitexdegraded("),
+            "Extended LaTeX structures must render authentically without degradation: {}",
+            doc.typst_source
+        );
+    }
+
+    #[test]
+    fn test_formula_level_visible_degradation_with_raw_latex() {
+        let md = r#"
+# Document with Unhandled LaTeX Commands
+
+$$\genfrac{(}{)}{0pt}{}{n}{k}$$
+$$\sideset{_a^b}{_c^d}\sum$$
+$$\unknownlatexcommand{42}$$
+"#;
+        let doc = crate::parser::markdown::convert_markdown_to_typst(md, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled = crate::compiler::engine::compile_typst_to_document(&doc.typst_source, ".", std::collections::HashMap::new(), None);
+        assert!(compiled.is_ok(), "Document compilation must succeed with degraded formulas: {:?}", compiled.err());
+
+        // Check that degraded formulas display the original raw LaTeX (escaped for string literal)
+        assert!(doc.typst_source.contains("mitexdegraded"), "Must use mitexdegraded for unhandled formulas");
+        assert!(doc.typst_source.contains(r#"\\genfrac{(}{)}{0pt}{}{n}{k}"#));
+        assert!(doc.typst_source.contains(r#"\\sideset{_a^b}{_c^d}\\sum"#));
+        assert!(doc.typst_source.contains(r#"\\unknownlatexcommand{42}"#));
     }
 }
