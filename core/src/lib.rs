@@ -24,21 +24,23 @@ fn frame_has_overflow(frame: &Frame, origin: Point, page_height: f64) -> bool {
 
                 if group.clip.is_some() {
                     let group_h = group.frame.size().y.to_pt();
-                    // If this group has clipping enabled (e.g. image container block with rounded corners),
-                    // check if any child group's layout height exceeds this group's rendered height.
-                    // This detects pagination-induced clipping where an outer block was forced to shrink
-                    // below its inner element's height, while correctly ignoring an image's normal aspect-ratio
-                    // crop (where the inner image group matches the outer block height).
+                    // Check direct children of the clipped container (e.g. image container block).
+                    // If a direct child group or direct image's layout height exceeds the container,
+                    // the container was forced to shrink by pagination, clipping the element.
+                    // Deliberate aspect-ratio crops (e.g. width=100, height=10) place an inner
+                    // group whose layout size matches the container (10pt), so they are not flagged.
                     for (inner_pos, inner_item) in group.frame.items() {
-                        if let FrameItem::Group(inner_group) = inner_item {
-                            let inner_bottom = inner_pos.y.to_pt() + inner_group.frame.size().y.to_pt();
-                            if inner_bottom > group_h + 1.0 {
-                                return true;
-                            }
+                        let inner_bottom = inner_pos.y.to_pt() + match inner_item {
+                            FrameItem::Group(inner_group) => inner_group.frame.size().y.to_pt(),
+                            FrameItem::Image(_, size, _) => size.y.to_pt(),
+                            _ => 0.0,
+                        };
+                        if inner_bottom > group_h + 1.0 {
+                            return true;
                         }
                     }
-                    // Since group.clip is true and group.size <= page_height, everything inside this group
-                    // is safely clipped within group.size and cannot visually overflow the page.
+                    // Since group.clip is true and no direct child exceeds group_h, everything inside
+                    // is safely bounded by group.size (which fits within page_height).
                 } else {
                     // Group does not clip its children, so recurse to check if unclipped children overflow.
                     if frame_has_overflow(&group.frame, abs_pos, page_height) {
@@ -483,17 +485,16 @@ fn main() {
 
     #[test]
     fn test_fluid_content_integrity_tall_block_prefers_candidate_a() {
-        // Document has a 10,000pt tall image, an image with explicit aspect-ratio crop (100x10),
-        // followed by 400 paragraphs.
-        //
-        // An image's normal aspect-ratio crop (<img width="100pt" height="10pt" />) must NOT
-        // be misidentified as pagination overflow.
-        // Meanwhile, Candidate B (dynamic slice ~9,266pt) clips the 10,000pt image.
-        // Because content integrity takes precedence, Candidate A (14,000pt) must be selected
-        // to preserve the 10,000pt image without clipping.
+        let temp_dir = std::env::temp_dir().join(format!("sgv_test_svg_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let tall_svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="800" height="10000"><rect width="800" height="10000" fill="red"/></svg>"#;
+        let crop_svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="blue"/></svg>"#;
+        std::fs::write(temp_dir.join("tall.svg"), tall_svg).unwrap();
+        std::fs::write(temp_dir.join("crop.svg"), crop_svg).unwrap();
+
         let mut md = String::new();
-        md.push_str("<img src=\"dummy.png\" height=\"10000pt\" />\n\n");
-        md.push_str("<img src=\"dummy.png\" width=\"100pt\" height=\"10pt\" />\n\n");
+        md.push_str("<img src=\"tall.svg\" height=\"10000pt\" />\n\n");
+        md.push_str("<img src=\"crop.svg\" width=\"100pt\" height=\"10pt\" />\n\n");
         for i in 0..400 {
             md.push_str(&format!("Paragraph {i} with some content to fill up the page.\n\n"));
         }
@@ -504,7 +505,7 @@ fn main() {
             ..Default::default()
         };
 
-        let res = compile_markdown_to_pdf(&md, "Integrity Test", ".", &options);
+        let res = compile_markdown_to_pdf(&md, "Integrity Test", &temp_dir, &options);
         assert!(res.is_ok(), "Compile failed: {:?}", res.err());
         let pdf = res.unwrap();
         let heights = extract_all_mediabox_heights(&pdf);
@@ -512,6 +513,8 @@ fn main() {
         for (i, h) in heights.iter().enumerate() {
             assert_eq!(*h, 14000.0, "Page {i} height {h}pt should be 14,000pt (Candidate A)");
         }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
