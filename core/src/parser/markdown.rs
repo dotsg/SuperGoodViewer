@@ -21,7 +21,8 @@ struct ImageParagraph {
 /// Escapes characters that have special syntactic meaning in Typst markup
 fn escape_typst_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
         match c {
             '\\' => out.push_str("\\\\"),
             '[' => out.push_str("\\["),
@@ -29,10 +30,52 @@ fn escape_typst_text(text: &str) -> String {
             '#' => out.push_str("\\#"),
             '@' => out.push_str("\\@"),
             '$' => out.push_str("\\$"),
+            '*' => out.push_str("\\*"),
+            '_' => out.push_str("\\_"),
+            '`' => out.push_str("\\`"),
+            '<' => out.push_str("\\<"),
+            '>' => out.push_str("\\>"),
+            '~' => out.push_str("\\~"),
+            '{' => out.push_str("\\{"),
+            '}' => out.push_str("\\}"),
+            '/' if chars.peek() == Some(&'/') => {
+                chars.next();
+                out.push_str("\\/\\/");
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                out.push_str("\\/\\*");
+            }
             _ => out.push(c),
         }
     }
     out
+}
+
+fn unique_typst_label(candidate: &str, registered: &mut HashSet<String>) -> String {
+    if registered.insert(candidate.to_string()) {
+        return candidate.to_string();
+    }
+    let mut i = 1usize;
+    loop {
+        let next = format!("{candidate}-{i}");
+        if registered.insert(next.clone()) {
+            return next;
+        }
+        i += 1;
+    }
+}
+
+/// PDF 1.7 default user space is 14,400pt per axis. Fluid `height: auto` on a
+/// large datasheet can exceed that (hundreds of thousands of points), which
+/// PDFium and other viewers clip or refuse. Cap tall fluid documents into
+/// stacked pages that the Flutter viewer already concatenates with no gap.
+const FLUID_CAPPED_PAGE_HEIGHT_PT: f32 = 14000.0;
+const FLUID_AUTO_MAX_CHARS: usize = 40_000;
+const FLUID_AUTO_MAX_LINES: usize = 500;
+
+fn fluid_needs_page_height_cap(markdown: &str) -> bool {
+    markdown.len() > FLUID_AUTO_MAX_CHARS || markdown.lines().count() > FLUID_AUTO_MAX_LINES
 }
 
 /// Escapes characters for embedding inside a Typst string literal ("...")
@@ -460,13 +503,13 @@ impl<'a> HtmlTranspiler<'a> {
         } else if trimmed_lower == "</p>" {
             out.push_str("\n\n");
         } else if trimmed_lower == "<strong>" || trimmed_lower == "<b>" {
-            out.push('*');
+            out.push_str("#strong[");
         } else if trimmed_lower == "</strong>" || trimmed_lower == "</b>" {
-            out.push('*');
+            out.push_str("]\u{200B}");
         } else if trimmed_lower == "<em>" || trimmed_lower == "<i>" {
-            out.push('_');
+            out.push_str("#emph[");
         } else if trimmed_lower == "</em>" || trimmed_lower == "</i>" {
-            out.push('_');
+            out.push_str("]\u{200B}");
         } else if trimmed_lower == "<br>" || trimmed_lower == "<br/>" || trimmed_lower == "<br />" {
             out.push_str("\\ \n");
         } else if trimmed_lower.starts_with("<a ") {
@@ -583,9 +626,10 @@ fn format_slot_to_typst(template: &str, safe_title: &str, text_color: &str) -> S
         return "[]".to_string();
     }
     let safe_template = escape_typst_text(template);
-    let with_page = safe_template.replace("{page}", "#page-num");
-    let with_total = with_page.replace("{total}", "#total-pages");
-    let with_title = with_total.replace("{title}", safe_title);
+    // Macros are escaped with the rest of the template, then restored as Typst code.
+    let with_page = safe_template.replace("\\{page\\}", "#page-num");
+    let with_total = with_page.replace("\\{total\\}", "#total-pages");
+    let with_title = with_total.replace("\\{title\\}", safe_title);
     format!("[#text(fill: {}, size: 9pt)[{}]]", text_color, with_title)
 }
 
@@ -627,6 +671,7 @@ pub fn convert_markdown_to_typst(
     };
 
     let is_fluid = normalized_format == "fluid";
+    let cap_fluid_height = is_fluid && fluid_needs_page_height_cap(markdown_body);
     let is_slide = normalized_format == "slide_16_9" || normalized_format == "slide_4_3";
     let is_slide_mode = is_slide;
 
@@ -657,6 +702,11 @@ pub fn convert_markdown_to_typst(
     };
 
     let (page_width, page_height, page_margin) = match normalized_format {
+        "fluid" if cap_fluid_height => (
+            format!("{}pt", options.viewport_width),
+            format!("{}pt", FLUID_CAPPED_PAGE_HEIGHT_PT),
+            "(x: 24pt, top: 0pt, bottom: 0pt)".to_string(),
+        ),
         "fluid" => (
             format!("{}pt", options.viewport_width),
             "auto".to_string(),
@@ -1111,8 +1161,8 @@ pub fn convert_markdown_to_typst(
                     let indent = "  ".repeat(list_depth.saturating_sub(1));
                     out.push_str(&format!("{}- ", indent));
                 }
-                Tag::Emphasis => out.push('_'),
-                Tag::Strong => out.push('*'),
+                Tag::Emphasis => out.push_str("#emph["),
+                Tag::Strong => out.push_str("#strong["),
                 Tag::Strikethrough => out.push_str("#strike["),
                 Tag::Link { dest_url, .. } => {
                     let dest = dest_url.trim();
@@ -1162,7 +1212,7 @@ pub fn convert_markdown_to_typst(
                 Tag::TableCell => {
                     out.push_str("  [");
                     if in_table_head {
-                        out.push('*');
+                        out.push_str("#strong[");
                     }
                 }
                 Tag::FootnoteDefinition(label) => {
@@ -1184,13 +1234,16 @@ pub fn convert_markdown_to_typst(
                     if let Some((_, h_text)) = current_heading.take() {
                         let (primary, secondary) = slugify_heading(&h_text);
                         if !primary.is_empty() {
+                            let primary = unique_typst_label(&primary, &mut registered_slugs);
                             let escaped_primary = escape_typst_string(&primary);
                             out.push_str(&format!(" #label(\"{escaped_primary}\")"));
-                            registered_slugs.insert(primary);
                             for sec in secondary {
+                                if sec.is_empty() {
+                                    continue;
+                                }
+                                let sec = unique_typst_label(&sec, &mut registered_slugs);
                                 let escaped_sec = escape_typst_string(&sec);
                                 out.push_str(&format!(" #metadata(none) #label(\"{escaped_sec}\")"));
-                                registered_slugs.insert(sec);
                             }
                         }
                     }
@@ -1227,8 +1280,8 @@ pub fn convert_markdown_to_typst(
                 TagEnd::Item => {
                     out.push('\n');
                 }
-                TagEnd::Emphasis => out.push('_'),
-                TagEnd::Strong => out.push('*'),
+                TagEnd::Emphasis => out.push_str("]\u{200B}"),
+                TagEnd::Strong => out.push_str("]\u{200B}"),
                 TagEnd::Strikethrough => out.push(']'),
                 TagEnd::Link => {
                     if link_stack.pop() == Some(true) {
@@ -1288,7 +1341,7 @@ pub fn convert_markdown_to_typst(
                 TagEnd::TableRow => {}
                 TagEnd::TableCell => {
                     if in_table_head {
-                        out.push('*');
+                        out.push(']');
                     }
                     out.push_str("],\n");
                 }
@@ -1360,6 +1413,10 @@ pub fn convert_markdown_to_typst(
     }
 
     html_transpiler.finish(&mut out);
+
+    if cap_fluid_height {
+        out.push_str("\n#v(56pt)\n");
+    }
 
     // Safely emit metadata anchors for any referenced links that don't match a defined heading
     // This prevents Typst compilation errors if an external markdown contains broken or missing local anchors
@@ -1453,6 +1510,85 @@ Some body text with "quotes" inside.
         assert!(res.is_ok(), "Typst compilation failed: {:?}", res.err());
         let pdf = res.unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn test_escape_typst_markup_specials() {
+        assert_eq!(escape_typst_text("PUT_PC"), r"PUT\_PC");
+        assert_eq!(escape_typst_text("*Note"), r"\*Note");
+        assert_eq!(escape_typst_text("AW_FCS"), r"AW\_FCS");
+        assert_eq!(escape_typst_text("1 ~ 8"), r"1 \~ 8");
+        assert_eq!(escape_typst_text("//Register Write"), r"\/\/Register Write");
+        assert_eq!(escape_typst_text("a < b and c > d"), r"a \< b and c \> d");
+        assert_eq!(escape_typst_text("use `code` here"), r"use \`code\` here");
+        assert_eq!(
+            escape_typst_text("{VSTBY,VFSPI}={on,off}"),
+            r"\{VSTBY,VFSPI\}=\{on,off\}"
+        );
+    }
+
+    #[test]
+    fn test_duplicate_headings_get_unique_labels() {
+        let md = "## Index: 30h\n\n## Index: 30h\n\n## Index: 30h\n";
+        let parsed = convert_markdown_to_typst(md, "Dup", &RenderOptions::default());
+        assert!(parsed.typst_source.contains(r#"#label("index-30h")"#));
+        assert!(parsed.typst_source.contains(r#"#label("index-30h-1")"#));
+        assert!(parsed.typst_source.contains(r#"#label("index-30h-2")"#));
+        assert!(parsed.typst_source.contains(r#"#label("Index: 30h")"#));
+        assert!(parsed.typst_source.contains(r#"#label("Index: 30h-1")"#));
+        assert!(parsed.typst_source.contains(r#"#label("Index: 30h-2")"#));
+        let res = crate::compiler::engine::compile_typst_to_pdf(
+            &parsed.typst_source,
+            ".",
+            parsed.virtual_files,
+        );
+        assert!(res.is_ok(), "Duplicate heading labels failed: {:?}", res.err());
+    }
+
+    #[test]
+    fn test_emphasis_and_table_headers_do_not_emit_markup_delimiters() {
+        // Hardware docs often write 64K*N as multiplication; CommonMark treats the
+        // asterisks as emphasis. Markup `_..._` would glue to the preceding word and
+        // fail Typst with "unclosed delimiter".
+        let md = r#"
+LPC window from (10000_0000h + 64K*LPCMWMRS) to (FFFF_FFFFh + 64K*(LPCMWMRS + 1)).
+
+| Bit | R/W | Default | Description |
+|-----|-----|---------|-------------|
+| 7-0 | R/W | 00h     | Mapping |
+
+| ** | ** | ** | 1CCDh/ |
+|----|----|----|--------|
+| a  | b  | c  | d      |
+"#;
+        let parsed = convert_markdown_to_typst(md, "HW", &RenderOptions::default());
+        assert!(parsed.typst_source.contains("#emph["));
+        assert!(parsed.typst_source.contains("#strong["));
+        assert!(
+            parsed.typst_source.contains("64K#emph["),
+            "multiplication asterisks should become emph without `_` delimiters:\n{}",
+            parsed.typst_source
+        );
+        assert!(
+            !parsed.typst_source.contains("64K_LPCMWMRS"),
+            "emphasis must not use `_` delimiters next to identifiers:\n{}",
+            parsed.typst_source
+        );
+        assert!(
+            !parsed.typst_source.contains("*1CCDh/*"),
+            "header bold wrapping must not form a /* comment:\n{}",
+            parsed.typst_source
+        );
+        let res = crate::compiler::engine::compile_typst_to_pdf(
+            &parsed.typst_source,
+            ".",
+            parsed.virtual_files,
+        );
+        if let Err(ref e) = res {
+            eprintln!("Generated typst:\n{}", parsed.typst_source);
+            eprintln!("error: {e:?}");
+        }
+        assert!(res.is_ok(), "Hardware-style emphasis/table failed: {:?}", res.err());
     }
 
     #[test]
@@ -1745,6 +1881,28 @@ Local image with dark border:
     }
 
     #[test]
+    fn test_very_long_fluid_document_caps_page_height() {
+        let mut long_md = String::new();
+        for i in 0..600 {
+            long_md.push_str(&format!("## Heading {i}\n\nParagraph {i}.\n\n"));
+        }
+        let parsed = convert_markdown_to_typst(&long_md, "Huge", &RenderOptions {
+            mode: "fluid".to_string(),
+            ..RenderOptions::default()
+        });
+        assert!(parsed.typst_source.contains("height: 14000pt"));
+        assert!(!parsed.typst_source.contains("height: auto"));
+        let res = crate::compiler::engine::compile_typst_to_pdf(
+            &parsed.typst_source,
+            ".",
+            parsed.virtual_files,
+        );
+        assert!(res.is_ok(), "Capped fluid compile failed: {:?}", res.err());
+        let pdf = res.unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    #[test]
     fn test_html_readme_header() {
         let md = r#"<div align="center">
   <img src="docs/images/app_logo.png" width="128" height="128" alt="超好读 Logo" />
@@ -1924,7 +2082,7 @@ Body text with unmatched brackets: array[0] and single ] and single [ and traili
 
         let parsed = convert_markdown_to_typst(md, "Title with ] and [ and \\ and {page}", &options);
         // Verify literal {page} inside title is NOT replaced by #page-num
-        assert!(parsed.typst_source.contains(r#"Title with \] and \[ and \\ and {page}"#));
+        assert!(parsed.typst_source.contains(r#"Title with \] and \[ and \\ and \{page\}"#));
 
         let res = crate::compiler::engine::compile_typst_to_pdf(&parsed.typst_source, ".", parsed.virtual_files);
         assert!(res.is_ok(), "Typst compilation failed with brackets/backslashes in slots: {:?}", res.err());
