@@ -165,6 +165,30 @@ void main() {
       controller.setSidebarPosition('left');
       expect(controller.sidebarPosition, 'left');
       expect(controller.isSidebarOnRight, false);
+
+      controller.toggleSidebarPosition();
+      expect(controller.sidebarPosition, 'right');
+      expect(controller.isSidebarOnRight, true);
+
+      controller.toggleSidebarPosition();
+      expect(controller.sidebarPosition, 'left');
+      expect(controller.isSidebarOnRight, false);
+    });
+
+    test('sidebar width controls clamp and persist properly', () {
+      final controller = ReaderController();
+      expect(controller.sidebarWidth, ReaderController.defaultSidebarWidth);
+
+      controller.setSidebarWidth(350.0);
+      expect(controller.sidebarWidth, 350.0);
+
+      // Clamping minimum
+      controller.setSidebarWidth(100.0);
+      expect(controller.sidebarWidth, ReaderController.minSidebarWidth);
+
+      // Clamping maximum
+      controller.setSidebarWidth(900.0);
+      expect(controller.sidebarWidth, ReaderController.maxSidebarWidth);
     });
 
     test('openFile with non-existent path records error message', () async {
@@ -346,6 +370,119 @@ void main() {
 
       expect(find.byType(SidebarView), findsOneWidget);
       expect(find.text('大纲目录'), findsOneWidget);
+    });
+
+    testWidgets('sidebar quick swap button toggles sidebar position', (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      controller.setSidebarOpen(true);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WorkspaceView(controller: controller),
+        ),
+      );
+      await tester.pump();
+
+      expect(controller.sidebarPosition, 'left');
+
+      // Click swap button in sidebar header
+      final swapButton = find.byIcon(Icons.swap_horiz_rounded);
+      expect(swapButton, findsOneWidget);
+      await tester.tap(swapButton);
+      await tester.pump();
+
+      expect(controller.sidebarPosition, 'right');
+      expect(controller.isSidebarOnRight, true);
+
+      // Tap again to return to left
+      await tester.tap(swapButton);
+      await tester.pump();
+
+      expect(controller.sidebarPosition, 'left');
+      expect(controller.isSidebarOnRight, false);
+    });
+
+    testWidgets('sidebar resize handle resizes on drag and resets on double-tap', (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      controller.setSidebarOpen(true);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WorkspaceView(controller: controller),
+        ),
+      );
+      await tester.pump();
+
+      expect(controller.sidebarWidth, ReaderController.defaultSidebarWidth);
+
+      // Find the resize handle tooltip
+      final handle = find.byTooltip('双击恢复默认宽度');
+      expect(handle, findsOneWidget);
+
+      // Drag right by 50px
+      await tester.drag(handle, const Offset(50, 0));
+      await tester.pump();
+
+      expect(controller.sidebarWidth > ReaderController.defaultSidebarWidth, isTrue);
+
+      // Double tap handle to reset
+      await tester.tap(handle);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(handle);
+      await tester.pump(const Duration(milliseconds: 700));
+
+      expect(controller.sidebarWidth, ReaderController.defaultSidebarWidth);
+    });
+
+    testWidgets('dragging sidebar grip handle and dropping onto dock target flips side', (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      controller.setSidebarOpen(true);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WorkspaceView(controller: controller),
+        ),
+      );
+      await tester.pump();
+
+      expect(controller.sidebarPosition, 'left');
+
+      final dragGrip = find.byIcon(Icons.drag_indicator_rounded);
+      expect(dragGrip, findsOneWidget);
+
+      final firstLocation = tester.getCenter(dragGrip);
+      final gesture = await tester.startGesture(firstLocation);
+      // Move beyond drag slop so Draggable recognizes drag and calls onDragStarted
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+
+      // Move toward right edge (x = 1100) where DragTarget is mounted
+      await gesture.moveTo(const Offset(1100, 400));
+      await tester.pump();
+
+      // Drop
+      await gesture.up();
+      await tester.pump();
+
+      expect(controller.sidebarPosition, 'right');
     });
 
     testWidgets('mode and page zoom controls render and trigger actions', (tester) async {

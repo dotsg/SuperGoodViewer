@@ -94,6 +94,9 @@ abstract class AppStrings {
   String get sidebarPositionDesc;
   String get sidebarPositionLeft;
   String get sidebarPositionRight;
+  String get moveSidebarToLeft;
+  String get moveSidebarToRight;
+  String get resetSidebarWidthTooltip;
 
   // --- Search Bar & Jump Dialog ---
   String get searchPlaceholder;

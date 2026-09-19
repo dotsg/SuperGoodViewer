@@ -197,6 +197,12 @@ class ZhHantStrings extends ZhHansStrings {
   String get sidebarPositionLeft => '靠左顯示 (預設)';
   @override
   String get sidebarPositionRight => '靠右顯示';
+  @override
+  String get moveSidebarToLeft => '移至左側';
+  @override
+  String get moveSidebarToRight => '移至右側';
+  @override
+  String get resetSidebarWidthTooltip => '雙擊恢復默認寬度';
 
   // --- Search Bar & Jump Dialog ---
   @override

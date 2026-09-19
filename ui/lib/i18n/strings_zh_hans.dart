@@ -197,6 +197,12 @@ class ZhHansStrings implements AppStrings {
   String get sidebarPositionLeft => '靠左显示 (默认)';
   @override
   String get sidebarPositionRight => '靠右显示';
+  @override
+  String get moveSidebarToLeft => '移至左侧';
+  @override
+  String get moveSidebarToRight => '移至右侧';
+  @override
+  String get resetSidebarWidthTooltip => '双击恢复默认宽度';
 
   // --- Search Bar & Jump Dialog ---
   @override

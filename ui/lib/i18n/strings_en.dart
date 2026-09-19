@@ -202,6 +202,12 @@ class EnStrings implements AppStrings {
   String get sidebarPositionLeft => 'Left Side (Default)';
   @override
   String get sidebarPositionRight => 'Right Side';
+  @override
+  String get moveSidebarToLeft => 'Move to Left';
+  @override
+  String get moveSidebarToRight => 'Move to Right';
+  @override
+  String get resetSidebarWidthTooltip => 'Double-click to reset width';
 
   // --- Search Bar & Jump Dialog ---
   @override

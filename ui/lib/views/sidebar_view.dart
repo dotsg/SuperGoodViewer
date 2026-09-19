@@ -10,12 +10,16 @@ class SidebarView extends StatefulWidget {
   final ReaderController controller;
   final VoidCallback? onClose;
   final ValueChanged<OutlineItem>? onJumpToOutline;
+  final VoidCallback? onDragStarted;
+  final VoidCallback? onDragEnded;
 
   const SidebarView({
     super.key,
     required this.controller,
     this.onClose,
     this.onJumpToOutline,
+    this.onDragStarted,
+    this.onDragEnded,
   });
 
   @override
@@ -502,95 +506,185 @@ class _SidebarViewState extends State<SidebarView> {
     final isDark = theme.brightness == Brightness.dark;
     final controller = widget.controller;
 
-    return Material(
-      color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F7F7),
-      child: Container(
-        width: 270,
-        decoration: BoxDecoration(
-          border: Border(
-            left: widget.controller.isSidebarOnRight
-                ? BorderSide(
-                    color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFE0E0E0),
-                    width: 1,
-                  )
-                : BorderSide.none,
-            right: !widget.controller.isSidebarOnRight
-                ? BorderSide(
-                    color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFE0E0E0),
-                    width: 1,
-                  )
-                : BorderSide.none,
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Sidebar Top Header (Aligned with macOS Traffic Lights)
-            Container(
-              height: 32,
-              padding: const EdgeInsets.only(right: 8),
+    return SizedBox(
+      width: widget.controller.sidebarWidth,
+      child: Stack(
+        children: [
+          Material(
+            color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F7F7),
+            child: Container(
+              width: widget.controller.sidebarWidth,
               decoration: BoxDecoration(
                 border: Border(
-                  bottom: BorderSide(
-                    color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFE5E5E5),
-                    width: 1,
-                  ),
+                  left: widget.controller.isSidebarOnRight
+                      ? BorderSide(
+                          color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFE0E0E0),
+                          width: 1,
+                        )
+                      : BorderSide.none,
+                  right: !widget.controller.isSidebarOnRight
+                      ? BorderSide(
+                          color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFE0E0E0),
+                          width: 1,
+                        )
+                      : BorderSide.none,
                 ),
               ),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Dedicated safe spacing for macOS traffic lights (Close/Miniaturize/Zoom)
-                  if (Platform.isMacOS && !widget.controller.isSidebarOnRight) const SizedBox(width: 78),
-                  Expanded(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.translucent,
-                      onPanStart: (_) {
-                        try {
-                          const MethodChannel('com.sogoodviewer.window').invokeMethod('startDragging');
-                        } catch (_) {}
-                      },
-                      onDoubleTap: () {
-                        try {
-                          const MethodChannel('com.sogoodviewer.window').invokeMethod('zoom');
-                        } catch (_) {}
-                      },
-                      child: const SizedBox.expand(),
-                    ),
-                  ),
-                  SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: IconButton(
-                      tooltip: '${controller.strings.openDocument} (${controller.shortcutService.getShortcutLabel('openFile')})',
-                      icon: const Icon(Icons.folder_open_rounded, size: 16),
-                      onPressed: () => _pickAndOpenFile(context),
-                      style: IconButton.styleFrom(
-                        padding: EdgeInsets.zero,
-                        minimumSize: const Size(24, 24),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                    ),
-                  ),
-                  if (widget.onClose != null) ...[
-                    const SizedBox(width: 4),
-                    SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: IconButton(
-                        tooltip: controller.strings.sidebarCloseTooltip(controller.shortcutService.getShortcutLabel('toggleSidebar')),
-                        icon: const Icon(Icons.close_rounded, size: 16),
-                        onPressed: widget.onClose,
-                        style: IconButton.styleFrom(
-                          padding: EdgeInsets.zero,
-                          minimumSize: const Size(24, 24),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  // Sidebar Top Header (Aligned with macOS Traffic Lights)
+                  Container(
+                    height: 32,
+                    padding: const EdgeInsets.only(right: 8),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        bottom: BorderSide(
+                          color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFE5E5E5),
+                          width: 1,
                         ),
                       ),
                     ),
-                  ],
-                ],
-              ),
-            ),
+                    child: Row(
+                      children: [
+                        // Dedicated safe spacing for macOS traffic lights (Close/Miniaturize/Zoom)
+                        if (Platform.isMacOS && !widget.controller.isSidebarOnRight) const SizedBox(width: 78),
+                        Expanded(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.translucent,
+                            onPanStart: (_) {
+                              try {
+                                const MethodChannel('com.sogoodviewer.window').invokeMethod('startDragging');
+                              } catch (_) {}
+                            },
+                            onDoubleTap: () {
+                              try {
+                                const MethodChannel('com.sogoodviewer.window').invokeMethod('zoom');
+                              } catch (_) {}
+                            },
+                            child: const SizedBox.expand(),
+                          ),
+                        ),
+                        // Drag grip handle to dock left/right
+                        Tooltip(
+                          message: controller.isSidebarOnRight
+                              ? controller.strings.moveSidebarToLeft
+                              : controller.strings.moveSidebarToRight,
+                          child: Draggable<String>(
+                            data: 'sidebar_dock',
+                            dragAnchorStrategy: pointerDragAnchorStrategy,
+                            onDragStarted: widget.onDragStarted,
+                            onDragEnd: (_) => widget.onDragEnded?.call(),
+                            onDraggableCanceled: (_, _) => widget.onDragEnded?.call(),
+                            onDragCompleted: () => widget.onDragEnded?.call(),
+                            feedback: Material(
+                              elevation: 8,
+                              borderRadius: BorderRadius.circular(8),
+                              color: isDark ? const Color(0xFF2E2E2E) : Colors.white,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: theme.colorScheme.primary,
+                                    width: 1.5,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(alpha: 0.25),
+                                      blurRadius: 12,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.swap_horiz_rounded, size: 16, color: theme.colorScheme.primary),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      controller.isSidebarOnRight
+                                          ? controller.strings.moveSidebarToLeft
+                                          : controller.strings.moveSidebarToRight,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: isDark ? Colors.white : Colors.black87,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            child: MouseRegion(
+                              cursor: SystemMouseCursors.grab,
+                              child: SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: Center(
+                                  child: Icon(
+                                    Icons.drag_indicator_rounded,
+                                    size: 16,
+                                    color: isDark ? Colors.white60 : Colors.black45,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        // One-click quick toggle side button
+                        SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: IconButton(
+                            tooltip: controller.isSidebarOnRight
+                                ? controller.strings.moveSidebarToLeft
+                                : controller.strings.moveSidebarToRight,
+                            icon: const Icon(Icons.swap_horiz_rounded, size: 16),
+                            onPressed: () => controller.toggleSidebarPosition(),
+                            style: IconButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                              minimumSize: const Size(24, 24),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: IconButton(
+                            tooltip: '${controller.strings.openDocument} (${controller.shortcutService.getShortcutLabel('openFile')})',
+                            icon: const Icon(Icons.folder_open_rounded, size: 16),
+                            onPressed: () => _pickAndOpenFile(context),
+                            style: IconButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                              minimumSize: const Size(24, 24),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                        ),
+                        if (widget.onClose != null) ...[
+                          const SizedBox(width: 4),
+                          SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: IconButton(
+                              tooltip: controller.strings.sidebarCloseTooltip(controller.shortcutService.getShortcutLabel('toggleSidebar')),
+                              icon: const Icon(Icons.close_rounded, size: 16),
+                              onPressed: widget.onClose,
+                              style: IconButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                minimumSize: const Size(24, 24),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
 
             // File status / info card
             Padding(
@@ -805,6 +899,76 @@ class _SidebarViewState extends State<SidebarView> {
               ),
             ),
           ],
+        ),
+      ),
+    ),
+    // Draggable column resize handle on the inner edge
+    Positioned(
+      top: 0,
+      bottom: 0,
+      left: widget.controller.isSidebarOnRight ? 0 : null,
+      right: !widget.controller.isSidebarOnRight ? 0 : null,
+      width: 7,
+      child: _SidebarResizeHandle(
+        controller: widget.controller,
+        isRightDocked: widget.controller.isSidebarOnRight,
+      ),
+    ),
+  ],
+),
+);
+  }
+}
+
+class _SidebarResizeHandle extends StatefulWidget {
+  final ReaderController controller;
+  final bool isRightDocked;
+
+  const _SidebarResizeHandle({
+    required this.controller,
+    required this.isRightDocked,
+  });
+
+  @override
+  State<_SidebarResizeHandle> createState() => _SidebarResizeHandleState();
+}
+
+class _SidebarResizeHandleState extends State<_SidebarResizeHandle> {
+  bool _isHovered = false;
+  bool _isDragging = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final active = _isHovered || _isDragging;
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onDoubleTap: () => widget.controller.setSidebarWidth(ReaderController.defaultSidebarWidth),
+        onHorizontalDragStart: (_) => setState(() => _isDragging = true),
+        onHorizontalDragUpdate: (details) {
+          final delta = widget.isRightDocked ? -details.delta.dx : details.delta.dx;
+          widget.controller.setSidebarWidth(widget.controller.sidebarWidth + delta);
+        },
+        onHorizontalDragEnd: (_) => setState(() => _isDragging = false),
+        onHorizontalDragCancel: () => setState(() => _isDragging = false),
+        child: Tooltip(
+          message: widget.controller.strings.resetSidebarWidthTooltip,
+          waitDuration: const Duration(milliseconds: 600),
+          child: Container(
+            width: 7,
+            color: Colors.transparent,
+            alignment: widget.isRightDocked ? Alignment.centerLeft : Alignment.centerRight,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              width: active ? 3.0 : 0.0,
+              color: theme.colorScheme.primary,
+            ),
+          ),
         ),
       ),
     );
