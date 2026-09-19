@@ -947,9 +947,9 @@ pub fn convert_markdown_to_typst(
 #let textbf(it) = text(weight: "bold", it)
 #let textit(it) = text(style: "italic", it)
 #let textrm(it) = text(it)
-#let textup(it) = text(style: "normal", it)
-#let textsf(it) = math.sans(it)
-#let texttt(it) = math.mono(it)
+#let textup(it) = math.upright(it)
+#let textsf(it) = math.sans(math.upright(it))
+#let texttt(it) = math.mono(math.upright(it))
 #let diff = math.partial
 #let pmod(n) = $(mod #n)$
 #let pod(n) = $(#n)$
@@ -962,9 +962,9 @@ pub fn convert_markdown_to_typst(
 #let phantom(it) = hide(it)
 #let hphantom(it) = box(height: 0pt, hide(it))
 #let vphantom(it) = box(width: 0pt, hide(it))
-#let mathclap(it) = box(width: 0pt, move(dx: -50%, $it$))
-#let mathllap(it) = box(width: 0pt, move(dx: -100%, $it$))
-#let mathrlap(it) = box(width: 0pt, $it$)
+#let mathclap(it) = context {{ let s = measure($it$); box(width: 0pt, move(dx: -s.width / 2, box(width: s.width, $it$))) }}
+#let mathllap(it) = context {{ let s = measure($it$); box(width: 0pt, move(dx: -s.width, box(width: s.width, $it$))) }}
+#let mathrlap(it) = context {{ let s = measure($it$); box(width: 0pt, box(width: s.width, $it$)) }}
 
 // Fractions & binomials
 #let cfrac(num, den) = math.display(math.frac(num, den))
@@ -972,7 +972,7 @@ pub fn convert_markdown_to_typst(
 #let tfrac(num, den) = math.inline(math.frac(num, den))
 #let dbinom(n, k) = math.display(math.binom(n, k))
 #let tbinom(n, k) = math.inline(math.binom(n, k))
-#let substack(it) = box(baseline: 0%, $script(it)$)
+#let substack(it) = box($script(it)$)
 
 // Dirac bracket notation
 #let bra(it) = $chevron.l it|$

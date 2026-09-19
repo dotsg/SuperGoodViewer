@@ -11,9 +11,18 @@ pub fn transpile_latex_math(latex: &str, is_block: bool) -> String {
         return String::new();
     }
 
-    match mitex::convert_math(trimmed, None) {
+    let (preprocessed, has_laps) = if trimmed.contains(r"\mathllap") || trimmed.contains(r"\mathrlap") {
+        let p = trimmed
+            .replace(r"\mathllap", r"\mathinner")
+            .replace(r"\mathrlap", r"\mathpunct");
+        (std::borrow::Cow::Owned(p), true)
+    } else {
+        (std::borrow::Cow::Borrowed(trimmed), false)
+    };
+
+    match mitex::convert_math(&preprocessed, None) {
         Ok(typst_math) => {
-            let clean = typst_math
+            let mut clean = typst_math
                 .trim()
                 .replace("mitexsqrt", "sqrt")
                 .replace("mitexdisplay", "display")
@@ -23,6 +32,11 @@ pub fn transpile_latex_math(latex: &str, is_block: bool) -> String {
                 .replace("angle.r", "chevron.r")
                 .replace("dot.circle", "dot.o")
                 .replace("times.circle", "times.o");
+            if has_laps {
+                clean = clean
+                    .replace("mathinner(", "mathllap(")
+                    .replace("mathpunct(", "mathrlap(");
+            }
             if is_block {
                 format!("$ {} $\n", clean)
             } else {
@@ -53,10 +67,6 @@ mod tests {
         assert!(res.starts_with('$') && res.ends_with('$'));
         println!("text: {:?}", mitex::convert_math(r"\text{Cost}", None));
     }
-
-
-
-
 
     #[test]
     fn test_transpile_maxwell() {
@@ -100,6 +110,9 @@ mod tests {
             r"\fbox{E=mc^2}",
             r"\hbox{test abc}",
             r"\hbox{\text{test}}",
+            r"\textsf{abc}",
+            r"\texttt{abc}",
+            r"\textup{abc}",
             r"\cfrac{1}{\sqrt{2}}",
             r"\dfrac{a}{b}",
             r"\tfrac{1}{2}",
@@ -118,6 +131,8 @@ mod tests {
             r"\bcancel{x}",
             r"\sout{x}",
             r"\mathclap{x}",
+            r"\mathllap{x}",
+            r"\mathrlap{x}",
             r"\mathring{A}",
             r"\underbar{x}",
             r"\overgroup{AB}",
@@ -141,26 +156,45 @@ mod tests {
     fn test_typst_macro_fidelity() {
         use typst::layout::{Frame, FrameItem, Point};
 
-        fn find_texts(frame: &Frame, origin: Point, out: &mut Vec<(String, Point)>) {
+        #[derive(Debug)]
+        struct TextRun {
+            text: String,
+            pos: Point,
+            font_size: typst::layout::Abs,
+        }
+
+        fn find_text_runs(frame: &Frame, origin: Point, out: &mut Vec<TextRun>) {
             for (pos, item) in frame.items() {
                 let p = origin + *pos;
                 match item {
-                    FrameItem::Group(g) => find_texts(&g.frame, p, out),
-                    FrameItem::Text(t) => out.push((t.text.clone().into(), p)),
+                    FrameItem::Group(g) => find_text_runs(&g.frame, p, out),
+                    FrameItem::Text(t) => out.push(TextRun {
+                        text: t.text.clone().into(),
+                        pos: p,
+                        font_size: t.size,
+                    }),
                     _ => {}
                 }
             }
         }
 
-        // 1. substack: verify vertical stacking and proper row separation
-        let md_sub = "# Substack\n\n$$\n\\sum_{\\substack{0 < i < m \\\\ 0 < j < n}} a_{i j}\n$$\n";
+        // 1. substack: verify vertical stacking, script font size, and baseline isolation
+        let md_sub = "# Substack\n\n$$\nX + \\substack{A \\\\ B} + Y\n$$\n";
         let doc_sub = crate::parser::markdown::convert_markdown_to_typst(md_sub, "Test", &crate::compiler::engine::RenderOptions::default());
         let compiled_sub = crate::compiler::engine::compile_typst_to_document(&doc_sub.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
-        let mut texts_sub = Vec::new();
-        find_texts(&compiled_sub.pages()[0].frame, Point::zero(), &mut texts_sub);
-        let i_row = texts_sub.iter().find(|(t, _)| t.contains('i') || t.contains('\u{1d456}')).expect("Row 1 'i' not found");
-        let j_row = texts_sub.iter().find(|(t, _)| t.contains('j') || t.contains('\u{1d457}')).expect("Row 2 'j' not found");
-        assert!(j_row.1.y > i_row.1.y, "Row 2 (j) must be positioned below row 1 (i) vertically");
+        let mut runs_sub = Vec::new();
+        find_text_runs(&compiled_sub.pages()[0].frame, Point::zero(), &mut runs_sub);
+        let x_run = runs_sub.iter().find(|r| r.text == "𝑋").expect("Outer X not found");
+        let y_run = runs_sub.iter().find(|r| r.text == "𝑌").expect("Outer Y not found");
+        let a_run = runs_sub.iter().find(|r| r.text == "𝐴").expect("Substack row 1 A not found");
+        let b_run = runs_sub.iter().find(|r| r.text == "𝐵").expect("Substack row 2 B not found");
+
+        // Row 2 below Row 1
+        assert!(b_run.pos.y > a_run.pos.y, "Substack row B must be vertically below row A");
+        // Script font size assertion (discriminates against unreduced #let substack(it) = it)
+        assert!(a_run.font_size < x_run.font_size, "Substack must reduce font size with script(): a_size={:?} vs x_size={:?}", a_run.font_size, x_run.font_size);
+        // Outer equation baseline isolation assertion (discriminates against unboxed line breaks)
+        assert_eq!(x_run.pos.y, y_run.pos.y, "Outer elements X and Y must remain on the exact same baseline");
 
         // 2. sout: verify horizontal strikethrough using native Typst strike
         let md_sout = "# Sout\n\n$$\n\\sout{x + y}\n$$\n";
@@ -183,25 +217,70 @@ mod tests {
         let md_hbox = "# Hbox\n\n$$\n\\hbox{test}\n$$\n";
         let doc_hbox = crate::parser::markdown::convert_markdown_to_typst(md_hbox, "Test", &crate::compiler::engine::RenderOptions::default());
         let compiled_hbox = crate::compiler::engine::compile_typst_to_document(&doc_hbox.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
-        let mut texts_hbox = Vec::new();
-        find_texts(&compiled_hbox.pages()[0].frame, Point::zero(), &mut texts_hbox);
-        let combined: String = texts_hbox.into_iter().map(|(t, _)| t).collect();
-        assert!(combined.contains("t e s t") || combined.contains("test"), "hbox must contain upright text 't e s t' or 'test': got {}", combined);
+        let mut runs_hbox = Vec::new();
+        find_text_runs(&compiled_hbox.pages()[0].frame, Point::zero(), &mut runs_hbox);
+        let combined: String = runs_hbox.into_iter().map(|r| r.text).collect();
+        assert!(combined.contains("t e s t") || combined.contains("test"), "hbox must contain upright text: got {}", combined);
 
-        // 4. mathclap: verify centered zero-width overflow
+        // 4. textsf and texttt: verify upright font mode
+        let md_txt = "# Text Mode\n\n$$\n\\textsf{a} + \\texttt{b}\n$$\n";
+        let doc_txt = crate::parser::markdown::convert_markdown_to_typst(md_txt, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled_txt = crate::compiler::engine::compile_typst_to_document(&doc_txt.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
+        let mut runs_txt = Vec::new();
+        find_text_runs(&compiled_txt.pages()[0].frame, Point::zero(), &mut runs_txt);
+        // textsf must be upright sans '𝖺' (U+1D5BA), NOT italic sans '𝘢' (U+1D622) or default math italic '𝑎' (U+1D44E)
+        let a_txt = runs_txt.iter().find(|r| r.text == "\u{1d5ba}").expect("textsf 'a' must be upright sans-serif '𝖺'");
+        assert_ne!(a_txt.text, "\u{1d622}", "textsf must NOT be italic sans '𝘢'");
+        assert_ne!(a_txt.text, "\u{1d44e}", "textsf must NOT be default math italic '𝑎'");
+
+        // texttt must be upright mono '𝚋' (U+1D68B), NOT italic '𝑏' (U+1D44F)
+        let b_txt = runs_txt.iter().find(|r| r.text == "\u{1d68b}").expect("texttt 'b' must be upright monospace '𝚋'");
+        assert_ne!(b_txt.text, "\u{1d44f}", "texttt must NOT be default math italic '𝑏'");
+
+        // 5. mathclap, mathllap, mathrlap: verify true displacement and baseline preservation
         let md_clap = "# Mathclap\n\n$$\nA \\mathclap{X Y Z} B\n$$\n";
         let doc_clap = crate::parser::markdown::convert_markdown_to_typst(md_clap, "Test", &crate::compiler::engine::RenderOptions::default());
         let compiled_clap = crate::compiler::engine::compile_typst_to_document(&doc_clap.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
-        let mut texts_clap = Vec::new();
-        find_texts(&compiled_clap.pages()[0].frame, Point::zero(), &mut texts_clap);
-        let a_pos = texts_clap.iter().find(|(t, _)| t == "𝐴").expect("A not found").1;
-        let b_pos = texts_clap.iter().find(|(t, _)| t == "𝐵").expect("B not found").1;
-        let y_pos = texts_clap.iter().find(|(t, _)| t == "𝑌").expect("Y not found").1;
-        let midpoint = (a_pos.x + b_pos.x) / 2.0;
-        // Y (center of XYZ) should be near the midpoint between A and B
-        assert!((y_pos.x - midpoint).abs().to_pt() < 5.0, "mathclap must center content between delimiters");
+        let mut runs_clap = Vec::new();
+        find_text_runs(&compiled_clap.pages()[0].frame, Point::zero(), &mut runs_clap);
+        let x_clap = runs_clap.iter().find(|r| r.text == "𝑋").expect("X clap not found");
+        let b_clap = runs_clap.iter().find(|r| r.text == "𝐵").expect("B clap not found");
 
-        // 5. xcancel: verify cross of 2 lines
+        let md_llap = "# Mathllap\n\n$$\nA \\mathllap{X Y Z} B\n$$\n";
+        let doc_llap = crate::parser::markdown::convert_markdown_to_typst(md_llap, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled_llap = crate::compiler::engine::compile_typst_to_document(&doc_llap.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
+        let mut runs_llap = Vec::new();
+        find_text_runs(&compiled_llap.pages()[0].frame, Point::zero(), &mut runs_llap);
+        let x_llap = runs_llap.iter().find(|r| r.text == "𝑋").expect("X llap not found");
+        let b_llap = runs_llap.iter().find(|r| r.text == "𝐵").expect("B llap not found");
+
+        let md_rlap = "# Mathrlap\n\n$$\nA \\mathrlap{X Y Z} B\n$$\n";
+        let doc_rlap = crate::parser::markdown::convert_markdown_to_typst(md_rlap, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled_rlap = crate::compiler::engine::compile_typst_to_document(&doc_rlap.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
+        let mut runs_rlap = Vec::new();
+        find_text_runs(&compiled_rlap.pages()[0].frame, Point::zero(), &mut runs_rlap);
+        let x_rlap = runs_rlap.iter().find(|r| r.text == "𝑋").expect("X rlap not found");
+        let b_rlap = runs_rlap.iter().find(|r| r.text == "𝐵").expect("B rlap not found");
+
+        // Zero-width invariant: B must be at identical position across all three laps
+        assert_eq!(b_clap.pos.x, b_llap.pos.x, "Zero-width box: B position must be identical");
+        assert_eq!(b_clap.pos.x, b_rlap.pos.x, "Zero-width box: B position must be identical");
+
+        // Baseline preservation: X must stay on the exact same baseline as A and B
+        assert_eq!(x_clap.pos.y, b_clap.pos.y, "mathclap must preserve baseline");
+        assert_eq!(x_llap.pos.y, b_llap.pos.y, "mathllap must preserve baseline");
+        assert_eq!(x_rlap.pos.y, b_rlap.pos.y, "mathrlap must preserve baseline");
+
+        // Precise discriminating displacement assertions:
+        // mathrlap is at offset 0; mathclap is shifted by -w/2; mathllap is shifted by -w
+        let clap_shift = (x_rlap.pos.x - x_clap.pos.x).to_pt();
+        let llap_shift = (x_rlap.pos.x - x_llap.pos.x).to_pt();
+        assert!(clap_shift > 10.0, "mathclap MUST produce an actual negative displacement: got {:.2}pt (would be 0 with no-op)", clap_shift);
+        assert!(llap_shift > 20.0, "mathllap MUST produce full negative displacement: got {:.2}pt (would be 0 with no-op)", llap_shift);
+        // clap_shift must be exactly half of llap_shift (within 0.5pt tolerance)
+        assert!((llap_shift - 2.0 * clap_shift).abs() < 0.5, "llap shift must be double clap shift: llap={:.2}, clap={:.2}", llap_shift, clap_shift);
+
+        // 6. xcancel: verify cross of 2 lines
         let md_xcancel = "# XCancel\n\n$$\n\\xcancel{x}\n$$\n";
         let doc_xcancel = crate::parser::markdown::convert_markdown_to_typst(md_xcancel, "Test", &crate::compiler::engine::RenderOptions::default());
         let compiled_xcancel = crate::compiler::engine::compile_typst_to_document(&doc_xcancel.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
@@ -218,7 +297,7 @@ mod tests {
         count_lines(&compiled_xcancel.pages()[0].frame, &mut line_count);
         assert_eq!(line_count, 2, "xcancel must generate an X cross (2 lines)");
 
-        // 6. hphantom and vphantom dimensions
+        // 7. hphantom and vphantom dimensions
         let md_phan = "# Phantom\n\n$$\n\\hphantom{X}\n$$\n$$\n\\vphantom{X}\n$$\n";
         let doc_phan = crate::parser::markdown::convert_markdown_to_typst(md_phan, "Test", &crate::compiler::engine::RenderOptions::default());
         let compiled_phan = crate::compiler::engine::compile_typst_to_pdf(&doc_phan.typst_source, ".", std::collections::HashMap::new());
