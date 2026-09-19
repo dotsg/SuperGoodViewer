@@ -831,7 +831,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 Row(
             children: [
               // Collapsible Left Sidebar (Outline & Recents)
-              if (_isSidebarOpen)
+              if (_isSidebarOpen && !controller.isSidebarOnRight)
                 SidebarView(
                   controller: controller,
                   onClose: () => _setSidebarOpen(false),
@@ -1086,6 +1086,14 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                   ],
                 ),
               ),
+
+              // Collapsible Right Sidebar (Outline & Recents)
+              if (_isSidebarOpen && controller.isSidebarOnRight)
+                SidebarView(
+                  controller: controller,
+                  onClose: () => _setSidebarOpen(false),
+                  onJumpToOutline: (item) => _pdfCanvasKey.currentState?.jumpToOutline(item),
+                ),
             ],
           ),
           if (_isDraggingFileOver)
@@ -1208,28 +1216,32 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 type: MaterialType.transparency,
                 child: Row(
                   children: [
-                    // When sidebar is closed, provide safe space for macOS traffic lights & sidebar button
-                    if (!_isSidebarOpen) ...[
+                    // Left side: safe space for macOS traffic lights & left sidebar toggle button
+                    if (!_isSidebarOpen || controller.isSidebarOnRight) ...[
                       if (Platform.isMacOS) const SizedBox(width: 78),
-                      Tooltip(
-                        message: controller.strings.toggleSidebarTooltip(controller.shortcutService.getShortcutLabel('toggleSidebar')),
-                        child: InkWell(
-                          onTap: () => _setSidebarOpen(true),
-                          borderRadius: BorderRadius.circular(4),
-                          child: SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: Center(
-                              child: Icon(
-                                Icons.view_sidebar_outlined,
-                                size: 16,
-                                color: isDark ? Colors.white70 : Colors.black54,
+                      if (!_isSidebarOpen && !controller.isSidebarOnRight) ...[
+                        Tooltip(
+                          message: controller.strings.toggleSidebarTooltip(controller.shortcutService.getShortcutLabel('toggleSidebar')),
+                          child: InkWell(
+                            onTap: () => _setSidebarOpen(true),
+                            borderRadius: BorderRadius.circular(4),
+                            child: SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: Center(
+                                child: Icon(
+                                  Icons.view_sidebar_outlined,
+                                  size: 16,
+                                  color: isDark ? Colors.white70 : Colors.black54,
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
+                        const SizedBox(width: 8),
+                      ] else if (!_isSidebarOpen && controller.isSidebarOnRight) ...[
+                        const SizedBox(width: 32),
+                      ],
                     ],
 
                     // Native window drag / caption area
@@ -1266,7 +1278,36 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                       ),
                     ),
 
-                    if (!_isSidebarOpen) SizedBox(width: (Platform.isMacOS ? 78.0 : 0.0) + 32.0),
+                    // Right side: right sidebar toggle button & balancing spacing
+                    if (!_isSidebarOpen && controller.isSidebarOnRight) ...[
+                      Tooltip(
+                        message: controller.strings.toggleSidebarTooltip(controller.shortcutService.getShortcutLabel('toggleSidebar')),
+                        child: InkWell(
+                          onTap: () => _setSidebarOpen(true),
+                          borderRadius: BorderRadius.circular(4),
+                          child: SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: Center(
+                              child: Transform.flip(
+                                flipX: true,
+                                child: Icon(
+                                  Icons.view_sidebar_outlined,
+                                  size: 16,
+                                  color: isDark ? Colors.white70 : Colors.black54,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      if (Platform.isMacOS) const SizedBox(width: 78),
+                    ] else if (!_isSidebarOpen && !controller.isSidebarOnRight) ...[
+                      SizedBox(width: (Platform.isMacOS ? 78.0 : 0.0) + 32.0),
+                    ] else if (_isSidebarOpen && controller.isSidebarOnRight) ...[
+                      if (Platform.isMacOS) const SizedBox(width: 78),
+                    ],
                   ],
                 ),
               ),

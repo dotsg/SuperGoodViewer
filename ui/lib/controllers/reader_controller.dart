@@ -121,6 +121,7 @@ class ReaderController extends ChangeNotifier {
 
   bool _isTwoPage = false;
   bool _isSidebarOpen = false;
+  String _sidebarPosition = 'left'; // 'left' or 'right'
   bool _isPresentationMode = false;
   List<OutlineItem> _outlineItems = [];
   int _activeOutlineIndex = -1;
@@ -162,6 +163,8 @@ class ReaderController extends ChangeNotifier {
   Map<String, dynamic> get fontReport => _fontReport;
   bool get isTwoPage => _isTwoPage;
   bool get isSidebarOpen => _isSidebarOpen;
+  String get sidebarPosition => _sidebarPosition;
+  bool get isSidebarOnRight => _sidebarPosition == 'right';
   bool get isPresentationMode => _isPresentationMode;
   List<OutlineItem> get outlineItems => _outlineItems;
   int get activeOutlineIndex => _activeOutlineIndex;
@@ -437,6 +440,15 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
+  void setSidebarPosition(String position) {
+    if (position != 'left' && position != 'right') return;
+    if (_sidebarPosition != position) {
+      _sidebarPosition = position;
+      _persistPreferences();
+      notifyListeners();
+    }
+  }
+
   void setAutoFitMode(AutoFitMode mode) {
     if (_autoFitMode != mode) {
       _autoFitMode = mode;
@@ -558,6 +570,10 @@ class ReaderController extends ChangeNotifier {
       if (savedTwoPage != null) {
         _isTwoPage = savedTwoPage;
       }
+      final savedSidebarPosition = prefs['sidebarPosition'] as String?;
+      if (savedSidebarPosition == 'left' || savedSidebarPosition == 'right') {
+        _sidebarPosition = savedSidebarPosition!;
+      }
       if (savedSidebarOpen != null) {
         _isSidebarOpen = savedSidebarOpen;
       }
@@ -637,6 +653,7 @@ class ReaderController extends ChangeNotifier {
       'lastPagedFormat': _lastPagedFormat,
       'isTwoPage': _isTwoPage,
       'isSidebarOpen': _isSidebarOpen,
+      'sidebarPosition': _sidebarPosition,
       'autoFitMode': _autoFitMode.name,
       'fontSize': _renderOptions.fontSize,
       'bodyFont': _renderOptions.bodyFont,

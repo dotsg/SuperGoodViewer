@@ -149,6 +149,24 @@ void main() {
       expect(controller.autoReload, true);
     });
 
+    test('sidebar position toggle updates state and clamps values', () {
+      final controller = ReaderController();
+      expect(controller.sidebarPosition, 'left');
+      expect(controller.isSidebarOnRight, false);
+
+      controller.setSidebarPosition('right');
+      expect(controller.sidebarPosition, 'right');
+      expect(controller.isSidebarOnRight, true);
+
+      // Invalid value should be ignored
+      controller.setSidebarPosition('top');
+      expect(controller.sidebarPosition, 'right');
+
+      controller.setSidebarPosition('left');
+      expect(controller.sidebarPosition, 'left');
+      expect(controller.isSidebarOnRight, false);
+    });
+
     test('openFile with non-existent path records error message', () async {
       final controller = ReaderController();
       await controller.openFile('/non/existent/file.md');
@@ -311,6 +329,21 @@ void main() {
       );
 
       // Sidebar should be rendered initially because preference restored it as open
+      expect(find.byType(SidebarView), findsOneWidget);
+      expect(find.text('大纲目录'), findsOneWidget);
+    });
+
+    testWidgets('renders with sidebar open on the right when sidebarPosition is right', (tester) async {
+      final controller = ReaderController();
+      controller.setSidebarPosition('right');
+      controller.setSidebarOpen(true);
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WorkspaceView(controller: controller),
+        ),
+      );
+
       expect(find.byType(SidebarView), findsOneWidget);
       expect(find.text('大纲目录'), findsOneWidget);
     });

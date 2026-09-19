@@ -187,6 +187,16 @@ class ZhHantStrings extends ZhHansStrings {
   String recentFilesCount(int count) => '$count 個最近檔案';
   @override
   String pageNumberBadge(int page) => 'P$page';
+  @override
+  String get sidebarPositionSection => '側邊欄佈局';
+  @override
+  String get sidebarPosition => '側邊欄顯示位置';
+  @override
+  String get sidebarPositionDesc => '控制大綱目錄與最近檔案側邊欄停靠在視窗左側或右側';
+  @override
+  String get sidebarPositionLeft => '靠左顯示 (預設)';
+  @override
+  String get sidebarPositionRight => '靠右顯示';
 
   // --- Search Bar & Jump Dialog ---
   @override

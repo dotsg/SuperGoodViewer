@@ -187,6 +187,16 @@ class ZhHansStrings implements AppStrings {
   String recentFilesCount(int count) => count > 0 ? '历史文件 ($count)' : '历史文件';
   @override
   String pageNumberBadge(int page) => 'P$page';
+  @override
+  String get sidebarPositionSection => '侧边栏布局';
+  @override
+  String get sidebarPosition => '侧边栏显示位置';
+  @override
+  String get sidebarPositionDesc => '控制大纲目录与最近文件侧边栏停靠在窗口左侧或右侧';
+  @override
+  String get sidebarPositionLeft => '靠左显示 (默认)';
+  @override
+  String get sidebarPositionRight => '靠右显示';
 
   // --- Search Bar & Jump Dialog ---
   @override

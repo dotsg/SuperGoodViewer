@@ -92,4 +92,47 @@ mod tests {
         let compiled = crate::compiler::engine::compile_typst_to_pdf(&source, ".", std::collections::HashMap::new());
         assert!(compiled.is_ok(), "Typst compilation failed: {:?}", compiled.err());
     }
+
+    #[test]
+    fn test_transpile_latex_macro_compatibility() {
+        let test_cases = [
+            r"\boxed{R_{target}=M+C-2}",
+            r"\fbox{E=mc^2}",
+            r"\hbox{\text{test}}",
+            r"\cfrac{1}{\sqrt{2}}",
+            r"\dfrac{a}{b}",
+            r"\tfrac{1}{2}",
+            r"\dbinom{n}{k}",
+            r"\tbinom{n}{k}",
+            r"\substack{0 < i < m \\ 0 < j < n}",
+            r"\bra{\psi}",
+            r"\ket{\phi}",
+            r"\braket{\psi|\phi}",
+            r"\Bra{\psi}",
+            r"\Ket{\phi}",
+            r"\Braket{\psi|\phi}",
+            r"\pod{n}",
+            r"\pmod{n}",
+            r"\xcancel{x}",
+            r"\bcancel{x}",
+            r"\sout{x}",
+            r"\mathclap{x}",
+            r"\mathring{A}",
+            r"\underbar{x}",
+            r"\overgroup{AB}",
+            r"\undergroup{AB}",
+            r"\phantom{x}",
+            r"\hphantom{x}",
+            r"\vphantom{x}",
+            r"\middle|",
+            r"\Set{x \mid x > 0}",
+        ];
+
+        for latex in test_cases {
+            let md = format!("# Test\n\n$$\n{}\n$$\n", latex);
+            let doc = crate::parser::markdown::convert_markdown_to_typst(&md, "Test", &crate::compiler::engine::RenderOptions::default());
+            let compiled = crate::compiler::engine::compile_typst_to_pdf(&doc.typst_source, ".", std::collections::HashMap::new());
+            assert!(compiled.is_ok(), "Failed for {}: {:?}", latex, compiled.err());
+        }
+    }
 }

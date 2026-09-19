@@ -508,10 +508,18 @@ class _SidebarViewState extends State<SidebarView> {
         width: 270,
         decoration: BoxDecoration(
           border: Border(
-            right: BorderSide(
-              color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFE0E0E0),
-              width: 1,
-            ),
+            left: widget.controller.isSidebarOnRight
+                ? BorderSide(
+                    color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFE0E0E0),
+                    width: 1,
+                  )
+                : BorderSide.none,
+            right: !widget.controller.isSidebarOnRight
+                ? BorderSide(
+                    color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFE0E0E0),
+                    width: 1,
+                  )
+                : BorderSide.none,
           ),
         ),
         child: Column(
@@ -532,7 +540,7 @@ class _SidebarViewState extends State<SidebarView> {
               child: Row(
                 children: [
                   // Dedicated safe spacing for macOS traffic lights (Close/Miniaturize/Zoom)
-                  if (Platform.isMacOS) const SizedBox(width: 78),
+                  if (Platform.isMacOS && !widget.controller.isSidebarOnRight) const SizedBox(width: 78),
                   Expanded(
                     child: GestureDetector(
                       behavior: HitTestBehavior.translucent,

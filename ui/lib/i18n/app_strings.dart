@@ -89,6 +89,11 @@ abstract class AppStrings {
   String get clearRecentHistory;
   String recentFilesCount(int count);
   String pageNumberBadge(int page);
+  String get sidebarPositionSection;
+  String get sidebarPosition;
+  String get sidebarPositionDesc;
+  String get sidebarPositionLeft;
+  String get sidebarPositionRight;
 
   // --- Search Bar & Jump Dialog ---
   String get searchPlaceholder;

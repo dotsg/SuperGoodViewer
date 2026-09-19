@@ -192,6 +192,16 @@ class EnStrings implements AppStrings {
   String recentFilesCount(int count) => '$count recent ${count == 1 ? "file" : "files"}';
   @override
   String pageNumberBadge(int page) => 'P$page';
+  @override
+  String get sidebarPositionSection => 'Sidebar Placement';
+  @override
+  String get sidebarPosition => 'Sidebar Position';
+  @override
+  String get sidebarPositionDesc => 'Control whether the outline & recents sidebar docks to the left or right side of the window';
+  @override
+  String get sidebarPositionLeft => 'Left Side (Default)';
+  @override
+  String get sidebarPositionRight => 'Right Side';
 
   // --- Search Bar & Jump Dialog ---
   @override

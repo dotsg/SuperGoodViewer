@@ -69,6 +69,7 @@ void main() {
 
       // Verify General tab content (toolbar duplicate options removed)
       expect(find.text('常规与阅读偏好'), findsOneWidget);
+      expect(find.text('侧边栏布局 (Sidebar Placement)'), findsOneWidget);
       expect(find.text('文件修改自动热重载 (Auto Reload)'), findsOneWidget);
       expect(find.text('会话与历史记录 (Session & History)'), findsOneWidget);
       expect(find.text('最近打开文档记录'), findsOneWidget);
@@ -213,7 +214,7 @@ void main() {
     });
 
     testWidgets('General tab displays compiled cache info and clears cache on button press', (tester) async {
-      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.physicalSize = const Size(1200, 1100);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
@@ -245,6 +246,9 @@ void main() {
       expect(find.textContaining('已缓存 1 个文档'), findsOneWidget);
       expect(find.text('打开目录'), findsOneWidget);
       expect(find.text('清理缓存'), findsOneWidget);
+
+      await tester.ensureVisible(find.text('清理缓存'));
+      await tester.pumpAndSettle();
 
       // Click clear cache inside runAsync so stream I/O completes
       await tester.runAsync(() async {

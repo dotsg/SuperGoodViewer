@@ -952,7 +952,47 @@ pub fn convert_markdown_to_typst(
 #let texttt(it) = text(it)
 #let diff = math.partial
 #let pmod(n) = $(mod #n)$
+#let pod(n) = $(#n)$
 #let odot = sym.dot.o
+
+// Boxes, frames & spacing
+#let boxed(it) = box(stroke: 0.65pt + {text_color}, inset: (x: 4.5pt, y: 3pt), baseline: 0%, $it$)
+#let fbox(it) = box(stroke: 0.65pt + {text_color}, inset: (x: 4.5pt, y: 3pt), baseline: 0%, $it$)
+#let hbox(it) = it
+#let phantom(it) = hide(it)
+#let hphantom(it) = box(height: 0pt, hide(it))
+#let vphantom(it) = box(width: 0pt, hide(it))
+#let mathclap(it) = box(width: 0pt, $it$)
+
+// Fractions & binomials
+#let cfrac(num, den) = math.display(math.frac(num, den))
+#let dfrac(num, den) = math.display(math.frac(num, den))
+#let tfrac(num, den) = math.inline(math.frac(num, den))
+#let dbinom(n, k) = math.display(math.binom(n, k))
+#let tbinom(n, k) = math.inline(math.binom(n, k))
+#let substack(it) = it
+
+// Dirac bracket notation
+#let bra(it) = $chevron.l it|$
+#let ket(it) = $|it chevron.r$
+#let braket(it) = $chevron.l it chevron.r$
+#let Bra(it) = $lr(chevron.l it|)$
+#let Ket(it) = $lr(|it chevron.r)$
+#let Braket(it) = $lr(chevron.l it chevron.r)$
+
+// Cancellation & accents
+#let xcancel(it) = math.cancel(it)
+#let bcancel(it) = math.cancel.with(inverted: true)(it)
+#let sout(it) = math.cancel.with(angle: 90deg)(it)
+#let mathring(it) = math.circle(it)
+#let underbar(it) = math.underline(it)
+#let overgroup(it) = $accent(it, \u{{0311}})$
+#let undergroup(it) = $accent(it, \u{{032e}})$
+
+// Delimiters & sets
+#let middle(it) = math.mid(it)
+#let Set(it) = $lr(\\{{it\\}})$
+
 
 #let mitexsqrt(..args) = {{
   if args.pos().len() == 1 {{

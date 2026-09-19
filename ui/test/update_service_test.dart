@@ -368,40 +368,43 @@ void main() {
 
         final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
         server.idleTimeout = Duration.zero;
-        addTearDown(() => server.close(force: true));
 
-        server.listen((HttpRequest req) async {
-          requestReceived.complete();
-          try {
-            await allowHeaders.future;
-            req.response.statusCode = 200;
-            req.response.contentLength = 1000;
-            req.response.add(List.filled(1000, 42));
-            await req.response.close();
-          } catch (_) {}
-        });
+        try {
+          server.listen((HttpRequest req) async {
+            requestReceived.complete();
+            try {
+              await allowHeaders.future;
+              req.response.statusCode = 200;
+              req.response.contentLength = 1000;
+              req.response.add(List.filled(1000, 42));
+              await req.response.close();
+            } catch (_) {}
+          });
 
-        final service = UpdateService();
-        final cancelToken = UpdateCancellationToken();
+          final service = UpdateService();
+          final cancelToken = UpdateCancellationToken();
 
-        final downloadFuture = service.downloadUpdateAsset(
-          'http://127.0.0.1:${server.port}/test_file.bin',
-          'test_file.bin',
-          cancelToken: cancelToken,
-          onProgress: (_, _) {},
-        );
+          final downloadFuture = service.downloadUpdateAsset(
+            'http://127.0.0.1:${server.port}/test_file.bin',
+            'test_file.bin',
+            cancelToken: cancelToken,
+            onProgress: (_, _) {},
+          );
 
-        await requestReceived.future;
-        // Cancel while client is awaiting response headers
-        cancelToken.cancel();
-        if (!allowHeaders.isCompleted) {
-          allowHeaders.complete();
+          await requestReceived.future;
+          // Cancel while client is awaiting response headers
+          cancelToken.cancel();
+          if (!allowHeaders.isCompleted) {
+            allowHeaders.complete();
+          }
+
+          await expectLater(
+            downloadFuture,
+            throwsA(isA<UpdateCancelledException>()),
+          );
+        } finally {
+          await server.close(force: true);
         }
-
-        await expectLater(
-          downloadFuture,
-          throwsA(isA<UpdateCancelledException>()),
-        );
       }, _RealHttpOverrides());
     });
 
@@ -409,39 +412,42 @@ void main() {
       await HttpOverrides.runWithHttpOverrides(() async {
         final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
         server.idleTimeout = Duration.zero;
-        addTearDown(() => server.close(force: true));
 
-        server.listen((HttpRequest req) async {
-          try {
-            req.response.statusCode = 200;
-            req.response.contentLength = 100000;
-            for (int i = 0; i < 20; i++) {
-              req.response.add(List.filled(5000, 42));
-              await req.response.flush();
-              await Future<void>.delayed(const Duration(milliseconds: 10));
-            }
-            await req.response.close();
-          } catch (_) {}
-        });
+        try {
+          server.listen((HttpRequest req) async {
+            try {
+              req.response.statusCode = 200;
+              req.response.contentLength = 100000;
+              for (int i = 0; i < 20; i++) {
+                req.response.add(List.filled(5000, 42));
+                await req.response.flush();
+                await Future<void>.delayed(const Duration(milliseconds: 10));
+              }
+              await req.response.close();
+            } catch (_) {}
+          });
 
-        final service = UpdateService();
-        final cancelToken = UpdateCancellationToken();
+          final service = UpdateService();
+          final cancelToken = UpdateCancellationToken();
 
-        final downloadFuture = service.downloadUpdateAsset(
-          'http://127.0.0.1:${server.port}/test_file_stream.bin',
-          'test_file_stream.bin',
-          cancelToken: cancelToken,
-          onProgress: (received, total) {
-            if (received > 0 && !cancelToken.isCancelled) {
-              cancelToken.cancel();
-            }
-          },
-        );
+          final downloadFuture = service.downloadUpdateAsset(
+            'http://127.0.0.1:${server.port}/test_file_stream.bin',
+            'test_file_stream.bin',
+            cancelToken: cancelToken,
+            onProgress: (received, total) {
+              if (received > 0 && !cancelToken.isCancelled) {
+                cancelToken.cancel();
+              }
+            },
+          );
 
-        await expectLater(
-          downloadFuture,
-          throwsA(isA<UpdateCancelledException>()),
-        );
+          await expectLater(
+            downloadFuture,
+            throwsA(isA<UpdateCancelledException>()),
+          );
+        } finally {
+          await server.close(force: true);
+        }
       }, _RealHttpOverrides());
     });
   });
