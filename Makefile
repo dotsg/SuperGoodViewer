@@ -4,7 +4,7 @@ else
   FLUTTER ?= flutter
 endif
 
-.PHONY: all build build-core build-core-universal build-app build-windows build-windows-arm64 build-linux test test-core test-app test-release-local bench benchmark clean run-macos run-windows run-linux dmg package-windows package-windows-arm64 package-linux
+.PHONY: all build build-core build-core-universal build-app build-windows build-windows-arm64 build-linux test test-core test-app test-release-local bench benchmark clean run-macos run-windows run-linux dmg dmg-arm64 dmg-x64 package-windows package-windows-arm64 package-linux
 
 all: build test
 
@@ -148,17 +148,15 @@ package-windows-arm64: build-windows-arm64
 	@echo "==> Package created: dist/SuperGoodViewer-windows-arm64.zip"
 
 dmg: build
-	@echo "==> Preparing macOS DMG staging folder..."
-	@rm -rf build/dmg-staging
-	@mkdir -p build/dmg-staging
-	@cp -R "ui/build/macos/Build/Products/Release/SuperGoodViewer.app" build/dmg-staging/SuperGoodViewer.app
-	@ln -s /Applications build/dmg-staging/Applications
-	@echo "==> Creating macOS DMG..."
-	@hdiutil create -volname "超好读 SuperGoodViewer" \
-		-srcfolder "build/dmg-staging" \
-		-ov -format UDZO \
-		"SuperGoodViewer-macos.dmg"
-	@rm -rf build/dmg-staging
-	@echo "==> DMG generated: SuperGoodViewer-macos.dmg"
+	@echo "==> Packaging Universal macOS DMG..."
+	@./scripts/package-macos-dmg.sh universal dist
+
+dmg-arm64: build
+	@echo "==> Packaging Apple Silicon (arm64) macOS DMG..."
+	@./scripts/package-macos-dmg.sh arm64 dist
+
+dmg-x64: build
+	@echo "==> Packaging Intel (x64) macOS DMG..."
+	@./scripts/package-macos-dmg.sh x64 dist
 
 

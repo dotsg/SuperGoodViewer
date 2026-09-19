@@ -111,6 +111,74 @@ void main() {
       }
     });
 
+    test('resolvePlatformAsset differentiates macOS architectures (arm64, x64, universal)', () {
+      final standaloneAssets = [
+        {
+          'name': 'SuperGoodViewer-v1.0.9-macos-arm64.dmg',
+          'browser_download_url': 'https://example.com/SuperGoodViewer-v1.0.9-macos-arm64.dmg',
+          'size': 37000000,
+        },
+        {
+          'name': 'SuperGoodViewer-v1.0.9-macos-x64.dmg',
+          'browser_download_url': 'https://example.com/SuperGoodViewer-v1.0.9-macos-x64.dmg',
+          'size': 40000000,
+        },
+      ];
+
+      // Apple Silicon Mac should resolve arm64 asset
+      final armAsset = UpdateService.resolvePlatformAsset(
+        standaloneAssets,
+        targetIsMacOS: true,
+        targetIsArm64: true,
+      );
+      expect(armAsset.name, 'SuperGoodViewer-v1.0.9-macos-arm64.dmg');
+
+      // Intel Mac should resolve x64 asset
+      final intelAsset = UpdateService.resolvePlatformAsset(
+        standaloneAssets,
+        targetIsMacOS: true,
+        targetIsArm64: false,
+      );
+      expect(intelAsset.name, 'SuperGoodViewer-v1.0.9-macos-x64.dmg');
+
+      // Universal package should resolve for both architectures
+      final universalAssets = [
+        {
+          'name': 'SuperGoodViewer-v1.0.8-macos.dmg',
+          'browser_download_url': 'https://example.com/SuperGoodViewer-v1.0.8-macos.dmg',
+          'size': 52000000,
+        },
+      ];
+      final armUniversal = UpdateService.resolvePlatformAsset(
+        universalAssets,
+        targetIsMacOS: true,
+        targetIsArm64: true,
+      );
+      expect(armUniversal.name, 'SuperGoodViewer-v1.0.8-macos.dmg');
+
+      final intelUniversal = UpdateService.resolvePlatformAsset(
+        universalAssets,
+        targetIsMacOS: true,
+        targetIsArm64: false,
+      );
+      expect(intelUniversal.name, 'SuperGoodViewer-v1.0.8-macos.dmg');
+
+      // If only arm64 is available, Intel Mac must NEVER download it (prevent breaking installation)
+      final armOnlyAssets = [
+        {
+          'name': 'SuperGoodViewer-v1.0.9-macos-arm64.dmg',
+          'browser_download_url': 'https://example.com/SuperGoodViewer-v1.0.9-macos-arm64.dmg',
+          'size': 37000000,
+        },
+      ];
+      final intelWithArmOnly = UpdateService.resolvePlatformAsset(
+        armOnlyAssets,
+        targetIsMacOS: true,
+        targetIsArm64: false,
+      );
+      expect(intelWithArmOnly.name, isNull);
+    });
+
     test('ignoreVersion saves preference correctly', () async {
       final service = UpdateService();
       await service.ignoreVersion('1.0.8');

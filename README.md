@@ -122,7 +122,10 @@ make test
 - **macOS (App Bundle & DMG)**:
   ```bash
   make build          # 生成 ui/build/macos/Build/Products/Release/SuperGoodViewer.app
-  make dmg            # 生成安装镜像 SuperGoodViewer-macos.dmg
+  make dmg            # 生成 Universal 通用安装镜像 dist/SuperGoodViewer-macos.dmg
+  # 亦可单独构建指定架构镜像：
+  make dmg-arm64      # 生成 dist/SuperGoodViewer-macos-arm64.dmg (Apple Silicon M 系列)
+  make dmg-x64        # 生成 dist/SuperGoodViewer-macos-x64.dmg (Intel 处理器)
   ```
 - **Windows x64 便携包 (Intel / AMD 架构及通用)**:
   ```bash

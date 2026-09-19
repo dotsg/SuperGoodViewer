@@ -106,26 +106,11 @@ jobs:
           # Re-sign app bundle after injecting dylib and CLI script so Gatekeeper doesn't reject modified code
           codesign --force --deep --sign - "$APP"
 
-      - name: Create macOS DMG Package
+      - name: Create macOS DMG Package (Universal)
         run: |
-          mkdir -p dist
-          APP_PATH="ui/build/macos/Build/Products/Release/SuperGoodViewer.app"
-          test -f "$APP_PATH/Contents/MacOS/SuperGoodViewer" || { echo "::error::Binary missing in $APP_PATH"; exit 1; }
-          DMG_FILE="dist/SuperGoodViewer-${{ env.RELEASE_VERSION }}-macos.dmg"
-          STAGING_DIR="dist/dmg_staging"
-
-          echo "==> Preparing DMG staging directory with Applications shortcut..."
-          rm -rf "$STAGING_DIR"
-          mkdir -p "$STAGING_DIR"
-          cp -R "$APP_PATH" "$STAGING_DIR/SuperGoodViewer.app"
-          ln -s /Applications "$STAGING_DIR/Applications"
-
-          echo "==> Creating DMG: $DMG_FILE"
-          hdiutil create -volname "超好读 SuperGoodViewer" \
-            -srcfolder "$STAGING_DIR" \
-            -ov -format UDZO \
-            "$DMG_FILE"
-          rm -rf "$STAGING_DIR"
+          chmod +x scripts/package-macos-dmg.sh
+          ./scripts/package-macos-dmg.sh universal dist "${{ env.RELEASE_VERSION }}"
+          test -f "dist/SuperGoodViewer-${{ env.RELEASE_VERSION }}-macos.dmg" || { echo "::error::Universal DMG missing"; exit 1; }
 
 
       - name: Upload macOS Artifacts
@@ -451,7 +436,7 @@ jobs:
 
             #### 🍏 macOS 用户
             - **下载文件**：`SuperGoodViewer-${{ env.RELEASE_VERSION }}-macos.dmg`
-            - **系统要求**：macOS 11.0+ (原生支持 Apple Silicon M 系列芯片与 Intel Mac)
+            - **系统要求**：macOS 11.0+ (Universal 通用二进制，纯原生同时支持 Apple Silicon M 系列芯片与 Intel Mac)
             - **首次打开提示处理**：
               若系统提示「*无法验证开发者*」或「*已损坏，无法打开*」，请打开终端（Terminal）执行以下命令解除隔离属性即可：
               ```bash

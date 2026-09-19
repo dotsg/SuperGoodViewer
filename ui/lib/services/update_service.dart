@@ -48,26 +48,55 @@ class UpdateService {
   }
 
   /// Resolves the optimal download asset for the current operating system and architecture.
-  static ({String? url, String? name, int? size}) resolvePlatformAsset(List<dynamic> assets) {
+  static ({String? url, String? name, int? size}) resolvePlatformAsset(
+    List<dynamic> assets, {
+    bool? targetIsMacOS,
+    bool? targetIsWindows,
+    bool? targetIsLinux,
+    bool? targetIsArm64,
+  }) {
     if (assets.isEmpty) return (url: null, name: null, size: null);
 
-    final isMac = Platform.isMacOS;
-    final isWin = Platform.isWindows;
-    final isLinux = Platform.isLinux;
+    final isMac = targetIsMacOS ?? Platform.isMacOS;
+    final isWin = targetIsWindows ?? Platform.isWindows;
+    final isLinux = targetIsLinux ?? Platform.isLinux;
 
     final winArch = (Platform.environment['PROCESSOR_ARCHITECTURE'] ?? '').toLowerCase();
-    final isWinArm = winArch.contains('arm') || Platform.version.toLowerCase().contains('arm');
+    final isWinArm = targetIsArm64 ?? (winArch.contains('arm') || Platform.version.toLowerCase().contains('arm'));
 
     Map<String, dynamic>? candidate;
 
-    for (final asset in assets) {
-      if (asset is! Map<String, dynamic>) continue;
-      final name = (asset['name'] as String? ?? '').toLowerCase();
+    if (isMac) {
+      final isMacArm = targetIsArm64 ?? (Platform.version.toLowerCase().contains('arm64') || Platform.version.toLowerCase().contains('aarch64'));
+      Map<String, dynamic>? exactArchCandidate;
+      Map<String, dynamic>? universalCandidate;
 
-      if (isMac && (name.endsWith('.dmg') || name.endsWith('.zip')) && name.contains('macos')) {
-        candidate = asset;
-        break;
-      } else if (isWin) {
+      for (final asset in assets) {
+        if (asset is! Map<String, dynamic>) continue;
+        final name = (asset['name'] as String? ?? '').toLowerCase();
+        if (!name.endsWith('.dmg') && !name.endsWith('.zip')) continue;
+        if (!name.contains('macos')) continue;
+
+        final isArmAsset = name.contains('arm64') || name.contains('aarch64');
+        final isX64Asset = name.contains('x64') || name.contains('x86_64') || name.contains('intel');
+
+        if (isMacArm && isArmAsset) {
+          exactArchCandidate = asset;
+          break;
+        } else if (!isMacArm && isX64Asset) {
+          exactArchCandidate = asset;
+          break;
+        } else if (!isArmAsset && !isX64Asset) {
+          universalCandidate ??= asset;
+        }
+      }
+
+      candidate = exactArchCandidate ?? universalCandidate;
+    } else if (isWin) {
+      for (final asset in assets) {
+        if (asset is! Map<String, dynamic>) continue;
+        final name = (asset['name'] as String? ?? '').toLowerCase();
+
         if (isWinArm && name.contains('windows-arm64') && name.endsWith('.zip')) {
           candidate = asset;
           break;
@@ -77,9 +106,16 @@ class UpdateService {
         } else if (name.contains('windows') && (name.endsWith('.zip') || name.endsWith('.exe'))) {
           candidate ??= asset;
         }
-      } else if (isLinux && (name.endsWith('.tar.gz') || name.endsWith('.appimage')) && name.contains('linux')) {
-        candidate = asset;
-        break;
+      }
+    } else if (isLinux) {
+      for (final asset in assets) {
+        if (asset is! Map<String, dynamic>) continue;
+        final name = (asset['name'] as String? ?? '').toLowerCase();
+
+        if ((name.endsWith('.tar.gz') || name.endsWith('.appimage')) && name.contains('linux')) {
+          candidate = asset;
+          break;
+        }
       }
     }
 
@@ -88,7 +124,15 @@ class UpdateService {
       for (final asset in assets) {
         if (asset is! Map<String, dynamic>) continue;
         final name = (asset['name'] as String? ?? '').toLowerCase();
-        if (isMac && name.endsWith('.dmg')) candidate = asset;
+        if (isMac && name.endsWith('.dmg')) {
+          final isMacArm = targetIsArm64 ?? (Platform.version.toLowerCase().contains('arm64') || Platform.version.toLowerCase().contains('aarch64'));
+          final isArmAsset = name.contains('arm64') || name.contains('aarch64');
+          // On Intel Mac, never fallback to an incompatible ARM-only package
+          if (isMacArm || !isArmAsset) {
+            candidate = asset;
+            break;
+          }
+        }
         if (isWin && name.endsWith('.zip')) candidate = asset;
         if (isLinux && name.endsWith('.tar.gz')) candidate = asset;
       }
