@@ -3,8 +3,81 @@ pub mod compiler;
 pub mod parser;
 
 use std::path::{Path, PathBuf};
-use compiler::engine::{compile_typst_to_pdf_with_options, CompileError, RenderOptions};
+use compiler::engine::{
+    compile_typst_to_document, export_document_to_pdf, CompileError, RenderOptions,
+    FLUID_CAPPED_PAGE_HEIGHT_PT,
+};
 use parser::markdown::convert_markdown_to_typst;
+use typst::layout::{Frame, FrameItem, Point};
+
+/// Recursively checks if any content in a Frame extends beyond the page height
+/// or was clipped by a container group that was forced to shrink by pagination.
+fn frame_has_overflow(frame: &Frame, origin: Point, page_height: f64) -> bool {
+    for (pos, item) in frame.items() {
+        let abs_pos = origin + *pos;
+        match item {
+            FrameItem::Group(group) => {
+                // Check if the group itself extends beyond the page height
+                if abs_pos.y.to_pt() + group.frame.size().y.to_pt() > page_height + 1.0 {
+                    return true;
+                }
+
+                if group.clip.is_some() {
+                    let group_h = group.frame.size().y.to_pt();
+                    // Check direct children of the clipped container (e.g. image container block).
+                    // If a direct child group or direct image's layout height exceeds the container,
+                    // the container was forced to shrink by pagination, clipping the element.
+                    // Deliberate aspect-ratio crops (e.g. width=100, height=10) place an inner
+                    // group whose layout size matches the container (10pt), so they are not flagged.
+                    for (inner_pos, inner_item) in group.frame.items() {
+                        let inner_bottom = inner_pos.y.to_pt() + match inner_item {
+                            FrameItem::Group(inner_group) => inner_group.frame.size().y.to_pt(),
+                            FrameItem::Image(_, size, _) => size.y.to_pt(),
+                            _ => 0.0,
+                        };
+                        if inner_bottom > group_h + 1.0 {
+                            return true;
+                        }
+                    }
+                    // Since group.clip is true and no direct child exceeds group_h, everything inside
+                    // is safely bounded by group.size (which fits within page_height).
+                } else {
+                    // Group does not clip its children, so recurse to check if unclipped children overflow.
+                    if frame_has_overflow(&group.frame, abs_pos, page_height) {
+                        return true;
+                    }
+                }
+            }
+            FrameItem::Image(_, size, _) => {
+                if abs_pos.y.to_pt() + size.y.to_pt() > page_height + 1.0 {
+                    return true;
+                }
+            }
+            FrameItem::Shape(_, _) | FrameItem::Text(_) => {
+                if abs_pos.y.to_pt() > page_height + 1.0 {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Checks whether any page in the document suffered content clipping or overflow,
+/// or contains empty pages caused by oversized blocks forcing premature page breaks.
+fn document_has_overflow(doc: &typst_layout::PagedDocument) -> bool {
+    for page in doc.pages() {
+        if page.frame.items().len() == 0 {
+            return true;
+        }
+        let page_height = page.frame.size().y.to_pt();
+        if frame_has_overflow(&page.frame, Point::zero(), page_height) {
+            return true;
+        }
+    }
+    false
+}
 
 /// High-level function: Compiles Markdown directly into a PDF byte stream.
 ///
@@ -16,9 +89,95 @@ pub fn compile_markdown_to_pdf(
     doc_dir: impl AsRef<Path>,
     options: &RenderOptions,
 ) -> Result<Vec<u8>, CompileError> {
-    let parsed = convert_markdown_to_typst(markdown, title, options);
     let cache_dir = options.image_cache_dir.as_ref().map(PathBuf::from);
-    compile_typst_to_pdf_with_options(&parsed.typst_source, doc_dir, parsed.virtual_files, cache_dir)
+
+    // Pass 1: Parse and compile the document (defaults to natural height for fluid mode).
+    // Moving parsed.virtual_files avoids cloning large image or diagram buffers in memory.
+    let parsed = convert_markdown_to_typst(markdown, title, options);
+    let document = compile_typst_to_document(
+        &parsed.typst_source,
+        doc_dir.as_ref(),
+        parsed.virtual_files,
+        cache_dir.clone(),
+    )?;
+
+    let valid_fluid_page_height = options.valid_fluid_page_height();
+
+    // Check if rendered layout height exceeds the PDF 1.7 default user space limit (14,400pt).
+    // We check against FLUID_CAPPED_PAGE_HEIGHT_PT (14,000pt), which provides a 400pt safety margin.
+    // If parsed.is_fluid is true and slicing is not explicitly disabled or specified,
+    // we inspect actual layout height across all pages.
+    if parsed.is_fluid && options.disable_fluid_slice != Some(true) && valid_fluid_page_height.is_none() {
+        let max_height = document
+            .pages()
+            .iter()
+            .map(|p| p.frame.size().y.to_pt())
+            .fold(0.0f64, f64::max);
+
+        if max_height > FLUID_CAPPED_PAGE_HEIGHT_PT as f64 {
+            let expected_slices = (max_height / FLUID_CAPPED_PAGE_HEIGHT_PT as f64).ceil() as usize;
+            let dynamic_slice_height = (max_height / expected_slices as f64) as f32;
+
+            // Candidate B: Dynamic slice height (H / ceil(H / 14000)), substantially reducing blank tail
+            let mut opts_b = options.clone();
+            opts_b.fluid_page_height = Some(dynamic_slice_height);
+            let parsed_b = convert_markdown_to_typst(markdown, title, &opts_b);
+            let doc_b = compile_typst_to_document(
+                &parsed_b.typst_source,
+                doc_dir.as_ref(),
+                parsed_b.virtual_files,
+                cache_dir.clone(),
+            )?;
+
+            let overflow_b = document_has_overflow(&doc_b);
+            let pages_b = doc_b.pages().len();
+            let canvas_b = pages_b as f64 * dynamic_slice_height as f64;
+            // Candidate A's page count must be >= expected_slices, so expected_slices * 14000
+            // represents the theoretical minimum canvas of Candidate A (a lower bound).
+            let min_canvas_a = expected_slices as f64 * FLUID_CAPPED_PAGE_HEIGHT_PT as f64;
+
+            // Content integrity takes precedence over canvas area:
+            // 1. If Candidate B suffered content clipping/overflow (e.g. a tall unbreakable block
+            //    exceeded dynamic_slice_height), we must compile Candidate A to preserve content.
+            // 2. If Candidate B has no overflow, but severe page spillover caused its canvas to exceed
+            //    Candidate A's theoretical minimum (canvas_b > min_canvas_a), we compile Candidate A.
+            // Otherwise (no overflow and canvas_b <= min_canvas_a), Candidate B is provably optimal.
+            if overflow_b || canvas_b > min_canvas_a {
+                let mut opts_a = options.clone();
+                opts_a.fluid_page_height = Some(FLUID_CAPPED_PAGE_HEIGHT_PT);
+                let parsed_a = convert_markdown_to_typst(markdown, title, &opts_a);
+                let doc_a = compile_typst_to_document(
+                    &parsed_a.typst_source,
+                    doc_dir.as_ref(),
+                    parsed_a.virtual_files,
+                    cache_dir,
+                )?;
+
+                let overflow_a = document_has_overflow(&doc_a);
+                if overflow_b && !overflow_a {
+                    // Candidate A preserves content integrity while Candidate B clipped content.
+                    return export_document_to_pdf(&doc_a);
+                }
+                if !overflow_b && overflow_a {
+                    // Candidate B preserves content integrity while Candidate A clipped content.
+                    return export_document_to_pdf(&doc_b);
+                }
+
+                let pages_a = doc_a.pages().len();
+                let canvas_a = pages_a as f64 * FLUID_CAPPED_PAGE_HEIGHT_PT as f64;
+
+                // When content integrity is equivalent (neither overflows, or both overflow),
+                // choose whichever produces the smaller total canvas.
+                if canvas_a < canvas_b {
+                    return export_document_to_pdf(&doc_a);
+                }
+            }
+
+            return export_document_to_pdf(&doc_b);
+        }
+    }
+
+    export_document_to_pdf(&document)
 }
 
 #[cfg(test)]
@@ -176,8 +335,186 @@ fn main() {
             assert!(res.is_ok(), "Failed to compile test.md: {:?}", res.err());
             let pdf = res.unwrap();
             assert!(pdf.starts_with(b"%PDF-"));
+            assert!(
+                parsed.typst_source.contains("]/**/"),
+                "test.md parsed typst source should use ]/**/ delimiter"
+            );
             println!("Compiled rich test.md spec in {:?}, generated PDF bytes: {}", elapsed, pdf.len());
         }
+    }
+
+    fn extract_all_mediabox_heights(pdf_bytes: &[u8]) -> Vec<f64> {
+        let s = String::from_utf8_lossy(pdf_bytes);
+        let mut heights = Vec::new();
+        let marker = "/MediaBox";
+        let mut search_from = 0;
+        while let Some(pos) = s[search_from..].find(marker) {
+            let abs_pos = search_from + pos;
+            let rest = &s[abs_pos + marker.len()..];
+            if let (Some(start), Some(end)) = (rest.find('['), rest.find(']')) {
+                let inner = &rest[start + 1..end];
+                let numbers: Vec<&str> = inner.split_whitespace().collect();
+                if numbers.len() == 4 {
+                    if let Ok(h) = numbers[3].parse::<f64>() {
+                        heights.push(h);
+                    }
+                }
+                search_from = abs_pos + marker.len() + end + 1;
+            } else {
+                break;
+            }
+        }
+        heights
+    }
+
+    #[test]
+    fn test_fluid_two_pass_auto_height_and_capped_fallback() {
+        // Construct a document with 1480 lines / ~19k chars whose rendered height
+        // exceeds 14,400pt (PDF 1.7 limit). The two-pass strategy must detect the
+        // actual height and automatically re-compile with dynamic slices <= 14,000pt
+        // so that the canvas fits the content without a large blank tail.
+        let mut tall_md = String::new();
+        for i in 0..740 {
+            tall_md.push_str(&format!("Line {i}\n\n"));
+        }
+
+        let options = RenderOptions {
+            mode: "fluid".to_string(),
+            theme: "light".to_string(),
+            viewport_width: 850.0,
+            font_size: 10.5,
+            ..Default::default()
+        };
+
+        let res = compile_markdown_to_pdf(&tall_md, "Tall Document", ".", &options);
+        assert!(res.is_ok(), "Tall document failed two-pass compile: {:?}", res.err());
+        let pdf = res.unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
+
+        // Verify that two-pass dynamically sliced the document into multiple pages
+        let heights = extract_all_mediabox_heights(&pdf);
+        assert!(heights.len() > 1, "Tall document must be sliced into multiple pages, got {}", heights.len());
+        for (i, h) in heights.iter().enumerate() {
+            assert!(*h <= 14000.5, "Page {i} height {h}pt exceeds 14,000pt limit");
+            // Dynamic slicing should produce ~7837pt per page rather than a fixed 14,000pt
+            assert!(*h < 10000.0, "Page {i} height {h}pt should be dynamically sliced (~7837pt), not fixed 14000pt");
+        }
+        // Verify blank tail elimination: total canvas must closely match natural height (~15674pt)
+        let total_canvas: f64 = heights.iter().sum();
+        assert!(total_canvas < 16500.0, "Total canvas {total_canvas}pt must not leave large blank tail (was 28,000pt)");
+    }
+
+    #[test]
+    fn test_fluid_frontmatter_two_pass_tall_document() {
+        // Reproduce P1: Frontmatter page_format: fluid with default RenderOptions
+        // (options.page_format is None, options.mode is default).
+        // A tall document with 480 table rows with <br> exceeds 14,000pt.
+        // Must correctly trigger two-pass capping instead of outputting a 35,000pt+ single page.
+        let mut md = String::from("---\npage_format: fluid\n---\n\n| Col A | Col B |\n| --- | --- |\n");
+        for i in 0..480 {
+            md.push_str(&format!("| Cell {i} A<br>extra line 1<br>extra line 2 | Cell {i} B |\n"));
+        }
+
+        let options = RenderOptions {
+            viewport_width: 850.0,
+            ..Default::default()
+        };
+
+        let res = compile_markdown_to_pdf(&md, "Tall Frontmatter Doc", ".", &options);
+        assert!(res.is_ok(), "Tall frontmatter compile failed: {:?}", res.err());
+        let pdf = res.unwrap();
+        let heights = extract_all_mediabox_heights(&pdf);
+        assert!(heights.len() > 1, "Frontmatter fluid document must be sliced into multiple pages");
+        for (i, h) in heights.iter().enumerate() {
+            assert!(*h <= 14000.5, "Page {i} height {h}pt exceeds 14,000pt limit");
+        }
+    }
+
+    #[test]
+    fn test_fluid_escape_hatch_disables_capping() {
+        let mut tall_md = String::new();
+        for i in 0..740 {
+            tall_md.push_str(&format!("Line {i}\n\n"));
+        }
+
+        let disabled_opts = RenderOptions {
+            mode: "fluid".to_string(),
+            viewport_width: 850.0,
+            disable_fluid_slice: Some(true),
+            ..Default::default()
+        };
+        let res = compile_markdown_to_pdf(&tall_md, "Tall Disabled", ".", &disabled_opts);
+        assert!(res.is_ok(), "Tall disabled failed compile: {:?}", res.err());
+        let heights = extract_all_mediabox_heights(&res.unwrap());
+        assert_eq!(heights.len(), 1, "disable_fluid_slice must keep a single page");
+        assert!(heights[0] > 14000.0, "disable_fluid_slice must keep natural height, got {}pt", heights[0]);
+    }
+
+    #[test]
+    fn test_fluid_tall_blocks_candidate_comparison() {
+        // Construct a document with 25 tall blocks (1300pt each).
+        // Self-contained: does not depend on external assets; unresolvable images safely
+        // fall back to a transparent placeholder while preserving the 1300pt layout box.
+        //
+        // Measured metrics:
+        // - Natural height ~33,756pt -> expected_slices = 3, min_canvas_a = 42,000pt.
+        // - Candidate B (dynamic slice ~11,252pt): each page fits at most 8 blocks (10,400pt),
+        //   causing 25 blocks to spill across 4 pages -> canvas_B = 4 * 11,252pt ≈ 45,008pt > 42,000pt.
+        // - Candidate A (slice 14,000pt): each page fits 10 blocks -> fits in 3 pages = 42,000pt.
+        // Candidate A wins because canvas_A (42,000pt) < canvas_B (45,008pt).
+        let mut md = String::new();
+        for i in 0..25 {
+            md.push_str(&format!("### Section {i}\n\nParagraph text {i}.\n\n<img src=\"dummy.png\" height=\"1300pt\" />\n\n"));
+        }
+
+        let options = RenderOptions {
+            mode: "fluid".to_string(),
+            viewport_width: 850.0,
+            ..Default::default()
+        };
+
+        let res = compile_markdown_to_pdf(&md, "Tall Blocks Doc", ".", &options);
+        assert!(res.is_ok(), "Tall blocks compile failed: {:?}", res.err());
+        let pdf = res.unwrap();
+        let heights = extract_all_mediabox_heights(&pdf);
+        assert_eq!(heights.len(), 3, "Candidate A should win with exactly 3 pages (Candidate B would spill to 4)");
+        for (i, h) in heights.iter().enumerate() {
+            assert_eq!(*h, 14000.0, "Page {i} height {h}pt should be Candidate A (14,000pt)");
+        }
+    }
+
+    #[test]
+    fn test_fluid_content_integrity_tall_block_prefers_candidate_a() {
+        let temp_dir = std::env::temp_dir().join(format!("sgv_test_svg_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let tall_svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="800" height="10000"><rect width="800" height="10000" fill="red"/></svg>"#;
+        let crop_svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="blue"/></svg>"#;
+        std::fs::write(temp_dir.join("tall.svg"), tall_svg).unwrap();
+        std::fs::write(temp_dir.join("crop.svg"), crop_svg).unwrap();
+
+        let mut md = String::new();
+        md.push_str("<img src=\"tall.svg\" height=\"10000pt\" />\n\n");
+        md.push_str("<img src=\"crop.svg\" width=\"100pt\" height=\"10pt\" />\n\n");
+        for i in 0..400 {
+            md.push_str(&format!("Paragraph {i} with some content to fill up the page.\n\n"));
+        }
+
+        let options = RenderOptions {
+            mode: "fluid".to_string(),
+            viewport_width: 850.0,
+            ..Default::default()
+        };
+
+        let res = compile_markdown_to_pdf(&md, "Integrity Test", &temp_dir, &options);
+        assert!(res.is_ok(), "Compile failed: {:?}", res.err());
+        let pdf = res.unwrap();
+        let heights = extract_all_mediabox_heights(&pdf);
+        assert_eq!(heights.len(), 2, "Candidate A should be selected with 2 pages of 14,000pt");
+        for (i, h) in heights.iter().enumerate() {
+            assert_eq!(*h, 14000.0, "Page {i} height {h}pt should be 14,000pt (Candidate A)");
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
@@ -436,53 +773,31 @@ Second index.
             ..Default::default()
         };
         let start = std::time::Instant::now();
-        let parsed = convert_markdown_to_typst(&content, "Large Markdown", &options);
+        let pdf = compile_markdown_to_pdf(&content, "Large Markdown", doc_dir, &options)
+            .unwrap_or_else(|err| panic!("Large markdown compile failed in {:?}: {:?}", start.elapsed(), err));
+        let heights = extract_all_mediabox_heights(&pdf);
         println!(
-            "Converted markdown ({} chars) to typst ({} chars) in {:?}",
-            content.len(),
-            parsed.typst_source.len(),
+            "Laid out {} page(s) in {:?}",
+            heights.len(),
             start.elapsed()
         );
-        let compile_start = std::time::Instant::now();
-        let world = compiler::world::MemoryWorld::new_with_cache_dir(
-            &parsed.typst_source,
-            doc_dir,
-            parsed.virtual_files.clone(),
-            None,
-        );
-        let document = typst::compile(&world).output.unwrap_or_else(|errs| {
-            panic!(
-                "Large markdown compile failed in {:?}: {:?}",
-                compile_start.elapsed(),
-                errs.iter().map(|e| e.message.to_string()).collect::<Vec<_>>()
-            )
-        });
-        let pdf = typst_pdf::pdf(&document, &typst_pdf::PdfOptions::default())
-            .expect("PDF export");
-        println!(
-            "Typst laid out {} page(s) in {:?}",
-            document.pages().len(),
-            compile_start.elapsed()
-        );
-        for (i, page) in document.pages().iter().enumerate() {
-            let size = page.frame.size();
+        for (i, h) in heights.iter().enumerate() {
             if i < 3 {
                 println!(
-                    "page {} size: {:.1}pt x {:.1}pt",
+                    "page {} size: {:.1}pt",
                     i + 1,
-                    size.x.to_pt(),
-                    size.y.to_pt()
+                    h
                 );
             }
             assert!(
-                size.y.to_pt() <= 14000.5,
+                *h <= 14000.5,
                 "fluid page {} is too tall for PDF: {:.1}pt",
                 i + 1,
-                size.y.to_pt()
+                h
             );
         }
         assert!(
-            document.pages().len() > 1,
+            heights.len() > 1,
             "large markdown should paginate in fluid mode"
         );
         assert!(pdf.starts_with(b"%PDF-"));
