@@ -536,9 +536,27 @@ class ZhHantStrings extends ZhHansStrings {
   @override
   String get cliAuthCancelled => '已取消授權操作';
   @override
-  String cliInstallFailed(String msg) => '安裝失敗: $msg';
+  String cliInstallFailed(String msg) => msg.isEmpty ? '安裝失敗' : '安裝失敗: $msg';
   @override
-  String cliUninstallFailed(String msg) => '解除安裝失敗: $msg';
+  String cliUninstallFailed(String msg) => msg.isEmpty ? '解除安裝失敗' : '解除安裝失敗: $msg';
+  @override
+  String get cliMsgNotInstalled => '未安裝';
+  @override
+  String get cliErrorAppDataDirFailed => '無法定位本機應用程式資料目錄';
+  @override
+  String get cliErrorAppPathFailed => '無法取得目前程式路徑';
+  @override
+  String get cliErrorWriteCmdFailed => '寫入 sgv.cmd 指令碼失敗';
+  @override
+  String get cliErrorLocateLauncherFailed => '未能定位 sgv 啟動指令碼';
+  @override
+  String get cliErrorSymlinkFailed => '建立符號連結失敗';
+  @override
+  String get cliErrorAuthScriptInitFailed => '無法初始化系統授權指令碼';
+  @override
+  String get cliErrorPlatformNotSupported => '目前平台暫不支援';
+  @override
+  String get cliErrorUnknown => '未知錯誤';
   @override
   String get cliWarningPathFailed => '未能將安裝目錄新增到環境變數 PATH（登錄檔受限），命令列可能無法直接呼叫';
   @override

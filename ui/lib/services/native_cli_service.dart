@@ -39,18 +39,20 @@ class CliStatus {
     } else if (warningCode == 'incomplete_tools') {
       return s.cliStatusPartialTools;
     }
-    if (warning == '安装不完整 (未添加到系统 PATH)') {
-      return s.cliStatusPartialPath;
-    } else if (warning == '安装不完整 (部分工具未就绪)') {
+    if (warning != null && warning!.isNotEmpty) {
+      return warning;
+    }
+    if (isPartial) {
       return s.cliStatusPartialTools;
     }
-    return warning;
+    return null;
   }
 }
 
 class CliOperationResult {
   final bool isSuccess;
   final bool isCancelled;
+  final String? messageCode;
   final String? message;
   final String? warning;
   final String? warningCode;
@@ -60,12 +62,41 @@ class CliOperationResult {
   const CliOperationResult({
     required this.isSuccess,
     this.isCancelled = false,
+    this.messageCode,
     this.message,
     this.warning,
     this.warningCode,
     this.warningCodes,
     this.path,
   });
+
+  String? localizedMessage(AppStrings s) {
+    if (messageCode != null) {
+      switch (messageCode) {
+        case 'not_installed':
+          return s.cliMsgNotInstalled;
+        case 'user_cancelled':
+          return s.cliAuthCancelled;
+        case 'app_data_dir_failed':
+          return s.cliErrorAppDataDirFailed;
+        case 'app_path_failed':
+          return s.cliErrorAppPathFailed;
+        case 'write_cmd_failed':
+          return s.cliErrorWriteCmdFailed;
+        case 'locate_launcher_failed':
+          return s.cliErrorLocateLauncherFailed;
+        case 'symlink_failed':
+          return s.cliErrorSymlinkFailed;
+        case 'auth_script_init_failed':
+          return s.cliErrorAuthScriptInitFailed;
+        case 'platform_not_supported':
+          return s.cliErrorPlatformNotSupported;
+        case 'unknown_error':
+          return s.cliErrorUnknown;
+      }
+    }
+    return message;
+  }
 
   String? localizedWarning(AppStrings s) {
     final codes = warningCodes ?? (warningCode != null ? [warningCode!] : null);
@@ -106,21 +137,13 @@ class NativeCliService {
       if (res != null) {
         final warningCode = res['warningCode'] as String?;
         final warning = res['warning'] as String?;
-        String? resolvedWarningCode = warningCode;
-        if (resolvedWarningCode == null && res['isPartial'] == true) {
-          if (warning == '安装不完整 (未添加到系统 PATH)') {
-            resolvedWarningCode = 'missing_path';
-          } else {
-            resolvedWarningCode = 'incomplete_tools';
-          }
-        }
         return CliStatus(
           isInstalled: res['isInstalled'] == true,
           isPartial: res['isPartial'] == true,
           path: res['path'] as String? ?? '',
           target: res['target'] as String? ?? '',
           isCurrentApp: res['isCurrentApp'] == true,
-          warningCode: resolvedWarningCode,
+          warningCode: warningCode,
           warning: warning,
         );
       }
@@ -142,6 +165,7 @@ class NativeCliService {
     if (!isSupported) {
       return const CliOperationResult(
         isSuccess: false,
+        messageCode: 'platform_not_supported',
         message: '当前平台暂不支持一键安装 CLI 命令',
       );
     }
@@ -149,6 +173,8 @@ class NativeCliService {
       final res = await channel.invokeMapMethod<String, dynamic>('installCli');
       if (res != null) {
         final status = res['status'] as String?;
+        final messageCode = res['messageCode'] as String?;
+        final message = res['message'] as String?;
         if (status == 'success') {
           final warningCodesRaw = res['warningCodes'];
           List<String>? warningCodes;
@@ -159,22 +185,25 @@ class NativeCliService {
               (warningCodes != null && warningCodes.isNotEmpty ? warningCodes.first : null);
           return CliOperationResult(
             isSuccess: true,
-            message: res['message'] as String?,
+            messageCode: messageCode,
+            message: message,
             warning: res['warning'] as String?,
             warningCode: warningCode,
             warningCodes: warningCodes,
             path: res['path'] as String?,
           );
         } else if (status == 'cancelled') {
-          return const CliOperationResult(
+          return CliOperationResult(
             isSuccess: false,
             isCancelled: true,
-            message: '已取消授权',
+            messageCode: messageCode ?? 'user_cancelled',
+            message: message ?? '已取消授权',
           );
         } else {
           return CliOperationResult(
             isSuccess: false,
-            message: res['message'] as String? ?? '安装失败',
+            messageCode: messageCode,
+            message: message ?? '安装失败',
           );
         }
       }
@@ -184,7 +213,11 @@ class NativeCliService {
         message: e.toString(),
       );
     }
-    return const CliOperationResult(isSuccess: false, message: '未知错误');
+    return const CliOperationResult(
+      isSuccess: false,
+      messageCode: 'unknown_error',
+      message: '未知错误',
+    );
   }
 
   /// Uninstalls / removes the `sgv` CLI symlink from /usr/local/bin
@@ -192,6 +225,7 @@ class NativeCliService {
     if (!isSupported) {
       return const CliOperationResult(
         isSuccess: false,
+        messageCode: 'platform_not_supported',
         message: '当前平台暂不支持',
       );
     }
@@ -199,22 +233,27 @@ class NativeCliService {
       final res = await channel.invokeMapMethod<String, dynamic>('uninstallCli');
       if (res != null) {
         final status = res['status'] as String?;
+        final messageCode = res['messageCode'] as String?;
+        final message = res['message'] as String?;
         if (status == 'success') {
           return CliOperationResult(
             isSuccess: true,
-            message: res['message'] as String?,
+            messageCode: messageCode,
+            message: message,
             warning: res['warning'] as String?,
           );
         } else if (status == 'cancelled') {
-          return const CliOperationResult(
+          return CliOperationResult(
             isSuccess: false,
             isCancelled: true,
-            message: '已取消授权',
+            messageCode: messageCode ?? 'user_cancelled',
+            message: message ?? '已取消授权',
           );
         } else {
           return CliOperationResult(
             isSuccess: false,
-            message: res['message'] as String? ?? '卸载失败',
+            messageCode: messageCode,
+            message: message ?? '卸载失败',
           );
         }
       }
@@ -224,7 +263,11 @@ class NativeCliService {
         message: e.toString(),
       );
     }
-    return const CliOperationResult(isSuccess: false, message: '未知错误');
+    return const CliOperationResult(
+      isSuccess: false,
+      messageCode: 'unknown_error',
+      message: '未知错误',
+    );
   }
 
   /// Queries the initial file passed to the app via macOS openFiles on cold launch

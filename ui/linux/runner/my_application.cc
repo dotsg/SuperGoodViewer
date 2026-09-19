@@ -148,6 +148,7 @@ static FlValue* install_cli() {
 
   if (target == nullptr) {
     fl_value_set_string_take(map, "status", fl_value_new_string("error"));
+    fl_value_set_string_take(map, "messageCode", fl_value_new_string("locate_launcher_failed"));
     fl_value_set_string_take(map, "message", fl_value_new_string("未能定位 sgv 启动脚本"));
     g_free(symlink_path);
     return map;
@@ -207,6 +208,7 @@ static FlValue* install_cli() {
       g_free(link_dir);
     }
     fl_value_set_string_take(map, "status", fl_value_new_string("error"));
+    fl_value_set_string_take(map, "messageCode", fl_value_new_string("symlink_failed"));
     fl_value_set_string_take(map, "message", fl_value_new_string("创建符号链接失败"));
   }
 

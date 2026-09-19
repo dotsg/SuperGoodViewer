@@ -533,9 +533,27 @@ class ZhHansStrings implements AppStrings {
   @override
   String get cliAuthCancelled => '已取消授权操作';
   @override
-  String cliInstallFailed(String msg) => '安装失败: $msg';
+  String cliInstallFailed(String msg) => msg.isEmpty ? '安装失败' : '安装失败: $msg';
   @override
-  String cliUninstallFailed(String msg) => '卸载失败: $msg';
+  String cliUninstallFailed(String msg) => msg.isEmpty ? '卸载失败' : '卸载失败: $msg';
+  @override
+  String get cliMsgNotInstalled => '未安装';
+  @override
+  String get cliErrorAppDataDirFailed => '无法定位本地应用数据目录';
+  @override
+  String get cliErrorAppPathFailed => '无法获取当前程序路径';
+  @override
+  String get cliErrorWriteCmdFailed => '写入 sgv.cmd 脚本失败';
+  @override
+  String get cliErrorLocateLauncherFailed => '未能定位 sgv 启动脚本';
+  @override
+  String get cliErrorSymlinkFailed => '创建符号链接失败';
+  @override
+  String get cliErrorAuthScriptInitFailed => '无法初始化系统授权脚本';
+  @override
+  String get cliErrorPlatformNotSupported => '当前平台暂不支持';
+  @override
+  String get cliErrorUnknown => '未知错误';
   @override
   String get cliWarningPathFailed => '未能将安装目录添加到环境变量 PATH（注册表受限），命令行可能无法直接调用';
   @override

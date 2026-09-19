@@ -561,9 +561,27 @@ class EnStrings implements AppStrings {
   @override
   String get cliAuthCancelled => 'Authorization cancelled.';
   @override
-  String cliInstallFailed(String msg) => 'Installation failed: $msg';
+  String cliInstallFailed(String msg) => msg.isEmpty ? 'Installation failed' : 'Installation failed: $msg';
   @override
-  String cliUninstallFailed(String msg) => 'Uninstall failed: $msg';
+  String cliUninstallFailed(String msg) => msg.isEmpty ? 'Uninstall failed' : 'Uninstall failed: $msg';
+  @override
+  String get cliMsgNotInstalled => 'Not installed';
+  @override
+  String get cliErrorAppDataDirFailed => 'Unable to locate local application data directory';
+  @override
+  String get cliErrorAppPathFailed => 'Unable to get current executable path';
+  @override
+  String get cliErrorWriteCmdFailed => 'Failed to write sgv.cmd script';
+  @override
+  String get cliErrorLocateLauncherFailed => 'Failed to locate sgv launcher script';
+  @override
+  String get cliErrorSymlinkFailed => 'Failed to create symbolic link';
+  @override
+  String get cliErrorAuthScriptInitFailed => 'Failed to initialize authorization script';
+  @override
+  String get cliErrorPlatformNotSupported => 'Current platform is not supported';
+  @override
+  String get cliErrorUnknown => 'Unknown error';
   @override
   String get cliWarningPathFailed =>
       'Failed to add install directory to environment PATH (registry restricted), command may not be directly accessible';

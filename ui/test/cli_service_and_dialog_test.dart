@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sogoodviewer/i18n/app_localizations.dart';
 import 'package:sogoodviewer/i18n/strings_en.dart';
 import 'package:sogoodviewer/i18n/strings_zh_hans.dart';
+import 'package:sogoodviewer/i18n/strings_zh_hant.dart';
 import 'package:sogoodviewer/services/native_cli_service.dart';
 import 'package:sogoodviewer/views/cli_tools_dialog.dart';
 
@@ -185,13 +186,14 @@ void main() {
       expect(res.message, isNull);
     });
 
-    test('uninstall handles success with custom message', () async {
+    test('uninstall handles success with custom message and messageCode', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (call) async {
         if (call.method == 'uninstallCli') {
           return {
             'status': 'success',
-            'message': '已成功卸载',
+            'messageCode': 'not_installed',
+            'message': '未安装',
           };
         }
         return null;
@@ -200,7 +202,35 @@ void main() {
       final res = await NativeCliService.uninstall();
       expect(res.isSuccess, isTrue);
       expect(res.isCancelled, isFalse);
-      expect(res.message, equals('已成功卸载'));
+      expect(res.messageCode, equals('not_installed'));
+      expect(res.localizedMessage(const ZhHansStrings()), equals('未安装'));
+      expect(res.localizedMessage(const ZhHantStrings()), equals('未安裝'));
+      expect(res.localizedMessage(const EnStrings()), equals('Not installed'));
+    });
+
+    test('operation result resolves error message codes across languages and falls back gracefully', () {
+      const resSymlink = CliOperationResult(
+        isSuccess: false,
+        messageCode: 'symlink_failed',
+        message: '创建符号链接失败',
+      );
+      expect(resSymlink.localizedMessage(const ZhHansStrings()), equals('创建符号链接失败'));
+      expect(resSymlink.localizedMessage(const ZhHantStrings()), equals('建立符號連結失敗'));
+      expect(resSymlink.localizedMessage(const EnStrings()), equals('Failed to create symbolic link'));
+
+      const resWriteCmd = CliOperationResult(
+        isSuccess: false,
+        messageCode: 'write_cmd_failed',
+        message: '写入 sgv.cmd 脚本失败',
+      );
+      expect(resWriteCmd.localizedMessage(const EnStrings()), equals('Failed to write sgv.cmd script'));
+
+      const resRaw = CliOperationResult(
+        isSuccess: false,
+        message: 'NSAppleScript error -1712: AppleEvent timed out',
+      );
+      expect(resRaw.localizedMessage(const EnStrings()), equals('NSAppleScript error -1712: AppleEvent timed out'));
+      expect(resRaw.localizedMessage(const ZhHansStrings()), equals('NSAppleScript error -1712: AppleEvent timed out'));
     });
   });
 
@@ -509,6 +539,90 @@ void main() {
       await tester.pump();
 
       expect(find.text('未安装'), findsOneWidget);
+    });
+
+    testWidgets('shows localized message in English when uninstall returns not_installed', (tester) async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'checkCliStatus') {
+          return {
+            'isInstalled': true,
+            'path': '/usr/local/bin/sgv',
+            'target': '/Applications/SuperGoodViewer.app/Contents/Resources/bin/sgv',
+            'isCurrentApp': true,
+          };
+        }
+        if (call.method == 'uninstallCli') {
+          return {
+            'status': 'success',
+            'messageCode': 'not_installed',
+            'message': '未安装',
+          };
+        }
+        return null;
+      });
+
+      await tester.pumpWidget(
+        buildTestApp(
+          Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () => showCliToolsDialog(context),
+              child: const Text('Open Dialog'),
+            ),
+          ),
+          'en',
+        ),
+      );
+
+      await tester.tap(find.text('Open Dialog'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Uninstall'));
+      await tester.pump();
+
+      expect(find.text('Not installed'), findsOneWidget);
+    });
+
+    testWidgets('shows localized failure message in English when install fails with messageCode', (tester) async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'checkCliStatus') {
+          return {
+            'isInstalled': false,
+            'path': '/usr/local/bin/sgv',
+            'target': '',
+            'isCurrentApp': false,
+          };
+        }
+        if (call.method == 'installCli') {
+          return {
+            'status': 'error',
+            'messageCode': 'write_cmd_failed',
+            'message': '写入 sgv.cmd 脚本失败',
+          };
+        }
+        return null;
+      });
+
+      await tester.pumpWidget(
+        buildTestApp(
+          Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () => showCliToolsDialog(context),
+              child: const Text('Open Dialog'),
+            ),
+          ),
+          'en',
+        ),
+      );
+
+      await tester.tap(find.text('Open Dialog'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Install to Terminal'));
+      await tester.pump();
+
+      expect(find.text('Installation failed: Failed to write sgv.cmd script'), findsOneWidget);
     });
   });
 }

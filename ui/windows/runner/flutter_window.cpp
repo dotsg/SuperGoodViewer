@@ -680,6 +680,7 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
   CliLocations loc;
   if (!CliLocations::TryGet(loc)) {
     res[flutter::EncodableValue("status")] = flutter::EncodableValue("error");
+    res[flutter::EncodableValue("messageCode")] = flutter::EncodableValue("app_data_dir_failed");
     res[flutter::EncodableValue("message")] = flutter::EncodableValue("无法定位本地应用数据目录");
     return res;
   }
@@ -693,6 +694,7 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
   std::wstring exe_path = GetCurrentExecutablePath();
   if (exe_path.empty()) {
     res[flutter::EncodableValue("status")] = flutter::EncodableValue("error");
+    res[flutter::EncodableValue("messageCode")] = flutter::EncodableValue("app_path_failed");
     res[flutter::EncodableValue("message")] = flutter::EncodableValue("无法获取当前程序路径");
     return res;
   }
@@ -845,6 +847,7 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
 
   if (!cmd_written) {
     res[flutter::EncodableValue("status")] = flutter::EncodableValue("error");
+    res[flutter::EncodableValue("messageCode")] = flutter::EncodableValue("write_cmd_failed");
     res[flutter::EncodableValue("message")] = flutter::EncodableValue("写入 sgv.cmd 脚本失败");
     return res;
   }
@@ -1001,6 +1004,7 @@ flutter::EncodableMap FlutterWindow::UninstallCli() {
   CliLocations loc;
   if (!CliLocations::TryGet(loc)) {
     res[flutter::EncodableValue("status")] = flutter::EncodableValue("error");
+    res[flutter::EncodableValue("messageCode")] = flutter::EncodableValue("app_data_dir_failed");
     res[flutter::EncodableValue("message")] = flutter::EncodableValue("无法定位本地应用数据目录");
     return res;
   }

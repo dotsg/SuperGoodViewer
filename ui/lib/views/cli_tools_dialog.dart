@@ -58,11 +58,12 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
             ),
           );
         } else {
+          final customMsg = res.localizedMessage(s);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                (res.message != null && res.message!.isNotEmpty)
-                    ? res.message!
+                (customMsg != null && customMsg.isNotEmpty)
+                    ? customMsg
                     : s.cliInstallSuccess,
               ),
               behavior: SnackBarBehavior.floating,
@@ -80,9 +81,10 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
           ),
         );
       } else {
+        final detail = res.localizedMessage(s) ?? '';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(s.cliInstallFailed(res.message ?? '')),
+            content: Text(s.cliInstallFailed(detail)),
             behavior: SnackBarBehavior.floating,
             backgroundColor: Colors.redAccent,
             duration: const Duration(seconds: 4),
@@ -111,11 +113,12 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
             ),
           );
         } else {
+          final customMsg = res.localizedMessage(s);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                (res.message != null && res.message!.isNotEmpty)
-                    ? res.message!
+                (customMsg != null && customMsg.isNotEmpty)
+                    ? customMsg
                     : s.cliUninstallSuccess,
               ),
               behavior: SnackBarBehavior.floating,
@@ -132,9 +135,10 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
           ),
         );
       } else {
+        final detail = res.localizedMessage(s) ?? '';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(s.cliUninstallFailed(res.message ?? '')),
+            content: Text(s.cliUninstallFailed(detail)),
             behavior: SnackBarBehavior.floating,
             backgroundColor: Colors.redAccent,
             duration: const Duration(seconds: 4),

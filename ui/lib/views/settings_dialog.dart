@@ -320,9 +320,14 @@ class _SettingsDialogState extends State<SettingsDialog> {
             ),
           );
         } else {
+          final customMsg = res.localizedMessage(widget.controller.strings);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(widget.controller.strings.cliInstallSuccess),
+              content: Text(
+                (customMsg != null && customMsg.isNotEmpty)
+                    ? customMsg
+                    : widget.controller.strings.cliInstallSuccess,
+              ),
               behavior: SnackBarBehavior.floating,
               backgroundColor: const Color(0xFF10B981),
               duration: const Duration(seconds: 3),
@@ -330,9 +335,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
           );
         }
       } else if (!res.isCancelled) {
+        final detail = res.localizedMessage(widget.controller.strings) ?? '';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(widget.controller.strings.cliInstallFailed(res.message ?? '')),
+            content: Text(widget.controller.strings.cliInstallFailed(detail)),
             behavior: SnackBarBehavior.floating,
             backgroundColor: Colors.redAccent,
             duration: const Duration(seconds: 4),
@@ -349,17 +355,23 @@ class _SettingsDialogState extends State<SettingsDialog> {
     if (mounted) {
       setState(() => _isOperatingCli = false);
       if (res.isSuccess) {
+        final customMsg = res.localizedMessage(widget.controller.strings);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(widget.controller.strings.cliUninstallSuccess),
+            content: Text(
+              (customMsg != null && customMsg.isNotEmpty)
+                  ? customMsg
+                  : widget.controller.strings.cliUninstallSuccess,
+            ),
             behavior: SnackBarBehavior.floating,
             duration: const Duration(seconds: 3),
           ),
         );
       } else if (!res.isCancelled) {
+        final detail = res.localizedMessage(widget.controller.strings) ?? '';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(widget.controller.strings.cliUninstallFailed(res.message ?? '')),
+            content: Text(widget.controller.strings.cliUninstallFailed(detail)),
             behavior: SnackBarBehavior.floating,
             backgroundColor: Colors.redAccent,
             duration: const Duration(seconds: 4),

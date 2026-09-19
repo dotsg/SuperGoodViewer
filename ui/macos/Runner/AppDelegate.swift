@@ -320,7 +320,7 @@ class AppDelegate: FlutterAppDelegate {
           restoreOldLinks()
           let errCode = err[NSAppleScript.errorNumber] as? Int ?? 0
           if errCode == -128 {
-            result(["status": "cancelled", "message": "用户取消了授权"])
+            result(["status": "cancelled", "messageCode": "user_cancelled", "message": "用户取消了授权"])
           } else {
             let errMsg = err[NSAppleScript.errorMessage] as? String ?? "未知权限错误"
             result(["status": "error", "message": errMsg])
@@ -330,7 +330,7 @@ class AppDelegate: FlutterAppDelegate {
         result(["status": "success", "path": cliSymlinkPath])
       } else {
         restoreOldLinks()
-        result(["status": "error", "message": "无法初始化系统授权脚本"])
+        result(["status": "error", "messageCode": "auth_script_init_failed", "message": "无法初始化系统授权脚本"])
       }
     }
   }
@@ -338,7 +338,7 @@ class AppDelegate: FlutterAppDelegate {
   private func uninstallCli(result: @escaping FlutterResult) {
     let fm = FileManager.default
     guard itemExists(atPath: cliSymlinkPath) || itemExists(atPath: cliToolSymlinkPath) else {
-      result(["status": "success", "message": "未安装"])
+      result(["status": "success", "messageCode": "not_installed", "message": "未安装"])
       return
     }
 
@@ -360,7 +360,7 @@ class AppDelegate: FlutterAppDelegate {
         if let err = errorDict {
           let errCode = err[NSAppleScript.errorNumber] as? Int ?? 0
           if errCode == -128 {
-            result(["status": "cancelled", "message": "用户取消了授权"])
+            result(["status": "cancelled", "messageCode": "user_cancelled", "message": "用户取消了授权"])
           } else {
             let errMsg = err[NSAppleScript.errorMessage] as? String ?? "未知权限错误"
             result(["status": "error", "message": errMsg])
@@ -369,7 +369,7 @@ class AppDelegate: FlutterAppDelegate {
         }
         result(["status": "success"])
       } else {
-        result(["status": "error", "message": "无法初始化系统授权脚本"])
+        result(["status": "error", "messageCode": "auth_script_init_failed", "message": "无法初始化系统授权脚本"])
       }
     }
   }

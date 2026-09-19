@@ -234,6 +234,15 @@ abstract class AppStrings {
   String get cliAuthCancelled;
   String cliInstallFailed(String msg);
   String cliUninstallFailed(String msg);
+  String get cliMsgNotInstalled;
+  String get cliErrorAppDataDirFailed;
+  String get cliErrorAppPathFailed;
+  String get cliErrorWriteCmdFailed;
+  String get cliErrorLocateLauncherFailed;
+  String get cliErrorSymlinkFailed;
+  String get cliErrorAuthScriptInitFailed;
+  String get cliErrorPlatformNotSupported;
+  String get cliErrorUnknown;
   String get cliWarningPathFailed;
   String get cliWarningPs1UpdateFailed;
   String get cliWarningPs1CreateFailed;
