@@ -112,15 +112,15 @@ Normal equation:
     expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
     expect(find.textContaining('1 个公式渲染异常'), findsOneWidget);
 
-    // While toolbar is visible on startup, banner floats at bottom: 84
+    // While toolbar is visible on startup, banner floats at bannerTierToolbar
     final initialPos = tester.widget<AnimatedPositioned>(find.byKey(const ValueKey('degraded_warning_positioned')));
-    expect(initialPos.bottom, equals(84.0));
+    expect(initialPos.bottom, equals(WorkspaceView.bannerTierToolbar));
 
-    // When toolbar autohides in Zen mode (3500ms timer), banner smoothly slides down to bottom: 24
+    // When toolbar autohides in Zen mode (3500ms timer), banner smoothly slides down to bannerTierZen
     await tester.pump(const Duration(milliseconds: 3600));
     await tester.pumpAndSettle();
     final zenPos = tester.widget<AnimatedPositioned>(find.byKey(const ValueKey('degraded_warning_positioned')));
-    expect(zenPos.bottom, equals(24.0));
+    expect(zenPos.bottom, equals(WorkspaceView.bannerTierZen));
 
     // Dismiss the banner
     await tester.tap(find.byKey(const ValueKey('degraded_warning_dismiss')));
@@ -152,20 +152,20 @@ Normal equation:
         home: WorkspaceView(controller: controller),
       ),
     );
-    // Initial pump: toolbar is visible on startup, so banner sits at bottom: 84
+    // Initial pump: toolbar is visible on startup, so banner sits at bannerTierToolbar
     await tester.pump();
     final startupPos = tester.widget<AnimatedPositioned>(find.byKey(const ValueKey('degraded_warning_positioned')));
-    expect(startupPos.bottom, equals(84.0));
+    expect(startupPos.bottom, equals(WorkspaceView.bannerTierToolbar));
 
-    // Tap zoom in to trigger transient Zoom HUD (at bottom: 84)
+    // Tap zoom in to trigger transient Zoom HUD (at zoomHudBottom)
     final zoomInBtn = find.byIcon(Icons.add_rounded);
     expect(zoomInBtn, findsOneWidget);
     await tester.tap(zoomInBtn);
     await tester.pump();
 
-    // With Zoom HUD active, banner elevates to bottom: 140 to avoid mutual occlusion
+    // With Zoom HUD active, banner elevates to bannerTierZoomHud to avoid mutual occlusion
     final zoomActivePos = tester.widget<AnimatedPositioned>(find.byKey(const ValueKey('degraded_warning_positioned')));
-    expect(zoomActivePos.bottom, equals(140.0));
+    expect(zoomActivePos.bottom, equals(WorkspaceView.bannerTierZoomHud));
 
     // Settle all remaining timers and animations
     await tester.pumpAndSettle();
