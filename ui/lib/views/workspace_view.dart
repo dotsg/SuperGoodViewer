@@ -964,7 +964,112 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                       ),
                     ),
 
-                    // Transient Zoom HUD Capsule (Floats above the bottom pill toolbar)
+                    // Floating Degraded Equations Warning Banner
+                    // Floats neatly above the bottom pill toolbar when toolbar is visible (84)
+                    // and gracefully slides down when the toolbar autohides in Zen mode (24).
+                    // When the transient Zoom HUD capsule appears (at 84), this banner yields
+                    // and slides up to 140 to eliminate any mutual occlusion.
+                    AnimatedPositioned(
+                      key: const ValueKey('degraded_warning_positioned'),
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      bottom: _isZoomHudVisible ? 140.0 : (_isToolbarVisible ? 84.0 : 24.0),
+                      left: 24,
+                      right: 24,
+                      child: Center(
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 220),
+                          reverseDuration: const Duration(milliseconds: 180),
+                          switchInCurve: Curves.easeOutCubic,
+                          switchOutCurve: Curves.easeInCubic,
+                          transitionBuilder: (child, animation) {
+                            return FadeTransition(
+                              opacity: animation,
+                              child: SlideTransition(
+                                position: Tween<Offset>(
+                                  begin: const Offset(0, 0.35),
+                                  end: Offset.zero,
+                                ).animate(animation),
+                                child: child,
+                              ),
+                            );
+                          },
+                          child: (controller.hasDegradedEquations &&
+                                  controller.errorMessage == null &&
+                                  !_dismissedDegradedWarning)
+                              ? Container(
+                                  key: const ValueKey('degraded_warning_banner'),
+                                  constraints: const BoxConstraints(maxWidth: 600),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: isDark ? const Color(0xEB92400E) : const Color(0xF0D97706),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: isDark ? const Color(0x4DFBBF24) : const Color(0x33B45309),
+                                      width: 1,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.15),
+                                        blurRadius: 14,
+                                        offset: const Offset(0, 4),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.warning_amber_rounded,
+                                        color: Colors.white,
+                                        size: 18,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          controller.strings.degradedEquationsWarning(
+                                            controller.degradedEquationCount,
+                                          ),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 12.5,
+                                          ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      MouseRegion(
+                                        cursor: SystemMouseCursors.click,
+                                        child: GestureDetector(
+                                          key: const ValueKey('degraded_warning_dismiss'),
+                                          onTap: () {
+                                            setState(() {
+                                              _dismissedDegradedWarning = true;
+                                            });
+                                          },
+                                          child: const Padding(
+                                            padding: EdgeInsets.all(4),
+                                            child: Icon(
+                                              Icons.close_rounded,
+                                              color: Colors.white,
+                                              size: 16,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              : const SizedBox.shrink(key: ValueKey('degraded_warning_none')),
+                        ),
+                      ),
+                    ),
+
+                    // Transient Zoom HUD Capsule (Floats above the bottom pill toolbar at bottom: 84)
+                    // Placed after the degraded warning banner in the Stack to guarantee top z-index.
                     if (_isZoomHudVisible)
                       Positioned(
                         bottom: 84,
@@ -1016,87 +1121,6 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                                   ],
                                 ),
                               ),
-                            ),
-                          ),
-                        ),
-                      ),
-
-                    // Floating Degraded Equations Warning Banner
-                    // Floats neatly above the bottom pill toolbar when toolbar is visible,
-                    // and gracefully slides down when the toolbar autohides in Zen mode.
-                    if (controller.hasDegradedEquations &&
-                        controller.errorMessage == null &&
-                        !_dismissedDegradedWarning)
-                      AnimatedPositioned(
-                        duration: const Duration(milliseconds: 220),
-                        curve: Curves.easeOutCubic,
-                        bottom: _isToolbarVisible ? 84 : 24,
-                        left: 24,
-                        right: 24,
-                        child: Center(
-                          child: Container(
-                            constraints: const BoxConstraints(maxWidth: 600),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 10,
-                            ),
-                            decoration: BoxDecoration(
-                              color: isDark ? const Color(0xEB92400E) : const Color(0xF0D97706),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: isDark ? const Color(0x4DFBBF24) : const Color(0x33B45309),
-                                width: 1,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.15),
-                                  blurRadius: 14,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.warning_amber_rounded,
-                                  color: Colors.white,
-                                  size: 18,
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Text(
-                                    controller.strings.degradedEquationsWarning(
-                                      controller.degradedEquationCount,
-                                    ),
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 12.5,
-                                    ),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                MouseRegion(
-                                  cursor: SystemMouseCursors.click,
-                                  child: GestureDetector(
-                                    key: const ValueKey('degraded_warning_dismiss'),
-                                    onTap: () {
-                                      setState(() {
-                                        _dismissedDegradedWarning = true;
-                                      });
-                                    },
-                                    child: const Padding(
-                                      padding: EdgeInsets.all(4),
-                                      child: Icon(
-                                        Icons.close_rounded,
-                                        color: Colors.white,
-                                        size: 16,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
                             ),
                           ),
                         ),

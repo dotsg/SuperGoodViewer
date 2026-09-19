@@ -107,20 +107,67 @@ Normal equation:
         home: WorkspaceView(controller: controller),
       ),
     );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
 
     expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
     expect(find.textContaining('1 个公式渲染异常'), findsOneWidget);
 
+    // While toolbar is visible on startup, banner floats at bottom: 84
+    final initialPos = tester.widget<AnimatedPositioned>(find.byKey(const ValueKey('degraded_warning_positioned')));
+    expect(initialPos.bottom, equals(84.0));
+
+    // When toolbar autohides in Zen mode (3500ms timer), banner smoothly slides down to bottom: 24
+    await tester.pump(const Duration(milliseconds: 3600));
+    await tester.pumpAndSettle();
+    final zenPos = tester.widget<AnimatedPositioned>(find.byKey(const ValueKey('degraded_warning_positioned')));
+    expect(zenPos.bottom, equals(24.0));
+
     // Dismiss the banner
     await tester.tap(find.byKey(const ValueKey('degraded_warning_dismiss')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
 
     expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
+  });
 
-    // Flush any pending debounce timers (e.g. _persistDebounced 600ms)
-    await tester.pump(const Duration(milliseconds: 700));
+  testWidgets('WorkspaceView: banner elevates to bottom 140 when Zoom HUD is visible to avoid collision', (tester) async {
+    final controller = ReaderController(autoRestorePreferences: false);
+    addTearDown(controller.dispose);
+    final testFile = File(p.join(tempTestDir.path, 'broken_ui_zoom.md'));
+    testFile.writeAsStringSync('''# Broken Doc
+\$\$\\unsupportedcmd{xyz}\$\$
+''');
+
+    await controller.openFile(testFile.path);
+    final end = DateTime.now().add(const Duration(seconds: 5));
+    while (controller.isCompiling || controller.degradedEquationCount == 0) {
+      if (DateTime.now().isAfter(end)) {
+        fail('Timed out waiting for broken doc compilation');
+      }
+      await tester.pump(const Duration(milliseconds: 20));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: WorkspaceView(controller: controller),
+      ),
+    );
+    // Initial pump: toolbar is visible on startup, so banner sits at bottom: 84
+    await tester.pump();
+    final startupPos = tester.widget<AnimatedPositioned>(find.byKey(const ValueKey('degraded_warning_positioned')));
+    expect(startupPos.bottom, equals(84.0));
+
+    // Tap zoom in to trigger transient Zoom HUD (at bottom: 84)
+    final zoomInBtn = find.byIcon(Icons.add_rounded);
+    expect(zoomInBtn, findsOneWidget);
+    await tester.tap(zoomInBtn);
+    await tester.pump();
+
+    // With Zoom HUD active, banner elevates to bottom: 140 to avoid mutual occlusion
+    final zoomActivePos = tester.widget<AnimatedPositioned>(find.byKey(const ValueKey('degraded_warning_positioned')));
+    expect(zoomActivePos.bottom, equals(140.0));
+
+    // Settle all remaining timers and animations
+    await tester.pumpAndSettle();
   });
 }
