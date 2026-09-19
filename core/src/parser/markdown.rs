@@ -10,6 +10,7 @@ use super::mermaid::render_mermaid;
 pub struct ParsedDocument {
     pub typst_source: String,
     pub virtual_files: HashMap<PathBuf, Bytes>,
+    pub is_fluid: bool,
 }
 
 struct ImageParagraph {
@@ -64,18 +65,6 @@ fn unique_typst_label(candidate: &str, registered: &mut HashSet<String>) -> Stri
         }
         i += 1;
     }
-}
-
-/// PDF 1.7 default user space is 14,400pt per axis. Fluid `height: auto` on a
-/// large datasheet can exceed that (hundreds of thousands of points), which
-/// PDFium and other viewers clip or refuse. Cap tall fluid documents into
-/// stacked pages that the Flutter viewer already concatenates with no gap.
-const FLUID_CAPPED_PAGE_HEIGHT_PT: f32 = 14000.0;
-const FLUID_AUTO_MAX_CHARS: usize = 40_000;
-const FLUID_AUTO_MAX_LINES: usize = 500;
-
-fn fluid_needs_page_height_cap(markdown: &str) -> bool {
-    markdown.len() > FLUID_AUTO_MAX_CHARS || markdown.lines().count() > FLUID_AUTO_MAX_LINES
 }
 
 /// Escapes characters for embedding inside a Typst string literal ("...")
@@ -505,11 +494,11 @@ impl<'a> HtmlTranspiler<'a> {
         } else if trimmed_lower == "<strong>" || trimmed_lower == "<b>" {
             out.push_str("#strong[");
         } else if trimmed_lower == "</strong>" || trimmed_lower == "</b>" {
-            out.push_str("]\u{200B}");
+            out.push_str("]/**/");
         } else if trimmed_lower == "<em>" || trimmed_lower == "<i>" {
             out.push_str("#emph[");
         } else if trimmed_lower == "</em>" || trimmed_lower == "</i>" {
-            out.push_str("]\u{200B}");
+            out.push_str("]/**/");
         } else if trimmed_lower == "<br>" || trimmed_lower == "<br/>" || trimmed_lower == "<br />" {
             out.push_str("\\ \n");
         } else if trimmed_lower.starts_with("<a ") {
@@ -520,7 +509,7 @@ impl<'a> HtmlTranspiler<'a> {
                 out.push('[');
             }
         } else if trimmed_lower == "</a>" {
-            out.push(']');
+            out.push_str("]/**/");
         }
     }
 
@@ -671,7 +660,12 @@ pub fn convert_markdown_to_typst(
     };
 
     let is_fluid = normalized_format == "fluid";
-    let cap_fluid_height = is_fluid && fluid_needs_page_height_cap(markdown_body);
+    let target_fluid_slice = if is_fluid && options.disable_fluid_slice != Some(true) {
+        options.valid_fluid_page_height()
+    } else {
+        None
+    };
+    let is_fluid_sliced = target_fluid_slice.is_some();
     let is_slide = normalized_format == "slide_16_9" || normalized_format == "slide_4_3";
     let is_slide_mode = is_slide;
 
@@ -702,11 +696,14 @@ pub fn convert_markdown_to_typst(
     };
 
     let (page_width, page_height, page_margin) = match normalized_format {
-        "fluid" if cap_fluid_height => (
-            format!("{}pt", options.viewport_width),
-            format!("{}pt", FLUID_CAPPED_PAGE_HEIGHT_PT),
-            "(x: 24pt, top: 0pt, bottom: 0pt)".to_string(),
-        ),
+        "fluid" if is_fluid_sliced => {
+            let slice_h = target_fluid_slice.unwrap();
+            (
+                format!("{}pt", options.viewport_width),
+                format!("{slice_h}pt"),
+                "(x: 24pt, top: 0pt, bottom: 0pt)".to_string(),
+            )
+        }
         "fluid" => (
             format!("{}pt", options.viewport_width),
             "auto".to_string(),
@@ -1280,12 +1277,12 @@ pub fn convert_markdown_to_typst(
                 TagEnd::Item => {
                     out.push('\n');
                 }
-                TagEnd::Emphasis => out.push_str("]\u{200B}"),
-                TagEnd::Strong => out.push_str("]\u{200B}"),
-                TagEnd::Strikethrough => out.push(']'),
+                TagEnd::Emphasis => out.push_str("]/**/"),
+                TagEnd::Strong => out.push_str("]/**/"),
+                TagEnd::Strikethrough => out.push_str("]/**/"),
                 TagEnd::Link => {
                     if link_stack.pop() == Some(true) {
-                        out.push(']');
+                        out.push_str("]/**/");
                     }
                 }
                 TagEnd::Image => {
@@ -1341,7 +1338,7 @@ pub fn convert_markdown_to_typst(
                 TagEnd::TableRow => {}
                 TagEnd::TableCell => {
                     if in_table_head {
-                        out.push(']');
+                        out.push_str("]/**/");
                     }
                     out.push_str("],\n");
                 }
@@ -1414,7 +1411,7 @@ pub fn convert_markdown_to_typst(
 
     html_transpiler.finish(&mut out);
 
-    if cap_fluid_height {
+    if is_fluid_sliced {
         out.push_str("\n#v(56pt)\n");
     }
 
@@ -1430,6 +1427,7 @@ pub fn convert_markdown_to_typst(
     ParsedDocument {
         typst_source: out,
         virtual_files,
+        is_fluid,
     }
 }
 
@@ -1584,10 +1582,11 @@ LPC window from (10000_0000h + 64K*LPCMWMRS) to (FFFF_FFFFh + 64K*(LPCMWMRS + 1)
             ".",
             parsed.virtual_files,
         );
-        if let Err(ref e) = res {
-            eprintln!("Generated typst:\n{}", parsed.typst_source);
-            eprintln!("error: {e:?}");
-        }
+        assert!(
+            parsed.typst_source.contains("]/**/"),
+            "emphasis and table headers must emit ]/**/ delimiters:\n{}",
+            parsed.typst_source
+        );
         assert!(res.is_ok(), "Hardware-style emphasis/table failed: {:?}", res.err());
     }
 
@@ -1881,6 +1880,31 @@ Local image with dark border:
     }
 
     #[test]
+    fn test_inline_formatting_boundaries_and_no_zero_width_space() {
+        let md = r#"
+**bold**(parens) and *italic*(parens) and ~~deleted~~(parens) and [link](https://example.com)(parens).
+
+**bold**[brackets] and *italic*[brackets] and ~~deleted~~[brackets] and [link](https://example.com)[brackets].
+
+**bold**.dot and *italic*.dot and ~~deleted~~.dot and [link](https://example.com).dot.
+
+HTML: <b>bold</b>(parens) and <i>italic</i>(parens) and <a href="https://example.com">link</a>(parens).
+"#;
+        let parsed = convert_markdown_to_typst(md, "Boundary Test", &RenderOptions::default());
+        assert!(!parsed.typst_source.contains('\u{200B}'), "Generated Typst source must not contain zero-width space");
+        assert!(parsed.typst_source.contains("]/**/"));
+
+        let res = crate::compiler::engine::compile_typst_to_pdf(
+            &parsed.typst_source,
+            ".",
+            parsed.virtual_files,
+        );
+        assert!(res.is_ok(), "Formatting boundary compilation failed: {:?}", res.err());
+        let pdf = res.unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    #[test]
     fn test_very_long_fluid_document_caps_page_height() {
         let mut long_md = String::new();
         for i in 0..600 {
@@ -1888,10 +1912,18 @@ Local image with dark border:
         }
         let parsed = convert_markdown_to_typst(&long_md, "Huge", &RenderOptions {
             mode: "fluid".to_string(),
+            fluid_page_height: Some(14000.0),
             ..RenderOptions::default()
         });
         assert!(parsed.typst_source.contains("height: 14000pt"));
         assert!(!parsed.typst_source.contains("height: auto"));
+
+        let sliced_parsed = convert_markdown_to_typst(&long_md, "Dynamic Sliced", &RenderOptions {
+            mode: "fluid".to_string(),
+            fluid_page_height: Some(7500.0),
+            ..RenderOptions::default()
+        });
+        assert!(sliced_parsed.typst_source.contains("height: 7500pt"));
         let res = crate::compiler::engine::compile_typst_to_pdf(
             &parsed.typst_source,
             ".",
@@ -1900,6 +1932,41 @@ Local image with dark border:
         assert!(res.is_ok(), "Capped fluid compile failed: {:?}", res.err());
         let pdf = res.unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn test_fluid_page_height_validation_filters_invalid_values() {
+        let md = "# Validation Test\n\nShort paragraph.";
+        for invalid_val in [0.0, -100.0, f32::NAN, f32::INFINITY] {
+            let parsed = convert_markdown_to_typst(md, "Validation", &RenderOptions {
+                mode: "fluid".to_string(),
+                fluid_page_height: Some(invalid_val),
+                ..RenderOptions::default()
+            });
+            assert!(
+                parsed.typst_source.contains("height: auto"),
+                "Invalid fluid_page_height ({invalid_val}) must safely fallback to height: auto"
+            );
+            assert!(
+                !parsed.typst_source.contains("NaNpt"),
+                "Source must not contain NaNpt"
+            );
+        }
+
+        // Values exceeding 14,000pt must be clamped to FLUID_CAPPED_PAGE_HEIGHT_PT (14,000pt)
+        let parsed_clamped = convert_markdown_to_typst(md, "Clamped", &RenderOptions {
+            mode: "fluid".to_string(),
+            fluid_page_height: Some(50000.0),
+            ..RenderOptions::default()
+        });
+        assert!(
+            parsed_clamped.typst_source.contains("height: 14000pt"),
+            "fluid_page_height exceeding cap must be clamped to 14000pt"
+        );
+        assert!(
+            !parsed_clamped.typst_source.contains("50000pt"),
+            "fluid_page_height exceeding cap must not appear raw in Typst output"
+        );
     }
 
     #[test]

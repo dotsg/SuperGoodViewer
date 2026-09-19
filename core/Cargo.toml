@@ -9,6 +9,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 typst = "0.15.1"
+typst-layout = "0.15.1"
 typst-pdf = "0.15.1"
 typst-syntax = "0.15.1"
 pulldown-cmark = { version = "0.13" }

@@ -59,9 +59,33 @@ pub struct RenderOptions {
     pub skip_first_page_header_footer: Option<bool>,
     #[serde(default)]
     pub marp_enabled: Option<bool>,
+    /// Explicit fluid page slice height in points. Must be finite and positive.
+    /// Values above 14,000pt are clamped to 14,000pt to prevent exceeding PDF 1.7 limits.
+    /// - None: automatic two-pass detection (natural height if <= 14000pt; dynamic slices if > 14000pt).
+    /// - Some(h) if h.is_finite() && h > 0.0: explicitly set slice height (clamped to <= 14000pt).
+    #[serde(default)]
+    pub fluid_page_height: Option<f32>,
+    /// Explicit escape hatch to disable fluid page height slicing.
+    /// When true, fluid documents will always render at their full natural height on a single page,
+    /// even if exceeding the 14,400pt PDF 1.7 limit.
+    #[serde(default)]
+    pub disable_fluid_slice: Option<bool>,
 }
 
+/// PDF 默认用户单位（1/72 英寸）下页面尺寸上限为 14,400pt，PDFium 超限会裁切或拒绝渲染。
+/// 此处使用 14,000.0pt（预留 400pt 安全边际）作为 fluid 模式切片的最大单页高度。
+pub const FLUID_CAPPED_PAGE_HEIGHT_PT: f32 = 14000.0;
+
 impl RenderOptions {
+    /// Returns validated and clamped fluid slice height in points.
+    /// Filters out non-finite (NaN, Inf) and non-positive (<= 0.0) values,
+    /// and clamps to FLUID_CAPPED_PAGE_HEIGHT_PT to prevent exceeding PDF limits.
+    pub fn valid_fluid_page_height(&self) -> Option<f32> {
+        self.fluid_page_height
+            .filter(|h| h.is_finite() && *h > 0.0)
+            .map(|h| h.min(FLUID_CAPPED_PAGE_HEIGHT_PT))
+    }
+
     pub fn resolved_page_format(&self) -> &str {
         if let Some(ref pf) = self.page_format {
             pf.as_str()
@@ -108,6 +132,8 @@ impl Default for RenderOptions {
             show_footer_rule: None,
             skip_first_page_header_footer: None,
             marp_enabled: None,
+            fluid_page_height: None,
+            disable_fluid_slice: None,
         }
     }
 }
@@ -120,24 +146,34 @@ pub enum CompileError {
     Pdf(String),
 }
 
+pub(crate) fn compile_typst_to_document(
+    typst_source: &str,
+    doc_dir: impl AsRef<Path>,
+    virtual_files: HashMap<PathBuf, Bytes>,
+    image_cache_dir: Option<PathBuf>,
+) -> Result<typst_layout::PagedDocument, CompileError> {
+    let world = MemoryWorld::new_with_cache_dir(typst_source, doc_dir, virtual_files, image_cache_dir);
+
+    let warned = typst::compile::<typst_layout::PagedDocument>(&world);
+    warned.output.map_err(|errs| {
+        let msgs: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
+        CompileError::Typst(msgs.join("\n"))
+    })
+}
+
+pub(crate) fn export_document_to_pdf(document: &typst_layout::PagedDocument) -> Result<Vec<u8>, CompileError> {
+    typst_pdf::pdf(document, &PdfOptions::default())
+        .map_err(|e| CompileError::Pdf(format!("{:?}", e)))
+}
+
 pub fn compile_typst_to_pdf_with_options(
     typst_source: &str,
     doc_dir: impl AsRef<Path>,
     virtual_files: HashMap<PathBuf, Bytes>,
     image_cache_dir: Option<PathBuf>,
 ) -> Result<Vec<u8>, CompileError> {
-    let world = MemoryWorld::new_with_cache_dir(typst_source, doc_dir, virtual_files, image_cache_dir);
-
-    let warned = typst::compile(&world);
-    let document = warned.output.map_err(|errs| {
-        let msgs: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
-        CompileError::Typst(msgs.join("\n"))
-    })?;
-
-    let pdf_bytes = typst_pdf::pdf(&document, &PdfOptions::default())
-        .map_err(|e| CompileError::Pdf(format!("{:?}", e)))?;
-
-    Ok(pdf_bytes)
+    let document = compile_typst_to_document(typst_source, doc_dir, virtual_files, image_cache_dir)?;
+    export_document_to_pdf(&document)
 }
 
 pub fn compile_typst_to_pdf(
