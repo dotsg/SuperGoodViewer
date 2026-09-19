@@ -9,17 +9,6 @@
     sgv
 #>
 
-param(
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]]$Files,
-
-    [Alias("h")]
-    [switch]$Help,
-
-    [Alias("v")]
-    [switch]$Version
-)
-
 # 1. Locate sgv-cli executable
 $cliBin = $null
 $cliCandidates = @(
@@ -46,7 +35,7 @@ if (-not $cliBin) {
     }
 }
 
-if ($Version) {
+if ($args.Count -eq 1 -and ($args[0] -in @('-v', '--version', '-version', '/v'))) {
     if ($cliBin) {
         & $cliBin --version
         exit $LASTEXITCODE
@@ -55,7 +44,7 @@ if ($Version) {
     exit 0
 }
 
-if ($Help) {
+if ($args.Count -eq 1 -and ($args[0] -in @('-h', '--help', '-help', '-?', '/?'))) {
     Write-Host "SuperGoodViewer (超好读) CLI Launcher & Tool"
     Write-Host ""
     Write-Host "Usage:"
@@ -63,7 +52,7 @@ if ($Help) {
     Write-Host "  sgv export <path>... [options]  Export markdown file(s) or directory to PDF"
     Write-Host "  sgv <file.md> -o <output.pdf>   Export single markdown file to PDF"
     Write-Host "  sgv                             Launch or focus SuperGoodViewer GUI"
-    Write-Host "  sgv -h, -Help                  Show this help message"
+    Write-Host "  sgv -h, --help                  Show this help message"
     Write-Host ""
     Write-Host "Export Options:"
     Write-Host "  -o, --output <path>             Output PDF path or destination directory"
@@ -85,11 +74,11 @@ if ($Help) {
 
 # 2. Check for export mode
 $isExport = $false
-if ($Files -and $Files.Count -gt 0 -and $Files[0] -eq 'export') {
+if ($args.Count -gt 0 -and $args[0] -eq 'export') {
     $isExport = $true
 } else {
-    foreach ($f in $Files) {
-        if ($f -in @('-o', '--output', '--export', '-f', '--format', '--page-format', '--fluid', '-t', '--theme', '--dark', '-s', '--font-size', '-r', '--recursive', '--no-recursive')) {
+    foreach ($f in $args) {
+        if ($f -in @('-o', '--output', '--export', '-f', '--format', '--page-format', '--fluid', '-t', '--theme', '--dark', '-s', '--font-size', '--title', '-r', '--recursive', '--no-recursive', '--image-cache-dir')) {
             $isExport = $true
             break
         }
@@ -101,7 +90,7 @@ if ($isExport) {
         Write-Error "sgv: error: headless export tool 'sgv-cli.exe' not found"
         exit 1
     }
-    & $cliBin @Files
+    & $cliBin @args
     exit $LASTEXITCODE
 }
 
@@ -135,12 +124,12 @@ if (-not $exePath) {
 }
 
 # 4. Launch GUI
-if (-not $Files -or $Files.Count -eq 0) {
+if ($args.Count -eq 0) {
     Start-Process -FilePath $exePath
     exit 0
 }
 
-foreach ($f in $Files) {
+foreach ($f in $args) {
     if (Test-Path $f) {
         $absPath = (Resolve-Path $f).Path
         Start-Process -FilePath $exePath -ArgumentList "`"$absPath`""

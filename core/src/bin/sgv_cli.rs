@@ -89,6 +89,7 @@ fn normalize_format(fmt: &str) -> String {
 
 fn extract_title_from_markdown(markdown: &str, fallback: &str) -> String {
     let mut in_frontmatter = false;
+    let mut in_fence = false;
     let mut line_index = 0;
 
     for line in markdown.lines() {
@@ -102,6 +103,16 @@ fn extract_title_from_markdown(markdown: &str, fallback: &str) -> String {
             if trimmed == "---" {
                 in_frontmatter = false;
             }
+            line_index += 1;
+            continue;
+        }
+
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            line_index += 1;
+            continue;
+        }
+        if in_fence {
             line_index += 1;
             continue;
         }
@@ -125,8 +136,12 @@ fn parse_cli_args(args: &[String]) -> Result<CliConfig, String> {
     while i < args.len() {
         let arg = &args[i];
         match arg.as_str() {
-            "export" => {
+            "export" if i == 0 => {
                 // subcommand marker
+                i += 1;
+            }
+            "--export" => {
+                // alias flag for export mode
                 i += 1;
             }
             "-h" | "--help" => {
@@ -360,7 +375,7 @@ fn plan_export_tasks(config: &CliConfig) -> Result<Vec<ExportTask>, String> {
 
         let out_path = if let Some(ref dest) = config.output {
             let dest_p = Path::new(dest);
-            if is_single && !dest_p.is_dir() && !dest.ends_with('/') && !dest.ends_with('\\') {
+            if is_single && item.base_dir.is_none() && !dest_p.is_dir() && !dest.ends_with('/') && !dest.ends_with('\\') {
                 // User passed single file and specific output file name (e.g. -o out.pdf)
                 dest_p.to_path_buf()
             } else {
@@ -552,6 +567,23 @@ mod tests {
 
         let md_no_h1 = "## Level 2\n\nNo h1 here";
         assert_eq!(extract_title_from_markdown(md_no_h1, "Fallback"), "Fallback");
+
+        let md_fence = "```bash\n# install deps\nnpm install\n```\n# Real Document Title\n";
+        assert_eq!(extract_title_from_markdown(md_fence, "Fallback"), "Real Document Title");
+    }
+
+    #[test]
+    fn test_parse_cli_args_positional_export_and_flag() {
+        // "export" at index 0 is subcommand, "export" at index 1 is positional argument
+        let args = vec!["export".to_string(), "export".to_string()];
+        let cfg = parse_cli_args(&args).expect("parse failed");
+        assert_eq!(cfg.inputs, vec!["export"]);
+
+        // --export anywhere should be accepted
+        let args2 = vec!["doc.md".to_string(), "--export".to_string(), "-o".to_string(), "out.pdf".to_string()];
+        let cfg2 = parse_cli_args(&args2).expect("parse failed");
+        assert_eq!(cfg2.inputs, vec!["doc.md"]);
+        assert_eq!(cfg2.output.as_deref(), Some("out.pdf"));
     }
 
     #[test]
@@ -640,6 +672,28 @@ mod tests {
 
         assert!(out1.ends_with("doc1.pdf"));
         assert!(out2.ends_with(Path::new("sub").join("doc2.pdf")));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_plan_export_single_file_directory_preserves_extension() {
+        let temp_dir = std::env::temp_dir().join(format!("sgv_test_single_in_dir_{}", std::process::id()));
+        let _ = fs::create_dir_all(&temp_dir);
+        let file1 = temp_dir.join("single.md");
+        fs::write(&file1, "# Single\n").unwrap();
+
+        let dist = temp_dir.join("dist"); // directory does not exist yet!
+        let cfg = CliConfig {
+            inputs: vec![temp_dir.to_string_lossy().to_string()],
+            output: Some(dist.to_string_lossy().to_string()),
+            recursive: true,
+            ..Default::default()
+        };
+
+        let tasks = plan_export_tasks(&cfg).expect("plan failed");
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].output_path, dist.join("single.pdf"));
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

@@ -293,7 +293,7 @@ if [ "$1" = "export" ]; then
 else
   for arg in "$@"; do
     case "$arg" in
-      -o | --output | --export | -f | --format | --page-format | --fluid | --theme | --dark | -s | --font-size | --title | -r | --recursive | --no-recursive | --image-cache-dir)
+      -o | --output | --export | -f | --format | --page-format | --fluid | -t | --theme | --dark | -s | --font-size | --title | -r | --recursive | --no-recursive | --image-cache-dir)
         IS_EXPORT=true
         break
         ;;

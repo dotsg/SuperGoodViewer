@@ -180,22 +180,41 @@ class AppDelegate: FlutterAppDelegate {
     return nil
   }
 
+  private func itemExists(atPath path: String) -> Bool {
+    return (try? FileManager.default.attributesOfItem(atPath: path)) != nil
+  }
+
   private func checkCliStatus() -> [String: Any] {
     let fm = FileManager.default
-    let exists = fm.fileExists(atPath: cliSymlinkPath)
+    let sgvExists = itemExists(atPath: cliSymlinkPath)
+    let cliToolExists = itemExists(atPath: cliToolSymlinkPath)
+    let cliBinPath = getCliBinaryPath()
+
+    let isInstalled = (cliBinPath != nil) ? (sgvExists && cliToolExists) : sgvExists
     var destination = ""
     var isCurrentApp = false
 
-    if exists {
+    if sgvExists {
       if let target = try? fm.destinationOfSymbolicLink(atPath: cliSymlinkPath) {
         destination = target
         let appBundlePath = Bundle.main.bundlePath
-        isCurrentApp = target.contains(appBundlePath) || target.contains("SuperGoodViewer")
+        let sgvMatches = target.contains(appBundlePath) || target.contains("SuperGoodViewer")
+
+        var cliToolMatches = true
+        if let bin = cliBinPath {
+          if let toolTarget = try? fm.destinationOfSymbolicLink(atPath: cliToolSymlinkPath) {
+            cliToolMatches = (toolTarget == bin) || toolTarget.contains(appBundlePath) || toolTarget.contains("SuperGoodViewer")
+          } else {
+            cliToolMatches = false
+          }
+        }
+
+        isCurrentApp = sgvMatches && cliToolMatches
       }
     }
 
     return [
-      "isInstalled": exists,
+      "isInstalled": isInstalled,
       "path": cliSymlinkPath,
       "target": destination,
       "isCurrentApp": isCurrentApp
@@ -214,16 +233,16 @@ class AppDelegate: FlutterAppDelegate {
 
     // Try non-root symlink creation first
     do {
-      if fm.fileExists(atPath: cliSymlinkPath) {
+      if itemExists(atPath: cliSymlinkPath) {
         try fm.removeItem(atPath: cliSymlinkPath)
       }
       try fm.createSymbolicLink(atPath: cliSymlinkPath, withDestinationPath: sourcePath)
 
       if let bin = cliBinPath {
-        if fm.fileExists(atPath: cliToolSymlinkPath) {
-          try? fm.removeItem(atPath: cliToolSymlinkPath)
+        if itemExists(atPath: cliToolSymlinkPath) {
+          try fm.removeItem(atPath: cliToolSymlinkPath)
         }
-        try? fm.createSymbolicLink(atPath: cliToolSymlinkPath, withDestinationPath: bin)
+        try fm.createSymbolicLink(atPath: cliToolSymlinkPath, withDestinationPath: bin)
       }
 
       result(["status": "success", "path": cliSymlinkPath])
@@ -260,16 +279,16 @@ class AppDelegate: FlutterAppDelegate {
 
   private func uninstallCli(result: @escaping FlutterResult) {
     let fm = FileManager.default
-    guard fm.fileExists(atPath: cliSymlinkPath) || fm.fileExists(atPath: cliToolSymlinkPath) else {
+    guard itemExists(atPath: cliSymlinkPath) || itemExists(atPath: cliToolSymlinkPath) else {
       result(["status": "success", "message": "未安装"])
       return
     }
 
     do {
-      if fm.fileExists(atPath: cliSymlinkPath) {
+      if itemExists(atPath: cliSymlinkPath) {
         try fm.removeItem(atPath: cliSymlinkPath)
       }
-      if fm.fileExists(atPath: cliToolSymlinkPath) {
+      if itemExists(atPath: cliToolSymlinkPath) {
         try fm.removeItem(atPath: cliToolSymlinkPath)
       }
       result(["status": "success", "path": cliSymlinkPath])
@@ -336,7 +355,7 @@ class AppDelegate: FlutterAppDelegate {
   else
     for arg in "$@"; do
       case "$arg" in
-        -o | --output | --export | -f | --format | --page-format | --fluid | --theme | --dark | -s | --font-size | --title | -r | --recursive | --no-recursive)
+        -o | --output | --export | -f | --format | --page-format | --fluid | -t | --theme | --dark | -s | --font-size | --title | -r | --recursive | --no-recursive | --image-cache-dir)
           IS_EXPORT=true
           break
           ;;

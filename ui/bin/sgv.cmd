@@ -5,14 +5,7 @@ rem ============================================================================
 rem sgv.cmd - SuperGoodViewer (超好读) Windows Command Line Launcher
 rem ==============================================================================
 
-rem 1. Handle help and version flags
-if "%~1"=="-h" goto help
-if "%~1"=="--help" goto help
-if "%~1"=="/?" goto help
-if "%~1"=="-v" goto version
-if "%~1"=="--version" goto version
-
-rem 2. Resolve sgv-cli.exe location
+rem 1. Resolve sgv-cli.exe location
 set "CLI_BIN="
 if exist "%~dp0sgv-cli.exe" set "CLI_BIN=%~dp0sgv-cli.exe"
 if not defined CLI_BIN (
@@ -39,6 +32,13 @@ if not defined CLI_BIN (
     )
 )
 
+rem 2. Handle help and version flags
+if "%~1"=="-h" goto help
+if "%~1"=="--help" goto help
+if "%~1"=="/?" goto help
+if "%~1"=="-v" goto version
+if "%~1"=="--version" goto version
+
 rem 3. Check for export mode or flags
 set "IS_EXPORT=0"
 if /i "%~1"=="export" set "IS_EXPORT=1"
@@ -48,15 +48,18 @@ for %%A in (%*) do (
     if /i "%%~A"=="--export" set "IS_EXPORT=1"
     if /i "%%~A"=="-f" set "IS_EXPORT=1"
     if /i "%%~A"=="--format" set "IS_EXPORT=1"
+    if /i "%%~A"=="--page-format" set "IS_EXPORT=1"
     if /i "%%~A"=="--fluid" set "IS_EXPORT=1"
     if /i "%%~A"=="-t" set "IS_EXPORT=1"
     if /i "%%~A"=="--theme" set "IS_EXPORT=1"
     if /i "%%~A"=="--dark" set "IS_EXPORT=1"
     if /i "%%~A"=="-s" set "IS_EXPORT=1"
     if /i "%%~A"=="--font-size" set "IS_EXPORT=1"
+    if /i "%%~A"=="--title" set "IS_EXPORT=1"
     if /i "%%~A"=="-r" set "IS_EXPORT=1"
     if /i "%%~A"=="--recursive" set "IS_EXPORT=1"
     if /i "%%~A"=="--no-recursive" set "IS_EXPORT=1"
+    if /i "%%~A"=="--image-cache-dir" set "IS_EXPORT=1"
 )
 
 if "!IS_EXPORT!"=="1" (
