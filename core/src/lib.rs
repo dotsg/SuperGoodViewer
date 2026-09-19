@@ -10,57 +10,40 @@ use compiler::engine::{
 use parser::markdown::convert_markdown_to_typst;
 use typst::layout::{Frame, FrameItem, Point};
 
-/// Recursively determines the bottom-most Y position of visual content within a Frame.
-fn frame_content_bottom(frame: &Frame, origin_y: f64) -> f64 {
-    let mut max_y = origin_y;
-    for (pos, item) in frame.items() {
-        let item_y = origin_y + pos.y.to_pt();
-        match item {
-            FrameItem::Group(g) => {
-                let g_bottom = frame_content_bottom(&g.frame, item_y);
-                if g_bottom > max_y {
-                    max_y = g_bottom;
-                }
-            }
-            FrameItem::Image(_, size, _) => {
-                let bottom = item_y + size.y.to_pt();
-                if bottom > max_y {
-                    max_y = bottom;
-                }
-            }
-            _ => {
-                if item_y > max_y {
-                    max_y = item_y;
-                }
-            }
-        }
-    }
-    max_y
-}
-
 /// Recursively checks if any content in a Frame extends beyond the page height
-/// or was clipped by a group that was forced to shrink (e.g. image container block).
+/// or was clipped by a container group that was forced to shrink by pagination.
 fn frame_has_overflow(frame: &Frame, origin: Point, page_height: f64) -> bool {
     for (pos, item) in frame.items() {
         let abs_pos = origin + *pos;
         match item {
             FrameItem::Group(group) => {
-                // If this group has clipping enabled (e.g. image container block with rounded corners),
-                // check if the inner content was clipped by comparing the inner content's bottom against
-                // the group's rendered height.
-                if group.clip.is_some() {
-                    let group_h = group.frame.size().y.to_pt();
-                    let content_bottom = frame_content_bottom(&group.frame, 0.0);
-                    if content_bottom > group_h + 1.0 {
-                        return true;
-                    }
-                }
                 // Check if the group itself extends beyond the page height
                 if abs_pos.y.to_pt() + group.frame.size().y.to_pt() > page_height + 1.0 {
                     return true;
                 }
-                if frame_has_overflow(&group.frame, abs_pos, page_height) {
-                    return true;
+
+                if group.clip.is_some() {
+                    let group_h = group.frame.size().y.to_pt();
+                    // If this group has clipping enabled (e.g. image container block with rounded corners),
+                    // check if any child group's layout height exceeds this group's rendered height.
+                    // This detects pagination-induced clipping where an outer block was forced to shrink
+                    // below its inner element's height, while correctly ignoring an image's normal aspect-ratio
+                    // crop (where the inner image group matches the outer block height).
+                    for (inner_pos, inner_item) in group.frame.items() {
+                        if let FrameItem::Group(inner_group) = inner_item {
+                            let inner_bottom = inner_pos.y.to_pt() + inner_group.frame.size().y.to_pt();
+                            if inner_bottom > group_h + 1.0 {
+                                return true;
+                            }
+                        }
+                    }
+                    // Since group.clip is true and group.size <= page_height, everything inside this group
+                    // is safely clipped within group.size and cannot visually overflow the page.
+                } else {
+                    // Group does not clip its children, so recurse to check if unclipped children overflow.
+                    if frame_has_overflow(&group.frame, abs_pos, page_height) {
+                        return true;
+                    }
                 }
             }
             FrameItem::Image(_, size, _) => {
@@ -500,15 +483,17 @@ fn main() {
 
     #[test]
     fn test_fluid_content_integrity_tall_block_prefers_candidate_a() {
-        // Document has a 10,000pt tall image followed by 400 paragraphs.
-        // Natural height ~18,510pt -> expected_slices = 2.
-        // Candidate B has dynamic slice height ~9,255pt, which would clip the 10,000pt image
-        // and leave page 0 empty. Although canvas_B (3 * 9,255 = 27,765pt) is slightly smaller
-        // than min_canvas_a (28,000pt), content integrity takes precedence:
-        // Candidate A (14,000pt) can accommodate the 10,000pt image without clipping,
-        // so Candidate A must be selected.
+        // Document has a 10,000pt tall image, an image with explicit aspect-ratio crop (100x10),
+        // followed by 400 paragraphs.
+        //
+        // An image's normal aspect-ratio crop (<img width="100pt" height="10pt" />) must NOT
+        // be misidentified as pagination overflow.
+        // Meanwhile, Candidate B (dynamic slice ~9,266pt) clips the 10,000pt image.
+        // Because content integrity takes precedence, Candidate A (14,000pt) must be selected
+        // to preserve the 10,000pt image without clipping.
         let mut md = String::new();
         md.push_str("<img src=\"dummy.png\" height=\"10000pt\" />\n\n");
+        md.push_str("<img src=\"dummy.png\" width=\"100pt\" height=\"10pt\" />\n\n");
         for i in 0..400 {
             md.push_str(&format!("Paragraph {i} with some content to fill up the page.\n\n"));
         }
