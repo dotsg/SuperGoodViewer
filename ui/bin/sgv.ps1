@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     SuperGoodViewer (超好读) PowerShell Command Line Launcher
 .DESCRIPTION

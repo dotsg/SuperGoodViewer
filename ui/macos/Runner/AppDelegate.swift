@@ -191,6 +191,7 @@ class AppDelegate: FlutterAppDelegate {
     let cliBinPath = getCliBinaryPath()
 
     let isInstalled = (cliBinPath != nil) ? (sgvExists && cliToolExists) : sgvExists
+    let isPartial = !isInstalled && (sgvExists || cliToolExists)
     var destination = ""
     var isCurrentApp = false
 
@@ -215,6 +216,7 @@ class AppDelegate: FlutterAppDelegate {
 
     return [
       "isInstalled": isInstalled,
+      "isPartial": isPartial,
       "path": cliSymlinkPath,
       "target": destination,
       "isCurrentApp": isCurrentApp
@@ -227,7 +229,53 @@ class AppDelegate: FlutterAppDelegate {
     let fm = FileManager.default
 
     let oldSgvDestination = try? fm.destinationOfSymbolicLink(atPath: cliSymlinkPath)
+    let backupSgvPath: String? = (oldSgvDestination == nil && itemExists(atPath: cliSymlinkPath))
+        ? (NSTemporaryDirectory() as NSString).appendingPathComponent("sgv_backup_\(ProcessInfo.processInfo.globallyUniqueString)")
+        : nil
+    if let backup = backupSgvPath {
+      try? fm.copyItem(atPath: cliSymlinkPath, toPath: backup)
+    }
+
     let oldCliToolDestination = try? fm.destinationOfSymbolicLink(atPath: cliToolSymlinkPath)
+    let backupCliToolPath: String? = (oldCliToolDestination == nil && itemExists(atPath: cliToolSymlinkPath))
+        ? (NSTemporaryDirectory() as NSString).appendingPathComponent("sgv_cli_backup_\(ProcessInfo.processInfo.globallyUniqueString)")
+        : nil
+    if let backup = backupCliToolPath {
+      try? fm.copyItem(atPath: cliToolSymlinkPath, toPath: backup)
+    }
+
+    defer {
+      if let backup = backupSgvPath {
+        try? fm.removeItem(atPath: backup)
+      }
+      if let backup = backupCliToolPath {
+        try? fm.removeItem(atPath: backup)
+      }
+    }
+
+    func targetExists(_ target: String, relativeTo linkPath: String) -> Bool {
+      let fullPath = (target as NSString).isAbsolutePath
+          ? target
+          : ((linkPath as NSString).deletingLastPathComponent as NSString).appendingPathComponent(target)
+      return fm.fileExists(atPath: fullPath)
+    }
+
+    func restoreOldLinks() {
+      if !itemExists(atPath: cliSymlinkPath) {
+        if let old = oldSgvDestination, targetExists(old, relativeTo: cliSymlinkPath) {
+          try? fm.createSymbolicLink(atPath: cliSymlinkPath, withDestinationPath: old)
+        } else if let backup = backupSgvPath, fm.fileExists(atPath: backup) {
+          try? fm.copyItem(atPath: backup, toPath: cliSymlinkPath)
+        }
+      }
+      if !itemExists(atPath: cliToolSymlinkPath) {
+        if let old = oldCliToolDestination, targetExists(old, relativeTo: cliToolSymlinkPath) {
+          try? fm.createSymbolicLink(atPath: cliToolSymlinkPath, withDestinationPath: old)
+        } else if let backup = backupCliToolPath, fm.fileExists(atPath: backup) {
+          try? fm.copyItem(atPath: backup, toPath: cliToolSymlinkPath)
+        }
+      }
+    }
 
     try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: sourcePath)
     if let bin = cliBinPath {
@@ -264,14 +312,9 @@ class AppDelegate: FlutterAppDelegate {
       if let script = NSAppleScript(source: appleScriptSource) {
         script.executeAndReturnError(&errorDict)
         if let err = errorDict {
+          restoreOldLinks()
           let errCode = err[NSAppleScript.errorNumber] as? Int ?? 0
           if errCode == -128 {
-            if !itemExists(atPath: cliSymlinkPath), let old = oldSgvDestination {
-              try? fm.createSymbolicLink(atPath: cliSymlinkPath, withDestinationPath: old)
-            }
-            if !itemExists(atPath: cliToolSymlinkPath), let old = oldCliToolDestination {
-              try? fm.createSymbolicLink(atPath: cliToolSymlinkPath, withDestinationPath: old)
-            }
             result(["status": "cancelled", "message": "用户取消了授权"])
           } else {
             let errMsg = err[NSAppleScript.errorMessage] as? String ?? "未知权限错误"
@@ -281,6 +324,7 @@ class AppDelegate: FlutterAppDelegate {
         }
         result(["status": "success", "path": cliSymlinkPath])
       } else {
+        restoreOldLinks()
         result(["status": "error", "message": "无法初始化系统授权脚本"])
       }
     }

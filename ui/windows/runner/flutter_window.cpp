@@ -299,15 +299,15 @@ bool CanWriteToDir(const std::wstring& dir) {
 
 std::wstring ResolveCliPath(const CliLocations& loc) {
   std::error_code ec;
-  // 1. If already installed in either location, return the existing script path
-  if (std::filesystem::exists(loc.custom_cmd, ec)) {
-    return loc.custom_cmd;
-  }
-  if (std::filesystem::exists(loc.winapps_cmd, ec)) {
-    return loc.winapps_cmd;
-  }
+  // 1. Check existing .cmd scripts first (highest priority)
+  if (std::filesystem::exists(loc.custom_cmd, ec)) return loc.custom_cmd;
+  if (std::filesystem::exists(loc.winapps_cmd, ec)) return loc.winapps_cmd;
 
-  // 2. Not yet installed: prefer WindowsApps only if writable, otherwise use SuperGoodViewer\bin.
+  // 2. Check existing .ps1 scripts second (fallback if .cmd is missing)
+  if (std::filesystem::exists(loc.custom_dir + L"\\sgv.ps1", ec)) return loc.custom_cmd;
+  if (std::filesystem::exists(loc.winapps_dir + L"\\sgv.ps1", ec)) return loc.winapps_cmd;
+
+  // 3. Not yet installed: prefer WindowsApps only if writable, otherwise use SuperGoodViewer\bin.
   // Pure query: do not create directories as a side effect.
   if (CanWriteToDir(loc.winapps_dir)) {
     return loc.winapps_cmd;
@@ -453,6 +453,39 @@ void RemoveFromUserPathIfPresent(const std::wstring& dir_to_remove) {
   }
 }
 
+template <typename Writer>
+bool WriteToFileAtomically(const std::wstring& target_path, Writer&& writer) {
+  std::error_code ec;
+  std::filesystem::path parent = std::filesystem::path(target_path).parent_path();
+  if (!parent.empty()) {
+    std::filesystem::create_directories(parent, ec);
+  }
+  std::wstring temp_path = target_path + L".tmp." + std::to_wstring(::GetCurrentProcessId());
+  {
+    std::ofstream out(temp_path, std::ios::trunc);
+    if (!out.is_open()) {
+      return false;
+    }
+    writer(out);
+    out.close();
+    if (out.fail()) {
+      std::filesystem::remove(temp_path, ec);
+      return false;
+    }
+  }
+
+  if (std::filesystem::exists(target_path, ec)) {
+    ::SetFileAttributesW(target_path.c_str(), FILE_ATTRIBUTE_NORMAL);
+  }
+
+  if (!::MoveFileExW(temp_path.c_str(), target_path.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) {
+    std::filesystem::remove(temp_path, ec);
+    return false;
+  }
+  return true;
+}
+
 void RemoveCliFiles(const std::wstring& cmd_path) {
   if (cmd_path.empty()) return;
   std::error_code ec;
@@ -479,7 +512,19 @@ std::wstring FlutterWindow::GetInstalledCliPath() {
 flutter::EncodableMap FlutterWindow::CheckCliStatus() {
   std::wstring cli_path = GetInstalledCliPath();
   std::error_code ec;
-  bool exists = !cli_path.empty() && std::filesystem::exists(cli_path, ec);
+  bool cmd_exists = !cli_path.empty() && std::filesystem::exists(cli_path, ec);
+
+  std::wstring ps1_path = L"";
+  if (!cli_path.empty()) {
+    auto dot_pos = cli_path.find_last_of(L'.');
+    if (dot_pos != std::wstring::npos) {
+      ps1_path = cli_path.substr(0, dot_pos) + L".ps1";
+    }
+  }
+  bool ps1_exists = !ps1_path.empty() && std::filesystem::exists(ps1_path, ec);
+
+  bool is_installed = cmd_exists && ps1_exists;
+  bool is_partial = !is_installed && (cmd_exists || ps1_exists);
 
   std::wstring exe_path = GetCurrentExecutablePath();
 
@@ -487,8 +532,9 @@ flutter::EncodableMap FlutterWindow::CheckCliStatus() {
   std::string target_utf8 = Utf8FromUtf16(exe_path.c_str());
 
   bool is_current_app = false;
-  if (exists && !target_utf8.empty()) {
-    std::ifstream file(cli_path);
+  if ((cmd_exists || ps1_exists) && !target_utf8.empty()) {
+    std::wstring check_path = cmd_exists ? cli_path : ps1_path;
+    std::ifstream file(check_path);
     if (file.is_open()) {
       std::string content((std::istreambuf_iterator<char>(file)),
                           std::istreambuf_iterator<char>());
@@ -500,7 +546,8 @@ flutter::EncodableMap FlutterWindow::CheckCliStatus() {
   }
 
   flutter::EncodableMap res;
-  res[flutter::EncodableValue("isInstalled")] = flutter::EncodableValue(exists);
+  res[flutter::EncodableValue("isInstalled")] = flutter::EncodableValue(is_installed);
+  res[flutter::EncodableValue("isPartial")] = flutter::EncodableValue(is_partial);
   res[flutter::EncodableValue("path")] = flutter::EncodableValue(path_utf8);
   res[flutter::EncodableValue("target")] = flutter::EncodableValue(target_utf8);
   res[flutter::EncodableValue("isCurrentApp")] = flutter::EncodableValue(is_current_app);
@@ -533,155 +580,154 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
   std::error_code ec;
   std::filesystem::create_directories(parent_dir, ec);
 
-  std::ofstream file(cli_path, std::ios::trunc);
+  auto write_cmd = [&](std::ofstream& file) {
+    // Write sgv.cmd with full export detection, version check, and CLI tool forwarding
+    file << "@echo off\n"
+         << "setlocal enabledelayedexpansion\n"
+         << "set \"EXE_PATH=" << exe_utf8 << "\"\n"
+         << "set \"EXE_DIR=" << exe_dir_utf8 << "\"\n"
+         << "\n"
+         << "rem 1. Resolve sgv-cli.exe location\n"
+         << "set \"CLI_BIN=\"\n"
+         << "if exist \"!EXE_DIR!\\sgv-cli.exe\" set \"CLI_BIN=!EXE_DIR!\\sgv-cli.exe\"\n"
+         << "if not defined CLI_BIN (\n"
+         << "    if exist \"%~dp0sgv-cli.exe\" set \"CLI_BIN=%~dp0sgv-cli.exe\"\n"
+         << ")\n"
+         << "if not defined CLI_BIN (\n"
+         << "    if exist \"%~dp0..\\sgv-cli.exe\" set \"CLI_BIN=%~dp0..\\sgv-cli.exe\"\n"
+         << ")\n"
+         << "if not defined CLI_BIN (\n"
+         << "    if exist \"%LOCALAPPDATA%\\SuperGoodViewer\\sgv-cli.exe\" set \"CLI_BIN=%LOCALAPPDATA%\\SuperGoodViewer\\sgv-cli.exe\"\n"
+         << ")\n"
+         << "if not defined CLI_BIN (\n"
+         << "    if exist \"%LOCALAPPDATA%\\Programs\\SuperGoodViewer\\sgv-cli.exe\" set \"CLI_BIN=%LOCALAPPDATA%\\Programs\\SuperGoodViewer\\sgv-cli.exe\"\n"
+         << ")\n"
+         << "if not defined CLI_BIN (\n"
+         << "    for %%X in (sgv-cli.exe) do (\n"
+         << "        if not \"%%~$PATH:X\"==\"\" set \"CLI_BIN=%%~$PATH:X\"\n"
+         << "    )\n"
+         << ")\n"
+         << "\n"
+         << "rem 2. Handle help and version flags\n"
+         << "if \"%~1\"==\"-h\" goto help\n"
+         << "if \"%~1\"==\"--help\" goto help\n"
+         << "if \"%~1\"==\"/?\" goto help\n"
+         << "if \"%~1\"==\"-v\" goto version\n"
+         << "if \"%~1\"==\"--version\" goto version\n"
+         << "\n"
+         << "rem 3. Check for export mode or flags\n"
+         << "set \"IS_EXPORT=0\"\n"
+         << "if /i \"%~1\"==\"export\" set \"IS_EXPORT=1\"\n"
+         << "if \"!IS_EXPORT!\"==\"0\" call :check_export %*\n"
+         << "\n"
+         << "if \"!IS_EXPORT!\"==\"1\" (\n"
+         << "    if not defined CLI_BIN (\n"
+         << "        echo sgv: error: headless export tool 'sgv-cli.exe' not found >&2\n"
+         << "        exit /b 1\n"
+         << "    )\n"
+         << "    \"!CLI_BIN!\" %*\n"
+         << "    exit /b !ERRORLEVEL!\n"
+         << ")\n"
+         << "\n"
+         << "rem 4. Open application or files\n"
+         << "if \"%~1\"==\"\" (\n"
+         << "    start \"\" \"!EXE_PATH!\"\n"
+         << "    exit /b 0\n"
+         << ")\n"
+         << "\n"
+         << ":loop\n"
+         << "if \"%~1\"==\"\" goto done\n"
+         << "set \"TARGET_FILE=%~f1\"\n"
+         << "if not exist \"!TARGET_FILE!\" (\n"
+         << "    echo sgv: error: file not found: %~1 >&2\n"
+         << "    exit /b 1\n"
+         << ")\n"
+         << "start \"\" \"!EXE_PATH!\" \"!TARGET_FILE!\"\n"
+         << "shift\n"
+         << "goto loop\n"
+         << "\n"
+         << ":done\n"
+         << "exit /b 0\n"
+         << "\n"
+         << ":version\n"
+         << "if defined CLI_BIN (\n"
+         << "    \"!CLI_BIN!\" --version\n"
+         << "    exit /b !ERRORLEVEL!\n"
+         << ")\n"
+         << "echo SuperGoodViewer CLI Launcher\n"
+         << "exit /b 0\n"
+         << "\n"
+         << ":help\n"
+         << "chcp 65001 >nul 2>&1\n"
+         << "echo SuperGoodViewer (超好读) CLI Launcher ^& Tool\n"
+         << "echo.\n"
+         << "echo Usage:\n"
+         << "echo   sgv [file.md ...]               Open markdown file(s) in SuperGoodViewer GUI\n"
+         << "echo   sgv export ^<path^>... [options]  Export markdown file(s) or directory to PDF\n"
+         << "echo   sgv ^<file.md^> -o ^<output.pdf^>   Export single markdown file to PDF\n"
+         << "echo   sgv                             Launch or focus SuperGoodViewer GUI\n"
+         << "echo   sgv -h, --help                  Show this help message\n"
+         << "echo.\n"
+         << "echo Export Options:\n"
+         << "echo   -o, --output ^<path^>             Output PDF path or destination directory\n"
+         << "echo   -f, --format ^<format^>           Page layout format: a4, a4-landscape, fluid, slide, slide-4-3\n"
+         << "echo       --fluid                     Shorthand for --format fluid\n"
+         << "echo   -t, --theme ^<theme^>             Theme: light, dark (default: light)\n"
+         << "echo       --dark                      Shorthand for --theme dark\n"
+         << "echo   -s, --font-size ^<pt^>            Font size in points (default: 10.5)\n"
+         << "echo   -r, --recursive                 Recursively scan subdirectories (default: enabled)\n"
+         << "echo       --no-recursive              Do not scan subdirectories\n"
+         << "echo.\n"
+         << "echo Examples:\n"
+         << "echo   sgv README.md                             # View in GUI\n"
+         << "echo   sgv export README.md                      # Export to README.pdf\n"
+         << "echo   sgv export .\\docs -o .\\dist               # Batch export .\\docs to .\\dist\n"
+         << "echo   type draft.md ^| sgv export - -o draft.pdf  # Export from stdin\n"
+         << "exit /b 0\n"
+         << "\n"
+         << ":check_export\n"
+         << "if \"%~1\"==\"\" goto :eof\n"
+         << "if /i \"%~1\"==\"-o\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--output\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--export\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"-f\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--format\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--page-format\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--fluid\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"-t\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--theme\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--dark\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"-s\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--font-size\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--title\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"-r\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--recursive\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--no-recursive\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--image-cache-dir\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "shift\n"
+         << "goto check_export\n";
+  };
+
+  bool cmd_written = WriteToFileAtomically(cli_path, write_cmd);
   // Only attempt fallback if initial target was NOT already custom_dir (i.e. was WindowsApps and failed)
-  if (!file.is_open() && !AreDirsEqual(parent_dir.wstring(), loc.custom_dir)) {
+  if (!cmd_written && !AreDirsEqual(parent_dir.wstring(), loc.custom_dir)) {
     cli_path = loc.custom_cmd;
-    std::filesystem::create_directories(loc.custom_dir, ec);
-    file.open(cli_path, std::ios::trunc);
-    if (file.is_open()) {
+    cmd_written = WriteToFileAtomically(cli_path, write_cmd);
+    if (cmd_written) {
       // Clean up stale script left at the old failed location (WindowsApps)
       RemoveCliFiles(initial_target);
     }
   }
 
-  if (!file.is_open()) {
+  if (!cmd_written) {
     res[flutter::EncodableValue("status")] = flutter::EncodableValue("error");
-    res[flutter::EncodableValue("message")] = flutter::EncodableValue("无法写入脚本文件");
+    res[flutter::EncodableValue("message")] = flutter::EncodableValue("写入 sgv.cmd 脚本失败");
     return res;
   }
 
-  // Write sgv.cmd with full export detection, version check, and CLI tool forwarding
-  file << "@echo off\n"
-       << "setlocal enabledelayedexpansion\n"
-       << "set \"EXE_PATH=" << exe_utf8 << "\"\n"
-       << "set \"EXE_DIR=" << exe_dir_utf8 << "\"\n"
-       << "\n"
-       << "rem 1. Resolve sgv-cli.exe location\n"
-       << "set \"CLI_BIN=\"\n"
-       << "if exist \"!EXE_DIR!\\sgv-cli.exe\" set \"CLI_BIN=!EXE_DIR!\\sgv-cli.exe\"\n"
-       << "if not defined CLI_BIN (\n"
-       << "    if exist \"%~dp0sgv-cli.exe\" set \"CLI_BIN=%~dp0sgv-cli.exe\"\n"
-       << ")\n"
-       << "if not defined CLI_BIN (\n"
-       << "    if exist \"%~dp0..\\sgv-cli.exe\" set \"CLI_BIN=%~dp0..\\sgv-cli.exe\"\n"
-       << ")\n"
-       << "if not defined CLI_BIN (\n"
-       << "    if exist \"%LOCALAPPDATA%\\SuperGoodViewer\\sgv-cli.exe\" set \"CLI_BIN=%LOCALAPPDATA%\\SuperGoodViewer\\sgv-cli.exe\"\n"
-       << ")\n"
-       << "if not defined CLI_BIN (\n"
-       << "    if exist \"%LOCALAPPDATA%\\Programs\\SuperGoodViewer\\sgv-cli.exe\" set \"CLI_BIN=%LOCALAPPDATA%\\Programs\\SuperGoodViewer\\sgv-cli.exe\"\n"
-       << ")\n"
-       << "if not defined CLI_BIN (\n"
-       << "    for %%X in (sgv-cli.exe) do (\n"
-       << "        if not \"%%~$PATH:X\"==\"\" set \"CLI_BIN=%%~$PATH:X\"\n"
-       << "    )\n"
-       << ")\n"
-       << "\n"
-       << "rem 2. Handle help and version flags\n"
-       << "if \"%~1\"==\"-h\" goto help\n"
-       << "if \"%~1\"==\"--help\" goto help\n"
-       << "if \"%~1\"==\"/?\" goto help\n"
-       << "if \"%~1\"==\"-v\" goto version\n"
-       << "if \"%~1\"==\"--version\" goto version\n"
-       << "\n"
-       << "rem 3. Check for export mode or flags\n"
-       << "set \"IS_EXPORT=0\"\n"
-       << "if /i \"%~1\"==\"export\" set \"IS_EXPORT=1\"\n"
-       << "if \"!IS_EXPORT!\"==\"0\" call :check_export %*\n"
-       << "\n"
-       << "if \"!IS_EXPORT!\"==\"1\" (\n"
-       << "    if not defined CLI_BIN (\n"
-       << "        echo sgv: error: headless export tool 'sgv-cli.exe' not found >&2\n"
-       << "        exit /b 1\n"
-       << "    )\n"
-       << "    \"!CLI_BIN!\" %*\n"
-       << "    exit /b !ERRORLEVEL!\n"
-       << ")\n"
-       << "\n"
-       << "rem 4. Open application or files\n"
-       << "if \"%~1\"==\"\" (\n"
-       << "    start \"\" \"!EXE_PATH!\"\n"
-       << "    exit /b 0\n"
-       << ")\n"
-       << "\n"
-       << ":loop\n"
-       << "if \"%~1\"==\"\" goto done\n"
-       << "set \"TARGET_FILE=%~f1\"\n"
-       << "if not exist \"!TARGET_FILE!\" (\n"
-       << "    echo sgv: error: file not found: %~1 >&2\n"
-       << "    exit /b 1\n"
-       << ")\n"
-       << "start \"\" \"!EXE_PATH!\" \"!TARGET_FILE!\"\n"
-       << "shift\n"
-       << "goto loop\n"
-       << "\n"
-       << ":done\n"
-       << "exit /b 0\n"
-       << "\n"
-       << ":version\n"
-       << "if defined CLI_BIN (\n"
-       << "    \"!CLI_BIN!\" --version\n"
-       << "    exit /b !ERRORLEVEL!\n"
-       << ")\n"
-       << "echo SuperGoodViewer CLI Launcher\n"
-       << "exit /b 0\n"
-       << "\n"
-       << ":help\n"
-       << "chcp 65001 >nul 2>&1\n"
-       << "echo SuperGoodViewer (超好读) CLI Launcher ^& Tool\n"
-       << "echo.\n"
-       << "echo Usage:\n"
-       << "echo   sgv [file.md ...]               Open markdown file(s) in SuperGoodViewer GUI\n"
-       << "echo   sgv export ^<path^>... [options]  Export markdown file(s) or directory to PDF\n"
-       << "echo   sgv ^<file.md^> -o ^<output.pdf^>   Export single markdown file to PDF\n"
-       << "echo   sgv                             Launch or focus SuperGoodViewer GUI\n"
-       << "echo   sgv -h, --help                  Show this help message\n"
-       << "echo.\n"
-       << "echo Export Options:\n"
-       << "echo   -o, --output ^<path^>             Output PDF path or destination directory\n"
-       << "echo   -f, --format ^<format^>           Page layout format: a4, a4-landscape, fluid, slide, slide-4-3\n"
-       << "echo       --fluid                     Shorthand for --format fluid\n"
-       << "echo   -t, --theme ^<theme^>             Theme: light, dark (default: light)\n"
-       << "echo       --dark                      Shorthand for --theme dark\n"
-       << "echo   -s, --font-size ^<pt^>            Font size in points (default: 10.5)\n"
-       << "echo   -r, --recursive                 Recursively scan subdirectories (default: enabled)\n"
-       << "echo       --no-recursive              Do not scan subdirectories\n"
-       << "echo.\n"
-       << "echo Examples:\n"
-       << "echo   sgv README.md                             # View in GUI\n"
-       << "echo   sgv export README.md                      # Export to README.pdf\n"
-       << "echo   sgv export .\\docs -o .\\dist               # Batch export .\\docs to .\\dist\n"
-       << "echo   type draft.md ^| sgv export - -o draft.pdf  # Export from stdin\n"
-       << "exit /b 0\n"
-       << "\n"
-       << ":check_export\n"
-       << "if \"%~1\"==\"\" goto :eof\n"
-       << "if /i \"%~1\"==\"-o\" (set \"IS_EXPORT=1\" & goto :eof)\n"
-       << "if /i \"%~1\"==\"--output\" (set \"IS_EXPORT=1\" & goto :eof)\n"
-       << "if /i \"%~1\"==\"--export\" (set \"IS_EXPORT=1\" & goto :eof)\n"
-       << "if /i \"%~1\"==\"-f\" (set \"IS_EXPORT=1\" & goto :eof)\n"
-       << "if /i \"%~1\"==\"--format\" (set \"IS_EXPORT=1\" & goto :eof)\n"
-       << "if /i \"%~1\"==\"--page-format\" (set \"IS_EXPORT=1\" & goto :eof)\n"
-       << "if /i \"%~1\"==\"--fluid\" (set \"IS_EXPORT=1\" & goto :eof)\n"
-       << "if /i \"%~1\"==\"-t\" (set \"IS_EXPORT=1\" & goto :eof)\n"
-       << "if /i \"%~1\"==\"--theme\" (set \"IS_EXPORT=1\" & goto :eof)\n"
-       << "if /i \"%~1\"==\"--dark\" (set \"IS_EXPORT=1\" & goto :eof)\n"
-       << "if /i \"%~1\"==\"-s\" (set \"IS_EXPORT=1\" & goto :eof)\n"
-       << "if /i \"%~1\"==\"--font-size\" (set \"IS_EXPORT=1\" & goto :eof)\n"
-       << "if /i \"%~1\"==\"--title\" (set \"IS_EXPORT=1\" & goto :eof)\n"
-       << "if /i \"%~1\"==\"-r\" (set \"IS_EXPORT=1\" & goto :eof)\n"
-       << "if /i \"%~1\"==\"--recursive\" (set \"IS_EXPORT=1\" & goto :eof)\n"
-       << "if /i \"%~1\"==\"--no-recursive\" (set \"IS_EXPORT=1\" & goto :eof)\n"
-       << "if /i \"%~1\"==\"--image-cache-dir\" (set \"IS_EXPORT=1\" & goto :eof)\n"
-       << "shift\n"
-       << "goto check_export\n";
-  file.close();
-
   // Also write sgv.ps1
   std::wstring ps1_path = cli_path.substr(0, cli_path.find_last_of(L'.')) + L".ps1";
-  std::ofstream ps1_file(ps1_path, std::ios::trunc);
-  if (ps1_file.is_open()) {
+  auto write_ps1 = [&](std::ofstream& ps1_file) {
     ps1_file << "\xEF\xBB\xBF";
     ps1_file << "$exePath = '" << exe_utf8 << "'\n"
              << "$exeDir = '" << exe_dir_utf8 << "'\n"
@@ -773,8 +819,10 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
              << "        exit 1\n"
              << "    }\n"
              << "}\n";
-    ps1_file.close();
-  }
+  };
+
+  WriteToFileAtomically(ps1_path, write_ps1);
+  bool ps1_missing = !std::filesystem::exists(ps1_path, ec);
 
   // Cross-location cleanup & PATH synchronization using loc directly
   std::wstring parent_dir_str = std::filesystem::path(cli_path).parent_path().wstring();
@@ -791,6 +839,10 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
   std::string cli_path_utf8 = Utf8FromUtf16(cli_path.c_str());
   res[flutter::EncodableValue("status")] = flutter::EncodableValue("success");
   res[flutter::EncodableValue("path")] = flutter::EncodableValue(cli_path_utf8);
+  if (ps1_missing) {
+    res[flutter::EncodableValue("warning")] =
+        flutter::EncodableValue("sgv.cmd 安装成功，但未能创建 sgv.ps1 脚本");
+  }
   return res;
 }
 

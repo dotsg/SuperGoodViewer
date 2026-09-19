@@ -45,14 +45,29 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
     if (mounted) {
       setState(() => _isOperating = false);
       if (res.isSuccess) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('🎉 \'sgv\' 命令行工具已成功安装！可在终端直接使用。'),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Color(0xFF10B981),
-            duration: Duration(seconds: 3),
-          ),
-        );
+        if (res.warning != null && res.warning!.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('⚠️ ${res.warning}'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.orange.shade800,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                (res.message != null && res.message!.isNotEmpty)
+                    ? res.message!
+                    : '🎉 \'sgv\' 命令行工具已成功安装！可在终端直接使用。',
+              ),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: const Color(0xFF10B981),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
       } else if (res.isCancelled) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -81,13 +96,28 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
     if (mounted) {
       setState(() => _isOperating = false);
       if (res.isSuccess) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('已成功卸载 \'sgv\' 命令行工具'),
-            behavior: SnackBarBehavior.floating,
-            duration: Duration(seconds: 3),
-          ),
-        );
+        if (res.warning != null && res.warning!.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('⚠️ ${res.warning}'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.orange.shade800,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                (res.message != null && res.message!.isNotEmpty)
+                    ? res.message!
+                    : '已成功卸载 \'sgv\' 命令行工具',
+              ),
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
       } else if (res.isCancelled) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -220,23 +250,31 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
                                   shape: BoxShape.circle,
                                   color: _status.isInstalled
                                       ? const Color(0xFF10B981)
-                                      : const Color(0xFF94A3B8),
+                                      : (_status.isPartial
+                                          ? Colors.orange
+                                          : const Color(0xFF94A3B8)),
                                 ),
                               ),
                               const SizedBox(width: 8),
                               Text(
-                                _status.isInstalled ? '已就绪 (已安装在系统 PATH)' : '尚未安装到系统终端',
+                                _status.isInstalled
+                                    ? '已就绪 (已安装在系统 PATH)'
+                                    : (_status.isPartial
+                                        ? '安装不完整 (部分工具未就绪)'
+                                        : '尚未安装到系统终端'),
                                 style: TextStyle(
                                   fontSize: 13.5,
                                   fontWeight: FontWeight.w600,
                                   color: _status.isInstalled
                                       ? (_status.isCurrentApp ? null : Colors.orange)
-                                      : theme.textTheme.bodyMedium?.color,
+                                      : (_status.isPartial
+                                          ? Colors.orange
+                                          : theme.textTheme.bodyMedium?.color),
                                 ),
                               ),
                             ],
                           ),
-                          if (_status.isInstalled) ...[
+                          if ((_status.isInstalled || _status.isPartial) && _status.path.isNotEmpty) ...[
                             const SizedBox(height: 8),
                             Text(
                               '软链接路径: ${_status.path}',
@@ -250,7 +288,7 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
                           const SizedBox(height: 16),
                           Row(
                             children: [
-                              if (!_status.isInstalled)
+                              if (!_status.isInstalled) ...[
                                 FilledButton.icon(
                                   onPressed: _isOperating ? null : _handleInstall,
                                   icon: _isOperating
@@ -263,7 +301,7 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
                                           ),
                                         )
                                       : const Icon(Icons.download_done_rounded, size: 16),
-                                  label: const Text('一键安装到终端'),
+                                  label: Text(_status.isPartial ? '重新安装 / 修复' : '一键安装到终端'),
                                   style: FilledButton.styleFrom(
                                     backgroundColor: const Color(0xFF2563EB),
                                     padding: const EdgeInsets.symmetric(
@@ -275,8 +313,30 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
                                       fontWeight: FontWeight.w600,
                                     ),
                                   ),
-                                )
-                              else ...[
+                                ),
+                                if (_status.isPartial) ...[
+                                  const SizedBox(width: 10),
+                                  OutlinedButton.icon(
+                                    onPressed: _isOperating ? null : _handleUninstall,
+                                    icon: const Icon(
+                                      Icons.delete_outline_rounded,
+                                      size: 15,
+                                      color: Colors.redAccent,
+                                    ),
+                                    label: const Text(
+                                      '卸载清理',
+                                      style: TextStyle(color: Colors.redAccent),
+                                    ),
+                                    style: OutlinedButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 8,
+                                      ),
+                                      textStyle: const TextStyle(fontSize: 12.5),
+                                    ),
+                                  ),
+                                ],
+                              ] else ...[
                                 OutlinedButton.icon(
                                   onPressed: _isOperating ? null : _handleInstall,
                                   icon: const Icon(Icons.sync_rounded, size: 15),

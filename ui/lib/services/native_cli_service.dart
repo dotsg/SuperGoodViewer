@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 class CliStatus {
   final bool isInstalled;
+  final bool isPartial;
   final String path;
   final String target;
   final bool isCurrentApp;
@@ -10,6 +11,7 @@ class CliStatus {
 
   const CliStatus({
     required this.isInstalled,
+    this.isPartial = false,
     required this.path,
     required this.target,
     required this.isCurrentApp,
@@ -19,6 +21,7 @@ class CliStatus {
   factory CliStatus.empty() {
     return const CliStatus(
       isInstalled: false,
+      isPartial: false,
       path: '',
       target: '',
       isCurrentApp: false,
@@ -30,12 +33,14 @@ class CliOperationResult {
   final bool isSuccess;
   final bool isCancelled;
   final String? message;
+  final String? warning;
   final String? path;
 
   const CliOperationResult({
     required this.isSuccess,
     this.isCancelled = false,
     this.message,
+    this.warning,
     this.path,
   });
 }
@@ -56,6 +61,7 @@ class NativeCliService {
       if (res != null) {
         return CliStatus(
           isInstalled: res['isInstalled'] == true,
+          isPartial: res['isPartial'] == true,
           path: res['path'] as String? ?? '',
           target: res['target'] as String? ?? '',
           isCurrentApp: res['isCurrentApp'] == true,
@@ -64,6 +70,7 @@ class NativeCliService {
     } catch (e) {
       return CliStatus(
         isInstalled: false,
+        isPartial: false,
         path: '',
         target: '',
         isCurrentApp: false,
@@ -88,6 +95,8 @@ class NativeCliService {
         if (status == 'success') {
           return CliOperationResult(
             isSuccess: true,
+            message: res['message'] as String?,
+            warning: res['warning'] as String?,
             path: res['path'] as String?,
           );
         } else if (status == 'cancelled') {
@@ -125,7 +134,11 @@ class NativeCliService {
       if (res != null) {
         final status = res['status'] as String?;
         if (status == 'success') {
-          return const CliOperationResult(isSuccess: true);
+          return CliOperationResult(
+            isSuccess: true,
+            message: res['message'] as String?,
+            warning: res['warning'] as String?,
+          );
         } else if (status == 'cancelled') {
           return const CliOperationResult(
             isSuccess: false,

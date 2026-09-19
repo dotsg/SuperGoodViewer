@@ -65,6 +65,19 @@ static gchar* get_linux_user_cli_symlink() {
   return g_build_filename(home, ".local", "bin", "sgv", nullptr);
 }
 
+static gboolean target_file_exists(const gchar* target, const gchar* link_dir) {
+  if (target == nullptr) return FALSE;
+  gchar* full_path = nullptr;
+  if (g_path_is_absolute(target)) {
+    full_path = g_strdup(target);
+  } else {
+    full_path = g_build_filename(link_dir, target, nullptr);
+  }
+  gboolean exists = g_file_test(full_path, G_FILE_TEST_EXISTS);
+  g_free(full_path);
+  return exists;
+}
+
 static FlValue* check_cli_status() {
   FlValue* map = fl_value_new_map();
   gchar* symlink_path = get_linux_user_cli_symlink();
@@ -82,6 +95,7 @@ static FlValue* check_cli_status() {
 
   gboolean has_cli_bin = cli_bin_target && g_file_test(cli_bin_target, G_FILE_TEST_EXISTS);
   gboolean is_installed = has_cli_bin ? (sgv_installed && cli_bin_installed) : sgv_installed;
+  gboolean is_partial = !is_installed && (sgv_installed || cli_bin_installed);
 
   gchar* current_target = nullptr;
   if (sgv_installed) {
@@ -109,6 +123,7 @@ static FlValue* check_cli_status() {
   }
 
   fl_value_set_string_take(map, "isInstalled", fl_value_new_bool(is_installed));
+  fl_value_set_string_take(map, "isPartial", fl_value_new_bool(is_partial));
   fl_value_set_string_take(map, "path", fl_value_new_string(symlink_path));
   fl_value_set_string_take(map, "target", fl_value_new_string(current_target ? current_target : (target ? target : "")));
   fl_value_set_string_take(map, "isCurrentApp", fl_value_new_bool(is_current_app));
@@ -151,10 +166,19 @@ static FlValue* install_cli() {
     gchar* cli_bin_symlink = g_build_filename(home, ".local", "bin", "sgv-cli", nullptr);
 
     if (g_file_test(cli_bin_target, G_FILE_TEST_EXISTS)) {
+      gchar* old_cli_bin_target = g_file_read_link(cli_bin_symlink, nullptr);
       unlink(cli_bin_symlink);
       if (symlink(cli_bin_target, cli_bin_symlink) != 0) {
         cli_bin_failed = TRUE;
+        if (old_cli_bin_target != nullptr) {
+          gchar* link_dir = g_path_get_dirname(cli_bin_symlink);
+          if (target_file_exists(old_cli_bin_target, link_dir)) {
+            symlink(old_cli_bin_target, cli_bin_symlink);
+          }
+          g_free(link_dir);
+        }
       }
+      g_free(old_cli_bin_target);
     }
     g_free(target_dir);
     g_free(cli_bin_target);
@@ -163,12 +187,16 @@ static FlValue* install_cli() {
     fl_value_set_string_take(map, "status", fl_value_new_string("success"));
     fl_value_set_string_take(map, "path", fl_value_new_string(symlink_path));
     if (cli_bin_failed) {
-      fl_value_set_string_take(map, "message", fl_value_new_string("sgv 安装成功，但未能创建 sgv-cli 快捷方式"));
+      fl_value_set_string_take(map, "warning", fl_value_new_string("sgv 安装成功，但未能创建 sgv-cli 快捷方式"));
     }
   } else {
-    // Restore previous sgv link if replacement failed
+    // Restore previous sgv link if replacement failed and target still exists
     if (old_sgv_target != nullptr) {
-      symlink(old_sgv_target, symlink_path);
+      gchar* link_dir = g_path_get_dirname(symlink_path);
+      if (target_file_exists(old_sgv_target, link_dir)) {
+        symlink(old_sgv_target, symlink_path);
+      }
+      g_free(link_dir);
     }
     fl_value_set_string_take(map, "status", fl_value_new_string("error"));
     fl_value_set_string_take(map, "message", fl_value_new_string("创建符号链接失败"));
