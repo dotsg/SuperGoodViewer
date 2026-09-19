@@ -1015,16 +1015,45 @@ pub fn convert_markdown_to_typst(
 }}
 #let mitex-len(it, default: 0pt) = {{
   let s = mitex-str(it).replace(" ", "").replace("\u{{200b}}", "").trim()
-  if s.len() == 0 {{ return default }}
-  if s.ends-with("ex") {{
-    let num = s.slice(0, -2)
-    return eval(num + " * 0.5em")
+  if s.len() < 2 {{ return default }}
+  let units = (
+    "pt": 1pt,
+    "mm": 1mm,
+    "cm": 1cm,
+    "in": 1in,
+    "em": 1em,
+    "ex": 0.5em,
+    "bp": 1in / 72,
+    "pc": 12pt,
+    "mu": 1em / 18,
+  )
+  let suffix = s.slice(s.len() - 2)
+  if suffix not in units {{ return default }}
+  let unit-mult = units.at(suffix)
+  let num-str = s.slice(0, s.len() - 2)
+  if num-str.len() == 0 {{ return default }}
+  let chars = num-str.clusters()
+  let i = 0
+  if chars.at(0) == "+" or chars.at(0) == "-" {{
+    i += 1
   }}
-  let valid-units = ("pt", "mm", "cm", "in", "em")
-  if valid-units.any(u => s.ends-with(u)) {{
-    return eval(s)
+  if i >= chars.len() {{ return default }}
+  let has-dot = false
+  let has-digit = false
+  while i < chars.len() {{
+    let c = chars.at(i)
+    if c == "." {{
+      if has-dot {{ return default }}
+      has-dot = true
+    }} else if c in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9") {{
+      has-digit = true
+    }} else {{
+      return default
+    }}
+    i += 1
   }}
-  default
+  if not has-digit {{ return default }}
+  float(num-str) * unit-mult
 }}
 
 // Spacing & sizing

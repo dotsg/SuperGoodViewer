@@ -138,6 +138,57 @@ mod tests {
         assert!(res.starts_with('$') && res.ends_with('$'));
     }
 
+    #[test]
+    fn test_latex_spacing_no_code_execution() {
+        use typst::layout::{Frame, FrameItem, Point};
+
+        #[derive(Debug)]
+        struct TextRun {
+            text: String,
+            pos: Point,
+        }
+
+        fn find_text_runs(frame: &Frame, origin: Point, out: &mut Vec<TextRun>) {
+            for (pos, item) in frame.items() {
+                let p = origin + *pos;
+                match item {
+                    FrameItem::Group(g) => find_text_runs(&g.frame, p, out),
+                    FrameItem::Text(t) => out.push(TextRun {
+                        text: t.text.clone().into(),
+                        pos: p,
+                    }),
+                    _ => {}
+                }
+            }
+        }
+
+        // Malicious Typst code injection attempts inside LaTeX length expressions
+        // Must NOT be executed by eval(), but safely rejected by pure numeric parser
+        let md = r#"
+$$ A \hspace{3pt} B $$
+$$ A \hspace{\text{calc.abs(-3pt)+0pt}} B $$
+$$ A \hspace{\text{calc.max(30pt,1pt)+0pt}} B $$
+"#;
+        let doc = crate::parser::markdown::convert_markdown_to_typst(md, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled = crate::compiler::engine::compile_typst_to_document(&doc.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
+        let mut runs = Vec::new();
+        find_text_runs(&compiled.pages()[0].frame, Point::zero(), &mut runs);
+
+        let a_runs: Vec<&TextRun> = runs.iter().filter(|r| r.text == "𝐴").collect();
+        let b_runs: Vec<&TextRun> = runs.iter().filter(|r| r.text == "𝐵").collect();
+        assert_eq!(a_runs.len(), 3);
+        assert_eq!(b_runs.len(), 3);
+
+        let gap_3pt = (b_runs[0].pos.x - a_runs[0].pos.x).to_pt();
+        let gap_exploit1 = (b_runs[1].pos.x - a_runs[1].pos.x).to_pt();
+        let gap_exploit2 = (b_runs[2].pos.x - a_runs[2].pos.x).to_pt();
+
+        // gap_exploit1 must NOT match gap_3pt (calc.abs(-3pt) must NOT be executed)
+        assert!((gap_exploit1 - gap_3pt).abs() > 5.0, "calc.abs code injection must NOT be executed: exploit={:.2}pt, 3pt={:.2}pt", gap_exploit1, gap_3pt);
+        // gap_exploit2 must NOT evaluate to 30pt (which would be ~37.88pt)
+        assert!((gap_exploit2 - gap_exploit1).abs() < 0.01, "Both unparsed expressions must fall back to safe default length");
+    }
+
 
     #[test]
     fn test_transpile_maxwell() {
