@@ -367,7 +367,7 @@ void main() {
         final allowHeaders = Completer<void>();
 
         final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-        server.idleTimeout = Duration.zero;
+        server.idleTimeout = const Duration(seconds: 5);
 
         try {
           server.listen((HttpRequest req) async {
@@ -411,7 +411,7 @@ void main() {
     test('downloadUpdateAsset cancels cleanly while stream is in progress', () async {
       await HttpOverrides.runWithHttpOverrides(() async {
         final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-        server.idleTimeout = Duration.zero;
+        server.idleTimeout = const Duration(seconds: 5);
 
         try {
           server.listen((HttpRequest req) async {
