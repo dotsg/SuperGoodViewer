@@ -388,32 +388,53 @@ bool ReadUserPath(std::wstring& out_path, DWORD& out_type) {
   return false; // Second read failed; return false to avoid treating it as empty and clobbering user PATH
 }
 
-void WriteUserPathAndBroadcast(const std::wstring& new_path, DWORD type) {
+bool WriteUserPathAndBroadcast(const std::wstring& new_path, DWORD type) {
   HKEY hkey;
-  if (::RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_WRITE, &hkey) == ERROR_SUCCESS) {
-    ::RegSetValueExW(hkey, L"Path", 0, type ? type : REG_EXPAND_SZ,
-                     reinterpret_cast<const BYTE*>(new_path.c_str()),
-                     static_cast<DWORD>((new_path.size() + 1) * sizeof(wchar_t)));
-    ::RegCloseKey(hkey);
-    DWORD_PTR result;
-    ::SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
-                          reinterpret_cast<LPARAM>(L"Environment"),
-                          SMTO_ABORTIFHUNG, 3000, &result);
+  if (::RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_WRITE, &hkey) != ERROR_SUCCESS) {
+    return false;
   }
+  LONG status = ::RegSetValueExW(hkey, L"Path", 0, type ? type : REG_EXPAND_SZ,
+                                reinterpret_cast<const BYTE*>(new_path.c_str()),
+                                static_cast<DWORD>((new_path.size() + 1) * sizeof(wchar_t)));
+  ::RegCloseKey(hkey);
+  if (status != ERROR_SUCCESS) {
+    return false;
+  }
+  DWORD_PTR result;
+  ::SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
+                        reinterpret_cast<LPARAM>(L"Environment"),
+                        SMTO_ABORTIFHUNG, 3000, &result);
+  return true;
 }
 
-void AddToUserPathIfMissing(const std::wstring& dir_to_add) {
-  if (dir_to_add.empty()) return;
+bool IsDirInUserPath(const std::wstring& dir) {
+  if (dir.empty()) return false;
+  std::wstring current_path;
+  DWORD type = REG_EXPAND_SZ;
+  if (!ReadUserPath(current_path, type) || current_path.empty()) {
+    return false;
+  }
+  std::vector<std::wstring> segments = GetPathSegments(current_path);
+  for (const auto& seg : segments) {
+    if (AreDirsEqual(seg, dir)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool AddToUserPathIfMissing(const std::wstring& dir_to_add) {
+  if (dir_to_add.empty()) return false;
   std::wstring current_path;
   DWORD type = REG_EXPAND_SZ;
   if (!ReadUserPath(current_path, type)) {
-    return; // Read failed; abort immediately to prevent clobbering user PATH
+    return false; // Read failed; abort immediately to prevent clobbering user PATH
   }
 
   std::vector<std::wstring> segments = GetPathSegments(current_path);
   for (const auto& seg : segments) {
     if (AreDirsEqual(seg, dir_to_add)) {
-      return;
+      return true;
     }
   }
 
@@ -425,7 +446,7 @@ void AddToUserPathIfMissing(const std::wstring& dir_to_add) {
     }
     new_path += current_path;
   }
-  WriteUserPathAndBroadcast(new_path, type);
+  return WriteUserPathAndBroadcast(new_path, type);
 }
 
 void RemoveFromUserPathIfPresent(const std::wstring& dir_to_remove) {
@@ -495,14 +516,35 @@ bool WriteToFileAtomically(const std::wstring& target_path, Writer&& writer) {
 
 void CleanOrphanedTempFiles(const std::wstring& dir) {
   if (dir.empty()) return;
-  std::error_code ec;
-  if (!std::filesystem::is_directory(dir, ec)) return;
-  for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
-    if (ec) break;
-    if (entry.is_regular_file(ec)) {
+  std::error_code dir_ec;
+  if (!std::filesystem::is_directory(dir, dir_ec)) return;
+  DWORD current_pid = ::GetCurrentProcessId();
+  for (const auto& entry : std::filesystem::directory_iterator(dir, dir_ec)) {
+    if (dir_ec) break;
+    std::error_code file_ec;
+    if (entry.is_regular_file(file_ec)) {
       std::wstring name = entry.path().filename().wstring();
-      if (name.rfind(L"sgv.cmd.tmp.", 0) == 0 || name.rfind(L"sgv.ps1.tmp.", 0) == 0) {
-        std::filesystem::remove(entry.path(), ec);
+      size_t prefix_len = 0;
+      if (name.rfind(L"sgv.cmd.tmp.", 0) == 0) {
+        prefix_len = 12;
+      } else if (name.rfind(L"sgv.ps1.tmp.", 0) == 0) {
+        prefix_len = 12;
+      }
+      if (prefix_len > 0) {
+        std::wstring pid_part = name.substr(prefix_len);
+        try {
+          DWORD pid = std::stoul(pid_part);
+          if (pid == current_pid) {
+            continue;
+          }
+          HANDLE h_proc = ::OpenProcess(SYNCHRONIZE, FALSE, pid);
+          if (h_proc != nullptr) {
+            ::CloseHandle(h_proc);
+            continue;
+          }
+        } catch (...) {
+        }
+        std::filesystem::remove(entry.path(), file_ec);
       }
     }
   }
@@ -534,7 +576,9 @@ std::wstring FlutterWindow::GetInstalledCliPath() {
 }
 
 flutter::EncodableMap FlutterWindow::CheckCliStatus() {
-  std::wstring cli_path = GetInstalledCliPath();
+  CliLocations loc;
+  bool has_loc = CliLocations::TryGet(loc);
+  std::wstring cli_path = has_loc ? ResolveCliPath(loc) : L"";
   std::error_code ec;
   bool cmd_exists = !cli_path.empty() && std::filesystem::exists(cli_path, ec);
 
@@ -547,8 +591,19 @@ flutter::EncodableMap FlutterWindow::CheckCliStatus() {
   }
   bool ps1_exists = !ps1_path.empty() && std::filesystem::exists(ps1_path, ec);
 
-  bool is_installed = cmd_exists && ps1_exists;
-  bool is_partial = !is_installed && (cmd_exists || ps1_exists);
+  bool files_ok = cmd_exists && ps1_exists;
+  bool any_file_exists = cmd_exists || ps1_exists;
+
+  bool path_ok = true;
+  if (has_loc && any_file_exists) {
+    std::wstring parent_dir_str = std::filesystem::path(cli_path).parent_path().wstring();
+    if (AreDirsEqual(parent_dir_str, loc.custom_dir)) {
+      path_ok = IsDirInUserPath(loc.custom_dir);
+    }
+  }
+
+  bool is_installed = files_ok && path_ok;
+  bool is_partial = !is_installed && any_file_exists;
 
   std::wstring exe_path = GetCurrentExecutablePath();
 
@@ -858,10 +913,11 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
   bool ps1_exists_now = std::filesystem::exists(ps1_path, ec);
 
   // Cross-location cleanup & PATH synchronization using loc directly
+  bool path_ok = true;
   std::wstring parent_dir_str = std::filesystem::path(cli_path).parent_path().wstring();
   if (AreDirsEqual(parent_dir_str, loc.custom_dir)) {
     // Installed to custom SuperGoodViewer\bin: register to PATH, clean any conflicting script in WindowsApps
-    AddToUserPathIfMissing(parent_dir_str);
+    path_ok = AddToUserPathIfMissing(parent_dir_str);
     RemoveCliFiles(loc.winapps_cmd);
   } else {
     // Installed to WindowsApps: clean any old script in SuperGoodViewer\bin, unregister from PATH
@@ -872,7 +928,10 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
   std::string cli_path_utf8 = Utf8FromUtf16(cli_path.c_str());
   res[flutter::EncodableValue("status")] = flutter::EncodableValue("success");
   res[flutter::EncodableValue("path")] = flutter::EncodableValue(cli_path_utf8);
-  if (!ps1_written) {
+  if (!path_ok) {
+    res[flutter::EncodableValue("warning")] = flutter::EncodableValue(
+        "脚本已生成，但未能将安装目录添加到用户环境变量 PATH（注册表受限），命令行可能无法直接调用");
+  } else if (!ps1_written) {
     res[flutter::EncodableValue("warning")] = flutter::EncodableValue(
         ps1_exists_now
             ? "sgv.cmd 安装成功，但 sgv.ps1 未能更新（可能被占用），PowerShell 下可能仍指向旧版本"
