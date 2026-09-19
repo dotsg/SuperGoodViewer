@@ -8,6 +8,91 @@ use compiler::engine::{
     FLUID_CAPPED_PAGE_HEIGHT_PT,
 };
 use parser::markdown::convert_markdown_to_typst;
+use typst::layout::{Frame, FrameItem, Point};
+
+/// Recursively determines the bottom-most Y position of visual content within a Frame.
+fn frame_content_bottom(frame: &Frame, origin_y: f64) -> f64 {
+    let mut max_y = origin_y;
+    for (pos, item) in frame.items() {
+        let item_y = origin_y + pos.y.to_pt();
+        match item {
+            FrameItem::Group(g) => {
+                let g_bottom = frame_content_bottom(&g.frame, item_y);
+                if g_bottom > max_y {
+                    max_y = g_bottom;
+                }
+            }
+            FrameItem::Image(_, size, _) => {
+                let bottom = item_y + size.y.to_pt();
+                if bottom > max_y {
+                    max_y = bottom;
+                }
+            }
+            _ => {
+                if item_y > max_y {
+                    max_y = item_y;
+                }
+            }
+        }
+    }
+    max_y
+}
+
+/// Recursively checks if any content in a Frame extends beyond the page height
+/// or was clipped by a group that was forced to shrink (e.g. image container block).
+fn frame_has_overflow(frame: &Frame, origin: Point, page_height: f64) -> bool {
+    for (pos, item) in frame.items() {
+        let abs_pos = origin + *pos;
+        match item {
+            FrameItem::Group(group) => {
+                // If this group has clipping enabled (e.g. image container block with rounded corners),
+                // check if the inner content was clipped by comparing the inner content's bottom against
+                // the group's rendered height.
+                if group.clip.is_some() {
+                    let group_h = group.frame.size().y.to_pt();
+                    let content_bottom = frame_content_bottom(&group.frame, 0.0);
+                    if content_bottom > group_h + 1.0 {
+                        return true;
+                    }
+                }
+                // Check if the group itself extends beyond the page height
+                if abs_pos.y.to_pt() + group.frame.size().y.to_pt() > page_height + 1.0 {
+                    return true;
+                }
+                if frame_has_overflow(&group.frame, abs_pos, page_height) {
+                    return true;
+                }
+            }
+            FrameItem::Image(_, size, _) => {
+                if abs_pos.y.to_pt() + size.y.to_pt() > page_height + 1.0 {
+                    return true;
+                }
+            }
+            FrameItem::Shape(_, _) | FrameItem::Text(_) => {
+                if abs_pos.y.to_pt() > page_height + 1.0 {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Checks whether any page in the document suffered content clipping or overflow,
+/// or contains empty pages caused by oversized blocks forcing premature page breaks.
+fn document_has_overflow(doc: &typst_layout::PagedDocument) -> bool {
+    for page in doc.pages() {
+        if page.frame.items().len() == 0 {
+            return true;
+        }
+        let page_height = page.frame.size().y.to_pt();
+        if frame_has_overflow(&page.frame, Point::zero(), page_height) {
+            return true;
+        }
+    }
+    false
+}
 
 /// High-level function: Compiles Markdown directly into a PDF byte stream.
 ///
@@ -59,17 +144,20 @@ pub fn compile_markdown_to_pdf(
                 cache_dir.clone(),
             )?;
 
+            let overflow_b = document_has_overflow(&doc_b);
             let pages_b = doc_b.pages().len();
             let canvas_b = pages_b as f64 * dynamic_slice_height as f64;
             // Candidate A's page count must be >= expected_slices, so expected_slices * 14000
             // represents the theoretical minimum canvas of Candidate A (a lower bound).
             let min_canvas_a = expected_slices as f64 * FLUID_CAPPED_PAGE_HEIGHT_PT as f64;
 
-            // If Candidate B's total canvas is already <= Candidate A's theoretical minimum,
-            // Candidate B is provably no worse than Candidate A, so we safely skip compiling A.
-            // Only if Candidate B had severe page spillover (due to tall unbreakable blocks like images)
-            // such that canvas_b > min_canvas_a, compile Candidate A and choose the smaller canvas.
-            if canvas_b > min_canvas_a {
+            // Content integrity takes precedence over canvas area:
+            // 1. If Candidate B suffered content clipping/overflow (e.g. a tall unbreakable block
+            //    exceeded dynamic_slice_height), we must compile Candidate A to preserve content.
+            // 2. If Candidate B has no overflow, but severe page spillover caused its canvas to exceed
+            //    Candidate A's theoretical minimum (canvas_b > min_canvas_a), we compile Candidate A.
+            // Otherwise (no overflow and canvas_b <= min_canvas_a), Candidate B is provably optimal.
+            if overflow_b || canvas_b > min_canvas_a {
                 let mut opts_a = options.clone();
                 opts_a.fluid_page_height = Some(FLUID_CAPPED_PAGE_HEIGHT_PT);
                 let parsed_a = convert_markdown_to_typst(markdown, title, &opts_a);
@@ -79,9 +167,22 @@ pub fn compile_markdown_to_pdf(
                     parsed_a.virtual_files,
                     cache_dir,
                 )?;
+
+                let overflow_a = document_has_overflow(&doc_a);
+                if overflow_b && !overflow_a {
+                    // Candidate A preserves content integrity while Candidate B clipped content.
+                    return export_document_to_pdf(&doc_a);
+                }
+                if !overflow_b && overflow_a {
+                    // Candidate B preserves content integrity while Candidate A clipped content.
+                    return export_document_to_pdf(&doc_b);
+                }
+
                 let pages_a = doc_a.pages().len();
                 let canvas_a = pages_a as f64 * FLUID_CAPPED_PAGE_HEIGHT_PT as f64;
 
+                // When content integrity is equivalent (neither overflows, or both overflow),
+                // choose whichever produces the smaller total canvas.
                 if canvas_a < canvas_b {
                     return export_document_to_pdf(&doc_a);
                 }
@@ -398,6 +499,37 @@ fn main() {
     }
 
     #[test]
+    fn test_fluid_content_integrity_tall_block_prefers_candidate_a() {
+        // Document has a 10,000pt tall image followed by 400 paragraphs.
+        // Natural height ~18,510pt -> expected_slices = 2.
+        // Candidate B has dynamic slice height ~9,255pt, which would clip the 10,000pt image
+        // and leave page 0 empty. Although canvas_B (3 * 9,255 = 27,765pt) is slightly smaller
+        // than min_canvas_a (28,000pt), content integrity takes precedence:
+        // Candidate A (14,000pt) can accommodate the 10,000pt image without clipping,
+        // so Candidate A must be selected.
+        let mut md = String::new();
+        md.push_str("<img src=\"dummy.png\" height=\"10000pt\" />\n\n");
+        for i in 0..400 {
+            md.push_str(&format!("Paragraph {i} with some content to fill up the page.\n\n"));
+        }
+
+        let options = RenderOptions {
+            mode: "fluid".to_string(),
+            viewport_width: 850.0,
+            ..Default::default()
+        };
+
+        let res = compile_markdown_to_pdf(&md, "Integrity Test", ".", &options);
+        assert!(res.is_ok(), "Compile failed: {:?}", res.err());
+        let pdf = res.unwrap();
+        let heights = extract_all_mediabox_heights(&pdf);
+        assert_eq!(heights.len(), 2, "Candidate A should be selected with 2 pages of 14,000pt");
+        for (i, h) in heights.iter().enumerate() {
+            assert_eq!(*h, 14000.0, "Page {i} height {h}pt should be 14,000pt (Candidate A)");
+        }
+    }
+
+    #[test]
     fn test_compile_sample_document_full_modes() {
         let sample_md = r#"
 # SuperGoodViewer 🚀
@@ -653,53 +785,31 @@ Second index.
             ..Default::default()
         };
         let start = std::time::Instant::now();
-        let parsed = convert_markdown_to_typst(&content, "Large Markdown", &options);
+        let pdf = compile_markdown_to_pdf(&content, "Large Markdown", doc_dir, &options)
+            .unwrap_or_else(|err| panic!("Large markdown compile failed in {:?}: {:?}", start.elapsed(), err));
+        let heights = extract_all_mediabox_heights(&pdf);
         println!(
-            "Converted markdown ({} chars) to typst ({} chars) in {:?}",
-            content.len(),
-            parsed.typst_source.len(),
+            "Laid out {} page(s) in {:?}",
+            heights.len(),
             start.elapsed()
         );
-        let compile_start = std::time::Instant::now();
-        let world = compiler::world::MemoryWorld::new_with_cache_dir(
-            &parsed.typst_source,
-            doc_dir,
-            parsed.virtual_files.clone(),
-            None,
-        );
-        let document = typst::compile(&world).output.unwrap_or_else(|errs| {
-            panic!(
-                "Large markdown compile failed in {:?}: {:?}",
-                compile_start.elapsed(),
-                errs.iter().map(|e| e.message.to_string()).collect::<Vec<_>>()
-            )
-        });
-        let pdf = typst_pdf::pdf(&document, &typst_pdf::PdfOptions::default())
-            .expect("PDF export");
-        println!(
-            "Typst laid out {} page(s) in {:?}",
-            document.pages().len(),
-            compile_start.elapsed()
-        );
-        for (i, page) in document.pages().iter().enumerate() {
-            let size = page.frame.size();
+        for (i, h) in heights.iter().enumerate() {
             if i < 3 {
                 println!(
-                    "page {} size: {:.1}pt x {:.1}pt",
+                    "page {} size: {:.1}pt",
                     i + 1,
-                    size.x.to_pt(),
-                    size.y.to_pt()
+                    h
                 );
             }
             assert!(
-                size.y.to_pt() <= 14000.5,
+                *h <= 14000.5,
                 "fluid page {} is too tall for PDF: {:.1}pt",
                 i + 1,
-                size.y.to_pt()
+                h
             );
         }
         assert!(
-            document.pages().len() > 1,
+            heights.len() > 1,
             "large markdown should paginate in fluid mode"
         );
         assert!(pdf.starts_with(b"%PDF-"));
