@@ -1014,8 +1014,12 @@ pub fn convert_markdown_to_typst(
   }}
 }}
 #let mitex-len(it, default: 0pt) = {{
+  if type(it) == length or type(it) == relative or type(it) == ratio {{
+    return it
+  }}
   let s = mitex-str(it).replace(" ", "").replace("\u{{200b}}", "").trim()
-  if s.len() < 2 {{ return default }}
+  let chars = s.clusters()
+  if chars.len() < 2 {{ return default }}
   let units = (
     "pt": 1pt,
     "mm": 1mm,
@@ -1027,21 +1031,21 @@ pub fn convert_markdown_to_typst(
     "pc": 12pt,
     "mu": 1em / 18,
   )
-  let suffix = s.slice(s.len() - 2)
+  let suffix = chars.slice(chars.len() - 2).join("")
   if suffix not in units {{ return default }}
   let unit-mult = units.at(suffix)
-  let num-str = s.slice(0, s.len() - 2)
+  let num-str = chars.slice(0, chars.len() - 2).join("")
   if num-str.len() == 0 {{ return default }}
-  let chars = num-str.clusters()
+  let num-chars = num-str.clusters()
   let i = 0
-  if chars.at(0) == "+" or chars.at(0) == "-" {{
+  if num-chars.at(0) == "+" or num-chars.at(0) == "-" {{
     i += 1
   }}
-  if i >= chars.len() {{ return default }}
+  if i >= num-chars.len() {{ return default }}
   let has-dot = false
   let has-digit = false
-  while i < chars.len() {{
-    let c = chars.at(i)
+  while i < num-chars.len() {{
+    let c = num-chars.at(i)
     if c == "." {{
       if has-dot {{ return default }}
       has-dot = true
@@ -1057,6 +1061,10 @@ pub fn convert_markdown_to_typst(
 }}
 
 // Spacing & sizing
+#let textwidth = 100%
+#let linewidth = 100%
+#let columnwidth = 100%
+#let baselineskip = 1.2em
 #let hspace(it) = h(mitex-len(it, default: 1em))
 #let vspace(it) = v(mitex-len(it, default: 1em))
 #let smash(it) = box(height: 0pt, $it$)

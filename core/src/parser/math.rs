@@ -163,11 +163,16 @@ mod tests {
         }
 
         // Malicious Typst code injection attempts inside LaTeX length expressions
-        // Must NOT be executed by eval(), but safely rejected by pure numeric parser
+        // Must NOT be executed by eval(), but safely rejected by pure numeric parser.
+        // Also verifies multibyte CJK characters do NOT cause slice boundary panics,
+        // and dimension identifiers like \textwidth are supported.
         let md = r#"
 $$ A \hspace{3pt} B $$
 $$ A \hspace{\text{calc.abs(-3pt)+0pt}} B $$
 $$ A \hspace{\text{calc.max(30pt,1pt)+0pt}} B $$
+$$ A \hspace{\text{中}} B $$
+$$ A \hspace{\text{1米m}} B $$
+$$ A \hspace{0.5\textwidth} B $$
 "#;
         let doc = crate::parser::markdown::convert_markdown_to_typst(md, "Test", &crate::compiler::engine::RenderOptions::default());
         let compiled = crate::compiler::engine::compile_typst_to_document(&doc.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
@@ -176,8 +181,8 @@ $$ A \hspace{\text{calc.max(30pt,1pt)+0pt}} B $$
 
         let a_runs: Vec<&TextRun> = runs.iter().filter(|r| r.text == "𝐴").collect();
         let b_runs: Vec<&TextRun> = runs.iter().filter(|r| r.text == "𝐵").collect();
-        assert_eq!(a_runs.len(), 3);
-        assert_eq!(b_runs.len(), 3);
+        assert_eq!(a_runs.len(), 6);
+        assert_eq!(b_runs.len(), 6);
 
         let gap_3pt = (b_runs[0].pos.x - a_runs[0].pos.x).to_pt();
         let gap_exploit1 = (b_runs[1].pos.x - a_runs[1].pos.x).to_pt();
@@ -187,7 +192,18 @@ $$ A \hspace{\text{calc.max(30pt,1pt)+0pt}} B $$
         assert!((gap_exploit1 - gap_3pt).abs() > 5.0, "calc.abs code injection must NOT be executed: exploit={:.2}pt, 3pt={:.2}pt", gap_exploit1, gap_3pt);
         // gap_exploit2 must NOT evaluate to 30pt (which would be ~37.88pt)
         assert!((gap_exploit2 - gap_exploit1).abs() < 0.01, "Both unparsed expressions must fall back to safe default length");
+
+        // CJK multibyte inputs must safely fall back without panic
+        let gap_cjk1 = (b_runs[3].pos.x - a_runs[3].pos.x).to_pt();
+        let gap_cjk2 = (b_runs[4].pos.x - a_runs[4].pos.x).to_pt();
+        assert!((gap_cjk1 - gap_exploit1).abs() < 0.01, "CJK '中' must safely fall back to default length");
+        assert!((gap_cjk2 - gap_exploit1).abs() < 0.01, "CJK '1米m' must safely fall back to default length");
+
+        // textwidth formula compiles successfully and produces positive gap
+        let gap_textwidth = (b_runs[5].pos.x - a_runs[5].pos.x).to_pt();
+        assert!(gap_textwidth > 0.0, "textwidth formula must produce valid gap");
     }
+
 
 
     #[test]

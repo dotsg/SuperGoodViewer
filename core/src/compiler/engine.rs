@@ -146,14 +146,93 @@ pub enum CompileError {
     Pdf(String),
 }
 
+fn degrade_failing_equations(
+    typst_source: &str,
+    world: &MemoryWorld,
+    errs: &[typst::diag::SourceDiagnostic],
+) -> Option<String> {
+    use typst::syntax::{LinkedNode, Side, SyntaxKind};
+    use typst::{World, WorldExt};
+
+    let main_id = world.main();
+    let main_src = world.source(main_id).ok()?;
+    let root = LinkedNode::new(main_src.root());
+
+    let mut equation_ranges = std::collections::BTreeSet::new();
+
+    for err in errs {
+        if let Some(range) = world.range(err.span) {
+            if let Some(leaf) = root.leaf_at(range.start, Side::After).or_else(|| root.leaf_at(range.start, Side::Before)) {
+                let mut cur = Some(leaf);
+                while let Some(node) = cur {
+                    if node.kind() == SyntaxKind::Equation {
+                        let r = node.range();
+                        equation_ranges.insert((r.start, r.end));
+                        break;
+                    }
+                    cur = node.parent().cloned();
+                }
+            }
+        }
+    }
+
+    if equation_ranges.is_empty() {
+        return None;
+    }
+
+    // Sort ranges in descending order so earlier replacements don't invalidate later byte offsets
+    let mut sorted_ranges: Vec<(usize, usize)> = equation_ranges.into_iter().collect();
+    sorted_ranges.sort_by_key(|r| std::cmp::Reverse(r.0));
+
+    let mut new_source = typst_source.to_string();
+    for (start, end) in sorted_ranges {
+        let range = start..end;
+        if range.end <= new_source.len() && new_source.is_char_boundary(range.start) && new_source.is_char_boundary(range.end) {
+            let eq_str = &new_source[range.clone()];
+            let trimmed = eq_str.trim();
+            let inner = trimmed
+                .strip_prefix('$')
+                .unwrap_or(trimmed)
+                .strip_suffix('$')
+                .unwrap_or(trimmed)
+                .trim();
+            let safe_inner = crate::parser::markdown::escape_typst_string(inner);
+            let replacement = format!("$ \"{}\" $", safe_inner);
+            new_source.replace_range(range, &replacement);
+        }
+    }
+
+    Some(new_source)
+}
+
 pub(crate) fn compile_typst_to_document(
     typst_source: &str,
     doc_dir: impl AsRef<Path>,
     virtual_files: HashMap<PathBuf, Bytes>,
     image_cache_dir: Option<PathBuf>,
 ) -> Result<typst_layout::PagedDocument, CompileError> {
-    let world = MemoryWorld::new_with_cache_dir(typst_source, doc_dir, virtual_files, image_cache_dir);
+    let mut current_source = typst_source.to_string();
+    let max_degrade_passes = 3;
 
+    for _ in 0..=max_degrade_passes {
+        let world = MemoryWorld::new_with_cache_dir(&current_source, doc_dir.as_ref(), virtual_files.clone(), image_cache_dir.clone());
+        let warned = typst::compile::<typst_layout::PagedDocument>(&world);
+        match warned.output {
+            Ok(doc) => return Ok(doc),
+            Err(errs) => {
+                if let Some(degraded_source) = degrade_failing_equations(&current_source, &world, &errs) {
+                    if degraded_source != current_source {
+                        current_source = degraded_source;
+                        continue;
+                    }
+                }
+                let msgs: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
+                return Err(CompileError::Typst(msgs.join("\n")));
+            }
+        }
+    }
+
+    let world = MemoryWorld::new_with_cache_dir(&current_source, doc_dir.as_ref(), virtual_files, image_cache_dir);
     let warned = typst::compile::<typst_layout::PagedDocument>(&world);
     warned.output.map_err(|errs| {
         let msgs: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
@@ -203,5 +282,25 @@ mod tests {
         assert!(pdf.starts_with(b"%PDF-"), "Output is not a valid PDF header");
         assert!(pdf.len() > 100);
         println!("Generated PDF bytes: {}", pdf.len());
+    }
+
+    #[test]
+    fn test_formula_level_degradation() {
+        let source_with_bad_math = r#"
+        #set page(width: 400pt, height: auto, margin: 20pt)
+        = Document With Broken Math
+
+        This heading and text should render fine.
+
+        Here is a valid equation: $ E = m c^2 $
+
+        Here is a broken equation with unknown identifier: $ A unknownvariable B $
+
+        And another valid equation: $ 1 + 1 = 2 $
+        "#;
+        let res = compile_typst_to_pdf(source_with_bad_math, ".", HashMap::new());
+        assert!(res.is_ok(), "Document should compile with degraded math formula instead of failing completely: {:?}", res.err());
+        let pdf = res.unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
     }
 }
