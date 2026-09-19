@@ -336,5 +336,107 @@ void main() {
       expect(controller.renderOptions.headerCenter, isNull);
       expect(find.text('版式与页眉页脚与当前文档一致'), findsOneWidget);
     });
+
+    testWidgets('CLI install cancellation shows auth-cancelled feedback', (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'checkCliStatus') {
+          return {
+            'isInstalled': false,
+            'path': '/usr/local/bin/sgv',
+            'target': '',
+            'isCurrentApp': false,
+          };
+        }
+        if (call.method == 'installCli') {
+          return {'status': 'cancelled', 'messageCode': 'user_cancelled'};
+        }
+        return null;
+      });
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (ctx) => ElevatedButton(
+                onPressed: () => showSettingsDialog(
+                  ctx,
+                  controller,
+                  initialTab: SettingsTab.cli,
+                ),
+                child: const Text('Open Cli'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Open Cli'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('一键安装到终端'));
+      await tester.pump();
+
+      expect(find.text('已取消授权操作'), findsOneWidget);
+    });
+
+    testWidgets('CLI uninstall cancellation shows auth-cancelled feedback', (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'checkCliStatus') {
+          return {
+            'isInstalled': true,
+            'path': '/usr/local/bin/sgv',
+            'target': '/Applications/SuperGoodViewer.app/Contents/Resources/bin/sgv',
+            'isCurrentApp': true,
+          };
+        }
+        if (call.method == 'uninstallCli') {
+          return {'status': 'cancelled', 'messageCode': 'user_cancelled'};
+        }
+        return null;
+      });
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (ctx) => ElevatedButton(
+                onPressed: () => showSettingsDialog(
+                  ctx,
+                  controller,
+                  initialTab: SettingsTab.cli,
+                ),
+                child: const Text('Open Cli'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Open Cli'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('卸载'));
+      await tester.pump();
+
+      expect(find.text('已取消授权操作'), findsOneWidget);
+    });
   });
 }
