@@ -474,16 +474,38 @@ bool WriteToFileAtomically(const std::wstring& target_path, Writer&& writer) {
     }
   }
 
+  DWORD orig_attrs = INVALID_FILE_ATTRIBUTES;
   if (std::filesystem::exists(target_path, ec)) {
-    ::SetFileAttributesW(target_path.c_str(), FILE_ATTRIBUTE_NORMAL);
+    orig_attrs = ::GetFileAttributesW(target_path.c_str());
+    if (orig_attrs != INVALID_FILE_ATTRIBUTES && (orig_attrs & FILE_ATTRIBUTE_READONLY)) {
+      ::SetFileAttributesW(target_path.c_str(), orig_attrs & ~FILE_ATTRIBUTE_READONLY);
+    }
   }
 
   if (!::MoveFileExW(temp_path.c_str(), target_path.c_str(),
                      MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) {
+    if (orig_attrs != INVALID_FILE_ATTRIBUTES && (orig_attrs & FILE_ATTRIBUTE_READONLY)) {
+      ::SetFileAttributesW(target_path.c_str(), orig_attrs);
+    }
     std::filesystem::remove(temp_path, ec);
     return false;
   }
   return true;
+}
+
+void CleanOrphanedTempFiles(const std::wstring& dir) {
+  if (dir.empty()) return;
+  std::error_code ec;
+  if (!std::filesystem::is_directory(dir, ec)) return;
+  for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+    if (ec) break;
+    if (entry.is_regular_file(ec)) {
+      std::wstring name = entry.path().filename().wstring();
+      if (name.rfind(L"sgv.cmd.tmp.", 0) == 0 || name.rfind(L"sgv.ps1.tmp.", 0) == 0) {
+        std::filesystem::remove(entry.path(), ec);
+      }
+    }
+  }
 }
 
 void RemoveCliFiles(const std::wstring& cmd_path) {
@@ -499,6 +521,8 @@ void RemoveCliFiles(const std::wstring& cmd_path) {
       std::filesystem::remove(ps1_path, ec);
     }
   }
+  std::filesystem::path p(cmd_path);
+  CleanOrphanedTempFiles(p.parent_path().wstring());
 }
 
 }  // namespace
@@ -532,16 +556,22 @@ flutter::EncodableMap FlutterWindow::CheckCliStatus() {
   std::string target_utf8 = Utf8FromUtf16(exe_path.c_str());
 
   bool is_current_app = false;
-  if ((cmd_exists || ps1_exists) && !target_utf8.empty()) {
-    std::wstring check_path = cmd_exists ? cli_path : ps1_path;
-    std::ifstream file(check_path);
-    if (file.is_open()) {
+  if (!target_utf8.empty()) {
+    auto file_contains_target = [&](const std::wstring& p) {
+      if (p.empty()) return false;
+      std::ifstream file(p);
+      if (!file.is_open()) return false;
       std::string content((std::istreambuf_iterator<char>(file)),
                           std::istreambuf_iterator<char>());
-      // Exact check against target executable path, no loose fallback substring
-      if (content.find(target_utf8) != std::string::npos) {
-        is_current_app = true;
-      }
+      return content.find(target_utf8) != std::string::npos;
+    };
+
+    if (cmd_exists && ps1_exists) {
+      is_current_app = file_contains_target(cli_path) && file_contains_target(ps1_path);
+    } else if (cmd_exists) {
+      is_current_app = file_contains_target(cli_path);
+    } else if (ps1_exists) {
+      is_current_app = file_contains_target(ps1_path);
     }
   }
 
@@ -562,6 +592,9 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
     res[flutter::EncodableValue("message")] = flutter::EncodableValue("无法定位本地应用数据目录");
     return res;
   }
+
+  CleanOrphanedTempFiles(loc.winapps_dir);
+  CleanOrphanedTempFiles(loc.custom_dir);
 
   std::wstring cli_path = ResolveCliPath(loc);
   std::wstring initial_target = cli_path;
@@ -821,8 +854,8 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
              << "}\n";
   };
 
-  WriteToFileAtomically(ps1_path, write_ps1);
-  bool ps1_missing = !std::filesystem::exists(ps1_path, ec);
+  bool ps1_written = WriteToFileAtomically(ps1_path, write_ps1);
+  bool ps1_exists_now = std::filesystem::exists(ps1_path, ec);
 
   // Cross-location cleanup & PATH synchronization using loc directly
   std::wstring parent_dir_str = std::filesystem::path(cli_path).parent_path().wstring();
@@ -839,9 +872,11 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
   std::string cli_path_utf8 = Utf8FromUtf16(cli_path.c_str());
   res[flutter::EncodableValue("status")] = flutter::EncodableValue("success");
   res[flutter::EncodableValue("path")] = flutter::EncodableValue(cli_path_utf8);
-  if (ps1_missing) {
-    res[flutter::EncodableValue("warning")] =
-        flutter::EncodableValue("sgv.cmd 安装成功，但未能创建 sgv.ps1 脚本");
+  if (!ps1_written) {
+    res[flutter::EncodableValue("warning")] = flutter::EncodableValue(
+        ps1_exists_now
+            ? "sgv.cmd 安装成功，但 sgv.ps1 未能更新（可能被占用），PowerShell 下可能仍指向旧版本"
+            : "sgv.cmd 安装成功，但未能创建 sgv.ps1 脚本");
   }
   return res;
 }
