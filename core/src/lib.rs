@@ -83,12 +83,20 @@ fn document_has_overflow(doc: &typst_layout::PagedDocument) -> bool {
 ///
 /// 1. Transpiles Markdown + LaTeX Math + Mermaid into Typst code and virtual assets.
 /// 2. Compiles Typst into an in-memory PDF stream using the embedded Typst engine.
-pub fn compile_markdown_to_pdf(
+#[derive(Debug)]
+pub struct MarkdownCompilationResult {
+    pub pdf_bytes: Vec<u8>,
+    pub degraded_equation_count: usize,
+    pub degraded_equations: Vec<String>,
+}
+
+/// High-level function: Compiles Markdown directly into a PDF byte stream with compilation metadata.
+pub fn compile_markdown_to_pdf_result(
     markdown: &str,
     title: &str,
     doc_dir: impl AsRef<Path>,
     options: &RenderOptions,
-) -> Result<Vec<u8>, CompileError> {
+) -> Result<MarkdownCompilationResult, CompileError> {
     let cache_dir = options.image_cache_dir.as_ref().map(PathBuf::from);
 
     // Pass 1: Parse and compile the document (defaults to natural height for fluid mode).
@@ -159,11 +167,25 @@ pub fn compile_markdown_to_pdf(
                 let overflow_a = document_has_overflow(&doc_a);
                 if overflow_b && !overflow_a {
                     // Candidate A preserves content integrity while Candidate B clipped content.
-                    return export_document_to_pdf(&doc_a);
+                    let count = doc_a.degraded_equation_count;
+                    let equations = doc_a.degraded_equations.clone();
+                    let pdf_bytes = export_document_to_pdf(&doc_a)?;
+                    return Ok(MarkdownCompilationResult {
+                        pdf_bytes,
+                        degraded_equation_count: count,
+                        degraded_equations: equations,
+                    });
                 }
                 if !overflow_b && overflow_a {
                     // Candidate B preserves content integrity while Candidate A clipped content.
-                    return export_document_to_pdf(&doc_b);
+                    let count = doc_b.degraded_equation_count;
+                    let equations = doc_b.degraded_equations.clone();
+                    let pdf_bytes = export_document_to_pdf(&doc_b)?;
+                    return Ok(MarkdownCompilationResult {
+                        pdf_bytes,
+                        degraded_equation_count: count,
+                        degraded_equations: equations,
+                    });
                 }
 
                 let pages_a = doc_a.pages().len();
@@ -172,15 +194,49 @@ pub fn compile_markdown_to_pdf(
                 // When content integrity is equivalent (neither overflows, or both overflow),
                 // choose whichever produces the smaller total canvas.
                 if canvas_a < canvas_b {
-                    return export_document_to_pdf(&doc_a);
+                    let count = doc_a.degraded_equation_count;
+                    let equations = doc_a.degraded_equations.clone();
+                    let pdf_bytes = export_document_to_pdf(&doc_a)?;
+                    return Ok(MarkdownCompilationResult {
+                        pdf_bytes,
+                        degraded_equation_count: count,
+                        degraded_equations: equations,
+                    });
                 }
             }
 
-            return export_document_to_pdf(&doc_b);
+            let count = doc_b.degraded_equation_count;
+            let equations = doc_b.degraded_equations.clone();
+            let pdf_bytes = export_document_to_pdf(&doc_b)?;
+            return Ok(MarkdownCompilationResult {
+                pdf_bytes,
+                degraded_equation_count: count,
+                degraded_equations: equations,
+            });
         }
     }
 
-    export_document_to_pdf(&document)
+    let count = document.degraded_equation_count;
+    let equations = document.degraded_equations.clone();
+    let pdf_bytes = export_document_to_pdf(&document)?;
+    Ok(MarkdownCompilationResult {
+        pdf_bytes,
+        degraded_equation_count: count,
+        degraded_equations: equations,
+    })
+}
+
+/// High-level function: Compiles Markdown directly into a PDF byte stream.
+///
+/// 1. Transpiles Markdown + LaTeX Math + Mermaid into Typst code and virtual assets.
+/// 2. Compiles Typst into an in-memory PDF stream using the embedded Typst engine.
+pub fn compile_markdown_to_pdf(
+    markdown: &str,
+    title: &str,
+    doc_dir: impl AsRef<Path>,
+    options: &RenderOptions,
+) -> Result<Vec<u8>, CompileError> {
+    compile_markdown_to_pdf_result(markdown, title, doc_dir, options).map(|r| r.pdf_bytes)
 }
 
 #[cfg(test)]

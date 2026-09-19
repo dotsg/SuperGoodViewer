@@ -95,6 +95,8 @@ class ReaderController extends ChangeNotifier {
   int _compileGeneration = 0;
   bool _hasPendingCompile = false;
   String? _errorMessage;
+  int _degradedEquationCount = 0;
+  List<String> _degradedEquations = const [];
   double _lastScrollRatio = 0.0;
   double _lastScrollOffset = 0.0;
   int _lastPageNumber = 1;
@@ -156,6 +158,9 @@ class ReaderController extends ChangeNotifier {
   RenderOptions get renderOptions => _renderOptions;
   bool get isCompiling => _isCompiling;
   String? get errorMessage => _errorMessage;
+  int get degradedEquationCount => _degradedEquationCount;
+  List<String> get degradedEquations => _degradedEquations;
+  bool get hasDegradedEquations => _degradedEquationCount > 0;
   double get lastScrollRatio => _lastScrollRatio;
   double get lastScrollOffset => _lastScrollOffset;
   int get lastPageNumber => _lastPageNumber;
@@ -774,6 +779,8 @@ class ReaderController extends ChangeNotifier {
       _currentMarkdown = '';
       _isRawPdf = false;
       _errorMessage = 'File not found: $filePath';
+      _degradedEquationCount = 0;
+      _degradedEquations = const [];
       finishReloading();
       notifyListeners();
       return;
@@ -794,6 +801,8 @@ class ReaderController extends ChangeNotifier {
         _outlineItems = [];
         _currentPdfBytes = bytes;
         _errorMessage = null;
+        _degradedEquationCount = 0;
+        _degradedEquations = const [];
 
         if (!preservePosition) {
           final history = _fileHistory[filePath];
@@ -883,6 +892,8 @@ class ReaderController extends ChangeNotifier {
       if (cachedPdf != null && cachedPdf.isNotEmpty) {
         _currentPdfBytes = cachedPdf;
         _errorMessage = null;
+        _degradedEquationCount = 0;
+        _degradedEquations = const [];
         debugPrint('[ReaderController] Fast cache hit: instant PDF loaded (${cachedPdf.length} bytes) for $filePath');
         notifyListeners();
         return;
@@ -894,6 +905,8 @@ class ReaderController extends ChangeNotifier {
       _currentPdfBytes = null;
       _outlineItems = [];
       _errorMessage = msg;
+      _degradedEquationCount = 0;
+      _degradedEquations = const [];
       finishReloading();
       notifyListeners();
     }
@@ -1053,6 +1066,8 @@ class ReaderController extends ChangeNotifier {
     _isCompiling = true;
     _hasPendingCompile = false;
     _errorMessage = null;
+    _degradedEquationCount = 0;
+    _degradedEquations = const [];
     debugPrint('[ReaderController] compileDocument: starting gen $generation for "$_documentTitle" (${_currentMarkdown.length} chars)');
     notifyListeners();
 
@@ -1067,7 +1082,7 @@ class ReaderController extends ChangeNotifier {
           ? p.dirname(_currentFilePath!)
           : Directory.current.path;
 
-      final pdfBytes = await NativeEngine.instance.compileMarkdownAsync(
+      final result = await NativeEngine.instance.compileMarkdownResultAsync(
         _currentMarkdown,
         title: _documentTitle,
         docDir: docDir,
@@ -1075,15 +1090,26 @@ class ReaderController extends ChangeNotifier {
       );
 
       if (generation == _compileGeneration && !isPdfDocument) {
-        if (pdfBytes != null && pdfBytes.isNotEmpty) {
+        if (result.isSuccess) {
+          final pdfBytes = result.pdfBytes!;
           _currentPdfBytes = pdfBytes;
           _errorMessage = null;
+          _degradedEquationCount = result.degradedEquationCount;
+          _degradedEquations = result.degradedEquations;
+          if (_degradedEquationCount > 0) {
+            debugPrint(
+              '[ReaderController] compileDocument: WARNING gen $generation: '
+              '$_degradedEquationCount degraded equation(s) detected: $_degradedEquations',
+            );
+          }
           debugPrint('[ReaderController] compileDocument: SUCCESS gen $generation (${pdfBytes.length} bytes)');
           if (_currentFilePath != null) {
             unawaited(DocumentCacheService.saveCachedPdf(_currentFilePath!, _renderOptions, pdfBytes));
           }
         } else {
-          _errorMessage = NativeEngine.instance.getLastError() ?? 'Compilation failed';
+          _degradedEquationCount = 0;
+          _degradedEquations = const [];
+          _errorMessage = result.errorMessage ?? NativeEngine.instance.getLastError() ?? 'Compilation failed';
           debugPrint('[ReaderController] compileDocument: FAILED gen $generation ($_errorMessage)');
         }
       }
@@ -1357,12 +1383,19 @@ class ReaderController extends ChangeNotifier {
               ? p.dirname(_currentFilePath!)
               : Directory.current.path;
 
-          bytesToExport = await NativeEngine.instance.compileMarkdownAsync(
+          final exportResult = await NativeEngine.instance.compileMarkdownResultAsync(
             _currentMarkdown,
             title: _documentTitle,
             docDir: docDir,
             options: exportOptions,
           );
+          bytesToExport = exportResult.pdfBytes;
+
+          if (exportResult.degradedEquationCount > 0) {
+            debugPrint(
+              '[ReaderController] exportPdf: WARNING: ${exportResult.degradedEquationCount} degraded equation(s) in export',
+            );
+          }
 
           if (bytesToExport != null && bytesToExport.isNotEmpty && _currentFilePath != null) {
             unawaited(DocumentCacheService.saveCachedPdf(_currentFilePath!, exportOptions, bytesToExport));

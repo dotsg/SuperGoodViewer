@@ -146,7 +146,7 @@ pub enum CompileError {
     Pdf(String),
 }
 
-#[derive(Clone)]
+#[derive(Debug)]
 pub struct CompilationResult {
     pub document: typst_layout::PagedDocument,
     pub degraded_equation_count: usize,
@@ -203,19 +203,19 @@ pub(crate) fn extract_degraded_equations_from_source(source: &str) -> Vec<String
             if idx < bytes.len() && bytes[idx] == b'"' {
                 idx += 1;
                 let mut escaped = false;
-                let mut str_content = String::new();
+                let mut str_bytes = Vec::new();
                 while idx < bytes.len() {
                     let b = bytes[idx];
                     if escaped {
                         match b {
-                            b'\\' => str_content.push('\\'),
-                            b'"' => str_content.push('"'),
-                            b'n' => str_content.push('\n'),
-                            b'r' => str_content.push('\r'),
-                            b't' => str_content.push('\t'),
+                            b'\\' => str_bytes.push(b'\\'),
+                            b'"' => str_bytes.push(b'"'),
+                            b'n' => str_bytes.push(b'\n'),
+                            b'r' => str_bytes.push(b'\r'),
+                            b't' => str_bytes.push(b'\t'),
                             _ => {
-                                str_content.push('\\');
-                                str_content.push(b as char);
+                                str_bytes.push(b'\\');
+                                str_bytes.push(b);
                             }
                         }
                         escaped = false;
@@ -225,11 +225,11 @@ pub(crate) fn extract_degraded_equations_from_source(source: &str) -> Vec<String
                         idx += 1;
                         break;
                     } else {
-                        str_content.push(b as char);
+                        str_bytes.push(b);
                     }
                     idx += 1;
                 }
-                results.push(str_content);
+                results.push(String::from_utf8_lossy(&str_bytes).into_owned());
                 cursor = idx;
                 continue;
             }
@@ -333,14 +333,9 @@ fn degrade_failing_equations(
         }
     }
 
-    // Prepend default mitexdegraded definition if not already in source
+    // Prepend default mitexdegraded definition if not already in source (fallback for raw Typst)
     if !had_mitexdegraded {
-        let is_dark = typst_source.contains("#1e1e1e")
-            || typst_source.contains("#0d1117")
-            || typst_source.contains("#c9d1d9")
-            || typst_source.contains("#3c1e22")
-            || typst_source.contains("#f85149");
-        let default_prelude = default_degraded_math_macro(is_dark, None);
+        let default_prelude = default_degraded_math_macro(false, None);
         new_source.insert_str(0, &default_prelude);
     }
 
@@ -514,5 +509,17 @@ mod tests {
         assert_eq!(res.degraded_equations[0], r"\indexedcommand{abc}");
         assert_eq!(res.degraded_equations[1], r"\hexcommand{xyz}");
         assert_eq!(res.degraded_equations[2], "unknownbare");
+    }
+
+    #[test]
+    fn test_extract_degraded_equations_preserves_utf8_multibyte() {
+        let source = r#"
+        $ mitexdegraded("\\unknowncmd{中文公式}") $
+        $ mitexdegraded("\\alsobad{\\text{αβγ}}") $
+        "#;
+        let extracted = extract_degraded_equations_from_source(source);
+        assert_eq!(extracted.len(), 2);
+        assert_eq!(extracted[0], r"\unknowncmd{中文公式}");
+        assert_eq!(extracted[1], r"\alsobad{\text{αβγ}}");
     }
 }

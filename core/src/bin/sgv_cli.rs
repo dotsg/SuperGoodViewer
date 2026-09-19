@@ -4,7 +4,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
-use sogood_core::compile_markdown_to_pdf;
+use sogood_core::compile_markdown_to_pdf_result;
 use sogood_core::compiler::engine::RenderOptions;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -491,8 +491,16 @@ fn main() {
             );
         }
 
-        match compile_markdown_to_pdf(&content, &title, &task.doc_dir, &options) {
-            Ok(pdf_bytes) => {
+        match compile_markdown_to_pdf_result(&content, &title, &task.doc_dir, &options) {
+            Ok(result) => {
+                if result.degraded_equation_count > 0 {
+                    eprintln!(
+                        "sgv-cli: warning: in '{}': {} LaTeX equation(s) could not be rendered and were degraded with fallback styling",
+                        display_src,
+                        result.degraded_equation_count
+                    );
+                }
+                let pdf_bytes = result.pdf_bytes;
                 if let Some(parent) = task.output_path.parent() {
                     if !parent.as_os_str().is_empty() && !parent.exists() {
                         let _ = fs::create_dir_all(parent);
