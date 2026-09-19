@@ -47,7 +47,7 @@ typedef SogoodCompileMarkdownDart = Pointer<CSogoodBuffer> Function(
 typedef SogoodDetectFontsC = Pointer<CSogoodBuffer> Function();
 typedef SogoodDetectFontsDart = Pointer<CSogoodBuffer> Function();
 
-typedef SogoodGetLastDegradedCountC = IntPtr Function();
+typedef SogoodGetLastDegradedCountC = UintPtr Function();
 typedef SogoodGetLastDegradedCountDart = int Function();
 
 typedef SogoodGetLastDegradedEquationsJsonC = Pointer<Utf8> Function();

@@ -57,6 +57,9 @@ class EnStrings implements AppStrings {
   @override
   String openFileFailed(String err) => 'Failed to open file: $err';
   @override
+  String degradedEquationsWarning(int count) =>
+      '$count formula(s) failed to render and were degraded to raw LaTeX';
+  @override
   String get copiedSelectedText => 'Selected text copied to clipboard';
   @override
   String toggleSidebarTooltip(String shortcut) => 'Toggle Sidebar ($shortcut)';

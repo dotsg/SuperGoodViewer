@@ -71,6 +71,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   Timer? _updateCheckTimer;
 
   bool _isFullScreen = false;
+  bool _dismissedDegradedWarning = false;
+  Uint8List? _lastSeenPdfBytes;
   static const _windowChannel = MethodChannel('com.sogoodviewer.window');
 
   @override
@@ -175,6 +177,10 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _onControllerChanged() {
+    if (_lastSeenPdfBytes != widget.controller.currentPdfBytes) {
+      _lastSeenPdfBytes = widget.controller.currentPdfBytes;
+      _dismissedDegradedWarning = false;
+    }
     if (widget.controller.requestedJumpItem != null) {
       final req = widget.controller.requestedJumpItem!;
       widget.controller.clearJumpRequest();
@@ -1010,6 +1016,79 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                                   ],
                                 ),
                               ),
+                            ),
+                          ),
+                        ),
+                      ),
+
+                    // Floating Degraded Equations Warning Banner
+                    if (controller.hasDegradedEquations &&
+                        controller.errorMessage == null &&
+                        !_dismissedDegradedWarning)
+                      Positioned(
+                        bottom: 20,
+                        left: 24,
+                        right: 24,
+                        child: Center(
+                          child: Container(
+                            constraints: const BoxConstraints(maxWidth: 600),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xE6D97706),
+                              borderRadius: BorderRadius.circular(10),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Colors.black26,
+                                  blurRadius: 12,
+                                  offset: Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.warning_amber_rounded,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    controller.strings.degradedEquationsWarning(
+                                      controller.degradedEquationCount,
+                                    ),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12.5,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                MouseRegion(
+                                  cursor: SystemMouseCursors.click,
+                                  child: GestureDetector(
+                                    key: const ValueKey('degraded_warning_dismiss'),
+                                    onTap: () {
+                                      setState(() {
+                                        _dismissedDegradedWarning = true;
+                                      });
+                                    },
+                                    child: const Padding(
+                                      padding: EdgeInsets.all(4),
+                                      child: Icon(
+                                        Icons.close_rounded,
+                                        color: Colors.white,
+                                        size: 16,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),

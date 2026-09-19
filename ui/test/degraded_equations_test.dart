@@ -1,9 +1,11 @@
 import 'dart:io';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sogoodviewer/bridge/native_engine.dart';
 import 'package:sogoodviewer/controllers/reader_controller.dart';
 import 'package:sogoodviewer/services/preferences_service.dart';
+import 'package:sogoodviewer/views/workspace_view.dart';
 
 void main() {
   late Directory tempTestDir;
@@ -31,9 +33,7 @@ void main() {
   }
 
   test('NativeEngine: reports degraded equation count and formulas', () async {
-    if (!NativeEngine.instance.isAvailable) {
-      return;
-    }
+    expect(NativeEngine.instance.isAvailable, isTrue);
 
     const testMarkdown = '''# Degradation Test
 
@@ -73,5 +73,42 @@ Normal equation:
     expect(controller.hasDegradedEquations, isTrue);
     expect(controller.degradedEquationCount, equals(1));
     expect(controller.degradedEquations.first, contains(r'\invalidmacro{formula}'));
+  });
+
+  testWidgets('WorkspaceView: displays floating amber banner when equations degrade and allows dismiss', (tester) async {
+    final controller = ReaderController(autoRestorePreferences: false);
+    addTearDown(controller.dispose);
+    final testFile = File(p.join(tempTestDir.path, 'broken_ui.md'));
+    testFile.writeAsStringSync('''# Broken Doc
+
+\$\$\\unsupportedcmd{abc}\$\$
+''');
+
+    await controller.openFile(testFile.path);
+    while (controller.isCompiling || controller.degradedEquationCount == 0) {
+      await tester.pump(const Duration(milliseconds: 20));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: WorkspaceView(controller: controller),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
+    expect(find.textContaining('1 个公式渲染异常'), findsOneWidget);
+
+    // Dismiss the banner
+    await tester.tap(find.byKey(const ValueKey('degraded_warning_dismiss')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
+
+    // Flush any pending debounce timers (e.g. _persistDebounced 600ms)
+    await tester.pump(const Duration(milliseconds: 700));
   });
 }

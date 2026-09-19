@@ -56,6 +56,8 @@ class ZhHansStrings implements AppStrings {
   @override
   String openFileFailed(String err) => '打开文件失败: $err';
   @override
+  String degradedEquationsWarning(int count) => '$count 个公式渲染异常，已自动降级展示原始 LaTeX';
+  @override
   String get copiedSelectedText => '已复制所选文本';
   @override
   String toggleSidebarTooltip(String shortcut) => '切换侧边栏 ($shortcut)';

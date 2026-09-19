@@ -61,30 +61,30 @@ pub fn resolve_page_geometry(
             }
         }
         "a4" => {
-            // A4: 595.28pt x 841.89pt, margin x: 2cm = 56.6929 pt.
+            // A4: 595.28pt x 841.89pt, margin x: 2cm = 56.692913 pt.
             let margin_x: f32 = 2.0 * 72.0 / 2.54;
             let width: f32 = 595.28;
-            let bw: f32 = width - 2.0 * margin_x; // ≈ 481.894 pt
+            let bw: f32 = width - 2.0 * margin_x; // 481.89417 pt
             PageGeometry {
                 page_width_str: format!("{width}pt"),
                 page_height_str: "841.89pt".to_string(),
-                page_margin_str: format!("(x: {:.2}pt, top: 2.5cm, bottom: 2.5cm)", margin_x),
-                body_width_pt: (bw * 100.0).round() / 100.0, // 481.89
+                page_margin_str: format!("(x: {margin_x}pt, top: 2.5cm, bottom: 2.5cm)"),
+                body_width_pt: bw,
                 page_width_pt: width,
                 margin_left_pt: margin_x,
                 margin_right_pt: margin_x,
             }
         }
         "a4_landscape" => {
-            // A4 landscape: 841.89pt x 595.28pt, margin x: 2.5cm = 70.8661 pt.
+            // A4 landscape: 841.89pt x 595.28pt, margin x: 2.5cm = 70.86614 pt.
             let margin_x: f32 = 2.5 * 72.0 / 2.54;
             let width: f32 = 841.89;
-            let bw: f32 = width - 2.0 * margin_x; // ≈ 700.158 pt
+            let bw: f32 = width - 2.0 * margin_x; // 700.1577 pt
             PageGeometry {
                 page_width_str: format!("{width}pt"),
                 page_height_str: "595.28pt".to_string(),
-                page_margin_str: format!("(x: {:.2}pt, top: 2cm, bottom: 2cm)", margin_x),
-                body_width_pt: (bw * 100.0).round() / 100.0, // 700.16
+                page_margin_str: format!("(x: {margin_x}pt, top: 2cm, bottom: 2cm)"),
+                body_width_pt: bw,
                 page_width_pt: width,
                 margin_left_pt: margin_x,
                 margin_right_pt: margin_x,
@@ -123,8 +123,8 @@ pub fn resolve_page_geometry(
             PageGeometry {
                 page_width_str: format!("{width}pt"),
                 page_height_str: "841.89pt".to_string(),
-                page_margin_str: format!("(x: {:.2}pt, top: 2.5cm, bottom: 2.5cm)", margin_x),
-                body_width_pt: (bw * 100.0).round() / 100.0,
+                page_margin_str: format!("(x: {margin_x}pt, top: 2.5cm, bottom: 2.5cm)"),
+                body_width_pt: bw,
                 page_width_pt: width,
                 margin_left_pt: margin_x,
                 margin_right_pt: margin_x,
@@ -1810,7 +1810,7 @@ mod tests {
             let expected_body_width = geom.page_width_pt - geom.margin_left_pt - geom.margin_right_pt;
             let diff = (geom.body_width_pt - expected_body_width).abs();
             assert!(
-                diff < 0.1,
+                diff < 1e-5,
                 "Format {} body_width_pt {} drifts from page_width - margins (expected {}, diff {})",
                 fmt,
                 geom.body_width_pt,
@@ -1818,11 +1818,10 @@ mod tests {
                 diff
             );
 
-            // Verify that page_margin_str is derived from margin_left_pt and actually contains the numeric pt margin
-            let expected_margin_str = format!("{:.2}pt", geom.margin_left_pt);
-            let expected_margin_short = format!("{}pt", geom.margin_left_pt as u32);
+            // Verify that page_margin_str is derived directly from margin_left_pt and reflects the exact pt margin
+            let expected_margin_str = format!("{}pt", geom.margin_left_pt);
             assert!(
-                geom.page_margin_str.contains(&expected_margin_str) || geom.page_margin_str.contains(&expected_margin_short),
+                geom.page_margin_str.contains(&expected_margin_str),
                 "Format {} page_margin_str '{}' does not reflect margin_left_pt {}",
                 fmt,
                 geom.page_margin_str,

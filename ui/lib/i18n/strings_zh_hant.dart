@@ -56,6 +56,8 @@ class ZhHantStrings extends ZhHansStrings {
   @override
   String openFileFailed(String err) => '開啟檔案失敗: $err';
   @override
+  String degradedEquationsWarning(int count) => '$count 個公式渲染異常，已自動降級顯示原始 LaTeX';
+  @override
   String get copiedSelectedText => '已複製所選文字';
   @override
   String toggleSidebarTooltip(String shortcut) => '切換側邊欄 ($shortcut)';

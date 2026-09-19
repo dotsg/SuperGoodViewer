@@ -1,9 +1,8 @@
+use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::path::Path;
-use parking_lot::RwLock;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::compiler::engine::RenderOptions;
 use crate::compile_markdown_to_pdf_result;
 
@@ -14,30 +13,28 @@ pub struct SogoodBuffer {
     pub capacity: usize,
 }
 
-static LAST_ERROR: RwLock<Option<String>> = RwLock::new(None);
-static LAST_DEGRADED_COUNT: AtomicUsize = AtomicUsize::new(0);
-static LAST_DEGRADED_EQUATIONS: RwLock<Vec<String>> = RwLock::new(Vec::new());
+thread_local! {
+    static LAST_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
+    static LAST_DEGRADED_COUNT: Cell<usize> = const { Cell::new(0) };
+    static LAST_DEGRADED_EQUATIONS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
 
 fn set_last_error(err: String) {
-    let mut guard = LAST_ERROR.write();
-    *guard = Some(err);
+    LAST_ERROR.with(|cell| *cell.borrow_mut() = Some(err));
 }
 
 fn clear_last_error() {
-    let mut guard = LAST_ERROR.write();
-    *guard = None;
+    LAST_ERROR.with(|cell| *cell.borrow_mut() = None);
 }
 
 fn set_last_degraded(count: usize, equations: Vec<String>) {
-    LAST_DEGRADED_COUNT.store(count, Ordering::SeqCst);
-    let mut guard = LAST_DEGRADED_EQUATIONS.write();
-    *guard = equations;
+    LAST_DEGRADED_COUNT.with(|cell| cell.set(count));
+    LAST_DEGRADED_EQUATIONS.with(|cell| *cell.borrow_mut() = equations);
 }
 
 fn clear_last_degraded() {
-    LAST_DEGRADED_COUNT.store(0, Ordering::SeqCst);
-    let mut guard = LAST_DEGRADED_EQUATIONS.write();
-    guard.clear();
+    LAST_DEGRADED_COUNT.with(|cell| cell.set(0));
+    LAST_DEGRADED_EQUATIONS.with(|cell| cell.borrow_mut().clear());
 }
 
 #[unsafe(no_mangle)]
@@ -48,34 +45,38 @@ pub extern "C" fn sogood_get_version() -> *const c_char {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sogood_get_last_error() -> *mut c_char {
-    let guard = LAST_ERROR.read();
-    match &*guard {
-        Some(msg) => match CString::new(msg.as_str()) {
-            Ok(c_str) => c_str.into_raw(),
-            Err(_) => std::ptr::null_mut(),
-        },
-        None => std::ptr::null_mut(),
-    }
+    LAST_ERROR.with(|cell| {
+        let guard = cell.borrow();
+        match &*guard {
+            Some(msg) => match CString::new(msg.as_str()) {
+                Ok(c_str) => c_str.into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            },
+            None => std::ptr::null_mut(),
+        }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sogood_get_last_degraded_count() -> usize {
-    LAST_DEGRADED_COUNT.load(Ordering::SeqCst)
+    LAST_DEGRADED_COUNT.with(|cell| cell.get())
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sogood_get_last_degraded_equations_json() -> *mut c_char {
-    let guard = LAST_DEGRADED_EQUATIONS.read();
-    if guard.is_empty() {
-        return std::ptr::null_mut();
-    }
-    match serde_json::to_string(&*guard) {
-        Ok(json) => match CString::new(json) {
-            Ok(c_str) => c_str.into_raw(),
+    LAST_DEGRADED_EQUATIONS.with(|cell| {
+        let guard = cell.borrow();
+        if guard.is_empty() {
+            return std::ptr::null_mut();
+        }
+        match serde_json::to_string(&*guard) {
+            Ok(json) => match CString::new(json) {
+                Ok(c_str) => c_str.into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            },
             Err(_) => std::ptr::null_mut(),
-        },
-        Err(_) => std::ptr::null_mut(),
-    }
+        }
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -265,6 +266,37 @@ mod tests {
             assert!(json_str.contains(r"\alsobroken{123}"));
             sogood_free_string(json_ptr);
         }
+    }
+
+    #[test]
+    fn test_c_api_thread_local_isolation() {
+        use std::thread;
+
+        let handle = thread::spawn(|| {
+            let md = CString::new("$$\\brokencommand{xyz}$$\n").unwrap();
+            let title = CString::new("Degradation").unwrap();
+            let dir = CString::new(".").unwrap();
+            let opts = CString::new(r#"{"mode":"fluid"}"#).unwrap();
+
+            let buffer_ptr = sogood_compile_markdown(
+                md.as_ptr(),
+                title.as_ptr(),
+                dir.as_ptr(),
+                opts.as_ptr(),
+            );
+            assert!(!buffer_ptr.is_null());
+            sogood_free_buffer(buffer_ptr);
+
+            // In this worker thread, degraded count is 1
+            assert_eq!(sogood_get_last_degraded_count(), 1);
+        });
+
+        handle.join().unwrap();
+
+        // In the main thread, degraded count must remain 0
+        assert_eq!(sogood_get_last_degraded_count(), 0);
+        let err_ptr = sogood_get_last_error();
+        assert!(err_ptr.is_null());
     }
 }
 

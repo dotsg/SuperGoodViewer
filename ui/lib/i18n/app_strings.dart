@@ -28,6 +28,7 @@ abstract class AppStrings {
   String exportPdfSuccess(String path);
   String get exportPdfFailed;
   String openFileFailed(String err);
+  String degradedEquationsWarning(int count);
   String get copiedSelectedText;
   String toggleSidebarTooltip(String shortcut);
   String toggleSidebarCollapse(String shortcut);

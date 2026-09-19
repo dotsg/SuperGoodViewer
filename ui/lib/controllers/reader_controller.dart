@@ -159,7 +159,7 @@ class ReaderController extends ChangeNotifier {
   bool get isCompiling => _isCompiling;
   String? get errorMessage => _errorMessage;
   int get degradedEquationCount => _degradedEquationCount;
-  List<String> get degradedEquations => _degradedEquations;
+  List<String> get degradedEquations => List.unmodifiable(_degradedEquations);
   bool get hasDegradedEquations => _degradedEquationCount > 0;
   double get lastScrollRatio => _lastScrollRatio;
   double get lastScrollOffset => _lastScrollOffset;
