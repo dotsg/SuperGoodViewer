@@ -4,12 +4,27 @@ else
   FLUTTER ?= flutter
 endif
 
-.PHONY: all build build-core build-core-universal build-app build-windows build-windows-arm64 build-linux test test-core test-app test-release-local bench benchmark clean run-macos run-windows run-linux dmg dmg-arm64 dmg-x64 package-windows package-windows-arm64 package-linux
+.PHONY: all build build-universal build-core build-core-universal build-app build-windows build-windows-arm64 build-linux test test-core test-app test-release-local bench benchmark clean run-macos run-windows run-linux dmg dmg-arm64 dmg-x64 package-windows package-windows-arm64 package-linux
 
 all: build test
 
-# Build Rust dynamic library and Flutter Desktop app
-build: build-core-universal build-app
+# Build Rust dynamic library and Flutter Desktop app (host architecture -- fast path for local development)
+build: build-core build-app
+	@echo "==> Packaging host dylib into macOS App Bundle..."
+	@mkdir -p ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Frameworks/
+	@cp core/target/release/libsogood_core.dylib ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Frameworks/
+	@echo "==> Packaging CLI scripts and tools into macOS App Bundle..."
+	@mkdir -p ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/
+	@cp ui/bin/sgv ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv
+	@cp core/target/release/sgv-cli ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv-cli
+	@chmod +x ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv
+	@chmod +x ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv-cli
+	@echo "==> Re-signing macOS App Bundle..."
+	@codesign --force --deep --sign - ui/build/macos/Build/Products/Release/SuperGoodViewer.app
+	@echo "==> Build complete! Output: ui/build/macos/Build/Products/Release/SuperGoodViewer.app"
+
+# Full universal (arm64 + x86_64) binaries for macOS release distribution
+build-universal: build-core-universal build-app
 	@echo "==> Packaging universal dylib into macOS App Bundle..."
 	@mkdir -p ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Frameworks/
 	@cp core/target/universal/release/libsogood_core.dylib ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Frameworks/
@@ -21,7 +36,7 @@ build: build-core-universal build-app
 	@chmod +x ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv-cli
 	@echo "==> Re-signing macOS App Bundle..."
 	@codesign --force --deep --sign - ui/build/macos/Build/Products/Release/SuperGoodViewer.app
-	@echo "==> Build complete! Output: ui/build/macos/Build/Products/Release/SuperGoodViewer.app"
+	@echo "==> Universal build complete! Output: ui/build/macos/Build/Products/Release/SuperGoodViewer.app"
 
 # Host-architecture only -- fast path for local development (run-macos, tests).
 build-core:
@@ -147,7 +162,7 @@ package-windows-arm64: build-windows-arm64
 	@powershell -Command "New-Item -ItemType Directory -Force -Path dist; Compress-Archive -Force -Path 'ui/build/windows_arm64/runner/Release/*' -DestinationPath 'dist/SuperGoodViewer-windows-arm64.zip'"
 	@echo "==> Package created: dist/SuperGoodViewer-windows-arm64.zip"
 
-dmg: build
+dmg: build-universal
 	@echo "==> Packaging Universal macOS DMG..."
 	@./scripts/package-macos-dmg.sh universal dist
 
@@ -155,7 +170,7 @@ dmg-arm64: build
 	@echo "==> Packaging Apple Silicon (arm64) macOS DMG..."
 	@./scripts/package-macos-dmg.sh arm64 dist
 
-dmg-x64: build
+dmg-x64: build-universal
 	@echo "==> Packaging Intel (x64) macOS DMG..."
 	@./scripts/package-macos-dmg.sh x64 dist
 
