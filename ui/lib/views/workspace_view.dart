@@ -72,7 +72,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
   bool _isFullScreen = false;
   bool _dismissedDegradedWarning = false;
-  Uint8List? _lastSeenPdfBytes;
+  int _lastSeenCompileGeneration = 0;
   static const _windowChannel = MethodChannel('com.sogoodviewer.window');
 
   @override
@@ -177,8 +177,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _onControllerChanged() {
-    if (_lastSeenPdfBytes != widget.controller.currentPdfBytes) {
-      _lastSeenPdfBytes = widget.controller.currentPdfBytes;
+    if (_lastSeenCompileGeneration != widget.controller.compileGeneration) {
+      _lastSeenCompileGeneration = widget.controller.compileGeneration;
       _dismissedDegradedWarning = false;
     }
     if (widget.controller.requestedJumpItem != null) {
@@ -1022,11 +1022,15 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                       ),
 
                     // Floating Degraded Equations Warning Banner
+                    // Floats neatly above the bottom pill toolbar when toolbar is visible,
+                    // and gracefully slides down when the toolbar autohides in Zen mode.
                     if (controller.hasDegradedEquations &&
                         controller.errorMessage == null &&
                         !_dismissedDegradedWarning)
-                      Positioned(
-                        bottom: 20,
+                      AnimatedPositioned(
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOutCubic,
+                        bottom: _isToolbarVisible ? 84 : 24,
                         left: 24,
                         right: 24,
                         child: Center(
@@ -1037,13 +1041,17 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                               vertical: 10,
                             ),
                             decoration: BoxDecoration(
-                              color: const Color(0xE6D97706),
+                              color: isDark ? const Color(0xEB92400E) : const Color(0xF0D97706),
                               borderRadius: BorderRadius.circular(10),
-                              boxShadow: const [
+                              border: Border.all(
+                                color: isDark ? const Color(0x4DFBBF24) : const Color(0x33B45309),
+                                width: 1,
+                              ),
+                              boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black26,
-                                  blurRadius: 12,
-                                  offset: Offset(0, 4),
+                                  color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.15),
+                                  blurRadius: 14,
+                                  offset: const Offset(0, 4),
                                 ),
                               ],
                             ),

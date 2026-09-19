@@ -157,6 +157,7 @@ class ReaderController extends ChangeNotifier {
   Uint8List? get currentPdfBytes => _currentPdfBytes;
   RenderOptions get renderOptions => _renderOptions;
   bool get isCompiling => _isCompiling;
+  int get compileGeneration => _compileGeneration;
   String? get errorMessage => _errorMessage;
   int get degradedEquationCount => _degradedEquationCount;
   List<String> get degradedEquations => List.unmodifiable(_degradedEquations);

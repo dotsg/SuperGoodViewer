@@ -26,10 +26,16 @@ void main() {
     } catch (_) {}
   });
 
-  Future<void> waitCompile(ReaderController controller) async {
-    while (controller.isCompiling) {
+  Future<void> waitCompile(
+    ReaderController controller, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    final end = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(end)) {
+      if (!controller.isCompiling) return;
       await Future.delayed(const Duration(milliseconds: 20));
     }
+    fail('Timed out waiting for compilation to complete within $timeout');
   }
 
   test('NativeEngine: reports degraded equation count and formulas', () async {
@@ -85,7 +91,13 @@ Normal equation:
 ''');
 
     await controller.openFile(testFile.path);
+    final end = DateTime.now().add(const Duration(seconds: 5));
     while (controller.isCompiling || controller.degradedEquationCount == 0) {
+      if (DateTime.now().isAfter(end)) {
+        fail(
+          'Timed out waiting for broken doc compilation: isCompiling=${controller.isCompiling}, degradedCount=${controller.degradedEquationCount}',
+        );
+      }
       await tester.pump(const Duration(milliseconds: 20));
       await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
     }
@@ -96,7 +108,7 @@ Normal equation:
       ),
     );
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
     expect(find.textContaining('1 个公式渲染异常'), findsOneWidget);
@@ -104,7 +116,7 @@ Normal equation:
     // Dismiss the banner
     await tester.tap(find.byKey(const ValueKey('degraded_warning_dismiss')));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
 
