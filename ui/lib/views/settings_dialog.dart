@@ -10,7 +10,7 @@ import '../services/native_cli_service.dart';
 import '../services/shortcut_service.dart';
 import '../services/update_service.dart';
 import '../services/preferences_service.dart';
-import 'cli_tools_dialog.dart';
+import 'cli_feedback.dart';
 import 'update_dialog.dart';
 
 /// Available tabs within the unified SettingsDialog.
