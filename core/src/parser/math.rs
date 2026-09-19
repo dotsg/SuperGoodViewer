@@ -97,7 +97,7 @@ fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
-pub fn hex_decode(s: &str) -> Option<String> {
+pub(crate) fn hex_decode(s: &str) -> Option<String> {
     if s.len() % 2 != 0 {
         return None;
     }
@@ -110,6 +110,10 @@ pub fn hex_decode(s: &str) -> Option<String> {
 }
 
 pub fn transpile_latex_math(latex: &str, is_block: bool) -> String {
+    transpile_latex_math_with_index(latex, is_block, None)
+}
+
+pub fn transpile_latex_math_with_index(latex: &str, is_block: bool, eq_idx: Option<usize>) -> String {
     let trimmed = latex.trim();
     if trimmed.is_empty() {
         return String::new();
@@ -129,11 +133,14 @@ pub fn transpile_latex_math(latex: &str, is_block: bool) -> String {
                 .replace("angle.r", "chevron.r")
                 .replace("dot.circle", "dot.o")
                 .replace("times.circle", "times.o");
-            let hex = hex_encode(trimmed.as_bytes());
+            let marker = match eq_idx {
+                Some(idx) => idx.to_string(),
+                None => hex_encode(trimmed.as_bytes()),
+            };
             if is_block {
-                format!("$ /*sgv-raw:{}*/ {} $\n", hex, clean)
+                format!("$ /*sgv-raw:{}*/ {} $\n", marker, clean)
             } else {
-                format!("$/*sgv-raw:{}*/ {}$", hex, clean)
+                format!("$/*sgv-raw:{}*/ {}$", marker, clean)
             }
         }
 
@@ -153,6 +160,27 @@ pub fn transpile_latex_math(latex: &str, is_block: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use typst::layout::{Frame, FrameItem, Point};
+
+    #[derive(Debug)]
+    struct TextRun {
+        text: String,
+        pos: Point,
+    }
+
+    fn find_text_runs(frame: &Frame, origin: Point, out: &mut Vec<TextRun>) {
+        for (pos, item) in frame.items() {
+            let p = origin + *pos;
+            match item {
+                FrameItem::Group(g) => find_text_runs(&g.frame, p, out),
+                FrameItem::Text(t) => out.push(TextRun {
+                    text: t.text.clone().into(),
+                    pos: p,
+                }),
+                _ => {}
+            }
+        }
+    }
 
     #[test]
     fn test_transpile_simple_math() {
@@ -163,31 +191,13 @@ mod tests {
         let hex_end = res.find("*/").unwrap();
         let decoded = hex_decode(&res[hex_start..hex_end]).unwrap();
         assert_eq!(decoded, "E = mc^2");
+
+        let res_idx = transpile_latex_math_with_index("E = mc^2", false, Some(42));
+        assert!(res_idx.contains("/*sgv-raw:42*/"));
     }
 
     #[test]
     fn test_latex_spacing_no_code_execution() {
-        use typst::layout::{Frame, FrameItem, Point};
-
-        #[derive(Debug)]
-        struct TextRun {
-            text: String,
-            pos: Point,
-        }
-
-        fn find_text_runs(frame: &Frame, origin: Point, out: &mut Vec<TextRun>) {
-            for (pos, item) in frame.items() {
-                let p = origin + *pos;
-                match item {
-                    FrameItem::Group(g) => find_text_runs(&g.frame, p, out),
-                    FrameItem::Text(t) => out.push(TextRun {
-                        text: t.text.clone().into(),
-                        pos: p,
-                    }),
-                    _ => {}
-                }
-            }
-        }
 
         // Malicious Typst code injection attempts inside LaTeX length expressions
         // Must NOT be executed by eval(), but safely rejected by pure numeric parser.
@@ -636,15 +646,73 @@ $$\color{blue}{y}$$
 "#;
         let doc = crate::parser::markdown::convert_markdown_to_typst(md, "Test", &crate::compiler::engine::RenderOptions::default());
         // Must compile cleanly
-        let compiled = crate::compiler::engine::compile_typst_to_document(&doc.typst_source, ".", std::collections::HashMap::new(), None);
-        assert!(compiled.is_ok(), "Extended LaTeX macros must compile authentically without errors: {:?}", compiled.err());
+        let compiled = crate::compiler::engine::compile_typst_to_document_with_raw_equations(
+            &doc.typst_source,
+            ".",
+            std::collections::HashMap::new(),
+            None,
+            &doc.raw_equations,
+        ).expect("Extended LaTeX macros must compile cleanly");
 
         // Must NOT have degraded into mitexdegraded in any equation
-        assert!(
-            !doc.typst_source.contains("$ mitexdegraded(") && !doc.typst_source.contains("$mitexdegraded("),
-            "Extended LaTeX structures must render authentically without degradation: {}",
-            doc.typst_source
+        assert_eq!(
+            compiled.degraded_equation_count, 0,
+            "Extended LaTeX structures must render authentically without degradation, but found degraded equations: {:?}",
+            compiled.degraded_equations
         );
+        assert!(
+            !compiled.final_typst_source.contains("mitexdegraded(\""),
+            "Final Typst source must not contain mitexdegraded calls: {}",
+            compiled.final_typst_source
+        );
+
+        // Verify that math runs were actually rendered authentically into layout frames
+        let mut runs = Vec::new();
+        for page in compiled.pages() {
+            find_text_runs(&page.frame, typst::layout::Point::zero(), &mut runs);
+        }
+        let texts: Vec<&str> = runs.iter().map(|r| r.text.as_str()).collect();
+        // Mathematical overbrace and underbrace glyphs
+        assert!(texts.contains(&"⏞"), "Rendered frames must contain top curly bracket overbrace glyph: {:?}", texts);
+        assert!(texts.contains(&"⏟"), "Rendered frames must contain bottom curly bracket underbrace glyph: {:?}", texts);
+        // Extensible square brackets
+        assert!(texts.contains(&"⎴"), "Rendered frames must contain top square bracket overbracket glyph: {:?}", texts);
+        assert!(texts.contains(&"⎵"), "Rendered frames must contain bottom square bracket underbracket glyph: {:?}", texts);
+        // Extensible arrow annotation
+        assert!(texts.contains(&"𝑓"), "Rendered frames must contain mathematical italic f annotation: {:?}", texts);
+        // Ensure no internal macro names or degraded boxes leaked into text
+        assert!(
+            !texts.iter().any(|t| t.contains("mitex") || t.contains("degraded") || t.contains("overbrace")),
+            "No raw macro names or degraded text should leak into frames: {:?}",
+            texts
+        );
+    }
+
+    #[test]
+    fn test_extended_latex_macros_degradation_detected_if_missing_from_prelude() {
+        let md = r#"
+# Test Missing Prelude Degradation Detection
+
+$$\overbrace{x+y}^{top}$$
+"#;
+        let doc = crate::parser::markdown::convert_markdown_to_typst(md, "Test", &crate::compiler::engine::RenderOptions::default());
+        // Deliberately remove #let mitexoverbrace to verify that missing macros are caught by degradation detection
+        let modified_source = doc.typst_source.replace("#let mitexoverbrace = math.overbrace", "// removed mitexoverbrace");
+        assert_ne!(modified_source, doc.typst_source, "Source must have contained #let mitexoverbrace");
+
+        let compiled = crate::compiler::engine::compile_typst_to_document_with_raw_equations(
+            &modified_source,
+            ".",
+            std::collections::HashMap::new(),
+            None,
+            &doc.raw_equations,
+        ).expect("Compilation must succeed via graceful degradation");
+
+        assert_eq!(
+            compiled.degraded_equation_count, 1,
+            "Missing #let mitexoverbrace MUST be detected as a degraded equation"
+        );
+        assert_eq!(compiled.degraded_equations[0], r"\overbrace{x+y}^{top}");
     }
 
     #[test]
@@ -657,13 +725,19 @@ $$\sideset{_a^b}{_c^d}\sum$$
 $$\unknownlatexcommand{42}$$
 "#;
         let doc = crate::parser::markdown::convert_markdown_to_typst(md, "Test", &crate::compiler::engine::RenderOptions::default());
-        let compiled = crate::compiler::engine::compile_typst_to_document(&doc.typst_source, ".", std::collections::HashMap::new(), None);
-        assert!(compiled.is_ok(), "Document compilation must succeed with degraded formulas: {:?}", compiled.err());
+        let compiled = crate::compiler::engine::compile_typst_to_document_with_raw_equations(
+            &doc.typst_source,
+            ".",
+            std::collections::HashMap::new(),
+            None,
+            &doc.raw_equations,
+        ).expect("Document compilation must succeed with degraded formulas");
 
         // Check that degraded formulas display the original raw LaTeX (escaped for string literal)
         assert!(doc.typst_source.contains("mitexdegraded"), "Must use mitexdegraded for unhandled formulas");
-        assert!(doc.typst_source.contains(r#"\\genfrac{(}{)}{0pt}{}{n}{k}"#));
-        assert!(doc.typst_source.contains(r#"\\sideset{_a^b}{_c^d}\\sum"#));
-        assert!(doc.typst_source.contains(r#"\\unknownlatexcommand{42}"#));
+        assert_eq!(compiled.degraded_equation_count, 3);
+        assert!(compiled.degraded_equations.iter().any(|e| e.contains(r"\genfrac{(}{)}{0pt}{}{n}{k}")));
+        assert!(compiled.degraded_equations.iter().any(|e| e.contains(r"\sideset{_a^b}{_c^d}\sum")));
+        assert!(compiled.degraded_equations.iter().any(|e| e.contains(r"\unknownlatexcommand{42}")));
     }
 }

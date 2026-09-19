@@ -4,7 +4,7 @@ pub mod parser;
 
 use std::path::{Path, PathBuf};
 use compiler::engine::{
-    compile_typst_to_document, export_document_to_pdf, CompileError, RenderOptions,
+    compile_typst_to_document_with_raw_equations, export_document_to_pdf, CompileError, RenderOptions,
     FLUID_CAPPED_PAGE_HEIGHT_PT,
 };
 use parser::markdown::convert_markdown_to_typst;
@@ -94,11 +94,12 @@ pub fn compile_markdown_to_pdf(
     // Pass 1: Parse and compile the document (defaults to natural height for fluid mode).
     // Moving parsed.virtual_files avoids cloning large image or diagram buffers in memory.
     let parsed = convert_markdown_to_typst(markdown, title, options);
-    let document = compile_typst_to_document(
+    let document = compile_typst_to_document_with_raw_equations(
         &parsed.typst_source,
         doc_dir.as_ref(),
         parsed.virtual_files,
         cache_dir.clone(),
+        &parsed.raw_equations,
     )?;
 
     let valid_fluid_page_height = options.valid_fluid_page_height();
@@ -122,11 +123,12 @@ pub fn compile_markdown_to_pdf(
             let mut opts_b = options.clone();
             opts_b.fluid_page_height = Some(dynamic_slice_height);
             let parsed_b = convert_markdown_to_typst(markdown, title, &opts_b);
-            let doc_b = compile_typst_to_document(
+            let doc_b = compile_typst_to_document_with_raw_equations(
                 &parsed_b.typst_source,
                 doc_dir.as_ref(),
                 parsed_b.virtual_files,
                 cache_dir.clone(),
+                &parsed_b.raw_equations,
             )?;
 
             let overflow_b = document_has_overflow(&doc_b);
@@ -146,11 +148,12 @@ pub fn compile_markdown_to_pdf(
                 let mut opts_a = options.clone();
                 opts_a.fluid_page_height = Some(FLUID_CAPPED_PAGE_HEIGHT_PT);
                 let parsed_a = convert_markdown_to_typst(markdown, title, &opts_a);
-                let doc_a = compile_typst_to_document(
+                let doc_a = compile_typst_to_document_with_raw_equations(
                     &parsed_a.typst_source,
                     doc_dir.as_ref(),
                     parsed_a.virtual_files,
                     cache_dir,
+                    &parsed_a.raw_equations,
                 )?;
 
                 let overflow_a = document_has_overflow(&doc_a);

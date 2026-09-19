@@ -4,13 +4,132 @@ use pulldown_cmark::{Alignment, Event, HeadingLevel, Options, Parser, Tag, TagEn
 use typst::foundations::Bytes;
 
 use crate::compiler::engine::RenderOptions;
-use super::math::transpile_latex_math;
+use super::math::transpile_latex_math_with_index;
 use super::mermaid::render_mermaid;
 
 pub struct ParsedDocument {
     pub typst_source: String,
     pub virtual_files: HashMap<PathBuf, Bytes>,
     pub is_fluid: bool,
+    pub raw_equations: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageGeometry {
+    pub page_width_str: String,
+    pub page_height_str: String,
+    pub page_margin_str: String,
+    pub body_width_pt: f32,
+    pub page_width_pt: f32,
+    pub margin_left_pt: f32,
+    pub margin_right_pt: f32,
+}
+
+pub fn resolve_page_geometry(
+    normalized_format: &str,
+    viewport_width: f32,
+    is_fluid_sliced: bool,
+    target_fluid_slice: Option<f32>,
+) -> PageGeometry {
+    // 1cm = 72.0 / 2.54 pt ≈ 28.3464567 pt
+    match normalized_format {
+        "fluid" if is_fluid_sliced => {
+            let slice_h = target_fluid_slice.unwrap_or(crate::compiler::engine::FLUID_CAPPED_PAGE_HEIGHT_PT);
+            let margin_x = 24.0;
+            let bw = (viewport_width - 2.0 * margin_x).max(100.0);
+            PageGeometry {
+                page_width_str: format!("{}pt", viewport_width),
+                page_height_str: format!("{slice_h}pt"),
+                page_margin_str: "(x: 24pt, top: 0pt, bottom: 0pt)".to_string(),
+                body_width_pt: bw,
+                page_width_pt: viewport_width,
+                margin_left_pt: margin_x,
+                margin_right_pt: margin_x,
+            }
+        }
+        "fluid" => {
+            let margin_x = 24.0;
+            let bw = (viewport_width - 2.0 * margin_x).max(100.0);
+            PageGeometry {
+                page_width_str: format!("{}pt", viewport_width),
+                page_height_str: "auto".to_string(),
+                page_margin_str: "(x: 24pt, top: 0pt, bottom: 56pt)".to_string(),
+                body_width_pt: bw,
+                page_width_pt: viewport_width,
+                margin_left_pt: margin_x,
+                margin_right_pt: margin_x,
+            }
+        }
+        "a4" => {
+            // A4: 595.28pt x 841.89pt, margin x: 2cm = 56.6929 pt.
+            // Body width: 595.28 - 2 * 56.692913 = 481.894 pt ≈ 481.89 pt.
+            let margin_x = 2.0 * 72.0 / 2.54;
+            let width = 595.28;
+            PageGeometry {
+                page_width_str: "595.28pt".to_string(),
+                page_height_str: "841.89pt".to_string(),
+                page_margin_str: "(x: 2cm, top: 2.5cm, bottom: 2.5cm)".to_string(),
+                body_width_pt: 481.89,
+                page_width_pt: width,
+                margin_left_pt: margin_x,
+                margin_right_pt: margin_x,
+            }
+        }
+        "a4_landscape" => {
+            // A4 landscape: 841.89pt x 595.28pt, margin x: 2.5cm = 70.8661 pt.
+            // Body width: 841.89 - 2 * 70.8661 = 700.158 pt ≈ 700.16 pt.
+            let margin_x = 2.5 * 72.0 / 2.54;
+            let width = 841.89;
+            PageGeometry {
+                page_width_str: "841.89pt".to_string(),
+                page_height_str: "595.28pt".to_string(),
+                page_margin_str: "(x: 2.5cm, top: 2cm, bottom: 2cm)".to_string(),
+                body_width_pt: 700.16,
+                page_width_pt: width,
+                margin_left_pt: margin_x,
+                margin_right_pt: margin_x,
+            }
+        }
+        "slide_16_9" => {
+            let margin_x = 48.0;
+            let width = 960.0;
+            PageGeometry {
+                page_width_str: "960pt".to_string(),
+                page_height_str: "540pt".to_string(),
+                page_margin_str: "(x: 48pt, top: 36pt, bottom: 36pt)".to_string(),
+                body_width_pt: width - 2.0 * margin_x,
+                page_width_pt: width,
+                margin_left_pt: margin_x,
+                margin_right_pt: margin_x,
+            }
+        }
+        "slide_4_3" => {
+            let margin_x = 48.0;
+            let width = 960.0;
+            PageGeometry {
+                page_width_str: "960pt".to_string(),
+                page_height_str: "720pt".to_string(),
+                page_margin_str: "(x: 48pt, top: 40pt, bottom: 40pt)".to_string(),
+                body_width_pt: width - 2.0 * margin_x,
+                page_width_pt: width,
+                margin_left_pt: margin_x,
+                margin_right_pt: margin_x,
+            }
+        }
+        _ => {
+            let margin_x = 2.0 * 72.0 / 2.54;
+            let width = 595.28;
+            PageGeometry {
+                page_width_str: "595.28pt".to_string(),
+                page_height_str: "841.89pt".to_string(),
+                page_margin_str: "(x: 2cm, top: 2.5cm, bottom: 2.5cm)".to_string(),
+                body_width_pt: 481.89,
+                page_width_pt: width,
+                margin_left_pt: margin_x,
+                margin_right_pt: margin_x,
+            }
+        }
+    }
 }
 
 struct ImageParagraph {
@@ -695,60 +814,16 @@ pub fn convert_markdown_to_typst(
         ("rgb(\"#f1f5f9\")", "rgb(\"#cbd5e1\")", "rgb(\"#334155\")")
     };
 
-    let (degraded_math_bg, degraded_math_stroke, degraded_math_fg) = if is_dark {
-        ("rgb(\"#3c1e22\")", "rgb(\"#f85149\")", "rgb(\"#ff7b72\")")
-    } else {
-        ("rgb(\"#fff5f5\")", "rgb(\"#cf222e\")", "rgb(\"#cf222e\")")
-    };
-
-    let body_width_pt: f32 = match normalized_format {
-        "fluid" => (options.viewport_width - 48.0).max(100.0),
-        "a4" => 481.89,
-        "a4_landscape" => 700.16,
-        "slide_16_9" | "slide_4_3" => 864.0,
-        _ => 481.89,
-    };
-
-    let (page_width, page_height, page_margin) = match normalized_format {
-        "fluid" if is_fluid_sliced => {
-            let slice_h = target_fluid_slice.unwrap();
-            (
-                format!("{}pt", options.viewport_width),
-                format!("{slice_h}pt"),
-                "(x: 24pt, top: 0pt, bottom: 0pt)".to_string(),
-            )
-        }
-        "fluid" => (
-            format!("{}pt", options.viewport_width),
-            "auto".to_string(),
-            "(x: 24pt, top: 0pt, bottom: 56pt)".to_string(),
-        ),
-        "a4" => (
-            "595.28pt".to_string(),
-            "841.89pt".to_string(),
-            "(x: 2cm, top: 2.5cm, bottom: 2.5cm)".to_string(),
-        ),
-        "a4_landscape" => (
-            "841.89pt".to_string(),
-            "595.28pt".to_string(),
-            "(x: 2.5cm, top: 2cm, bottom: 2cm)".to_string(),
-        ),
-        "slide_16_9" => (
-            "960pt".to_string(),
-            "540pt".to_string(),
-            "(x: 48pt, top: 36pt, bottom: 36pt)".to_string(),
-        ),
-        "slide_4_3" => (
-            "960pt".to_string(),
-            "720pt".to_string(),
-            "(x: 48pt, top: 40pt, bottom: 40pt)".to_string(),
-        ),
-        _ => (
-            "595.28pt".to_string(),
-            "841.89pt".to_string(),
-            "(x: 2cm, top: 2.5cm, bottom: 2.5cm)".to_string(),
-        ),
-    };
+    let geom = resolve_page_geometry(
+        normalized_format,
+        options.viewport_width,
+        is_fluid_sliced,
+        target_fluid_slice,
+    );
+    let body_width_pt = geom.body_width_pt;
+    let page_width = geom.page_width_str;
+    let page_height = geom.page_height_str;
+    let page_margin = geom.page_margin_str;
 
     out.push_str(&format!(
         r##"// Auto-generated Typst markup by SuperGoodViewer
@@ -909,6 +984,7 @@ pub fn convert_markdown_to_typst(
     } else {
         format!("({})", code_fonts_default.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
     };
+    let degraded_math_macro_str = crate::compiler::engine::default_degraded_math_macro(is_dark, Some(&code_font_str));
 
     out.push_str(&format!(
         r##")
@@ -934,8 +1010,11 @@ pub fn convert_markdown_to_typst(
   inset: (x: 4pt, y: 0pt),
   outset: (y: 3pt),
   radius: 3pt,
+  baseline: 0pt,
   it
 )
+
+#show figure.where(kind: raw): it => it.body
 
 #show raw.where(block: true): it => block(
   fill: {code_bg},
@@ -1017,15 +1096,7 @@ pub fn convert_markdown_to_typst(
 #let mitexunderbracket = math.underbracket
 
 // Formula-level graceful degradation placeholder
-#let mitexdegraded(raw-latex) = box(
-  stroke: (dash: "densely-dashed", paint: {degraded_math_stroke}, thickness: 0.65pt),
-  fill: {degraded_math_bg},
-  inset: (x: 4pt, y: 2.5pt),
-  radius: 3pt,
-  baseline: 0%,
-  text(fill: {degraded_math_fg}, font: {code_font_str}, size: 0.82em, raw-latex)
-)
-#let mitex-degraded-math = mitexdegraded
+{degraded_math_macro_str}
 
 // String & dimension helper for mitex arguments
 #let sgvbodywidth = {body_width_pt}pt
@@ -1160,6 +1231,15 @@ pub fn convert_markdown_to_typst(
 #let mitex-len = mitexlen
 
 // Spacing & sizing
+// Note on textwidth/linewidth/columnwidth:
+// In LaTeX math expressions (e.g. \hspace{{0.5\textwidth}}), MiTeX transpiles this to
+// `hspace(0.5 textwidth)`. In Typst math mode, relative lengths like `100%` cannot be
+// dynamically multiplied or resolved without a contextual parent container (evaluating
+// to 0pt in inline math).
+// By defining `#let textwidth = [textwidth]` as a content tag, `0.5 textwidth` produces
+// content that `mitexstr()` captures as the string "0.5textwidth".
+// `mitexlen()` then extracts the coefficient ("0.5") and computes `coeff * sgvbodywidth`,
+// where `sgvbodywidth` is the statically resolved body content width in points for the current page layout.
 #let textwidth = [textwidth]
 #let linewidth = [linewidth]
 #let columnwidth = [columnwidth]
@@ -1301,9 +1381,7 @@ pub fn convert_markdown_to_typst(
         table_header_bg = table_header_bg,
         body_font_str = body_font_str,
         code_font_str = code_font_str,
-        degraded_math_bg = degraded_math_bg,
-        degraded_math_stroke = degraded_math_stroke,
-        degraded_math_fg = degraded_math_fg,
+        degraded_math_macro_str = degraded_math_macro_str,
         body_width_pt = body_width_pt
     ));
 
@@ -1336,6 +1414,7 @@ pub fn convert_markdown_to_typst(
     let mut referenced_anchors: HashSet<String> = HashSet::new();
     let custom_cache = options.image_cache_dir.as_deref().map(Path::new);
     let mut html_transpiler = HtmlTranspiler::new(is_dark, is_fluid, badge_bg, badge_stroke, badge_fg, custom_cache);
+    let mut raw_equations: Vec<String> = Vec::new();
 
     for event in parser {
         // Only a paragraph containing one image (optionally linked/formatted)
@@ -1665,10 +1744,14 @@ pub fn convert_markdown_to_typst(
                 }
             }
             Event::InlineMath(latex) => {
-                out.push_str(&transpile_latex_math(&latex, false));
+                let eq_idx = raw_equations.len();
+                raw_equations.push(latex.to_string());
+                out.push_str(&transpile_latex_math_with_index(&latex, false, Some(eq_idx)));
             }
             Event::DisplayMath(latex) => {
-                out.push_str(&transpile_latex_math(&latex, true));
+                let eq_idx = raw_equations.len();
+                raw_equations.push(latex.to_string());
+                out.push_str(&transpile_latex_math_with_index(&latex, true, Some(eq_idx)));
             }
             Event::Rule => {
                 if is_slide_mode {
@@ -1713,12 +1796,31 @@ pub fn convert_markdown_to_typst(
         typst_source: out,
         virtual_files,
         is_fluid,
+        raw_equations,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_page_margin_and_body_width_consistency() {
+        let formats = ["fluid", "a4", "a4_landscape", "slide_16_9", "slide_4_3"];
+        for fmt in formats {
+            let geom = resolve_page_geometry(fmt, 800.0, false, None);
+            let expected_body_width = geom.page_width_pt - geom.margin_left_pt - geom.margin_right_pt;
+            let diff = (geom.body_width_pt - expected_body_width).abs();
+            assert!(
+                diff < 0.1,
+                "Format {} body_width_pt {} drifts from page_width - margins (expected {}, diff {})",
+                fmt,
+                geom.body_width_pt,
+                expected_body_width,
+                diff
+            );
+        }
+    }
 
     #[test]
     fn test_convert_markdown_full_suite() {

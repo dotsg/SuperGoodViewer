@@ -146,10 +146,104 @@ pub enum CompileError {
     Pdf(String),
 }
 
+#[derive(Clone)]
+pub struct CompilationResult {
+    pub document: typst_layout::PagedDocument,
+    pub degraded_equation_count: usize,
+    pub degraded_equations: Vec<String>,
+    pub final_typst_source: String,
+}
+
+impl std::ops::Deref for CompilationResult {
+    type Target = typst_layout::PagedDocument;
+
+    fn deref(&self) -> &Self::Target {
+        &self.document
+    }
+}
+
+impl CompilationResult {
+    pub fn into_document(self) -> typst_layout::PagedDocument {
+        self.document
+    }
+}
+
+pub(crate) fn default_degraded_math_macro(is_dark: bool, code_font_str: Option<&str>) -> String {
+    let (degraded_math_bg, degraded_math_stroke, degraded_math_fg) = if is_dark {
+        ("rgb(\"#3c1e22\")", "rgb(\"#f85149\")", "rgb(\"#ff7b72\")")
+    } else {
+        ("rgb(\"#fff5f5\")", "rgb(\"#cf222e\")", "rgb(\"#cf222e\")")
+    };
+    let font = code_font_str.unwrap_or("(\"Menlo\", \"Consolas\", \"monospace\")");
+    format!(
+        "#let mitexdegraded(raw-latex) = box(\n  stroke: (dash: \"densely-dashed\", paint: {degraded_math_stroke}, thickness: 0.65pt),\n  fill: {degraded_math_bg},\n  inset: (x: 4pt, y: 2.5pt),\n  radius: 3pt,\n  baseline: 0%,\n  text(fill: {degraded_math_fg}, font: {font}, size: 0.82em, raw-latex)\n)\n#let mitex-degraded-math = mitexdegraded\n"
+    )
+}
+
+pub(crate) fn extract_degraded_equations_from_source(source: &str) -> Vec<String> {
+    let mut results = Vec::new();
+    let pattern = "mitexdegraded";
+    let bytes = source.as_bytes();
+    let mut cursor = 0;
+
+    while let Some(pos) = source[cursor..].find(pattern) {
+        let mut idx = cursor + pos + pattern.len();
+        // Skip whitespace
+        while idx < bytes.len() && (bytes[idx] == b' ' || bytes[idx] == b'\t' || bytes[idx] == b'\n' || bytes[idx] == b'\r') {
+            idx += 1;
+        }
+        // Expect '('
+        if idx < bytes.len() && bytes[idx] == b'(' {
+            idx += 1;
+            // Skip whitespace
+            while idx < bytes.len() && (bytes[idx] == b' ' || bytes[idx] == b'\t' || bytes[idx] == b'\n' || bytes[idx] == b'\r') {
+                idx += 1;
+            }
+            // Expect '"'
+            if idx < bytes.len() && bytes[idx] == b'"' {
+                idx += 1;
+                let mut escaped = false;
+                let mut str_content = String::new();
+                while idx < bytes.len() {
+                    let b = bytes[idx];
+                    if escaped {
+                        match b {
+                            b'\\' => str_content.push('\\'),
+                            b'"' => str_content.push('"'),
+                            b'n' => str_content.push('\n'),
+                            b'r' => str_content.push('\r'),
+                            b't' => str_content.push('\t'),
+                            _ => {
+                                str_content.push('\\');
+                                str_content.push(b as char);
+                            }
+                        }
+                        escaped = false;
+                    } else if b == b'\\' {
+                        escaped = true;
+                    } else if b == b'"' {
+                        idx += 1;
+                        break;
+                    } else {
+                        str_content.push(b as char);
+                    }
+                    idx += 1;
+                }
+                results.push(str_content);
+                cursor = idx;
+                continue;
+            }
+        }
+        cursor = idx.max(cursor + pos + 1);
+    }
+    results
+}
+
 fn degrade_failing_equations(
     typst_source: &str,
     world: &MemoryWorld,
     errs: &[typst::diag::SourceDiagnostic],
+    raw_equations: &[String],
 ) -> Option<String> {
     use typst::syntax::{LinkedNode, Side, SyntaxKind};
     use typst::{World, WorldExt};
@@ -202,12 +296,16 @@ fn degrade_failing_equations(
         let range = start..end;
         if range.end <= new_source.len() && new_source.is_char_boundary(range.start) && new_source.is_char_boundary(range.end) {
             let eq_str = &new_source[range.clone()];
-            // Try to recover original raw LaTeX from /*sgv-raw:<hex>*/ if embedded by transpile_latex_math
+            // Try to recover original raw LaTeX from /*sgv-raw:<index or hex>*/ if embedded by transpile_latex_math
             let recovered_raw = if let Some(raw_start) = eq_str.find("/*sgv-raw:") {
                 let after_prefix = &eq_str[raw_start + 10..];
                 if let Some(raw_end) = after_prefix.find("*/") {
-                    let hex_str = &after_prefix[..raw_end];
-                    crate::parser::math::hex_decode(hex_str)
+                    let marker = &after_prefix[..raw_end];
+                    if let Ok(idx) = marker.parse::<usize>() {
+                        raw_equations.get(idx).cloned()
+                    } else {
+                        crate::parser::math::hex_decode(marker)
+                    }
                 } else {
                     None
                 }
@@ -237,8 +335,13 @@ fn degrade_failing_equations(
 
     // Prepend default mitexdegraded definition if not already in source
     if !had_mitexdegraded {
-        let default_prelude = "#let mitexdegraded(raw) = box(stroke: (dash: \"densely-dashed\", paint: rgb(\"#cf222e\"), thickness: 0.65pt), fill: rgb(\"#fff5f5\"), inset: (x: 4pt, y: 2.5pt), radius: 3pt, baseline: 0%, text(fill: rgb(\"#cf222e\"), font: (\"Menlo\", \"Consolas\", \"monospace\"), size: 0.82em, raw))\n";
-        new_source.insert_str(0, default_prelude);
+        let is_dark = typst_source.contains("#1e1e1e")
+            || typst_source.contains("#0d1117")
+            || typst_source.contains("#c9d1d9")
+            || typst_source.contains("#3c1e22")
+            || typst_source.contains("#f85149");
+        let default_prelude = default_degraded_math_macro(is_dark, None);
+        new_source.insert_str(0, &default_prelude);
     }
 
     Some(new_source)
@@ -249,7 +352,23 @@ pub(crate) fn compile_typst_to_document(
     doc_dir: impl AsRef<Path>,
     virtual_files: HashMap<PathBuf, Bytes>,
     image_cache_dir: Option<PathBuf>,
-) -> Result<typst_layout::PagedDocument, CompileError> {
+) -> Result<CompilationResult, CompileError> {
+    compile_typst_to_document_with_raw_equations(
+        typst_source,
+        doc_dir,
+        virtual_files,
+        image_cache_dir,
+        &[],
+    )
+}
+
+pub(crate) fn compile_typst_to_document_with_raw_equations(
+    typst_source: &str,
+    doc_dir: impl AsRef<Path>,
+    virtual_files: HashMap<PathBuf, Bytes>,
+    image_cache_dir: Option<PathBuf>,
+    raw_equations: &[String],
+) -> Result<CompilationResult, CompileError> {
     let mut current_source = typst_source.to_string();
     let max_degrade_passes = 3;
     let virtual_files_arc = std::sync::Arc::new(virtual_files);
@@ -258,9 +377,18 @@ pub(crate) fn compile_typst_to_document(
         let world = MemoryWorld::new_with_cache_dir(&current_source, doc_dir.as_ref(), virtual_files_arc.clone(), image_cache_dir.clone());
         let warned = typst::compile::<typst_layout::PagedDocument>(&world);
         match warned.output {
-            Ok(doc) => return Ok(doc),
+            Ok(doc) => {
+                let degraded_equations = extract_degraded_equations_from_source(&current_source);
+                let degraded_equation_count = degraded_equations.len();
+                return Ok(CompilationResult {
+                    document: doc,
+                    degraded_equation_count,
+                    degraded_equations,
+                    final_typst_source: current_source,
+                });
+            }
             Err(errs) => {
-                if let Some(degraded_source) = degrade_failing_equations(&current_source, &world, &errs) {
+                if let Some(degraded_source) = degrade_failing_equations(&current_source, &world, &errs, raw_equations) {
                     if degraded_source != current_source {
                         current_source = degraded_source;
                         continue;
@@ -274,10 +402,22 @@ pub(crate) fn compile_typst_to_document(
 
     let world = MemoryWorld::new_with_cache_dir(&current_source, doc_dir.as_ref(), virtual_files_arc, image_cache_dir);
     let warned = typst::compile::<typst_layout::PagedDocument>(&world);
-    warned.output.map_err(|errs| {
-        let msgs: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
-        CompileError::Typst(msgs.join("\n"))
-    })
+    match warned.output {
+        Ok(doc) => {
+            let degraded_equations = extract_degraded_equations_from_source(&current_source);
+            let degraded_equation_count = degraded_equations.len();
+            Ok(CompilationResult {
+                document: doc,
+                degraded_equation_count,
+                degraded_equations,
+                final_typst_source: current_source,
+            })
+        }
+        Err(errs) => {
+            let msgs: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
+            Err(CompileError::Typst(msgs.join("\n")))
+        }
+    }
 }
 
 pub(crate) fn export_document_to_pdf(document: &typst_layout::PagedDocument) -> Result<Vec<u8>, CompileError> {
@@ -350,5 +490,29 @@ mod tests {
         assert!(res.is_ok(), "Document should compile with degraded math formula instead of failing completely: {:?}", res.err());
         let pdf = res.unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn test_degraded_equations_side_table_and_hex_fallback() {
+        let raw_table = vec![r"\indexedcommand{abc}".to_string()];
+        let raw_latex = r"\hexcommand{xyz}";
+        let mut hex = String::new();
+        for &b in raw_latex.as_bytes() {
+            use std::fmt::Write;
+            let _ = write!(&mut hex, "{:02x}", b);
+        }
+
+        let source = format!(r#"
+        #set page(width: 400pt, height: auto, margin: 20pt)
+        $ /*sgv-raw:0*/ indexedcommand(a b c) $
+        $ /*sgv-raw:{}*/ hexcommand(x y z) $
+        $ unknownbare $
+        "#, hex);
+
+        let res = compile_typst_to_document_with_raw_equations(&source, ".", HashMap::new(), None, &raw_table).unwrap();
+        assert_eq!(res.degraded_equation_count, 3);
+        assert_eq!(res.degraded_equations[0], r"\indexedcommand{abc}");
+        assert_eq!(res.degraded_equations[1], r"\hexcommand{xyz}");
+        assert_eq!(res.degraded_equations[2], "unknownbare");
     }
 }
