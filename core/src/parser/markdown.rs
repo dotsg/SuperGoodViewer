@@ -955,6 +955,16 @@ pub fn convert_markdown_to_typst(
 #let pod(n) = $(#n)$
 #let odot = sym.dot.o
 
+// TeX math atom classes
+#let mathord(it) = it
+#let mathop(it) = math.op(it)
+#let mathbin(it) = it
+#let mathrel(it) = it
+#let mathopen(it) = it
+#let mathclose(it) = it
+#let mathpunct(it) = it
+#let mathinner(it) = it
+
 // Boxes, frames & spacing
 #let boxed(it) = box(stroke: 0.65pt + {text_color}, inset: (x: 4.5pt, y: 3pt), baseline: 0%, $it$)
 #let fbox(it) = box(stroke: 0.65pt + {text_color}, inset: (x: 4.5pt, y: 3pt), baseline: 0%, $it$)
@@ -964,7 +974,7 @@ pub fn convert_markdown_to_typst(
 #let vphantom(it) = box(width: 0pt, hide(it))
 #let mathclap(it) = context {{ let s = measure($it$); box(width: 0pt, move(dx: -s.width / 2, box(width: s.width, $it$))) }}
 #let mathllap(it) = context {{ let s = measure($it$); box(width: 0pt, move(dx: -s.width, box(width: s.width, $it$))) }}
-#let mathrlap(it) = context {{ let s = measure($it$); box(width: 0pt, box(width: s.width, $it$)) }}
+#let mathrlap(it) = box(width: 0pt, $it$)
 
 // Fractions & binomials
 #let cfrac(num, den) = math.display(math.frac(num, den))

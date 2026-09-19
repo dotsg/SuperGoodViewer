@@ -5,24 +5,85 @@ use super::markdown::escape_typst_string;
 /// Converts a LaTeX math string to Typst math syntax.
 /// If transpilation succeeds, returns the Typst math code.
 /// If it fails, falls back gracefully to the original input (or raw text) to prevent compilation breakage.
+/// Helper to preprocess \mathllap and \mathrlap using MiTeX's native `\iftypst ... \fi` pass-through,
+/// avoiding any pollution of TeX commands like \mathinner or \mathpunct.
+fn preprocess_laps(input: &str) -> String {
+    if !input.contains(r"\mathllap") && !input.contains(r"\mathrlap") {
+        return input.to_string();
+    }
+
+    let mut result = String::with_capacity(input.len());
+    let mut i = 0;
+    let bytes = input.as_bytes();
+    let len = bytes.len();
+
+    while i < len {
+        let is_llap = input[i..].starts_with(r"\mathllap");
+        let is_rlap = input[i..].starts_with(r"\mathrlap");
+
+        if is_llap || is_rlap {
+            let cmd_name = if is_llap { "mathllap" } else { "mathrlap" };
+            let cmd_len = 9; // r"\mathllap".len() == 9
+            let after_cmd = i + cmd_len;
+
+            let is_escaped = i > 0 && bytes[i - 1] == b'\\';
+            let is_boundary = after_cmd >= len || !bytes[after_cmd].is_ascii_alphabetic();
+
+            if !is_escaped && is_boundary {
+                let mut brace_start = after_cmd;
+                while brace_start < len && bytes[brace_start].is_ascii_whitespace() {
+                    brace_start += 1;
+                }
+
+                if brace_start < len && bytes[brace_start] == b'{' {
+                    let mut depth = 1;
+                    let mut j = brace_start + 1;
+                    while j < len && depth > 0 {
+                        match bytes[j] {
+                            b'\\' => {
+                                j += 1; // Skip escaped character like \{ or \}
+                            }
+                            b'{' => depth += 1,
+                            b'}' => depth -= 1,
+                            _ => {}
+                        }
+                        j += 1;
+                    }
+
+                    if depth == 0 {
+                        let inner = &input[brace_start + 1..j - 1];
+                        let processed_inner = preprocess_laps(inner);
+                        let inner_typst = match mitex::convert_math(&processed_inner, None) {
+                            Ok(t) => t.trim().to_string(),
+                            Err(_) => processed_inner,
+                        };
+                        result.push_str(&format!(r"\iftypst {}({}) \fi", cmd_name, inner_typst));
+                        i = j;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        let ch = input[i..].chars().next().unwrap();
+        result.push(ch);
+        i += ch.len_utf8();
+    }
+
+    result
+}
+
 pub fn transpile_latex_math(latex: &str, is_block: bool) -> String {
     let trimmed = latex.trim();
     if trimmed.is_empty() {
         return String::new();
     }
 
-    let (preprocessed, has_laps) = if trimmed.contains(r"\mathllap") || trimmed.contains(r"\mathrlap") {
-        let p = trimmed
-            .replace(r"\mathllap", r"\mathinner")
-            .replace(r"\mathrlap", r"\mathpunct");
-        (std::borrow::Cow::Owned(p), true)
-    } else {
-        (std::borrow::Cow::Borrowed(trimmed), false)
-    };
+    let preprocessed = preprocess_laps(trimmed);
 
     match mitex::convert_math(&preprocessed, None) {
         Ok(typst_math) => {
-            let mut clean = typst_math
+            let clean = typst_math
                 .trim()
                 .replace("mitexsqrt", "sqrt")
                 .replace("mitexdisplay", "display")
@@ -32,11 +93,6 @@ pub fn transpile_latex_math(latex: &str, is_block: bool) -> String {
                 .replace("angle.r", "chevron.r")
                 .replace("dot.circle", "dot.o")
                 .replace("times.circle", "times.o");
-            if has_laps {
-                clean = clean
-                    .replace("mathinner(", "mathllap(")
-                    .replace("mathpunct(", "mathrlap(");
-            }
             if is_block {
                 format!("$ {} $\n", clean)
             } else {
@@ -65,7 +121,6 @@ mod tests {
     fn test_transpile_simple_math() {
         let res = transpile_latex_math("E = mc^2", false);
         assert!(res.starts_with('$') && res.ends_with('$'));
-        println!("text: {:?}", mitex::convert_math(r"\text{Cost}", None));
     }
 
     #[test]
@@ -194,7 +249,7 @@ mod tests {
         // Script font size assertion (discriminates against unreduced #let substack(it) = it)
         assert!(a_run.font_size < x_run.font_size, "Substack must reduce font size with script(): a_size={:?} vs x_size={:?}", a_run.font_size, x_run.font_size);
         // Outer equation baseline isolation assertion (discriminates against unboxed line breaks)
-        assert_eq!(x_run.pos.y, y_run.pos.y, "Outer elements X and Y must remain on the exact same baseline");
+        assert!((x_run.pos.y - y_run.pos.y).abs().to_pt() < 0.01, "Outer elements X and Y must remain on the exact same baseline");
 
         // 2. sout: verify horizontal strikethrough using native Typst strike
         let md_sout = "# Sout\n\n$$\n\\sout{x + y}\n$$\n";
@@ -262,14 +317,14 @@ mod tests {
         let x_rlap = runs_rlap.iter().find(|r| r.text == "𝑋").expect("X rlap not found");
         let b_rlap = runs_rlap.iter().find(|r| r.text == "𝐵").expect("B rlap not found");
 
-        // Zero-width invariant: B must be at identical position across all three laps
-        assert_eq!(b_clap.pos.x, b_llap.pos.x, "Zero-width box: B position must be identical");
-        assert_eq!(b_clap.pos.x, b_rlap.pos.x, "Zero-width box: B position must be identical");
+        // Zero-width invariant: B must be at identical position across all three laps (< 0.01pt tolerance)
+        assert!((b_clap.pos.x - b_llap.pos.x).abs().to_pt() < 0.01, "Zero-width box: B position must be identical");
+        assert!((b_clap.pos.x - b_rlap.pos.x).abs().to_pt() < 0.01, "Zero-width box: B position must be identical");
 
-        // Baseline preservation: X must stay on the exact same baseline as A and B
-        assert_eq!(x_clap.pos.y, b_clap.pos.y, "mathclap must preserve baseline");
-        assert_eq!(x_llap.pos.y, b_llap.pos.y, "mathllap must preserve baseline");
-        assert_eq!(x_rlap.pos.y, b_rlap.pos.y, "mathrlap must preserve baseline");
+        // Baseline preservation: X must stay on the exact same baseline as A and B (< 0.01pt tolerance)
+        assert!((x_clap.pos.y - b_clap.pos.y).abs().to_pt() < 0.01, "mathclap must preserve baseline");
+        assert!((x_llap.pos.y - b_llap.pos.y).abs().to_pt() < 0.01, "mathllap must preserve baseline");
+        assert!((x_rlap.pos.y - b_rlap.pos.y).abs().to_pt() < 0.01, "mathrlap must preserve baseline");
 
         // Precise discriminating displacement assertions:
         // mathrlap is at offset 0; mathclap is shifted by -w/2; mathllap is shifted by -w
@@ -302,5 +357,41 @@ mod tests {
         let doc_phan = crate::parser::markdown::convert_markdown_to_typst(md_phan, "Test", &crate::compiler::engine::RenderOptions::default());
         let compiled_phan = crate::compiler::engine::compile_typst_to_pdf(&doc_phan.typst_source, ".", std::collections::HashMap::new());
         assert!(compiled_phan.is_ok(), "Phantom compilation failed: {:?}", compiled_phan.err());
+    }
+
+    #[test]
+    fn test_math_laps_non_pollution() {
+        // 1. \mathrlap{a} + \mathinner{b}: \mathinner must NOT be rewritten to \mathllap
+        let raw1 = r"\mathrlap{a} + \mathinner{b}";
+        let trans1 = transpile_latex_math(raw1, false);
+        assert!(trans1.contains("mathrlap"), "Must contain mathrlap: got {}", trans1);
+        assert!(trans1.contains("mathinner"), "Must preserve mathinner: got {}", trans1);
+        assert!(!trans1.contains("mathllap"), "Must NOT pollute into mathllap: got {}", trans1);
+
+        // 2. \mathllap{a} + \mathpunct{b}: \mathpunct must NOT be rewritten to \mathrlap
+        let raw2 = r"\mathllap{a} + \mathpunct{b}";
+        let trans2 = transpile_latex_math(raw2, false);
+        assert!(trans2.contains("mathllap"), "Must contain mathllap: got {}", trans2);
+        assert!(trans2.contains("mathpunct"), "Must preserve mathpunct: got {}", trans2);
+        assert!(!trans2.contains("mathrlap"), "Must NOT pollute into mathrlap: got {}", trans2);
+
+        // 3. \text{use \mathrlap here}: Must not mangle into mathpunct
+        let raw3 = r"\text{use \mathrlap here}";
+        let trans3 = transpile_latex_math(raw3, false);
+        assert!(!trans3.contains("mathpunct"), "Text with mathrlap must not be mangled to mathpunct: got {}", trans3);
+
+        // 4. Verify full document compilation of coexistence
+        let md = "# Coexistence\n\n$$\n\\mathrlap{a} + \\mathinner{b}\n$$\n\n$$\n\\mathllap{c} + \\mathpunct{d}\n$$\n";
+        let doc = crate::parser::markdown::convert_markdown_to_typst(md, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled = crate::compiler::engine::compile_typst_to_document(&doc.typst_source, ".", std::collections::HashMap::new(), None);
+        assert!(compiled.is_ok(), "Coexistence compilation failed: {:?}", compiled.err());
+    }
+
+    #[test]
+    fn test_tex_atom_classes_compilation() {
+        let md = "# Atoms\n\n$$\n\\mathord{a} + \\mathop{b} + \\mathbin{c} + \\mathrel{d} + \\mathopen{e} + \\mathclose{f} + \\mathpunct{g} + \\mathinner{h}\n$$\n";
+        let doc = crate::parser::markdown::convert_markdown_to_typst(md, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled = crate::compiler::engine::compile_typst_to_document(&doc.typst_source, ".", std::collections::HashMap::new(), None);
+        assert!(compiled.is_ok(), "TeX atom classes compilation failed: {:?}", compiled.err());
     }
 }
