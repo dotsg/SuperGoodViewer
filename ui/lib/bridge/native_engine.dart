@@ -47,6 +47,29 @@ typedef SogoodCompileMarkdownDart = Pointer<CSogoodBuffer> Function(
 typedef SogoodDetectFontsC = Pointer<CSogoodBuffer> Function();
 typedef SogoodDetectFontsDart = Pointer<CSogoodBuffer> Function();
 
+typedef SogoodGetLastDegradedCountC = UintPtr Function();
+typedef SogoodGetLastDegradedCountDart = int Function();
+
+typedef SogoodGetLastDegradedEquationsJsonC = Pointer<Utf8> Function();
+typedef SogoodGetLastDegradedEquationsJsonDart = Pointer<Utf8> Function();
+
+/// Result from compiling markdown via the native engine.
+class NativeCompilationResult {
+  final Uint8List? pdfBytes;
+  final String? errorMessage;
+  final int degradedEquationCount;
+  final List<String> degradedEquations;
+
+  const NativeCompilationResult({
+    this.pdfBytes,
+    this.errorMessage,
+    this.degradedEquationCount = 0,
+    this.degradedEquations = const [],
+  });
+
+  bool get isSuccess => pdfBytes != null && pdfBytes!.isNotEmpty;
+}
+
 /// Singleton bridge communicating with the Rust `sogood_core` library.
 class NativeEngine {
   static final NativeEngine instance = NativeEngine._();
@@ -58,6 +81,8 @@ class NativeEngine {
   late final SogoodFreeBufferDart _freeBuffer;
   late final SogoodCompileMarkdownDart _compileMarkdown;
   late final SogoodDetectFontsDart _detectFonts;
+  SogoodGetLastDegradedCountDart? _getLastDegradedCount;
+  SogoodGetLastDegradedEquationsJsonDart? _getLastDegradedEquationsJson;
 
   bool _initialized = false;
   String? _initError;
@@ -114,6 +139,20 @@ class NativeEngine {
         SogoodDetectFontsC,
         SogoodDetectFontsDart
       >('sogood_detect_fonts');
+
+      try {
+        _getLastDegradedCount = lib.lookupFunction<
+          SogoodGetLastDegradedCountC,
+          SogoodGetLastDegradedCountDart
+        >('sogood_get_last_degraded_count');
+      } catch (_) {}
+
+      try {
+        _getLastDegradedEquationsJson = lib.lookupFunction<
+          SogoodGetLastDegradedEquationsJsonC,
+          SogoodGetLastDegradedEquationsJsonDart
+        >('sogood_get_last_degraded_equations_json');
+      } catch (_) {}
 
       _initialized = true;
     } catch (e) {
@@ -191,6 +230,29 @@ class NativeEngine {
     return msg;
   }
 
+  int getLastDegradedCount() {
+    if (!isAvailable || _getLastDegradedCount == null) return 0;
+    return _getLastDegradedCount!();
+  }
+
+  List<String> getLastDegradedEquations() {
+    if (!isAvailable || _getLastDegradedEquationsJson == null) return const [];
+    final ptr = _getLastDegradedEquationsJson!();
+    if (ptr.address == 0) return const [];
+    try {
+      final jsonStr = ptr.toDartString();
+      final decoded = jsonDecode(jsonStr);
+      if (decoded is List) {
+        return List<String>.from(decoded.map((e) => e.toString()));
+      }
+      return const [];
+    } catch (_) {
+      return const [];
+    } finally {
+      _freeString(ptr);
+    }
+  }
+
   Uint8List? compileMarkdown(
     String markdown, {
     String title = 'Document',
@@ -237,6 +299,63 @@ class NativeEngine {
     }
   }
 
+  /// Compiles markdown and collects degradation and error information synchronously.
+  NativeCompilationResult compileMarkdownResult(
+    String markdown, {
+    String title = 'Document',
+    String docDir = '.',
+    RenderOptions options = const RenderOptions(),
+  }) {
+    if (!isAvailable) {
+      return NativeCompilationResult(
+        errorMessage: _initError ?? 'Native library not loaded',
+      );
+    }
+
+    final bytes = compileMarkdown(
+      markdown,
+      title: title,
+      docDir: docDir,
+      options: options,
+    );
+
+    final error = bytes == null ? getLastError() : null;
+    final degradedCount = getLastDegradedCount();
+    final degradedEquations =
+        degradedCount > 0 ? getLastDegradedEquations() : const <String>[];
+
+    return NativeCompilationResult(
+      pdfBytes: bytes,
+      errorMessage: error,
+      degradedEquationCount: degradedCount,
+      degradedEquations: degradedEquations,
+    );
+  }
+
+  /// Compiles markdown in a background Dart isolate, returning full result metadata
+  /// (including degraded equation stats and errors) safely across the isolate boundary.
+  Future<NativeCompilationResult> compileMarkdownResultAsync(
+    String markdown, {
+    String title = 'Document',
+    String docDir = '.',
+    RenderOptions options = const RenderOptions(),
+  }) async {
+    if (!isAvailable) {
+      return NativeCompilationResult(
+        errorMessage: _initError ?? 'Native library not loaded',
+      );
+    }
+
+    return await Isolate.run(() {
+      return NativeEngine.instance.compileMarkdownResult(
+        markdown,
+        title: title,
+        docDir: docDir,
+        options: options,
+      );
+    });
+  }
+
   /// Compiles markdown in a background Dart isolate so the UI thread never drops frames.
   Future<Uint8List?> compileMarkdownAsync(
     String markdown, {
@@ -244,16 +363,13 @@ class NativeEngine {
     String docDir = '.',
     RenderOptions options = const RenderOptions(),
   }) async {
-    if (!isAvailable) return null;
-
-    return await Isolate.run(() {
-      return NativeEngine.instance.compileMarkdown(
-        markdown,
-        title: title,
-        docDir: docDir,
-        options: options,
-      );
-    });
+    final result = await compileMarkdownResultAsync(
+      markdown,
+      title: title,
+      docDir: docDir,
+      options: options,
+    );
+    return result.pdfBytes;
   }
 
   /// Queries the system and embedded font store for available fonts,

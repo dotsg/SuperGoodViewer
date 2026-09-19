@@ -138,7 +138,9 @@ class RemoteImageService {
           final localAppData = Platform.environment['LOCALAPPDATA'] ?? home;
           basePath = p.join(localAppData, 'SuperGoodViewer', 'Cache', 'remote_images');
         } else {
-          basePath = p.join(home, '.cache', 'sogoodviewer', 'remote_images');
+          final primary = p.join(home, '.cache', 'supergoodviewer', 'remote_images');
+          final legacy = p.join(home, '.cache', 'sogoodviewer', 'remote_images');
+          basePath = Directory(legacy).existsSync() && !Directory(primary).existsSync() ? legacy : primary;
         }
         final dir = Directory(basePath);
         if (!dir.existsSync()) {

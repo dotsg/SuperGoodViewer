@@ -32,34 +32,325 @@ if [ "$IS_DARWIN" = true ]; then
     fi
   fi
 else
-  # Linux: find sogoodviewer binary
-  if [ -x "$SCRIPT_DIR/sogoodviewer" ]; then
+  # Linux: recover interrupted updates if a journal exists in candidate directories
+  for candidate in "$SCRIPT_DIR" "$SCRIPT_DIR/.." "/opt/supergoodviewer"; do
+    [ -d "$candidate" ] || continue
+    candidate="$(cd "$candidate" 2>/dev/null && pwd)" || continue
+    if [ -f "$candidate/.sgv_journal" ]; then
+      JOURNAL_PID=""
+      BACKUP_DIR=""
+      INSTALLED_LIST=""
+      IS_COMMITTED=0
+      while IFS='=' read -r key val || [ -n "$key" ]; do
+        case "$key" in
+          PID)
+            case "$val" in
+              *[!0-9]* | "" | 0* | 1) ;;
+              [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*) ;;
+              *) JOURNAL_PID="$val" ;;
+            esac
+            ;;
+          BACKUP_DIR) BACKUP_DIR="$val" ;;
+          INSTALLED_LIST) INSTALLED_LIST="$val" ;;
+          STATUS)
+            [ "$val" = "COMMITTED" ] && IS_COMMITTED=1
+            ;;
+          COMMITTED)
+            [ "$val" = "1" ] && IS_COMMITTED=1
+            ;;
+          /*)
+            if [ -z "$BACKUP_DIR" ] && [ -z "$val" ]; then
+              BACKUP_DIR="$key"
+            fi
+            ;;
+        esac
+      done < "$candidate/.sgv_journal"
+
+      # Validate that BACKUP_DIR and INSTALLED_LIST are legitimate entries inside $candidate
+      CANDIDATE_REAL="$(cd "$candidate" 2>/dev/null && pwd -P)"
+      case "$BACKUP_DIR" in
+        /*)
+          b_name="${BACKUP_DIR##*/}"
+          b_parent="${BACKUP_DIR%/*}"
+          [ -z "$b_parent" ] && b_parent="/"
+          b_parent_real="$(cd "$b_parent" 2>/dev/null && pwd -P)" || b_parent_real=""
+          case "$b_name" in
+            .sgv_backup.*[!0-9]* | .sgv_backup.) BACKUP_DIR="" ;;
+            .sgv_backup.[0-9]*) ;;
+            *) BACKUP_DIR="" ;;
+          esac
+          if [ -n "$BACKUP_DIR" ]; then
+            if [ "$b_parent_real" != "$CANDIDATE_REAL" ] || [ -L "$BACKUP_DIR" ]; then
+              BACKUP_DIR=""
+            elif [ -d "$BACKUP_DIR" ]; then
+              b_real="$(cd "$BACKUP_DIR" 2>/dev/null && pwd -P)" || b_real=""
+              if [ "$b_real" != "$CANDIDATE_REAL/$b_name" ]; then
+                BACKUP_DIR=""
+              fi
+            fi
+          fi
+          ;;
+        *)
+          BACKUP_DIR=""
+          ;;
+      esac
+
+      case "$INSTALLED_LIST" in
+        /*)
+          i_name="${INSTALLED_LIST##*/}"
+          i_parent="${INSTALLED_LIST%/*}"
+          [ -z "$i_parent" ] && i_parent="/"
+          i_parent_real="$(cd "$i_parent" 2>/dev/null && pwd -P)" || i_parent_real=""
+          case "$i_name" in
+            .sgv_installed.*[!0-9]* | .sgv_installed.) INSTALLED_LIST="" ;;
+            .sgv_installed.[0-9]*) ;;
+            *) INSTALLED_LIST="" ;;
+          esac
+          if [ -n "$INSTALLED_LIST" ]; then
+            if [ "$i_parent_real" != "$CANDIDATE_REAL" ] || [ -L "$INSTALLED_LIST" ]; then
+              INSTALLED_LIST=""
+            elif [ -e "$INSTALLED_LIST" ] && [ ! -f "$INSTALLED_LIST" ]; then
+              INSTALLED_LIST=""
+            fi
+          fi
+          ;;
+        *)
+          INSTALLED_LIST=""
+          ;;
+      esac
+
+      if [ -z "$JOURNAL_PID" ] && [ -n "$BACKUP_DIR" ]; then
+        b_ext="${BACKUP_DIR##*.}"
+        case "$b_ext" in
+          *[!0-9]* | "" | 0* | 1) ;;
+          [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*) ;;
+          *) JOURNAL_PID="$b_ext" ;;
+        esac
+      fi
+      if [ -z "$INSTALLED_LIST" ] && [ -n "$JOURNAL_PID" ] && [ -f "$candidate/.sgv_installed.$JOURNAL_PID" ] && [ ! -L "$candidate/.sgv_installed.$JOURNAL_PID" ]; then
+        INSTALLED_LIST="$candidate/.sgv_installed.$JOURNAL_PID"
+      fi
+
+      # If the updater process is actively running, do not interfere with the update
+      IS_ALIVE=0
+      if [ -n "$JOURNAL_PID" ] && [ "$JOURNAL_PID" -gt 1 ] 2>/dev/null; then
+        if kill -0 "$JOURNAL_PID" 2>/dev/null; then
+          if [ -d "/proc/$JOURNAL_PID" ] && [ -f "/proc/$JOURNAL_PID/cmdline" ]; then
+            if { grep -q -a -F "$candidate" "/proc/$JOURNAL_PID/cmdline" 2>/dev/null || \
+                 grep -q -a -F "$CANDIDATE_REAL" "/proc/$JOURNAL_PID/cmdline" 2>/dev/null; } && \
+               grep -q -a -E "supergoodviewer|sogoodviewer" "/proc/$JOURNAL_PID/cmdline" 2>/dev/null; then
+              IS_ALIVE=1
+            fi
+          else
+            IS_ALIVE=1
+          fi
+        fi
+      fi
+
+      if [ $IS_ALIVE -eq 1 ]; then
+        continue
+      fi
+
+      if [ $IS_COMMITTED -eq 1 ]; then
+        # Transaction committed: the app payload is complete and verified.
+        # Clean up residual backup directory and temporary lists without rolling back.
+        if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
+          rm -rf "$BACKUP_DIR" 2>/dev/null || true
+        fi
+        [ -n "$INSTALLED_LIST" ] && rm -f "$INSTALLED_LIST" 2>/dev/null || true
+        rm -f "$candidate/.sgv_journal" 2>/dev/null || true
+        continue
+      fi
+
+      if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
+        if [ -n "$INSTALLED_LIST" ] && [ -f "$INSTALLED_LIST" ] && [ -n "$CANDIDATE_REAL" ]; then
+          INSTALLED_TMP="$INSTALLED_LIST.tmp.$$"
+          : > "$INSTALLED_TMP"
+          while IFS= read -r n || [ -n "$n" ]; do
+            case "$n" in
+              "" | /* | . | .. | ./* | ../* | */. | */.. | */./* | */../* ) continue ;;
+            esac
+            target="$candidate/$n"
+            parent="${target%/*}"
+            [ -z "$parent" ] && parent="$candidate"
+            parent_real="$(cd "$parent" 2>/dev/null && pwd -P)" || continue
+            case "$parent_real" in
+              "$CANDIDATE_REAL" | "$CANDIDATE_REAL"/*) ;;
+              *) continue ;;
+            esac
+            if [ -L "$target" ]; then
+              rm -f "$target" 2>/dev/null || true
+            elif [ -d "$target" ]; then
+              rm -rf "$target" 2>/dev/null || true
+              if [ -d "$target" ] && [ ! -L "$target" ]; then
+                chmod -R u+rwx "$target" 2>/dev/null || true
+                rm -rf "$target" 2>/dev/null || true
+              fi
+            elif [ -e "$target" ]; then
+              rm -f "$target" 2>/dev/null || true
+            fi
+            if [ -e "$target" ] || [ -L "$target" ]; then
+              echo "$n" >> "$INSTALLED_TMP"
+            fi
+          done < "$INSTALLED_LIST"
+          mv -f "$INSTALLED_TMP" "$INSTALLED_LIST" 2>/dev/null || true
+        fi
+
+        RECOVERY_FAILED=0
+        for p in "$BACKUP_DIR"/* "$BACKUP_DIR"/.*; do
+          n="${p##*/}"
+          if [ "$n" = "." ] || [ "$n" = ".." ] || [ "$n" = "*" ] || { [ ! -e "$p" ] && [ ! -L "$p" ]; }; then
+            continue
+          fi
+          if [ -L "$candidate/$n" ]; then
+            rm -f "$candidate/$n" 2>/dev/null || true
+          elif [ -d "$candidate/$n" ]; then
+            rm -rf "$candidate/$n" 2>/dev/null || true
+            if [ -d "$candidate/$n" ] && [ ! -L "$candidate/$n" ]; then
+              chmod -R u+rwx "$candidate/$n" 2>/dev/null || true
+              rm -rf "$candidate/$n" 2>/dev/null || true
+            fi
+          elif [ -e "$candidate/$n" ]; then
+            rm -f "$candidate/$n" 2>/dev/null || true
+          fi
+          if [ -e "$candidate/$n" ] || [ -L "$candidate/$n" ]; then
+            RECOVERY_FAILED=1
+            continue
+          fi
+          if mv "$p" "$candidate/$n" 2>/dev/null; then
+            if [ -n "$INSTALLED_LIST" ] && [ -f "$INSTALLED_LIST" ]; then
+              if grep -q -F -x "$n" "$INSTALLED_LIST" 2>/dev/null; then
+                grep -v -F -x "$n" "$INSTALLED_LIST" > "$INSTALLED_LIST.tmp.$$" 2>/dev/null && \
+                  mv -f "$INSTALLED_LIST.tmp.$$" "$INSTALLED_LIST" 2>/dev/null || \
+                  rm -f "$INSTALLED_LIST.tmp.$$" 2>/dev/null
+              fi
+            fi
+          else
+            RECOVERY_FAILED=1
+          fi
+        done
+
+        if [ $RECOVERY_FAILED -eq 0 ]; then
+          rm -rf "$BACKUP_DIR" "$candidate/.sgv_journal" 2>/dev/null || true
+          [ -n "$INSTALLED_LIST" ] && rm -f "$INSTALLED_LIST" 2>/dev/null || true
+        fi
+      else
+        # Dangling journal: backup directory does not exist and updater is dead
+        rm -f "$candidate/.sgv_journal" 2>/dev/null || true
+        [ -n "$INSTALLED_LIST" ] && rm -f "$INSTALLED_LIST" 2>/dev/null || true
+      fi
+    fi
+  done
+
+  # Linux: find binary (prefer adjacent bundle binaries first, then global system PATH)
+  if [ -x "$SCRIPT_DIR/supergoodviewer" ]; then
+    APP_BIN="$SCRIPT_DIR/supergoodviewer"
+  elif [ -x "$SCRIPT_DIR/../supergoodviewer" ]; then
+    APP_BIN="$(cd "$SCRIPT_DIR/.." && pwd)/supergoodviewer"
+  elif [ -x "$SCRIPT_DIR/sogoodviewer" ]; then
     APP_BIN="$SCRIPT_DIR/sogoodviewer"
   elif [ -x "$SCRIPT_DIR/../sogoodviewer" ]; then
     APP_BIN="$(cd "$SCRIPT_DIR/.." && pwd)/sogoodviewer"
+  elif command -v supergoodviewer >/dev/null 2>&1; then
+    APP_BIN="$(command -v supergoodviewer)"
+  elif [ -x "/opt/supergoodviewer/supergoodviewer" ]; then
+    APP_BIN="/opt/supergoodviewer/supergoodviewer"
   elif command -v sogoodviewer >/dev/null 2>&1; then
     APP_BIN="$(command -v sogoodviewer)"
   elif [ -x "/opt/supergoodviewer/sogoodviewer" ]; then
     APP_BIN="/opt/supergoodviewer/sogoodviewer"
   else
-    APP_BIN="sogoodviewer"
+    APP_BIN="supergoodviewer"
   fi
 fi
 
-# 3. Handle help and flags
+# 3. Locate headless export CLI binary
+CLI_BIN=""
+if [ -x "$SCRIPT_DIR/sgv-cli" ]; then
+  CLI_BIN="$SCRIPT_DIR/sgv-cli"
+elif [ -x "$SCRIPT_DIR/../bin/sgv-cli" ]; then
+  CLI_BIN="$SCRIPT_DIR/../bin/sgv-cli"
+elif [ -x "$APP_DIR/Contents/Resources/bin/sgv-cli" ]; then
+  CLI_BIN="$APP_DIR/Contents/Resources/bin/sgv-cli"
+elif [ -x "$APP_DIR/Contents/MacOS/sgv-cli" ]; then
+  CLI_BIN="$APP_DIR/Contents/MacOS/sgv-cli"
+elif [ -n "$APP_BIN" ] && [ -x "$(dirname "$APP_BIN")/bin/sgv-cli" ]; then
+  CLI_BIN="$(dirname "$APP_BIN")/bin/sgv-cli"
+elif [ -n "$APP_BIN" ] && [ -x "$(dirname "$APP_BIN")/sgv-cli" ]; then
+  CLI_BIN="$(dirname "$APP_BIN")/sgv-cli"
+elif [ -x "$SCRIPT_DIR/../../core/target/release/sgv-cli" ]; then
+  CLI_BIN="$SCRIPT_DIR/../../core/target/release/sgv-cli"
+elif [ -x "$SCRIPT_DIR/../../core/target/debug/sgv-cli" ]; then
+  CLI_BIN="$SCRIPT_DIR/../../core/target/debug/sgv-cli"
+elif command -v sgv-cli >/dev/null 2>&1; then
+  CLI_BIN="$(command -v sgv-cli)"
+fi
+
+# 4. Check for export mode or flags
+IS_EXPORT=false
+if [ "$1" = "export" ]; then
+  IS_EXPORT=true
+else
+  for arg in "$@"; do
+    case "$arg" in
+      -o | --output | --export | -f | --format | --page-format | --fluid | -t | --theme | --dark | -s | --font-size | --title | -r | --recursive | --no-recursive | --image-cache-dir)
+        IS_EXPORT=true
+        break
+        ;;
+    esac
+  done
+fi
+
+if [ "$IS_EXPORT" = true ]; then
+  if [ -n "$CLI_BIN" ] && [ -x "$CLI_BIN" ]; then
+    exec "$CLI_BIN" "$@"
+  else
+    echo "sgv: error: headless export tool 'sgv-cli' not found" >&2
+    exit 1
+  fi
+fi
+
+# 5. Handle help and flags
 if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-  echo "SuperGoodViewer (超好读) CLI Launcher"
+  echo "SuperGoodViewer (超好读) CLI Launcher & Tool"
   echo ""
   echo "Usage:"
-  echo "  sgv [file.md ...]      Open markdown file(s) in SuperGoodViewer"
-  echo "  sgv                    Launch or focus SuperGoodViewer"
-  echo "  sgv -h, --help         Show this help message"
+  echo "  sgv [file.md ...]               Open markdown file(s) in SuperGoodViewer GUI"
+  echo "  sgv export <path>... [options]  Export markdown file(s) or directory to PDF"
+  echo "  sgv <file.md> -o <output.pdf>   Export single markdown file to PDF"
+  echo "  sgv                             Launch or focus SuperGoodViewer GUI"
+  echo "  sgv -h, --help                  Show this help message"
+  echo ""
+  echo "Export Options:"
+  echo "  -o, --output <path>             Output PDF path or destination directory"
+  echo "  -f, --format <format>           Page layout format: a4, a4-landscape, fluid, slide, slide-4-3"
+  echo "      --fluid                     Shorthand for --format fluid"
+  echo "  -t, --theme <theme>             Theme: light, dark (default: light)"
+  echo "      --dark                      Shorthand for --theme dark"
+  echo "  -s, --font-size <pt>            Font size in points (default: 10.5)"
+  echo "  -r, --recursive                 Recursively scan subdirectories (default: enabled)"
+  echo "      --no-recursive              Do not scan subdirectories"
+  echo ""
+  echo "Examples:"
+  echo "  sgv README.md                             # View in GUI"
+  echo "  sgv export README.md                      # Export to README.pdf"
+  echo "  sgv export ./docs -o ./dist               # Batch export ./docs to ./dist"
+  echo "  cat draft.md | sgv export - -o draft.pdf  # Export from stdin"
   exit 0
+fi
+
+if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
+  if [ -n "$CLI_BIN" ] && [ -x "$CLI_BIN" ]; then
+    exec "$CLI_BIN" --version
+  else
+    echo "SuperGoodViewer CLI Launcher"
+    exit 0
+  fi
 fi
 
 SOCK_FILE="/tmp/sgv_${USER:-user}.sock"
 
-# 4. Open application or files
+# 6. Open application or files
 if [ $# -eq 0 ]; then
   if [ "$IS_DARWIN" = true ]; then
     open -a "$APP_DIR"

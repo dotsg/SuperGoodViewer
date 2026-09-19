@@ -88,7 +88,7 @@ A4 出版打印视图 (Paged)：精确的标准 A4 页面排版、动态页眉�
 
 前往 GitHub Releases 页面，即可直接下载预编译安装包：👉下载地址：
 
-🍏 macOS 用户：下载 SuperGoodViewer-v1.0.1-macos.dmg
+🍏 macOS 用户：下载 `SuperGoodViewer-v1.0.1-macos.dmg` (Universal 通用安装包，原生支持 M 系列与 Intel 芯片 Mac)
 
 🪟 Windows 用户：下载 SuperGoodViewer-v1.0.1-windows-x64.zip
 

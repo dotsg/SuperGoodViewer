@@ -10,6 +10,7 @@ import '../services/native_cli_service.dart';
 import '../services/shortcut_service.dart';
 import '../services/update_service.dart';
 import '../services/preferences_service.dart';
+import 'cli_feedback.dart';
 import 'update_dialog.dart';
 
 /// Available tabs within the unified SettingsDialog.
@@ -38,7 +39,7 @@ void showSettingsDialog(
 }
 
 class SettingsDialog extends StatefulWidget {
-  static const String appVersion = '1.0.7';
+  static const String appVersion = '1.0.8';
 
   final ReaderController controller;
   final SettingsTab initialTab;
@@ -308,25 +309,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final res = await NativeCliService.install();
     if (mounted) {
       setState(() => _isOperatingCli = false);
-      if (res.isSuccess) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(widget.controller.strings.cliInstallSuccess),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: const Color(0xFF10B981),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      } else if (!res.isCancelled) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(widget.controller.strings.cliInstallFailed(res.message ?? '')),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Colors.redAccent,
-            duration: const Duration(seconds: 4),
-          ),
-        );
-      }
+      showCliOperationFeedback(
+        context,
+        result: res,
+        strings: widget.controller.strings,
+        isInstall: true,
+      );
       _loadCliStatus();
     }
   }
@@ -336,24 +324,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final res = await NativeCliService.uninstall();
     if (mounted) {
       setState(() => _isOperatingCli = false);
-      if (res.isSuccess) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(widget.controller.strings.cliUninstallSuccess),
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      } else if (!res.isCancelled) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(widget.controller.strings.cliUninstallFailed(res.message ?? '')),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Colors.redAccent,
-            duration: const Duration(seconds: 4),
-          ),
-        );
-      }
+      showCliOperationFeedback(
+        context,
+        result: res,
+        strings: widget.controller.strings,
+        isInstall: false,
+      );
       _loadCliStatus();
     }
   }
@@ -1153,6 +1129,84 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       setState(() {});
                     }
                   },
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+
+        // 2. Sidebar Placement Selector
+        _buildSectionHeader('${strings.sidebarPositionSection} (Sidebar Placement)'),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF9F9F9),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Transform.flip(
+                    flipX: controller.isSidebarOnRight,
+                    child: Icon(Icons.view_sidebar_outlined, size: 22, color: theme.colorScheme.primary),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          strings.sidebarPosition,
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          strings.sidebarPositionDesc,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<String>(
+                  segments: [
+                    ButtonSegment<String>(
+                      value: 'left',
+                      icon: const Icon(Icons.view_sidebar_outlined, size: 15),
+                      label: Text(strings.sidebarPositionLeft, style: const TextStyle(fontSize: 12)),
+                    ),
+                    ButtonSegment<String>(
+                      value: 'right',
+                      icon: Transform.flip(
+                        flipX: true,
+                        child: const Icon(Icons.view_sidebar_outlined, size: 15),
+                      ),
+                      label: Text(strings.sidebarPositionRight, style: const TextStyle(fontSize: 12)),
+                    ),
+                  ],
+                  selected: {controller.sidebarPosition},
+                  onSelectionChanged: (newSelection) {
+                    controller.setSidebarPosition(newSelection.first);
+                    setState(() {});
+                  },
+                  style: const ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
                 ),
               ),
             ],
@@ -2459,6 +2513,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     }
 
     final isInstalled = _cliStatus.isInstalled;
+    final isPartial = _cliStatus.isPartial;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2488,7 +2543,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      isInstalled ? s.cliStatusReady : s.cliStatusNotInstalled,
+                      isInstalled
+                          ? s.cliStatusReady
+                          : (isPartial
+                              ? (_cliStatus.localizedWarning(s) ?? s.cliStatusPartialTools)
+                              : s.cliStatusNotInstalled),
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 13.5,
@@ -2501,7 +2560,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     Text(
                       isInstalled
                           ? (Platform.isWindows ? 'PATH: ${_cliStatus.path}' : s.cliSymlinkPath(_cliStatus.path))
-                          : '安装后可直接在终端中输入 sgv README.md 极速预览任何文档',
+                          : s.cliHintQuickPreview,
                       style: TextStyle(
                         fontSize: 11.5,
                         color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
@@ -2525,7 +2584,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                   child: Text(s.cliUninstall, style: const TextStyle(fontSize: 12)),
                 )
-              else
+              else ...[
                 ElevatedButton(
                   onPressed: _handleInstallCli,
                   style: ElevatedButton.styleFrom(
@@ -2533,8 +2592,20 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     foregroundColor: Colors.white,
                     visualDensity: VisualDensity.compact,
                   ),
-                  child: Text(s.cliInstall, style: const TextStyle(fontSize: 12)),
+                  child: Text(isPartial ? s.cliReinstallRepair : s.cliInstall, style: const TextStyle(fontSize: 12)),
                 ),
+                if (isPartial) ...[
+                  const SizedBox(width: 8),
+                  OutlinedButton(
+                    onPressed: _handleUninstallCli,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.redAccent,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    child: Text(s.cliCleanUninstall, style: const TextStyle(fontSize: 12)),
+                  ),
+                ],
+              ],
             ],
           ),
         ),
@@ -2547,7 +2618,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         const SizedBox(height: 8),
         _buildCliCodeSnippet(s.cliExampleAnyFile, 'sgv --a4 report.md', isDark),
         const SizedBox(height: 8),
-        _buildCliCodeSnippet('通过管道即时预览 stdin', 'cat note.md | sgv', isDark),
+        _buildCliCodeSnippet(s.cliExampleStdin, 'cat note.md | sgv', isDark),
       ],
     );
   }

@@ -56,6 +56,8 @@ class ZhHansStrings implements AppStrings {
   @override
   String openFileFailed(String err) => '打开文件失败: $err';
   @override
+  String degradedEquationsWarning(int count) => '$count 个公式渲染异常，已自动降级展示原始 LaTeX';
+  @override
   String get copiedSelectedText => '已复制所选文本';
   @override
   String toggleSidebarTooltip(String shortcut) => '切换侧边栏 ($shortcut)';
@@ -187,6 +189,22 @@ class ZhHansStrings implements AppStrings {
   String recentFilesCount(int count) => count > 0 ? '历史文件 ($count)' : '历史文件';
   @override
   String pageNumberBadge(int page) => 'P$page';
+  @override
+  String get sidebarPositionSection => '侧边栏布局';
+  @override
+  String get sidebarPosition => '侧边栏显示位置';
+  @override
+  String get sidebarPositionDesc => '控制大纲目录与最近文件侧边栏停靠在窗口左侧或右侧';
+  @override
+  String get sidebarPositionLeft => '靠左显示 (默认)';
+  @override
+  String get sidebarPositionRight => '靠右显示';
+  @override
+  String get moveSidebarToLeft => '移至左侧';
+  @override
+  String get moveSidebarToRight => '移至右侧';
+  @override
+  String get resetSidebarWidthTooltip => '双击恢复默认宽度';
 
   // --- Search Bar & Jump Dialog ---
   @override
@@ -505,9 +523,15 @@ class ZhHansStrings implements AppStrings {
   @override
   String get cliDescWin => '在终端 (CMD / PowerShell) 中随时通过 sgv 命令打开 Markdown 或 PDF';
   @override
+  String get cliDescLinux => '在 Linux 终端中随时通过 sgv 命令打开 Markdown 或 PDF';
+  @override
   String get cliStatusReady => '已就绪 (已安装在系统 PATH)';
   @override
   String get cliStatusNotInstalled => '尚未安装到系统终端';
+  @override
+  String get cliStatusPartialPath => '安装不完整 (未添加到系统 PATH)';
+  @override
+  String get cliStatusPartialTools => '安装不完整 (部分工具未就绪)';
   @override
   String cliSymlinkPath(String path) => '软链接路径: $path';
   @override
@@ -515,7 +539,11 @@ class ZhHansStrings implements AppStrings {
   @override
   String get cliRelink => '重新链接 / 修复';
   @override
+  String get cliReinstallRepair => '重新安装 / 修复';
+  @override
   String get cliUninstall => '卸载';
+  @override
+  String get cliCleanUninstall => '卸载清理';
   @override
   String get cliInstallSuccess => '🎉 \'sgv\' 命令行工具已成功安装！可在终端直接使用。';
   @override
@@ -523,9 +551,45 @@ class ZhHansStrings implements AppStrings {
   @override
   String get cliAuthCancelled => '已取消授权操作';
   @override
-  String cliInstallFailed(String msg) => '安装失败: $msg';
+  String cliInstallFailed(String msg) => msg.isEmpty ? '安装失败' : '安装失败: $msg';
   @override
-  String cliUninstallFailed(String msg) => '卸载失败: $msg';
+  String cliUninstallFailed(String msg) => msg.isEmpty ? '卸载失败' : '卸载失败: $msg';
+  @override
+  String get cliMsgNotInstalled => '未安装';
+  @override
+  String get cliErrorAppDataDirFailed => '无法定位本地应用数据目录';
+  @override
+  String get cliErrorAppPathFailed => '无法获取当前程序路径';
+  @override
+  String get cliErrorWriteCmdFailed => '写入 sgv.cmd 脚本失败';
+  @override
+  String get cliErrorLocateLauncherFailed => '未能定位 sgv 启动脚本';
+  @override
+  String get cliErrorSymlinkFailed => '创建符号链接失败';
+  @override
+  String get cliErrorAuthScriptInitFailed => '无法初始化系统授权脚本';
+  @override
+  String get cliErrorPlatformNotSupported => '当前平台暂不支持';
+  @override
+  String get cliErrorUnknown => '未知错误';
+  @override
+  String get cliWarningPathFailed => '未能将安装目录添加到环境变量 PATH（注册表受限），命令行可能无法直接调用';
+  @override
+  String get cliWarningPs1UpdateFailed => 'sgv.ps1 未能更新（可能被占用），PowerShell 下可能仍指向旧版本';
+  @override
+  String get cliWarningPs1CreateFailed => '未能创建 sgv.ps1 脚本';
+  @override
+  String get cliWarningCliToolFailed => '未能创建 sgv-cli 快捷方式';
+  @override
+  String cliWarningCombined(List<String> warnings) {
+    if (warnings.isEmpty) return '';
+    final buffer = StringBuffer('脚本已生成，但')..write(warnings[0]);
+    for (var i = 1; i < warnings.length; i++) {
+      buffer.write('；且 ');
+      buffer.write(warnings[i]);
+    }
+    return buffer.toString();
+  }
   @override
   String get cliUsageExamples => '使用示例';
   @override
@@ -535,9 +599,21 @@ class ZhHansStrings implements AppStrings {
   @override
   String get cliExampleLaunch => '快速激活或启动超好读';
   @override
+  String get cliExampleStdin => '通过管道即时预览 stdin';
+  @override
+  String get cliExampleOpenMarkdown => '在阅读器中打开 Markdown 文档';
+  @override
+  String get cliExampleExportSingle => '无头导出单篇 Markdown 为出版级 PDF';
+  @override
+  String get cliExampleExportBatch => '批量将目录下全部 Markdown 导出为 PDF';
+  @override
+  String get cliHintQuickPreview => '安装后可直接在终端中输入 sgv README.md 极速预览任何文档';
+  @override
   String get cliTipMac => '提示：点击安装若系统需要权限，macOS 会自动弹出指纹或管理员密码授权窗口，无需您手动打开终端输入任何命令。';
   @override
   String get cliTipWin => '提示：安装后可在命令提示符、PowerShell 或 Windows Terminal 中直接运行 sgv 命令。';
+  @override
+  String get cliTipLinux => '提示：安装将在 ~/.local/bin 中创建 sgv 软链接，请确保该目录在 PATH 环境变量中。';
   @override
   String get copyCommandTooltip => '复制命令';
   @override

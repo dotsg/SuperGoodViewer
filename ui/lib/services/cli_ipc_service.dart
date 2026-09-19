@@ -1,12 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 
 /// Lightweight local IPC service enabling the `sgv` CLI command to instantly
 /// communicate target file paths to an already-running SuperGoodViewer instance.
 class CliIpcService {
   static ServerSocket? _server;
   static StreamSubscription<Socket>? _serverSub;
+
+  /// Whether the CLI IPC service is enabled.
+  /// Automatically defaults to `false` in test environments (`FLUTTER_TEST` is present).
+  @visibleForTesting
+  static bool isEnabled = !Platform.environment.containsKey('FLUTTER_TEST');
 
   static String get socketPath {
     final user = Platform.environment['USER'] ?? 'user';
@@ -15,6 +21,9 @@ class CliIpcService {
 
   /// Starts the Unix domain socket server and listens for incoming file path payloads.
   static Future<void> start(void Function(String filePath) onFileReceived) async {
+    if (!isEnabled) {
+      return;
+    }
     if (!Platform.isMacOS && !Platform.isLinux) {
       return;
     }

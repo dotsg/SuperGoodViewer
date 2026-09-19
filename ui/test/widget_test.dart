@@ -5,7 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sogoodviewer/controllers/reader_controller.dart';
 import 'package:sogoodviewer/models/render_options.dart';
+import 'package:sogoodviewer/models/update_info.dart';
+import 'package:sogoodviewer/services/cli_ipc_service.dart';
 import 'package:sogoodviewer/services/preferences_service.dart';
+import 'package:sogoodviewer/services/update_service.dart';
 import 'package:sogoodviewer/views/pdf_canvas_view.dart';
 import 'package:sogoodviewer/views/sidebar_view.dart';
 import 'package:sogoodviewer/views/workspace_view.dart';
@@ -14,7 +17,7 @@ void main() {
   late Directory tempTestDir;
 
   setUpAll(() {
-    tempTestDir = Directory.systemTemp.createTempSync('sogoodviewer_test_');
+    tempTestDir = Directory.systemTemp.createTempSync('supergoodviewer_test_');
     PreferencesService.setConfigFileForTesting(
       File(p.join(tempTestDir.path, 'preferences.json')),
     );
@@ -96,6 +99,13 @@ void main() {
       expect(controller.renderOptions.isDark, false);
     });
 
+    test('demo document contains font alignment tip', () {
+      final controller = ReaderController();
+      expect(controller.currentMarkdown, contains('Maple Mono'));
+      expect(controller.currentMarkdown, contains('关于排版对齐'));
+      expect(controller.currentMarkdown, contains('https://github.com/subframe7536/maple-font'));
+    });
+
     test('toggles mode and theme', () {
       final controller = ReaderController();
       controller.toggleMode();
@@ -140,6 +150,48 @@ void main() {
       expect(controller.autoReload, false);
       controller.setAutoReload(true);
       expect(controller.autoReload, true);
+    });
+
+    test('sidebar position toggle updates state and clamps values', () {
+      final controller = ReaderController();
+      expect(controller.sidebarPosition, 'left');
+      expect(controller.isSidebarOnRight, false);
+
+      controller.setSidebarPosition('right');
+      expect(controller.sidebarPosition, 'right');
+      expect(controller.isSidebarOnRight, true);
+
+      // Invalid value should be ignored
+      controller.setSidebarPosition('top');
+      expect(controller.sidebarPosition, 'right');
+
+      controller.setSidebarPosition('left');
+      expect(controller.sidebarPosition, 'left');
+      expect(controller.isSidebarOnRight, false);
+
+      controller.toggleSidebarPosition();
+      expect(controller.sidebarPosition, 'right');
+      expect(controller.isSidebarOnRight, true);
+
+      controller.toggleSidebarPosition();
+      expect(controller.sidebarPosition, 'left');
+      expect(controller.isSidebarOnRight, false);
+    });
+
+    test('sidebar width controls clamp and persist properly', () {
+      final controller = ReaderController();
+      expect(controller.sidebarWidth, ReaderController.defaultSidebarWidth);
+
+      controller.setSidebarWidth(350.0);
+      expect(controller.sidebarWidth, 350.0);
+
+      // Clamping minimum
+      controller.setSidebarWidth(100.0);
+      expect(controller.sidebarWidth, ReaderController.minSidebarWidth);
+
+      // Clamping maximum
+      controller.setSidebarWidth(900.0);
+      expect(controller.sidebarWidth, ReaderController.maxSidebarWidth);
     });
 
     test('openFile with non-existent path records error message', () async {
@@ -306,6 +358,95 @@ void main() {
       // Sidebar should be rendered initially because preference restored it as open
       expect(find.byType(SidebarView), findsOneWidget);
       expect(find.text('大纲目录'), findsOneWidget);
+    });
+
+    testWidgets('renders with sidebar open on the right when sidebarPosition is right', (tester) async {
+      final controller = ReaderController();
+      controller.setSidebarPosition('right');
+      controller.setSidebarOpen(true);
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WorkspaceView(controller: controller),
+        ),
+      );
+
+      expect(find.byType(SidebarView), findsOneWidget);
+      expect(find.text('大纲目录'), findsOneWidget);
+    });
+
+    testWidgets('sidebar quick swap button toggles sidebar position', (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      controller.setSidebarOpen(true);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WorkspaceView(controller: controller),
+        ),
+      );
+      await tester.pump();
+
+      expect(controller.sidebarPosition, 'left');
+
+      // Click swap button in sidebar header
+      final swapButton = find.byIcon(Icons.swap_horiz_rounded);
+      expect(swapButton, findsOneWidget);
+      await tester.tap(swapButton);
+      await tester.pump();
+
+      expect(controller.sidebarPosition, 'right');
+      expect(controller.isSidebarOnRight, true);
+
+      // Tap again to return to left
+      await tester.tap(swapButton);
+      await tester.pump();
+
+      expect(controller.sidebarPosition, 'left');
+      expect(controller.isSidebarOnRight, false);
+    });
+
+    testWidgets('sidebar resize handle resizes on drag and resets on double-tap', (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      controller.setSidebarOpen(true);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WorkspaceView(controller: controller),
+        ),
+      );
+      await tester.pump();
+
+      expect(controller.sidebarWidth, ReaderController.defaultSidebarWidth);
+
+      // Find the resize handle tooltip
+      final handle = find.byTooltip('双击恢复默认宽度');
+      expect(handle, findsOneWidget);
+
+      // Drag right by 50px
+      await tester.drag(handle, const Offset(50, 0));
+      await tester.pump();
+
+      expect(controller.sidebarWidth > ReaderController.defaultSidebarWidth, isTrue);
+
+      // Double tap handle to reset
+      await tester.tap(handle);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(handle);
+      await tester.pump(const Duration(milliseconds: 700));
+
+      expect(controller.sidebarWidth, ReaderController.defaultSidebarWidth);
     });
 
     testWidgets('mode and page zoom controls render and trigger actions', (tester) async {
@@ -755,6 +896,80 @@ void main() {
       expect(titleBarHidden, findsOneWidget);
       controllerScrolled.dispose();
     });
+
+    testWidgets('WorkspaceView defaults enableStartupUpdateCheck to false in test environment and does not trigger check', (tester) async {
+      expect(WorkspaceView.defaultEnableStartupUpdateCheck, isFalse);
+      expect(WorkspaceView.defaultEnableSystemIntegration, isFalse);
+      expect(CliIpcService.isEnabled, isFalse);
+
+      final mockUpdateService = _MockCheckUpdateService();
+      UpdateService.setInstanceForTesting(mockUpdateService);
+      addTearDown(() => UpdateService.setInstanceForTesting(null));
+
+      final controller = ReaderController(autoRestorePreferences: true);
+      addTearDown(controller.dispose);
+
+      final workspace = WorkspaceView(controller: controller);
+      expect(workspace.enableStartupUpdateCheck, isNull);
+      expect(workspace.enableSystemIntegration, isNull);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: workspace,
+        ),
+      );
+
+      // Advance fake clock past the 5-second window.
+      // Since enableStartupUpdateCheckForTesting is false, the timer was never scheduled.
+      await tester.pump(const Duration(seconds: 6));
+      expect(mockUpdateService.checkCalls, equals(0));
+    });
+
+    testWidgets('WorkspaceView honors explicit enableStartupUpdateCheck: true by scheduling check', (tester) async {
+      final mockUpdateService = _MockCheckUpdateService();
+      UpdateService.setInstanceForTesting(mockUpdateService);
+      addTearDown(() => UpdateService.setInstanceForTesting(null));
+
+      final controller = ReaderController(autoRestorePreferences: true);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WorkspaceView(
+            controller: controller,
+            enableStartupUpdateCheck: true,
+          ),
+        ),
+      );
+
+      // Before 5 seconds, checkUpdate has not been called yet
+      await tester.pump(const Duration(seconds: 3));
+      expect(mockUpdateService.checkCalls, equals(0));
+
+      // After passing the 5-second mark, the timer fires and executes checkUpdate
+      await tester.pump(const Duration(seconds: 3));
+      expect(mockUpdateService.checkCalls, equals(1));
+    });
   });
+}
+
+class _MockCheckUpdateService extends UpdateService {
+  int checkCalls = 0;
+
+  @override
+  Future<UpdateInfo> checkUpdate({
+    required String currentVersion,
+    bool isManual = false,
+  }) async {
+    checkCalls++;
+    return UpdateInfo(
+      currentVersion: currentVersion,
+      latestVersion: currentVersion,
+      title: '',
+      releaseNotes: '',
+      htmlUrl: '',
+      hasUpdate: false,
+    );
+  }
 }
 

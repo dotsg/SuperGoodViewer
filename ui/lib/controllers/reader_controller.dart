@@ -95,6 +95,8 @@ class ReaderController extends ChangeNotifier {
   int _compileGeneration = 0;
   bool _hasPendingCompile = false;
   String? _errorMessage;
+  int _degradedEquationCount = 0;
+  List<String> _degradedEquations = const [];
   double _lastScrollRatio = 0.0;
   double _lastScrollOffset = 0.0;
   int _lastPageNumber = 1;
@@ -121,6 +123,11 @@ class ReaderController extends ChangeNotifier {
 
   bool _isTwoPage = false;
   bool _isSidebarOpen = false;
+  String _sidebarPosition = 'left'; // 'left' or 'right'
+  static const double defaultSidebarWidth = 270.0;
+  static const double minSidebarWidth = 180.0;
+  static const double maxSidebarWidth = 600.0;
+  double _sidebarWidth = defaultSidebarWidth;
   bool _isPresentationMode = false;
   List<OutlineItem> _outlineItems = [];
   int _activeOutlineIndex = -1;
@@ -150,7 +157,11 @@ class ReaderController extends ChangeNotifier {
   Uint8List? get currentPdfBytes => _currentPdfBytes;
   RenderOptions get renderOptions => _renderOptions;
   bool get isCompiling => _isCompiling;
+  int get compileGeneration => _compileGeneration;
   String? get errorMessage => _errorMessage;
+  int get degradedEquationCount => _degradedEquationCount;
+  List<String> get degradedEquations => List.unmodifiable(_degradedEquations);
+  bool get hasDegradedEquations => _degradedEquationCount > 0;
   double get lastScrollRatio => _lastScrollRatio;
   double get lastScrollOffset => _lastScrollOffset;
   int get lastPageNumber => _lastPageNumber;
@@ -162,6 +173,9 @@ class ReaderController extends ChangeNotifier {
   Map<String, dynamic> get fontReport => _fontReport;
   bool get isTwoPage => _isTwoPage;
   bool get isSidebarOpen => _isSidebarOpen;
+  String get sidebarPosition => _sidebarPosition;
+  bool get isSidebarOnRight => _sidebarPosition == 'right';
+  double get sidebarWidth => _sidebarWidth;
   bool get isPresentationMode => _isPresentationMode;
   List<OutlineItem> get outlineItems => _outlineItems;
   int get activeOutlineIndex => _activeOutlineIndex;
@@ -437,6 +451,28 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
+  void setSidebarPosition(String position) {
+    if (position != 'left' && position != 'right') return;
+    if (_sidebarPosition != position) {
+      _sidebarPosition = position;
+      _persistPreferences();
+      notifyListeners();
+    }
+  }
+
+  void toggleSidebarPosition() {
+    setSidebarPosition(isSidebarOnRight ? 'left' : 'right');
+  }
+
+  void setSidebarWidth(double width) {
+    final clamped = width.clamp(minSidebarWidth, maxSidebarWidth);
+    if ((_sidebarWidth - clamped).abs() > 0.5) {
+      _sidebarWidth = clamped;
+      _persistDebounced();
+      notifyListeners();
+    }
+  }
+
   void setAutoFitMode(AutoFitMode mode) {
     if (_autoFitMode != mode) {
       _autoFitMode = mode;
@@ -558,6 +594,14 @@ class ReaderController extends ChangeNotifier {
       if (savedTwoPage != null) {
         _isTwoPage = savedTwoPage;
       }
+      final savedSidebarPosition = prefs['sidebarPosition'] as String?;
+      if (savedSidebarPosition == 'left' || savedSidebarPosition == 'right') {
+        _sidebarPosition = savedSidebarPosition!;
+      }
+      final savedSidebarWidth = (prefs['sidebarWidth'] as num?)?.toDouble();
+      if (savedSidebarWidth != null && savedSidebarWidth >= minSidebarWidth && savedSidebarWidth <= maxSidebarWidth) {
+        _sidebarWidth = savedSidebarWidth;
+      }
       if (savedSidebarOpen != null) {
         _isSidebarOpen = savedSidebarOpen;
       }
@@ -637,6 +681,8 @@ class ReaderController extends ChangeNotifier {
       'lastPagedFormat': _lastPagedFormat,
       'isTwoPage': _isTwoPage,
       'isSidebarOpen': _isSidebarOpen,
+      'sidebarPosition': _sidebarPosition,
+      'sidebarWidth': _sidebarWidth,
       'autoFitMode': _autoFitMode.name,
       'fontSize': _renderOptions.fontSize,
       'bodyFont': _renderOptions.bodyFont,
@@ -734,6 +780,8 @@ class ReaderController extends ChangeNotifier {
       _currentMarkdown = '';
       _isRawPdf = false;
       _errorMessage = 'File not found: $filePath';
+      _degradedEquationCount = 0;
+      _degradedEquations = const [];
       finishReloading();
       notifyListeners();
       return;
@@ -754,6 +802,8 @@ class ReaderController extends ChangeNotifier {
         _outlineItems = [];
         _currentPdfBytes = bytes;
         _errorMessage = null;
+        _degradedEquationCount = 0;
+        _degradedEquations = const [];
 
         if (!preservePosition) {
           final history = _fileHistory[filePath];
@@ -843,6 +893,8 @@ class ReaderController extends ChangeNotifier {
       if (cachedPdf != null && cachedPdf.isNotEmpty) {
         _currentPdfBytes = cachedPdf;
         _errorMessage = null;
+        _degradedEquationCount = 0;
+        _degradedEquations = const [];
         debugPrint('[ReaderController] Fast cache hit: instant PDF loaded (${cachedPdf.length} bytes) for $filePath');
         notifyListeners();
         return;
@@ -854,6 +906,8 @@ class ReaderController extends ChangeNotifier {
       _currentPdfBytes = null;
       _outlineItems = [];
       _errorMessage = msg;
+      _degradedEquationCount = 0;
+      _degradedEquations = const [];
       finishReloading();
       notifyListeners();
     }
@@ -1013,6 +1067,8 @@ class ReaderController extends ChangeNotifier {
     _isCompiling = true;
     _hasPendingCompile = false;
     _errorMessage = null;
+    _degradedEquationCount = 0;
+    _degradedEquations = const [];
     debugPrint('[ReaderController] compileDocument: starting gen $generation for "$_documentTitle" (${_currentMarkdown.length} chars)');
     notifyListeners();
 
@@ -1027,7 +1083,7 @@ class ReaderController extends ChangeNotifier {
           ? p.dirname(_currentFilePath!)
           : Directory.current.path;
 
-      final pdfBytes = await NativeEngine.instance.compileMarkdownAsync(
+      final result = await NativeEngine.instance.compileMarkdownResultAsync(
         _currentMarkdown,
         title: _documentTitle,
         docDir: docDir,
@@ -1035,15 +1091,26 @@ class ReaderController extends ChangeNotifier {
       );
 
       if (generation == _compileGeneration && !isPdfDocument) {
-        if (pdfBytes != null && pdfBytes.isNotEmpty) {
+        if (result.isSuccess) {
+          final pdfBytes = result.pdfBytes!;
           _currentPdfBytes = pdfBytes;
           _errorMessage = null;
+          _degradedEquationCount = result.degradedEquationCount;
+          _degradedEquations = result.degradedEquations;
+          if (_degradedEquationCount > 0) {
+            debugPrint(
+              '[ReaderController] compileDocument: WARNING gen $generation: '
+              '$_degradedEquationCount degraded equation(s) detected: $_degradedEquations',
+            );
+          }
           debugPrint('[ReaderController] compileDocument: SUCCESS gen $generation (${pdfBytes.length} bytes)');
           if (_currentFilePath != null) {
             unawaited(DocumentCacheService.saveCachedPdf(_currentFilePath!, _renderOptions, pdfBytes));
           }
         } else {
-          _errorMessage = NativeEngine.instance.getLastError() ?? 'Compilation failed';
+          _degradedEquationCount = 0;
+          _degradedEquations = const [];
+          _errorMessage = result.errorMessage ?? NativeEngine.instance.getLastError() ?? 'Compilation failed';
           debugPrint('[ReaderController] compileDocument: FAILED gen $generation ($_errorMessage)');
         }
       }
@@ -1317,12 +1384,19 @@ class ReaderController extends ChangeNotifier {
               ? p.dirname(_currentFilePath!)
               : Directory.current.path;
 
-          bytesToExport = await NativeEngine.instance.compileMarkdownAsync(
+          final exportResult = await NativeEngine.instance.compileMarkdownResultAsync(
             _currentMarkdown,
             title: _documentTitle,
             docDir: docDir,
             options: exportOptions,
           );
+          bytesToExport = exportResult.pdfBytes;
+
+          if (exportResult.degradedEquationCount > 0) {
+            debugPrint(
+              '[ReaderController] exportPdf: WARNING: ${exportResult.degradedEquationCount} degraded equation(s) in export',
+            );
+          }
 
           if (bytesToExport != null && bytesToExport.isNotEmpty && _currentFilePath != null) {
             unawaited(DocumentCacheService.saveCachedPdf(_currentFilePath!, exportOptions, bytesToExport));
@@ -1346,11 +1420,7 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
-  void _setSampleDocumentContent() {
-    _currentFilePath = null;
-    _documentTitle = 'SuperGoodViewer Demo';
-    _currentMarkdown = r'''
-# SuperGoodViewer 🚀
+  static const String _sampleMarkdown = r'''# SuperGoodViewer 🚀
 ### 出版级排版 Markdown 桌面阅读器
 
 欢迎体验 **SuperGoodViewer**！本应用通过 **Typst 嵌入式编译 + PDFium 矢量渲染**，为您提供极致的阅读美感与跨平台 100% 像素级一致性。
@@ -1393,7 +1463,10 @@ graph LR
 
 ## 🔤 CJK 1:2 等宽代码与 ASCII 字符表
 
-搭配 **Maple Mono** 字体，实现中英文全角半角严格 1:2 绝对对齐：
+搭配 **Maple Mono** 或中英文严格 1:2 等宽字体，实现全角半角绝对对齐：
+
+> [!TIP]
+> **关于排版对齐**：若下方字符画表格右侧边框存在轻微错位，是因为当前环境所用等宽字体的全角汉字与半角英文未达到严格 1:2 宽度比例（常见于英文等宽字体回退至系统通用黑体）。推荐下载安装开源 [Maple Mono](https://github.com/subframe7536/maple-font) 或更纱黑体（Sarasa Gothic）。若您已配置魔改 Consolas 等 1:2 等宽字体，可按快捷键 **Cmd/Ctrl + ,** 进入 **「字体与排版」** 设置中指定代码字体。
 
 ```
 ┌─────────────────────────────────────┬─────────────────────────────────────┐
@@ -1432,6 +1505,10 @@ graph LR
     > 点击顶部工具栏的 **视图切换** 按钮，可在自适应屏幕长卷轴与标准 A4 打印预览间丝滑切换。
 ''';
 
+  void _setSampleDocumentContent() {
+    _currentFilePath = null;
+    _documentTitle = 'SuperGoodViewer Demo';
+    _currentMarkdown = _sampleMarkdown;
     _extractOutline(_currentMarkdown);
   }
 

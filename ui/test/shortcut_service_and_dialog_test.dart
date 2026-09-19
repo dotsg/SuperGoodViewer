@@ -12,7 +12,7 @@ void main() {
   late Directory tempTestDir;
 
   setUpAll(() {
-    tempTestDir = Directory.systemTemp.createTempSync('sogoodviewer_shortcut_test_');
+    tempTestDir = Directory.systemTemp.createTempSync('supergoodviewer_shortcut_test_');
     PreferencesService.setConfigFileForTesting(
       File(p.join(tempTestDir.path, 'preferences.json')),
     );

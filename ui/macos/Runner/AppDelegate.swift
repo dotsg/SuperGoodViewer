@@ -143,6 +143,7 @@ class AppDelegate: FlutterAppDelegate {
   // MARK: - CLI Tool Management
 
   private let cliSymlinkPath = "/usr/local/bin/sgv"
+  private let cliToolSymlinkPath = "/usr/local/bin/sgv-cli"
 
   private func getCliScriptPath() -> String {
     let resourcesBin = Bundle.main.bundleURL
@@ -167,55 +168,159 @@ class AppDelegate: FlutterAppDelegate {
     return scriptUrl.path
   }
 
+  private func getCliBinaryPath() -> String? {
+    let resourcesBin = Bundle.main.bundleURL
+      .appendingPathComponent("Contents/Resources/bin", isDirectory: true)
+    let binaryUrl = resourcesBin.appendingPathComponent("sgv-cli")
+
+    let fm = FileManager.default
+    if fm.fileExists(atPath: binaryUrl.path) {
+      return binaryUrl.path
+    }
+    return nil
+  }
+
+  private func itemExists(atPath path: String) -> Bool {
+    return (try? FileManager.default.attributesOfItem(atPath: path)) != nil
+  }
+
   private func checkCliStatus() -> [String: Any] {
     let fm = FileManager.default
-    let exists = fm.fileExists(atPath: cliSymlinkPath)
+    let sgvExists = itemExists(atPath: cliSymlinkPath)
+    let cliToolExists = itemExists(atPath: cliToolSymlinkPath)
+    let cliBinPath = getCliBinaryPath()
+
+    let isInstalled = (cliBinPath != nil) ? (sgvExists && cliToolExists) : sgvExists
+    let isPartial = !isInstalled && (sgvExists || cliToolExists)
     var destination = ""
     var isCurrentApp = false
 
-    if exists {
+    if sgvExists {
       if let target = try? fm.destinationOfSymbolicLink(atPath: cliSymlinkPath) {
         destination = target
         let appBundlePath = Bundle.main.bundlePath
-        isCurrentApp = target.contains(appBundlePath) || target.contains("SuperGoodViewer")
+        let sgvMatches = target.contains(appBundlePath) || target.contains("SuperGoodViewer")
+
+        var cliToolMatches = true
+        if let bin = cliBinPath {
+          if let toolTarget = try? fm.destinationOfSymbolicLink(atPath: cliToolSymlinkPath) {
+            cliToolMatches = (toolTarget == bin) || toolTarget.contains(appBundlePath) || toolTarget.contains("SuperGoodViewer")
+          } else {
+            cliToolMatches = false
+          }
+        }
+
+        isCurrentApp = sgvMatches && cliToolMatches
       }
     }
 
-    return [
-      "isInstalled": exists,
+    var res: [String: Any] = [
+      "isInstalled": isInstalled,
+      "isPartial": isPartial,
       "path": cliSymlinkPath,
       "target": destination,
       "isCurrentApp": isCurrentApp
     ]
+    if isPartial {
+      res["warningCode"] = "incomplete_tools"
+      res["warning"] = "安装不完整 (部分工具未就绪)"
+    }
+    return res
   }
 
   private func installCli(result: @escaping FlutterResult) {
     let sourcePath = getCliScriptPath()
+    let cliBinPath = getCliBinaryPath()
     let fm = FileManager.default
 
+    let oldSgvDestination = try? fm.destinationOfSymbolicLink(atPath: cliSymlinkPath)
+    let backupSgvPath: String? = (oldSgvDestination == nil && itemExists(atPath: cliSymlinkPath))
+        ? (NSTemporaryDirectory() as NSString).appendingPathComponent("sgv_backup_\(ProcessInfo.processInfo.globallyUniqueString)")
+        : nil
+    if let backup = backupSgvPath {
+      try? fm.copyItem(atPath: cliSymlinkPath, toPath: backup)
+    }
+
+    let oldCliToolDestination = try? fm.destinationOfSymbolicLink(atPath: cliToolSymlinkPath)
+    let backupCliToolPath: String? = (oldCliToolDestination == nil && itemExists(atPath: cliToolSymlinkPath))
+        ? (NSTemporaryDirectory() as NSString).appendingPathComponent("sgv_cli_backup_\(ProcessInfo.processInfo.globallyUniqueString)")
+        : nil
+    if let backup = backupCliToolPath {
+      try? fm.copyItem(atPath: cliToolSymlinkPath, toPath: backup)
+    }
+
+    defer {
+      if let backup = backupSgvPath {
+        try? fm.removeItem(atPath: backup)
+      }
+      if let backup = backupCliToolPath {
+        try? fm.removeItem(atPath: backup)
+      }
+    }
+
+    func targetExists(_ target: String, relativeTo linkPath: String) -> Bool {
+      let fullPath = (target as NSString).isAbsolutePath
+          ? target
+          : ((linkPath as NSString).deletingLastPathComponent as NSString).appendingPathComponent(target)
+      return fm.fileExists(atPath: fullPath)
+    }
+
+    func restoreOldLinks() {
+      if !itemExists(atPath: cliSymlinkPath) {
+        if let old = oldSgvDestination, targetExists(old, relativeTo: cliSymlinkPath) {
+          try? fm.createSymbolicLink(atPath: cliSymlinkPath, withDestinationPath: old)
+        } else if let backup = backupSgvPath, fm.fileExists(atPath: backup) {
+          try? fm.copyItem(atPath: backup, toPath: cliSymlinkPath)
+        }
+      }
+      if !itemExists(atPath: cliToolSymlinkPath) {
+        if let old = oldCliToolDestination, targetExists(old, relativeTo: cliToolSymlinkPath) {
+          try? fm.createSymbolicLink(atPath: cliToolSymlinkPath, withDestinationPath: old)
+        } else if let backup = backupCliToolPath, fm.fileExists(atPath: backup) {
+          try? fm.copyItem(atPath: backup, toPath: cliToolSymlinkPath)
+        }
+      }
+    }
+
     try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: sourcePath)
+    if let bin = cliBinPath {
+      try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin)
+    }
 
     // Try non-root symlink creation first
     do {
-      if fm.fileExists(atPath: cliSymlinkPath) {
+      if itemExists(atPath: cliSymlinkPath) {
         try fm.removeItem(atPath: cliSymlinkPath)
       }
       try fm.createSymbolicLink(atPath: cliSymlinkPath, withDestinationPath: sourcePath)
+
+      if let bin = cliBinPath {
+        if itemExists(atPath: cliToolSymlinkPath) {
+          try fm.removeItem(atPath: cliToolSymlinkPath)
+        }
+        try fm.createSymbolicLink(atPath: cliToolSymlinkPath, withDestinationPath: bin)
+      }
+
       result(["status": "success", "path": cliSymlinkPath])
       return
     } catch {
       // Standard creation failed (needs admin permissions). Use AppleScript.
+      var scriptCommands = "mkdir -p /usr/local/bin && ln -sf '\(sourcePath)' '\(cliSymlinkPath)'"
+      if let bin = cliBinPath {
+        scriptCommands += " && ln -sf '\(bin)' '\(cliToolSymlinkPath)'"
+      }
       let appleScriptSource = """
-      do shell script "mkdir -p /usr/local/bin && ln -sf '\(sourcePath)' '\(cliSymlinkPath)'" with administrator privileges
+      do shell script "\(scriptCommands)" with administrator privileges
       """
 
       var errorDict: NSDictionary?
       if let script = NSAppleScript(source: appleScriptSource) {
         script.executeAndReturnError(&errorDict)
         if let err = errorDict {
+          restoreOldLinks()
           let errCode = err[NSAppleScript.errorNumber] as? Int ?? 0
           if errCode == -128 {
-            result(["status": "cancelled", "message": "用户取消了授权"])
+            result(["status": "cancelled", "messageCode": "user_cancelled", "message": "用户取消了授权"])
           } else {
             let errMsg = err[NSAppleScript.errorMessage] as? String ?? "未知权限错误"
             result(["status": "error", "message": errMsg])
@@ -224,24 +329,30 @@ class AppDelegate: FlutterAppDelegate {
         }
         result(["status": "success", "path": cliSymlinkPath])
       } else {
-        result(["status": "error", "message": "无法初始化系统授权脚本"])
+        restoreOldLinks()
+        result(["status": "error", "messageCode": "auth_script_init_failed", "message": "无法初始化系统授权脚本"])
       }
     }
   }
 
   private func uninstallCli(result: @escaping FlutterResult) {
     let fm = FileManager.default
-    guard fm.fileExists(atPath: cliSymlinkPath) else {
-      result(["status": "success", "message": "未安装"])
+    guard itemExists(atPath: cliSymlinkPath) || itemExists(atPath: cliToolSymlinkPath) else {
+      result(["status": "success", "messageCode": "not_installed", "message": "未安装"])
       return
     }
 
     do {
-      try fm.removeItem(atPath: cliSymlinkPath)
+      if itemExists(atPath: cliSymlinkPath) {
+        try fm.removeItem(atPath: cliSymlinkPath)
+      }
+      if itemExists(atPath: cliToolSymlinkPath) {
+        try fm.removeItem(atPath: cliToolSymlinkPath)
+      }
       result(["status": "success", "path": cliSymlinkPath])
     } catch {
       let appleScriptSource = """
-      do shell script "rm -f '\(cliSymlinkPath)'" with administrator privileges
+      do shell script "rm -f '\(cliSymlinkPath)' '\(cliToolSymlinkPath)'" with administrator privileges
       """
       var errorDict: NSDictionary?
       if let script = NSAppleScript(source: appleScriptSource) {
@@ -249,7 +360,7 @@ class AppDelegate: FlutterAppDelegate {
         if let err = errorDict {
           let errCode = err[NSAppleScript.errorNumber] as? Int ?? 0
           if errCode == -128 {
-            result(["status": "cancelled", "message": "用户取消了授权"])
+            result(["status": "cancelled", "messageCode": "user_cancelled", "message": "用户取消了授权"])
           } else {
             let errMsg = err[NSAppleScript.errorMessage] as? String ?? "未知权限错误"
             result(["status": "error", "message": errMsg])
@@ -258,7 +369,7 @@ class AppDelegate: FlutterAppDelegate {
         }
         result(["status": "success"])
       } else {
-        result(["status": "error", "message": "无法初始化系统授权脚本"])
+        result(["status": "error", "messageCode": "auth_script_init_failed", "message": "无法初始化系统授权脚本"])
       }
     }
   }
@@ -286,13 +397,48 @@ class AppDelegate: FlutterAppDelegate {
     fi
   fi
 
+  # Check for headless export CLI
+  CLI_BIN=""
+  if [ -x "$SCRIPT_DIR/sgv-cli" ]; then
+    CLI_BIN="$SCRIPT_DIR/sgv-cli"
+  elif [ -x "$APP_DIR/Contents/Resources/bin/sgv-cli" ]; then
+    CLI_BIN="$APP_DIR/Contents/Resources/bin/sgv-cli"
+  elif command -v sgv-cli >/dev/null 2>&1; then
+    CLI_BIN="$(command -v sgv-cli)"
+  fi
+
+  IS_EXPORT=false
+  if [ "$1" = "export" ]; then
+    IS_EXPORT=true
+  else
+    for arg in "$@"; do
+      case "$arg" in
+        -o | --output | --export | -f | --format | --page-format | --fluid | -t | --theme | --dark | -s | --font-size | --title | -r | --recursive | --no-recursive | --image-cache-dir)
+          IS_EXPORT=true
+          break
+          ;;
+      esac
+    done
+  fi
+
+  if [ "$IS_EXPORT" = true ]; then
+    if [ -n "$CLI_BIN" ] && [ -x "$CLI_BIN" ]; then
+      exec "$CLI_BIN" "$@"
+    else
+      echo "sgv: error: headless export tool 'sgv-cli' not found" >&2
+      exit 1
+    fi
+  fi
+
   if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-    echo "SuperGoodViewer (超好读) CLI Launcher"
+    echo "SuperGoodViewer (超好读) CLI Launcher & Tool"
     echo ""
     echo "Usage:"
-    echo "  sgv [file.md ...]      Open markdown file(s) in SuperGoodViewer"
-    echo "  sgv                    Launch or focus SuperGoodViewer"
-    echo "  sgv -h, --help         Show this help message"
+    echo "  sgv [file.md ...]               Open markdown file(s) in SuperGoodViewer GUI"
+    echo "  sgv export <path>... [options]  Export markdown file(s) or directory to PDF"
+    echo "  sgv <file.md> -o <output.pdf>   Export single markdown file to PDF"
+    echo "  sgv                             Launch or focus SuperGoodViewer GUI"
+    echo "  sgv -h, --help                  Show this help message"
     exit 0
   fi
 

@@ -6,7 +6,7 @@
 </div>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Release: v1.0.7](https://img.shields.io/badge/Release-v1.0.7-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
+[![Release: v1.0.8](https://img.shields.io/badge/Release-v1.0.8-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
 [![CI Status](https://img.shields.io/badge/CI-Passing-brightgreen.svg)]()
 [![Platform: macOS | Windows | Linux](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)]()
 
@@ -122,7 +122,10 @@ make test
 - **macOS (App Bundle & DMG)**:
   ```bash
   make build          # 生成 ui/build/macos/Build/Products/Release/SuperGoodViewer.app
-  make dmg            # 生成安装镜像 SuperGoodViewer-macos.dmg
+  make dmg            # 生成 Universal 通用安装镜像 dist/SuperGoodViewer-macos.dmg
+  # 亦可单独构建指定架构镜像：
+  make dmg-arm64      # 生成 dist/SuperGoodViewer-macos-arm64.dmg (Apple Silicon M 系列)
+  make dmg-x64        # 生成 dist/SuperGoodViewer-macos-x64.dmg (Intel 处理器)
   ```
 - **Windows x64 便携包 (Intel / AMD 架构及通用)**:
   ```bash
@@ -157,6 +160,26 @@ sgv
 
 # 查看帮助信息
 sgv -h
+```
+
+### 3. 无头静默导出 PDF (`sgv export`)
+支持 AI 编码工具（如 Claude Code, Cursor, 脚本）或终端用户直接将 Markdown 批量导出为出版级 PDF，完全后台静默执行、不弹出任何窗口、支持 stdin 管道：
+
+```bash
+# 导出单个文档为 PDF（默认输出 README.pdf）
+sgv export README.md
+
+# 指定输出文件路径与页面版式（支持 a4, a4-landscape, fluid, slide）
+sgv export report.md -o output.pdf --format a4
+
+# 导出为 16:9 演示幻灯片 PDF
+sgv export deck.md -o slides.pdf --format slide
+
+# 批量导出整个目录（保留子目录层级）
+sgv export ./docs -o ./dist
+
+# 从标准输入 (stdin) 管道读取并导出
+cat draft.md | sgv export - -o draft.pdf
 ```
 
 ---
@@ -194,6 +217,28 @@ sgv -h
 ---
 
 ## 📝 更新日志 (Changelog)
+
+### v1.0.8 (2026-09)
+- **无头命令行导出出版级 PDF (Headless CLI PDF Export)**：
+  - 新增独立 `sgv-cli` 二进制与 `sgv export` 命令，支持无 GUI 快速导出 Markdown 为高品质无损 PDF；
+  - 支持单文件转换、标准输入管道 (`cat doc.md | sgv export - -o out.pdf`) 与整目录批量导出（递归保持原目录层级与资产路径）；
+  - 支持通过命令行参数指定主题（浅色/暗黑）、正文字号、纸张格式与输出路径；
+  - 加固跨平台快捷启动脚本（macOS / Linux / Windows），提供一键安装、PATH 环境变量检测与卸载安全确认。
+- **LaTeX 数学公式保真度与可视化降级 (LaTeX Math Fidelity & Visible Degradation)**：
+  - 全面增强 MiTeX 与 Typst 兼容宏前言，新增支持 `\overbrace`、`\underbrace`、`\overbracket`、`\underbracket`、`\xleftrightarrow`、`\textcolor`、`\color`、`\colortext`、`\substack`、`\sout`、`\smallmatrix` 等大量常用 LaTeX 命令；
+  - 移除 `mitex-len` 的动态 `eval()`，替换为严格数值解析器，支持按页面实际版心宽度计算 `\textwidth` 与 `\linewidth`；
+  - **公式级可见降级**：编译或转译失败的公式不再静默丢弃，而是以醒目的红色虚线框与原始 LaTeX 源码清晰渲染；
+  - 界面底部动态显示降级公式警告横幅，可直观查看受影响公式总数与具体源码清单；
+  - C-API 降级统计指标支持线程局部存储（thread-local），确保多线程并发编译场景下指标统计互不串扰。
+- **可拖拽侧边栏与布局自定义**：
+  - 侧边栏支持鼠标边缘拖拽自由调整宽度，双击把手一键恢复默认 270px 宽度；
+  - 支持侧边栏左侧/右侧一键快捷对调，状态与宽度跨会话自动记忆恢复。
+- **macOS 架构感知更新与构建优化**：
+  - 自动更新器支持 Apple Silicon (ARM64) 与 Intel (x64) 架构精准匹配，防止 Intel 机器误下 ARM64 更新包；
+  - 新增独立 `scripts/package-macos-dmg.sh` 脚本并支持 `make dmg` / `dmg-arm64` / `dmg-x64` 打包；
+  - 切换至多线程 ThinLTO 编译优化，大幅降低构建耗时。
+- **长文档流式排版动态截断**：
+  - 引入双 pass 动态页高计算与截断保护，替换 ZWSP 内联分隔符，保障极端超大文档排版稳定性。
 
 ### v1.0.7 (2026-09)
 - **内置自动更新器与就地重启 (In-App Auto Updater)**：

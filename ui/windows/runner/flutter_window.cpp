@@ -299,15 +299,15 @@ bool CanWriteToDir(const std::wstring& dir) {
 
 std::wstring ResolveCliPath(const CliLocations& loc) {
   std::error_code ec;
-  // 1. If already installed in either location, return the existing script path
-  if (std::filesystem::exists(loc.custom_cmd, ec)) {
-    return loc.custom_cmd;
-  }
-  if (std::filesystem::exists(loc.winapps_cmd, ec)) {
-    return loc.winapps_cmd;
-  }
+  // 1. Check existing .cmd scripts first (highest priority)
+  if (std::filesystem::exists(loc.custom_cmd, ec)) return loc.custom_cmd;
+  if (std::filesystem::exists(loc.winapps_cmd, ec)) return loc.winapps_cmd;
 
-  // 2. Not yet installed: prefer WindowsApps only if writable, otherwise use SuperGoodViewer\bin.
+  // 2. Check existing .ps1 scripts second (fallback if .cmd is missing)
+  if (std::filesystem::exists(loc.custom_dir + L"\\sgv.ps1", ec)) return loc.custom_cmd;
+  if (std::filesystem::exists(loc.winapps_dir + L"\\sgv.ps1", ec)) return loc.winapps_cmd;
+
+  // 3. Not yet installed: prefer WindowsApps only if writable, otherwise use SuperGoodViewer\bin.
   // Pure query: do not create directories as a side effect.
   if (CanWriteToDir(loc.winapps_dir)) {
     return loc.winapps_cmd;
@@ -341,9 +341,9 @@ bool AreDirsEqual(const std::wstring& a, const std::wstring& b) {
   return NormalizeDirPath(a) == NormalizeDirPath(b);
 }
 
-bool ReadUserPath(std::wstring& out_path, DWORD& out_type) {
+bool ReadRegistryPath(HKEY root, const wchar_t* subkey, std::wstring& out_path, DWORD& out_type) {
   HKEY hkey;
-  if (::RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_READ, &hkey) != ERROR_SUCCESS) {
+  if (::RegOpenKeyExW(root, subkey, 0, KEY_READ, &hkey) != ERROR_SUCCESS) {
     return false;
   }
   DWORD size = 0;
@@ -385,35 +385,78 @@ bool ReadUserPath(std::wstring& out_path, DWORD& out_type) {
   }
 
   ::RegCloseKey(hkey);
-  return false; // Second read failed; return false to avoid treating it as empty and clobbering user PATH
+  return false;
 }
 
-void WriteUserPathAndBroadcast(const std::wstring& new_path, DWORD type) {
+bool ReadUserPath(std::wstring& out_path, DWORD& out_type) {
+  return ReadRegistryPath(HKEY_CURRENT_USER, L"Environment", out_path, out_type);
+}
+
+bool ReadSystemPath(std::wstring& out_path, DWORD& out_type) {
+  return ReadRegistryPath(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment", out_path, out_type);
+}
+
+bool WriteUserPathAndBroadcast(const std::wstring& new_path, DWORD type) {
   HKEY hkey;
-  if (::RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_WRITE, &hkey) == ERROR_SUCCESS) {
-    ::RegSetValueExW(hkey, L"Path", 0, type ? type : REG_EXPAND_SZ,
-                     reinterpret_cast<const BYTE*>(new_path.c_str()),
-                     static_cast<DWORD>((new_path.size() + 1) * sizeof(wchar_t)));
-    ::RegCloseKey(hkey);
-    DWORD_PTR result;
-    ::SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
-                          reinterpret_cast<LPARAM>(L"Environment"),
-                          SMTO_ABORTIFHUNG, 3000, &result);
+  if (::RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_WRITE, &hkey) != ERROR_SUCCESS) {
+    return false;
   }
+  LONG status = ::RegSetValueExW(hkey, L"Path", 0, type ? type : REG_EXPAND_SZ,
+                                reinterpret_cast<const BYTE*>(new_path.c_str()),
+                                static_cast<DWORD>((new_path.size() + 1) * sizeof(wchar_t)));
+  ::RegCloseKey(hkey);
+  if (status != ERROR_SUCCESS) {
+    return false;
+  }
+  DWORD_PTR result;
+  ::SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
+                        reinterpret_cast<LPARAM>(L"Environment"),
+                        SMTO_ABORTIFHUNG, 3000, &result);
+  return true;
 }
 
-void AddToUserPathIfMissing(const std::wstring& dir_to_add) {
-  if (dir_to_add.empty()) return;
+bool IsDirInPath(const std::wstring& dir) {
+  if (dir.empty()) return false;
+  // 1. Check User PATH
+  std::wstring user_path;
+  DWORD type = REG_EXPAND_SZ;
+  if (ReadUserPath(user_path, type) && !user_path.empty()) {
+    for (const auto& seg : GetPathSegments(user_path)) {
+      if (AreDirsEqual(seg, dir)) return true;
+    }
+  }
+  // 2. Check System PATH
+  std::wstring sys_path;
+  if (ReadSystemPath(sys_path, type) && !sys_path.empty()) {
+    for (const auto& seg : GetPathSegments(sys_path)) {
+      if (AreDirsEqual(seg, dir)) return true;
+    }
+  }
+  return false;
+}
+
+bool AddToUserPathIfMissing(const std::wstring& dir_to_add) {
+  if (dir_to_add.empty()) return false;
+  // If already active via System PATH, no need to add a duplicate to User PATH
+  std::wstring sys_path;
+  DWORD sys_type = REG_EXPAND_SZ;
+  if (ReadSystemPath(sys_path, sys_type) && !sys_path.empty()) {
+    for (const auto& seg : GetPathSegments(sys_path)) {
+      if (AreDirsEqual(seg, dir_to_add)) {
+        return true;
+      }
+    }
+  }
+
   std::wstring current_path;
   DWORD type = REG_EXPAND_SZ;
   if (!ReadUserPath(current_path, type)) {
-    return; // Read failed; abort immediately to prevent clobbering user PATH
+    return false; // Read failed; abort immediately to prevent clobbering user PATH
   }
 
-  std::vector<std::wstring> segments = GetPathSegments(current_path);
-  for (const auto& seg : segments) {
+  for (const auto& seg : GetPathSegments(current_path)) {
     if (AreDirsEqual(seg, dir_to_add)) {
-      return;
+      return true;
     }
   }
 
@@ -425,7 +468,7 @@ void AddToUserPathIfMissing(const std::wstring& dir_to_add) {
     }
     new_path += current_path;
   }
-  WriteUserPathAndBroadcast(new_path, type);
+  return WriteUserPathAndBroadcast(new_path, type);
 }
 
 void RemoveFromUserPathIfPresent(const std::wstring& dir_to_remove) {
@@ -453,6 +496,82 @@ void RemoveFromUserPathIfPresent(const std::wstring& dir_to_remove) {
   }
 }
 
+template <typename Writer>
+bool WriteToFileAtomically(const std::wstring& target_path, Writer&& writer) {
+  std::error_code ec;
+  std::filesystem::path parent = std::filesystem::path(target_path).parent_path();
+  if (!parent.empty()) {
+    std::filesystem::create_directories(parent, ec);
+  }
+  std::wstring temp_path = target_path + L".tmp." + std::to_wstring(::GetCurrentProcessId());
+  {
+    std::ofstream out(temp_path, std::ios::trunc);
+    if (!out.is_open()) {
+      return false;
+    }
+    writer(out);
+    out.close();
+    if (out.fail()) {
+      std::filesystem::remove(temp_path, ec);
+      return false;
+    }
+  }
+
+  DWORD orig_attrs = INVALID_FILE_ATTRIBUTES;
+  if (std::filesystem::exists(target_path, ec)) {
+    orig_attrs = ::GetFileAttributesW(target_path.c_str());
+    if (orig_attrs != INVALID_FILE_ATTRIBUTES && (orig_attrs & FILE_ATTRIBUTE_READONLY)) {
+      ::SetFileAttributesW(target_path.c_str(), orig_attrs & ~FILE_ATTRIBUTE_READONLY);
+    }
+  }
+
+  if (!::MoveFileExW(temp_path.c_str(), target_path.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) {
+    if (orig_attrs != INVALID_FILE_ATTRIBUTES && (orig_attrs & FILE_ATTRIBUTE_READONLY)) {
+      ::SetFileAttributesW(target_path.c_str(), orig_attrs);
+    }
+    std::filesystem::remove(temp_path, ec);
+    return false;
+  }
+  return true;
+}
+
+void CleanOrphanedTempFiles(const std::wstring& dir) {
+  if (dir.empty()) return;
+  std::error_code dir_ec;
+  if (!std::filesystem::is_directory(dir, dir_ec)) return;
+  DWORD current_pid = ::GetCurrentProcessId();
+  for (const auto& entry : std::filesystem::directory_iterator(dir, dir_ec)) {
+    if (dir_ec) break;
+    std::error_code file_ec;
+    if (entry.is_regular_file(file_ec)) {
+      std::wstring name = entry.path().filename().wstring();
+      size_t prefix_len = 0;
+      if (name.rfind(L"sgv.cmd.tmp.", 0) == 0) {
+        prefix_len = 12;
+      } else if (name.rfind(L"sgv.ps1.tmp.", 0) == 0) {
+        prefix_len = 12;
+      }
+      if (prefix_len > 0) {
+        std::wstring pid_part = name.substr(prefix_len);
+        try {
+          DWORD pid = std::stoul(pid_part);
+          if (pid == current_pid) {
+            continue;
+          }
+          HANDLE h_proc = ::OpenProcess(SYNCHRONIZE, FALSE, pid);
+          if (h_proc != nullptr) {
+            ::CloseHandle(h_proc);
+            continue;
+          }
+        } catch (...) {
+        }
+        std::filesystem::remove(entry.path(), file_ec);
+      }
+    }
+  }
+}
+
 void RemoveCliFiles(const std::wstring& cmd_path) {
   if (cmd_path.empty()) return;
   std::error_code ec;
@@ -466,20 +585,55 @@ void RemoveCliFiles(const std::wstring& cmd_path) {
       std::filesystem::remove(ps1_path, ec);
     }
   }
+  std::filesystem::path p(cmd_path);
+  CleanOrphanedTempFiles(p.parent_path().wstring());
 }
 
 }  // namespace
 
-std::wstring FlutterWindow::GetInstalledCliPath() {
-  CliLocations loc;
-  if (!CliLocations::TryGet(loc)) return L"";
-  return ResolveCliPath(loc);
-}
-
 flutter::EncodableMap FlutterWindow::CheckCliStatus() {
-  std::wstring cli_path = GetInstalledCliPath();
+  CliLocations loc;
+  bool has_loc = CliLocations::TryGet(loc);
+  std::wstring cli_path = has_loc ? ResolveCliPath(loc) : L"";
   std::error_code ec;
-  bool exists = !cli_path.empty() && std::filesystem::exists(cli_path, ec);
+  bool cmd_exists = !cli_path.empty() && std::filesystem::exists(cli_path, ec);
+
+  std::wstring ps1_path = L"";
+  if (!cli_path.empty()) {
+    auto dot_pos = cli_path.find_last_of(L'.');
+    if (dot_pos != std::wstring::npos) {
+      ps1_path = cli_path.substr(0, dot_pos) + L".ps1";
+    }
+  }
+  bool ps1_exists = !ps1_path.empty() && std::filesystem::exists(ps1_path, ec);
+
+  bool files_ok = cmd_exists && ps1_exists;
+  bool any_file_exists = cmd_exists || ps1_exists;
+
+  bool path_ok = true;
+  if (has_loc && any_file_exists) {
+    std::wstring parent_dir_str = std::filesystem::path(cli_path).parent_path().wstring();
+    if (AreDirsEqual(parent_dir_str, loc.custom_dir)) {
+      path_ok = IsDirInPath(loc.custom_dir);
+    } else {
+      path_ok = IsDirInPath(loc.winapps_dir);
+    }
+  }
+
+  bool is_installed = files_ok && path_ok;
+  bool is_partial = !is_installed && any_file_exists;
+
+  std::string warning_code = "";
+  std::string warning_utf8 = "";
+  if (is_partial) {
+    if (files_ok && !path_ok) {
+      warning_code = "missing_path";
+      warning_utf8 = "安装不完整 (未添加到系统 PATH)";
+    } else {
+      warning_code = "incomplete_tools";
+      warning_utf8 = "安装不完整 (部分工具未就绪)";
+    }
+  }
 
   std::wstring exe_path = GetCurrentExecutablePath();
 
@@ -487,23 +641,37 @@ flutter::EncodableMap FlutterWindow::CheckCliStatus() {
   std::string target_utf8 = Utf8FromUtf16(exe_path.c_str());
 
   bool is_current_app = false;
-  if (exists && !target_utf8.empty()) {
-    std::ifstream file(cli_path);
-    if (file.is_open()) {
+  if (!target_utf8.empty()) {
+    auto file_contains_target = [&](const std::wstring& p) {
+      if (p.empty()) return false;
+      std::ifstream file(p);
+      if (!file.is_open()) return false;
       std::string content((std::istreambuf_iterator<char>(file)),
                           std::istreambuf_iterator<char>());
-      // Exact check against target executable path, no loose fallback substring
-      if (content.find(target_utf8) != std::string::npos) {
-        is_current_app = true;
-      }
+      return content.find(target_utf8) != std::string::npos;
+    };
+
+    if (cmd_exists && ps1_exists) {
+      is_current_app = file_contains_target(cli_path) && file_contains_target(ps1_path);
+    } else if (cmd_exists) {
+      is_current_app = file_contains_target(cli_path);
+    } else if (ps1_exists) {
+      is_current_app = file_contains_target(ps1_path);
     }
   }
 
   flutter::EncodableMap res;
-  res[flutter::EncodableValue("isInstalled")] = flutter::EncodableValue(exists);
+  res[flutter::EncodableValue("isInstalled")] = flutter::EncodableValue(is_installed);
+  res[flutter::EncodableValue("isPartial")] = flutter::EncodableValue(is_partial);
   res[flutter::EncodableValue("path")] = flutter::EncodableValue(path_utf8);
   res[flutter::EncodableValue("target")] = flutter::EncodableValue(target_utf8);
   res[flutter::EncodableValue("isCurrentApp")] = flutter::EncodableValue(is_current_app);
+  if (!warning_code.empty()) {
+    res[flutter::EncodableValue("warningCode")] = flutter::EncodableValue(warning_code);
+  }
+  if (!warning_utf8.empty()) {
+    res[flutter::EncodableValue("warning")] = flutter::EncodableValue(warning_utf8);
+  }
   return res;
 }
 
@@ -512,9 +680,13 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
   CliLocations loc;
   if (!CliLocations::TryGet(loc)) {
     res[flutter::EncodableValue("status")] = flutter::EncodableValue("error");
+    res[flutter::EncodableValue("messageCode")] = flutter::EncodableValue("app_data_dir_failed");
     res[flutter::EncodableValue("message")] = flutter::EncodableValue("无法定位本地应用数据目录");
     return res;
   }
+
+  CleanOrphanedTempFiles(loc.winapps_dir);
+  CleanOrphanedTempFiles(loc.custom_dir);
 
   std::wstring cli_path = ResolveCliPath(loc);
   std::wstring initial_target = cli_path;
@@ -522,98 +694,269 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
   std::wstring exe_path = GetCurrentExecutablePath();
   if (exe_path.empty()) {
     res[flutter::EncodableValue("status")] = flutter::EncodableValue("error");
+    res[flutter::EncodableValue("messageCode")] = flutter::EncodableValue("app_path_failed");
     res[flutter::EncodableValue("message")] = flutter::EncodableValue("无法获取当前程序路径");
     return res;
   }
   std::string exe_utf8 = Utf8FromUtf16(exe_path.c_str());
+  std::wstring exe_dir = std::filesystem::path(exe_path).parent_path().wstring();
+  std::string exe_dir_utf8 = Utf8FromUtf16(exe_dir.c_str());
 
   std::filesystem::path parent_dir = std::filesystem::path(cli_path).parent_path();
   std::error_code ec;
   std::filesystem::create_directories(parent_dir, ec);
 
-  std::ofstream file(cli_path, std::ios::trunc);
+  auto write_cmd = [&](std::ofstream& file) {
+    // Write sgv.cmd with full export detection, version check, and CLI tool forwarding
+    file << "@echo off\n"
+         << "setlocal enabledelayedexpansion\n"
+         << "set \"EXE_PATH=" << exe_utf8 << "\"\n"
+         << "set \"EXE_DIR=" << exe_dir_utf8 << "\"\n"
+         << "\n"
+         << "rem 1. Resolve sgv-cli.exe location\n"
+         << "set \"CLI_BIN=\"\n"
+         << "if exist \"!EXE_DIR!\\sgv-cli.exe\" set \"CLI_BIN=!EXE_DIR!\\sgv-cli.exe\"\n"
+         << "if not defined CLI_BIN (\n"
+         << "    if exist \"%~dp0sgv-cli.exe\" set \"CLI_BIN=%~dp0sgv-cli.exe\"\n"
+         << ")\n"
+         << "if not defined CLI_BIN (\n"
+         << "    if exist \"%~dp0..\\sgv-cli.exe\" set \"CLI_BIN=%~dp0..\\sgv-cli.exe\"\n"
+         << ")\n"
+         << "if not defined CLI_BIN (\n"
+         << "    if exist \"%LOCALAPPDATA%\\SuperGoodViewer\\sgv-cli.exe\" set \"CLI_BIN=%LOCALAPPDATA%\\SuperGoodViewer\\sgv-cli.exe\"\n"
+         << ")\n"
+         << "if not defined CLI_BIN (\n"
+         << "    if exist \"%LOCALAPPDATA%\\Programs\\SuperGoodViewer\\sgv-cli.exe\" set \"CLI_BIN=%LOCALAPPDATA%\\Programs\\SuperGoodViewer\\sgv-cli.exe\"\n"
+         << ")\n"
+         << "if not defined CLI_BIN (\n"
+         << "    for %%X in (sgv-cli.exe) do (\n"
+         << "        if not \"%%~$PATH:X\"==\"\" set \"CLI_BIN=%%~$PATH:X\"\n"
+         << "    )\n"
+         << ")\n"
+         << "\n"
+         << "rem 2. Handle help and version flags\n"
+         << "if \"%~1\"==\"-h\" goto help\n"
+         << "if \"%~1\"==\"--help\" goto help\n"
+         << "if \"%~1\"==\"/?\" goto help\n"
+         << "if \"%~1\"==\"-v\" goto version\n"
+         << "if \"%~1\"==\"--version\" goto version\n"
+         << "\n"
+         << "rem 3. Check for export mode or flags\n"
+         << "set \"IS_EXPORT=0\"\n"
+         << "if /i \"%~1\"==\"export\" set \"IS_EXPORT=1\"\n"
+         << "if \"!IS_EXPORT!\"==\"0\" call :check_export %*\n"
+         << "\n"
+         << "if \"!IS_EXPORT!\"==\"1\" (\n"
+         << "    if not defined CLI_BIN (\n"
+         << "        echo sgv: error: headless export tool 'sgv-cli.exe' not found >&2\n"
+         << "        exit /b 1\n"
+         << "    )\n"
+         << "    \"!CLI_BIN!\" %*\n"
+         << "    exit /b !ERRORLEVEL!\n"
+         << ")\n"
+         << "\n"
+         << "rem 4. Open application or files\n"
+         << "if \"%~1\"==\"\" (\n"
+         << "    start \"\" \"!EXE_PATH!\"\n"
+         << "    exit /b 0\n"
+         << ")\n"
+         << "\n"
+         << ":loop\n"
+         << "if \"%~1\"==\"\" goto done\n"
+         << "set \"TARGET_FILE=%~f1\"\n"
+         << "if not exist \"!TARGET_FILE!\" (\n"
+         << "    echo sgv: error: file not found: %~1 >&2\n"
+         << "    exit /b 1\n"
+         << ")\n"
+         << "start \"\" \"!EXE_PATH!\" \"!TARGET_FILE!\"\n"
+         << "shift\n"
+         << "goto loop\n"
+         << "\n"
+         << ":done\n"
+         << "exit /b 0\n"
+         << "\n"
+         << ":version\n"
+         << "if defined CLI_BIN (\n"
+         << "    \"!CLI_BIN!\" --version\n"
+         << "    exit /b !ERRORLEVEL!\n"
+         << ")\n"
+         << "echo SuperGoodViewer CLI Launcher\n"
+         << "exit /b 0\n"
+         << "\n"
+         << ":help\n"
+         << "chcp 65001 >nul 2>&1\n"
+         << "echo SuperGoodViewer (超好读) CLI Launcher ^& Tool\n"
+         << "echo.\n"
+         << "echo Usage:\n"
+         << "echo   sgv [file.md ...]               Open markdown file(s) in SuperGoodViewer GUI\n"
+         << "echo   sgv export ^<path^>... [options]  Export markdown file(s) or directory to PDF\n"
+         << "echo   sgv ^<file.md^> -o ^<output.pdf^>   Export single markdown file to PDF\n"
+         << "echo   sgv                             Launch or focus SuperGoodViewer GUI\n"
+         << "echo   sgv -h, --help                  Show this help message\n"
+         << "echo.\n"
+         << "echo Export Options:\n"
+         << "echo   -o, --output ^<path^>             Output PDF path or destination directory\n"
+         << "echo   -f, --format ^<format^>           Page layout format: a4, a4-landscape, fluid, slide, slide-4-3\n"
+         << "echo       --fluid                     Shorthand for --format fluid\n"
+         << "echo   -t, --theme ^<theme^>             Theme: light, dark (default: light)\n"
+         << "echo       --dark                      Shorthand for --theme dark\n"
+         << "echo   -s, --font-size ^<pt^>            Font size in points (default: 10.5)\n"
+         << "echo   -r, --recursive                 Recursively scan subdirectories (default: enabled)\n"
+         << "echo       --no-recursive              Do not scan subdirectories\n"
+         << "echo.\n"
+         << "echo Examples:\n"
+         << "echo   sgv README.md                             # View in GUI\n"
+         << "echo   sgv export README.md                      # Export to README.pdf\n"
+         << "echo   sgv export .\\docs -o .\\dist               # Batch export .\\docs to .\\dist\n"
+         << "echo   type draft.md ^| sgv export - -o draft.pdf  # Export from stdin\n"
+         << "exit /b 0\n"
+         << "\n"
+         << ":check_export\n"
+         << "if \"%~1\"==\"\" goto :eof\n"
+         << "if /i \"%~1\"==\"-o\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--output\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--export\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"-f\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--format\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--page-format\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--fluid\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"-t\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--theme\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--dark\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"-s\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--font-size\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--title\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"-r\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--recursive\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--no-recursive\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "if /i \"%~1\"==\"--image-cache-dir\" (set \"IS_EXPORT=1\" & goto :eof)\n"
+         << "shift\n"
+         << "goto check_export\n";
+  };
+
+  bool cmd_written = WriteToFileAtomically(cli_path, write_cmd);
   // Only attempt fallback if initial target was NOT already custom_dir (i.e. was WindowsApps and failed)
-  if (!file.is_open() && !AreDirsEqual(parent_dir.wstring(), loc.custom_dir)) {
+  if (!cmd_written && !AreDirsEqual(parent_dir.wstring(), loc.custom_dir)) {
     cli_path = loc.custom_cmd;
-    std::filesystem::create_directories(loc.custom_dir, ec);
-    file.open(cli_path, std::ios::trunc);
-    if (file.is_open()) {
+    cmd_written = WriteToFileAtomically(cli_path, write_cmd);
+    if (cmd_written) {
       // Clean up stale script left at the old failed location (WindowsApps)
       RemoveCliFiles(initial_target);
     }
   }
 
-  if (!file.is_open()) {
+  if (!cmd_written) {
     res[flutter::EncodableValue("status")] = flutter::EncodableValue("error");
-    res[flutter::EncodableValue("message")] = flutter::EncodableValue("无法写入脚本文件");
+    res[flutter::EncodableValue("messageCode")] = flutter::EncodableValue("write_cmd_failed");
+    res[flutter::EncodableValue("message")] = flutter::EncodableValue("写入 sgv.cmd 脚本失败");
     return res;
   }
 
-  // Write sgv.cmd with full multi-argument looping and chcp 65001 to prevent mojibake
-  file << "@echo off\n"
-       << "setlocal enabledelayedexpansion\n"
-       << "set \"EXE_PATH=" << exe_utf8 << "\"\n"
-       << "if \"%~1\"==\"\" (\n"
-       << "    start \"\" \"!EXE_PATH!\"\n"
-       << "    exit /b 0\n"
-       << ")\n"
-       << "if \"%~1\"==\"-h\" goto help\n"
-       << "if \"%~1\"==\"--help\" goto help\n"
-       << "if \"%~1\"==\"/?\" goto help\n"
-       << ":loop\n"
-       << "if \"%~1\"==\"\" goto done\n"
-       << "set \"TARGET_FILE=%~f1\"\n"
-       << "if not exist \"!TARGET_FILE!\" (\n"
-       << "    echo sgv: error: file not found: %~1 >&2\n"
-       << "    exit /b 1\n"
-       << ")\n"
-       << "start \"\" \"!EXE_PATH!\" \"!TARGET_FILE!\"\n"
-       << "shift\n"
-       << "goto loop\n"
-       << ":done\n"
-       << "exit /b 0\n"
-       << ":help\n"
-       << "chcp 65001 >nul 2>&1\n"
-       << "echo SuperGoodViewer (超好读) CLI Launcher\n"
-       << "echo.\n"
-       << "echo Usage:\n"
-       << "echo   sgv [file.md ...]      Open markdown file(s) in SuperGoodViewer\n"
-       << "echo   sgv                    Launch or focus SuperGoodViewer\n"
-       << "echo   sgv -h, --help         Show this help message\n"
-       << "exit /b 0\n";
-  file.close();
-
   // Also write sgv.ps1
   std::wstring ps1_path = cli_path.substr(0, cli_path.find_last_of(L'.')) + L".ps1";
-  std::ofstream ps1_file(ps1_path, std::ios::trunc);
-  if (ps1_file.is_open()) {
-    ps1_file << "param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Files, [switch]$Help, [switch]$h)\n"
-             << "if ($Help -or $h) {\n"
-             << "    Write-Host 'SuperGoodViewer (超好读) CLI Launcher'\n"
-             << "    Write-Host ''\n"
-             << "    Write-Host 'Usage:'\n"
-             << "    Write-Host '  sgv [file.md ...]      Open markdown file(s) in SuperGoodViewer'\n"
-             << "    Write-Host '  sgv                    Launch or focus SuperGoodViewer'\n"
-             << "    Write-Host '  sgv -h, -Help          Show this help message'\n"
+  auto write_ps1 = [&](std::ofstream& ps1_file) {
+    ps1_file << "\xEF\xBB\xBF";
+    ps1_file << "$exePath = '" << exe_utf8 << "'\n"
+             << "$exeDir = '" << exe_dir_utf8 << "'\n"
+             << "\n"
+             << "# 1. Locate sgv-cli executable\n"
+             << "$cliBin = $null\n"
+             << "$cliCandidates = @(\n"
+             << "    \"$exeDir\\sgv-cli.exe\",\n"
+             << "    \"$PSScriptRoot\\sgv-cli.exe\",\n"
+             << "    \"$PSScriptRoot\\..\\sgv-cli.exe\",\n"
+             << "    \"$env:LOCALAPPDATA\\SuperGoodViewer\\sgv-cli.exe\",\n"
+             << "    \"$env:LOCALAPPDATA\\Programs\\SuperGoodViewer\\sgv-cli.exe\"\n"
+             << ")\n"
+             << "foreach ($c in $cliCandidates) {\n"
+             << "    if (Test-Path $c) { $cliBin = (Resolve-Path $c).Path; break }\n"
+             << "}\n"
+             << "if (-not $cliBin) {\n"
+             << "    $cmd = Get-Command 'sgv-cli.exe' -ErrorAction SilentlyContinue\n"
+             << "    if ($cmd) { $cliBin = $cmd.Source }\n"
+             << "}\n"
+             << "\n"
+             << "if ($args.Count -eq 1 -and ($args[0] -in @('-v', '--version', '-version', '/v'))) {\n"
+             << "    if ($cliBin) { & $cliBin --version; exit $LASTEXITCODE }\n"
+             << "    Write-Host 'SuperGoodViewer CLI Launcher'\n"
              << "    exit 0\n"
              << "}\n"
-             << "if (-not $Files) { Start-Process '" << exe_utf8 << "'; exit 0 }\n"
-             << "foreach ($f in $Files) {\n"
-             << "    if (Test-Path $f) {\n"
-             << "        Start-Process '" << exe_utf8 << "' -ArgumentList \"`\"$((Resolve-Path $f).Path)`\"\"\n"
+             << "\n"
+             << "if ($args.Count -eq 1 -and ($args[0] -in @('-h', '--help', '-help', '-?', '/?'))) {\n"
+             << "    Write-Host 'SuperGoodViewer (超好读) CLI Launcher & Tool'\n"
+             << "    Write-Host ''\n"
+             << "    Write-Host 'Usage:'\n"
+             << "    Write-Host '  sgv [file.md ...]               Open markdown file(s) in SuperGoodViewer GUI'\n"
+             << "    Write-Host '  sgv export <path>... [options]  Export markdown file(s) or directory to PDF'\n"
+             << "    Write-Host '  sgv <file.md> -o <output.pdf>   Export single markdown file to PDF'\n"
+             << "    Write-Host '  sgv                             Launch or focus SuperGoodViewer GUI'\n"
+             << "    Write-Host '  sgv -h, --help                  Show this help message'\n"
+             << "    Write-Host ''\n"
+             << "    Write-Host 'Export Options:'\n"
+             << "    Write-Host '  -o, --output <path>             Output PDF path or destination directory'\n"
+             << "    Write-Host '  -f, --format <format>           Page layout format: a4, a4-landscape, fluid, slide, slide-4-3'\n"
+             << "    Write-Host '      --fluid                     Shorthand for --format fluid'\n"
+             << "    Write-Host '  -t, --theme <theme>             Theme: light, dark (default: light)'\n"
+             << "    Write-Host '      --dark                      Shorthand for --theme dark'\n"
+             << "    Write-Host '  -s, --font-size <pt>            Font size in points (default: 10.5)'\n"
+             << "    Write-Host '  -r, --recursive                 Recursively scan subdirectories (default: enabled)'\n"
+             << "    Write-Host '      --no-recursive              Do not scan subdirectories'\n"
+             << "    Write-Host ''\n"
+             << "    Write-Host 'Examples:'\n"
+             << "    Write-Host '  sgv README.md                             # View in GUI'\n"
+             << "    Write-Host '  sgv export README.md                      # Export to README.pdf'\n"
+             << "    Write-Host '  sgv export .\\docs -o .\\dist               # Batch export .\\docs to .\\dist'\n"
+             << "    Write-Host '  type draft.md | sgv export - -o draft.pdf  # Export from stdin'\n"
+             << "    exit 0\n"
+             << "}\n"
+             << "\n"
+             << "# 2. Check for export mode\n"
+             << "$isExport = $false\n"
+             << "if ($args.Count -gt 0 -and $args[0] -eq 'export') {\n"
+             << "    $isExport = $true\n"
+             << "} else {\n"
+             << "    foreach ($f in $args) {\n"
+             << "        if ($f -in @('-o', '--output', '--export', '-f', '--format', '--page-format', '--fluid', '-t', '--theme', '--dark', '-s', '--font-size', '--title', '-r', '--recursive', '--no-recursive', '--image-cache-dir')) {\n"
+             << "            $isExport = $true\n"
+             << "            break\n"
+             << "        }\n"
+             << "    }\n"
+             << "}\n"
+             << "\n"
+             << "if ($isExport) {\n"
+             << "    if (-not $cliBin -or -not (Test-Path $cliBin)) {\n"
+             << "        Write-Error 'sgv: error: headless export tool sgv-cli.exe not found'\n"
+             << "        exit 1\n"
+             << "    }\n"
+             << "    & $cliBin @args\n"
+             << "    exit $LASTEXITCODE\n"
+             << "}\n"
+             << "\n"
+             << "# 3. Launch GUI\n"
+             << "if ($args.Count -eq 0) {\n"
+             << "    Start-Process -FilePath $exePath\n"
+             << "    exit 0\n"
+             << "}\n"
+             << "foreach ($f in $args) {\n"
+             << "    if (Test-Path -LiteralPath $f) {\n"
+             << "        $absPath = (Resolve-Path -LiteralPath $f).Path\n"
+             << "        Start-Process -FilePath $exePath -ArgumentList \"`\"$absPath`\"\"\n"
              << "    } else {\n"
-             << "        Write-Error \"sgv: file not found: $f\"\n"
+             << "        Write-Error \"sgv: error: file not found: $f\"\n"
              << "        exit 1\n"
              << "    }\n"
              << "}\n";
-    ps1_file.close();
-  }
+  };
+
+  bool ps1_written = WriteToFileAtomically(ps1_path, write_ps1);
+  bool ps1_exists_now = std::filesystem::exists(ps1_path, ec);
 
   // Cross-location cleanup & PATH synchronization using loc directly
+  bool path_ok = true;
   std::wstring parent_dir_str = std::filesystem::path(cli_path).parent_path().wstring();
   if (AreDirsEqual(parent_dir_str, loc.custom_dir)) {
     // Installed to custom SuperGoodViewer\bin: register to PATH, clean any conflicting script in WindowsApps
-    AddToUserPathIfMissing(parent_dir_str);
+    path_ok = AddToUserPathIfMissing(parent_dir_str);
     RemoveCliFiles(loc.winapps_cmd);
   } else {
     // Installed to WindowsApps: clean any old script in SuperGoodViewer\bin, unregister from PATH
@@ -624,6 +967,35 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
   std::string cli_path_utf8 = Utf8FromUtf16(cli_path.c_str());
   res[flutter::EncodableValue("status")] = flutter::EncodableValue("success");
   res[flutter::EncodableValue("path")] = flutter::EncodableValue(cli_path_utf8);
+  std::vector<std::string> warning_codes;
+  std::vector<std::string> warnings;
+  if (!path_ok) {
+    warning_codes.push_back("path_failed");
+    warnings.push_back("未能将安装目录添加到环境变量 PATH（注册表受限），命令行可能无法直接调用");
+  }
+  if (!ps1_written) {
+    warning_codes.push_back(ps1_exists_now ? "ps1_update_failed" : "ps1_create_failed");
+    warnings.push_back(
+        ps1_exists_now
+            ? "sgv.ps1 未能更新（可能被占用），PowerShell 下可能仍指向旧版本"
+            : "未能创建 sgv.ps1 脚本");
+  }
+
+  if (!warning_codes.empty()) {
+    flutter::EncodableList code_list;
+    for (const auto& c : warning_codes) {
+      code_list.push_back(flutter::EncodableValue(c));
+    }
+    res[flutter::EncodableValue("warningCodes")] = flutter::EncodableValue(code_list);
+    res[flutter::EncodableValue("warningCode")] = flutter::EncodableValue(warning_codes[0]);
+  }
+  if (!warnings.empty()) {
+    std::string combined = "脚本已生成，但" + warnings[0];
+    for (size_t i = 1; i < warnings.size(); ++i) {
+      combined += "；且 " + warnings[i];
+    }
+    res[flutter::EncodableValue("warning")] = flutter::EncodableValue(combined);
+  }
   return res;
 }
 
@@ -632,6 +1004,7 @@ flutter::EncodableMap FlutterWindow::UninstallCli() {
   CliLocations loc;
   if (!CliLocations::TryGet(loc)) {
     res[flutter::EncodableValue("status")] = flutter::EncodableValue("error");
+    res[flutter::EncodableValue("messageCode")] = flutter::EncodableValue("app_data_dir_failed");
     res[flutter::EncodableValue("message")] = flutter::EncodableValue("无法定位本地应用数据目录");
     return res;
   }

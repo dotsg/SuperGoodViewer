@@ -128,7 +128,10 @@ void main() {
             globalPosition: Offset.zero,
           ),
         );
-        await Future.delayed(const Duration(milliseconds: 300));
+        for (int i = 0; i < 50; i++) {
+          if (controller.currentFilePath == sampleMd.path) break;
+          await Future.delayed(const Duration(milliseconds: 50));
+        }
       });
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 200));
@@ -174,7 +177,10 @@ void main() {
             globalPosition: Offset.zero,
           ),
         );
-        await Future.delayed(const Duration(milliseconds: 300));
+        for (int i = 0; i < 50; i++) {
+          if (controller.currentFilePath == readme.path) break;
+          await Future.delayed(const Duration(milliseconds: 50));
+        }
       });
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 200));
@@ -218,7 +224,10 @@ void main() {
             globalPosition: Offset.zero,
           ),
         );
-        await Future.delayed(const Duration(milliseconds: 300));
+        for (int i = 0; i < 50; i++) {
+          if (controller.currentFilePath == fileA.path) break;
+          await Future.delayed(const Duration(milliseconds: 50));
+        }
       });
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 200));

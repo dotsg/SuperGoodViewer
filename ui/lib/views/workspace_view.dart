@@ -23,7 +23,39 @@ import '../services/update_service.dart';
 class WorkspaceView extends StatefulWidget {
   final ReaderController controller;
 
-  const WorkspaceView({super.key, required this.controller});
+  /// Whether to automatically schedule a background startup update check after launch.
+  /// Defaults to null, falling back to [defaultEnableStartupUpdateCheck].
+  final bool? enableStartupUpdateCheck;
+
+  /// Default fallback value for [enableStartupUpdateCheck].
+  /// Automatically defaults to `false` in test environments (`FLUTTER_TEST` is present),
+  /// preventing background network requests and socket timer leaks in widget tests.
+  @visibleForTesting
+  static bool defaultEnableStartupUpdateCheck = !Platform.environment.containsKey('FLUTTER_TEST');
+
+  /// Whether to enable system integration services on startup (CLI IPC socket, initial system file check).
+  /// Defaults to null, falling back to [defaultEnableSystemIntegration].
+  final bool? enableSystemIntegration;
+
+  /// Default fallback value for [enableSystemIntegration].
+  /// Automatically defaults to `false` in test environments (`FLUTTER_TEST` is present),
+  /// preventing local IPC socket probing and system file checks in widget tests.
+  @visibleForTesting
+  static bool defaultEnableSystemIntegration = !Platform.environment.containsKey('FLUTTER_TEST');
+
+  // Floating HUD bottom tier metrics (in logical pixels)
+  static const double toolbarBottom = 24.0;
+  static const double zoomHudBottom = 84.0;
+  static const double bannerTierZen = toolbarBottom;
+  static const double bannerTierToolbar = zoomHudBottom; // 84.0: floats above reading toolbar
+  static const double bannerTierZoomHud = 140.0; // 140.0: floats above zoom HUD capsule
+
+  const WorkspaceView({
+    super.key,
+    required this.controller,
+    this.enableStartupUpdateCheck,
+    this.enableSystemIntegration,
+  });
 
   @override
   State<WorkspaceView> createState() => _WorkspaceViewState();
@@ -71,6 +103,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   Timer? _updateCheckTimer;
 
   bool _isFullScreen = false;
+  bool _dismissedDegradedWarning = false;
+  int _lastSeenCompileGeneration = 0;
   static const _windowChannel = MethodChannel('com.sogoodviewer.window');
 
   @override
@@ -90,17 +124,22 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       _syncWindowTitle();
     });
     widget.controller.addListener(_onControllerChanged);
-    NativeCliService.channel.setMethodCallHandler(_handleNativeMethodCall);
-    _checkInitialFileFromSystem();
-    CliIpcService.start((filePath) {
-      if (mounted) {
-        widget.controller.openFile(filePath);
-      }
-    });
+    final enableIntegration = widget.enableSystemIntegration ?? WorkspaceView.defaultEnableSystemIntegration;
+    if (enableIntegration) {
+      NativeCliService.channel.setMethodCallHandler(_handleNativeMethodCall);
+      _checkInitialFileFromSystem();
+      CliIpcService.start((filePath) {
+        if (mounted) {
+          widget.controller.openFile(filePath);
+        }
+      });
+    }
     _scheduleStartupUpdateCheck();
   }
 
   void _scheduleStartupUpdateCheck() {
+    final shouldCheck = widget.enableStartupUpdateCheck ?? WorkspaceView.defaultEnableStartupUpdateCheck;
+    if (!shouldCheck) return;
     if (!widget.controller.autoRestorePreferences) return;
 
     _updateCheckTimer = Timer(const Duration(seconds: 5), () async {
@@ -175,6 +214,10 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _onControllerChanged() {
+    if (_lastSeenCompileGeneration != widget.controller.compileGeneration) {
+      _lastSeenCompileGeneration = widget.controller.compileGeneration;
+      _dismissedDegradedWarning = false;
+    }
     if (widget.controller.requestedJumpItem != null) {
       final req = widget.controller.requestedJumpItem!;
       widget.controller.clearJumpRequest();
@@ -193,8 +236,11 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   @override
   void dispose() {
     _windowChannel.setMethodCallHandler(null);
-    CliIpcService.stop();
-    NativeCliService.channel.setMethodCallHandler(null);
+    final enableIntegration = widget.enableSystemIntegration ?? WorkspaceView.defaultEnableSystemIntegration;
+    if (enableIntegration) {
+      CliIpcService.stop();
+      NativeCliService.channel.setMethodCallHandler(null);
+    }
     widget.controller.removeListener(_onControllerChanged);
     _toolbarTimer?.cancel();
     _zoomHudTimer?.cancel();
@@ -831,7 +877,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 Row(
             children: [
               // Collapsible Left Sidebar (Outline & Recents)
-              if (_isSidebarOpen)
+              if (_isSidebarOpen && !controller.isSidebarOnRight)
                 SidebarView(
                   controller: controller,
                   onClose: () => _setSidebarOpen(false),
@@ -926,7 +972,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
                     // Zen Floating Frosted Glass Pill Toolbar (Bottom Reading HUD)
                     Positioned(
-                      bottom: 24,
+                      bottom: WorkspaceView.toolbarBottom,
                       left: 0,
                       right: 0,
                       child: Center(
@@ -958,10 +1004,14 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                       ),
                     ),
 
+                    // Floating Degraded Equations Warning Banner
+                    _buildDegradedWarningBanner(theme, isDark, controller),
+
                     // Transient Zoom HUD Capsule (Floats above the bottom pill toolbar)
+                    // Placed after the degraded warning banner in the Stack to guarantee top z-index.
                     if (_isZoomHudVisible)
                       Positioned(
-                        bottom: 84,
+                        bottom: WorkspaceView.zoomHudBottom,
                         left: 0,
                         right: 0,
                         child: Center(
@@ -1086,6 +1136,14 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                   ],
                 ),
               ),
+
+              // Collapsible Right Sidebar (Outline & Recents)
+              if (_isSidebarOpen && controller.isSidebarOnRight)
+                SidebarView(
+                  controller: controller,
+                  onClose: () => _setSidebarOpen(false),
+                  onJumpToOutline: (item) => _pdfCanvasKey.currentState?.jumpToOutline(item),
+                ),
             ],
           ),
           if (_isDraggingFileOver)
@@ -1096,9 +1154,123 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   ),
 ),
 );
-},
-);
-}
+      },
+    );
+  }
+
+  double get _degradedBannerBottom {
+    if (_isZoomHudVisible) {
+      return WorkspaceView.bannerTierZoomHud;
+    }
+    return _isToolbarVisible ? WorkspaceView.bannerTierToolbar : WorkspaceView.bannerTierZen;
+  }
+
+  Widget _buildDegradedWarningBanner(
+    ThemeData theme,
+    bool isDark,
+    ReaderController controller,
+  ) {
+    final showDegradedWarning = controller.hasDegradedEquations &&
+        controller.errorMessage == null &&
+        !_dismissedDegradedWarning;
+
+    return AnimatedPositioned(
+      key: const ValueKey('degraded_warning_positioned'),
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      bottom: _degradedBannerBottom,
+      left: 24,
+      right: 24,
+      child: Center(
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 220),
+          reverseDuration: const Duration(milliseconds: 180),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          transitionBuilder: (child, animation) {
+            return FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.35),
+                  end: Offset.zero,
+                ).animate(animation),
+                child: child,
+              ),
+            );
+          },
+          child: showDegradedWarning
+              ? Container(
+                  key: const ValueKey('degraded_warning_banner'),
+                  constraints: const BoxConstraints(maxWidth: 600),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xEB92400E) : const Color(0xF0D97706),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: isDark ? const Color(0x4DFBBF24) : const Color(0x33B45309),
+                      width: 1,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.15),
+                        blurRadius: 14,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.warning_amber_rounded,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          controller.strings.degradedEquationsWarning(
+                            controller.degradedEquationCount,
+                          ),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12.5,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: GestureDetector(
+                          key: const ValueKey('degraded_warning_dismiss'),
+                          onTap: () {
+                            setState(() {
+                              _dismissedDegradedWarning = true;
+                            });
+                          },
+                          child: const Padding(
+                            padding: EdgeInsets.all(4),
+                            child: Icon(
+                              Icons.close_rounded,
+                              color: Colors.white,
+                              size: 16,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : const SizedBox.shrink(key: ValueKey('degraded_warning_none')),
+        ),
+      ),
+    );
+  }
 
   Widget _buildDragDropOverlay(ThemeData theme, bool isDark) {
     return Positioned.fill(
@@ -1208,28 +1380,32 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 type: MaterialType.transparency,
                 child: Row(
                   children: [
-                    // When sidebar is closed, provide safe space for macOS traffic lights & sidebar button
-                    if (!_isSidebarOpen) ...[
+                    // Left side: safe space for macOS traffic lights & left sidebar toggle button
+                    if (!_isSidebarOpen || controller.isSidebarOnRight) ...[
                       if (Platform.isMacOS) const SizedBox(width: 78),
-                      Tooltip(
-                        message: controller.strings.toggleSidebarTooltip(controller.shortcutService.getShortcutLabel('toggleSidebar')),
-                        child: InkWell(
-                          onTap: () => _setSidebarOpen(true),
-                          borderRadius: BorderRadius.circular(4),
-                          child: SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: Center(
-                              child: Icon(
-                                Icons.view_sidebar_outlined,
-                                size: 16,
-                                color: isDark ? Colors.white70 : Colors.black54,
+                      if (!_isSidebarOpen && !controller.isSidebarOnRight) ...[
+                        Tooltip(
+                          message: controller.strings.toggleSidebarTooltip(controller.shortcutService.getShortcutLabel('toggleSidebar')),
+                          child: InkWell(
+                            onTap: () => _setSidebarOpen(true),
+                            borderRadius: BorderRadius.circular(4),
+                            child: SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: Center(
+                                child: Icon(
+                                  Icons.view_sidebar_outlined,
+                                  size: 16,
+                                  color: isDark ? Colors.white70 : Colors.black54,
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
+                        const SizedBox(width: 8),
+                      ] else if (!_isSidebarOpen && controller.isSidebarOnRight) ...[
+                        const SizedBox(width: 32),
+                      ],
                     ],
 
                     // Native window drag / caption area
@@ -1266,7 +1442,36 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                       ),
                     ),
 
-                    if (!_isSidebarOpen) SizedBox(width: (Platform.isMacOS ? 78.0 : 0.0) + 32.0),
+                    // Right side: right sidebar toggle button & balancing spacing
+                    if (!_isSidebarOpen && controller.isSidebarOnRight) ...[
+                      Tooltip(
+                        message: controller.strings.toggleSidebarTooltip(controller.shortcutService.getShortcutLabel('toggleSidebar')),
+                        child: InkWell(
+                          onTap: () => _setSidebarOpen(true),
+                          borderRadius: BorderRadius.circular(4),
+                          child: SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: Center(
+                              child: Transform.flip(
+                                flipX: true,
+                                child: Icon(
+                                  Icons.view_sidebar_outlined,
+                                  size: 16,
+                                  color: isDark ? Colors.white70 : Colors.black54,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      if (Platform.isMacOS) const SizedBox(width: 78),
+                    ] else if (!_isSidebarOpen && !controller.isSidebarOnRight) ...[
+                      SizedBox(width: (Platform.isMacOS ? 78.0 : 0.0) + 32.0),
+                    ] else if (_isSidebarOpen && controller.isSidebarOnRight) ...[
+                      if (Platform.isMacOS) const SizedBox(width: 78),
+                    ],
                   ],
                 ),
               ),

@@ -32,7 +32,9 @@ class DocumentCacheService {
           final localAppData = Platform.environment['LOCALAPPDATA'] ?? home;
           basePath = p.join(localAppData, 'SuperGoodViewer', 'Cache', 'compiled');
         } else {
-          basePath = p.join(home, '.cache', 'sogoodviewer', 'compiled');
+          final primary = p.join(home, '.cache', 'supergoodviewer', 'compiled');
+          final legacy = p.join(home, '.cache', 'sogoodviewer', 'compiled');
+          basePath = Directory(legacy).existsSync() && !Directory(primary).existsSync() ? legacy : primary;
         }
         final dir = Directory(basePath);
         if (!dir.existsSync()) {

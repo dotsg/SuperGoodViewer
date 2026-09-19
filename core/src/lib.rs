@@ -4,7 +4,7 @@ pub mod parser;
 
 use std::path::{Path, PathBuf};
 use compiler::engine::{
-    compile_typst_to_document, export_document_to_pdf, CompileError, RenderOptions,
+    compile_typst_to_document_with_raw_equations, export_document_to_pdf, CompileError, RenderOptions,
     FLUID_CAPPED_PAGE_HEIGHT_PT,
 };
 use parser::markdown::convert_markdown_to_typst;
@@ -83,22 +83,31 @@ fn document_has_overflow(doc: &typst_layout::PagedDocument) -> bool {
 ///
 /// 1. Transpiles Markdown + LaTeX Math + Mermaid into Typst code and virtual assets.
 /// 2. Compiles Typst into an in-memory PDF stream using the embedded Typst engine.
-pub fn compile_markdown_to_pdf(
+#[derive(Debug)]
+pub struct MarkdownCompilationResult {
+    pub pdf_bytes: Vec<u8>,
+    pub degraded_equation_count: usize,
+    pub degraded_equations: Vec<String>,
+}
+
+/// High-level function: Compiles Markdown directly into a PDF byte stream with compilation metadata.
+pub fn compile_markdown_to_pdf_result(
     markdown: &str,
     title: &str,
     doc_dir: impl AsRef<Path>,
     options: &RenderOptions,
-) -> Result<Vec<u8>, CompileError> {
+) -> Result<MarkdownCompilationResult, CompileError> {
     let cache_dir = options.image_cache_dir.as_ref().map(PathBuf::from);
 
     // Pass 1: Parse and compile the document (defaults to natural height for fluid mode).
     // Moving parsed.virtual_files avoids cloning large image or diagram buffers in memory.
     let parsed = convert_markdown_to_typst(markdown, title, options);
-    let document = compile_typst_to_document(
+    let document = compile_typst_to_document_with_raw_equations(
         &parsed.typst_source,
         doc_dir.as_ref(),
         parsed.virtual_files,
         cache_dir.clone(),
+        &parsed.raw_equations,
     )?;
 
     let valid_fluid_page_height = options.valid_fluid_page_height();
@@ -122,11 +131,12 @@ pub fn compile_markdown_to_pdf(
             let mut opts_b = options.clone();
             opts_b.fluid_page_height = Some(dynamic_slice_height);
             let parsed_b = convert_markdown_to_typst(markdown, title, &opts_b);
-            let doc_b = compile_typst_to_document(
+            let doc_b = compile_typst_to_document_with_raw_equations(
                 &parsed_b.typst_source,
                 doc_dir.as_ref(),
                 parsed_b.virtual_files,
                 cache_dir.clone(),
+                &parsed_b.raw_equations,
             )?;
 
             let overflow_b = document_has_overflow(&doc_b);
@@ -146,21 +156,36 @@ pub fn compile_markdown_to_pdf(
                 let mut opts_a = options.clone();
                 opts_a.fluid_page_height = Some(FLUID_CAPPED_PAGE_HEIGHT_PT);
                 let parsed_a = convert_markdown_to_typst(markdown, title, &opts_a);
-                let doc_a = compile_typst_to_document(
+                let doc_a = compile_typst_to_document_with_raw_equations(
                     &parsed_a.typst_source,
                     doc_dir.as_ref(),
                     parsed_a.virtual_files,
                     cache_dir,
+                    &parsed_a.raw_equations,
                 )?;
 
                 let overflow_a = document_has_overflow(&doc_a);
                 if overflow_b && !overflow_a {
                     // Candidate A preserves content integrity while Candidate B clipped content.
-                    return export_document_to_pdf(&doc_a);
+                    let count = doc_a.degraded_equation_count;
+                    let equations = doc_a.degraded_equations.clone();
+                    let pdf_bytes = export_document_to_pdf(&doc_a)?;
+                    return Ok(MarkdownCompilationResult {
+                        pdf_bytes,
+                        degraded_equation_count: count,
+                        degraded_equations: equations,
+                    });
                 }
                 if !overflow_b && overflow_a {
                     // Candidate B preserves content integrity while Candidate A clipped content.
-                    return export_document_to_pdf(&doc_b);
+                    let count = doc_b.degraded_equation_count;
+                    let equations = doc_b.degraded_equations.clone();
+                    let pdf_bytes = export_document_to_pdf(&doc_b)?;
+                    return Ok(MarkdownCompilationResult {
+                        pdf_bytes,
+                        degraded_equation_count: count,
+                        degraded_equations: equations,
+                    });
                 }
 
                 let pages_a = doc_a.pages().len();
@@ -169,15 +194,49 @@ pub fn compile_markdown_to_pdf(
                 // When content integrity is equivalent (neither overflows, or both overflow),
                 // choose whichever produces the smaller total canvas.
                 if canvas_a < canvas_b {
-                    return export_document_to_pdf(&doc_a);
+                    let count = doc_a.degraded_equation_count;
+                    let equations = doc_a.degraded_equations.clone();
+                    let pdf_bytes = export_document_to_pdf(&doc_a)?;
+                    return Ok(MarkdownCompilationResult {
+                        pdf_bytes,
+                        degraded_equation_count: count,
+                        degraded_equations: equations,
+                    });
                 }
             }
 
-            return export_document_to_pdf(&doc_b);
+            let count = doc_b.degraded_equation_count;
+            let equations = doc_b.degraded_equations.clone();
+            let pdf_bytes = export_document_to_pdf(&doc_b)?;
+            return Ok(MarkdownCompilationResult {
+                pdf_bytes,
+                degraded_equation_count: count,
+                degraded_equations: equations,
+            });
         }
     }
 
-    export_document_to_pdf(&document)
+    let count = document.degraded_equation_count;
+    let equations = document.degraded_equations.clone();
+    let pdf_bytes = export_document_to_pdf(&document)?;
+    Ok(MarkdownCompilationResult {
+        pdf_bytes,
+        degraded_equation_count: count,
+        degraded_equations: equations,
+    })
+}
+
+/// High-level function: Compiles Markdown directly into a PDF byte stream.
+///
+/// 1. Transpiles Markdown + LaTeX Math + Mermaid into Typst code and virtual assets.
+/// 2. Compiles Typst into an in-memory PDF stream using the embedded Typst engine.
+pub fn compile_markdown_to_pdf(
+    markdown: &str,
+    title: &str,
+    doc_dir: impl AsRef<Path>,
+    options: &RenderOptions,
+) -> Result<Vec<u8>, CompileError> {
+    compile_markdown_to_pdf_result(markdown, title, doc_dir, options).map(|r| r.pdf_bytes)
 }
 
 #[cfg(test)]

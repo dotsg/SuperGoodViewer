@@ -4,13 +4,133 @@ use pulldown_cmark::{Alignment, Event, HeadingLevel, Options, Parser, Tag, TagEn
 use typst::foundations::Bytes;
 
 use crate::compiler::engine::RenderOptions;
-use super::math::transpile_latex_math;
+use super::math::transpile_latex_math_with_index;
 use super::mermaid::render_mermaid;
 
 pub struct ParsedDocument {
     pub typst_source: String,
     pub virtual_files: HashMap<PathBuf, Bytes>,
     pub is_fluid: bool,
+    pub raw_equations: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageGeometry {
+    pub page_width_str: String,
+    pub page_height_str: String,
+    pub page_margin_str: String,
+    pub body_width_pt: f32,
+    pub page_width_pt: f32,
+    pub margin_left_pt: f32,
+    pub margin_right_pt: f32,
+}
+
+pub fn resolve_page_geometry(
+    normalized_format: &str,
+    viewport_width: f32,
+    is_fluid_sliced: bool,
+    target_fluid_slice: Option<f32>,
+) -> PageGeometry {
+    // 1cm = 72.0 / 2.54 pt ≈ 28.3464567 pt
+    match normalized_format {
+        "fluid" if is_fluid_sliced => {
+            let slice_h = target_fluid_slice.unwrap_or(crate::compiler::engine::FLUID_CAPPED_PAGE_HEIGHT_PT);
+            let margin_x = 24.0;
+            let bw = (viewport_width - 2.0 * margin_x).max(100.0);
+            PageGeometry {
+                page_width_str: format!("{}pt", viewport_width),
+                page_height_str: format!("{slice_h}pt"),
+                page_margin_str: format!("(x: {margin_x}pt, top: 0pt, bottom: 0pt)"),
+                body_width_pt: bw,
+                page_width_pt: viewport_width,
+                margin_left_pt: margin_x,
+                margin_right_pt: margin_x,
+            }
+        }
+        "fluid" => {
+            let margin_x = 24.0;
+            let bw = (viewport_width - 2.0 * margin_x).max(100.0);
+            PageGeometry {
+                page_width_str: format!("{}pt", viewport_width),
+                page_height_str: "auto".to_string(),
+                page_margin_str: format!("(x: {margin_x}pt, top: 0pt, bottom: 56pt)"),
+                body_width_pt: bw,
+                page_width_pt: viewport_width,
+                margin_left_pt: margin_x,
+                margin_right_pt: margin_x,
+            }
+        }
+        "a4" => {
+            // A4: 595.28pt x 841.89pt, margin x: 2cm = 56.692913 pt.
+            let margin_x: f32 = 2.0 * 72.0 / 2.54;
+            let width: f32 = 595.28;
+            let bw: f32 = width - 2.0 * margin_x; // 481.89417 pt
+            PageGeometry {
+                page_width_str: format!("{width}pt"),
+                page_height_str: "841.89pt".to_string(),
+                page_margin_str: format!("(x: {margin_x}pt, top: 2.5cm, bottom: 2.5cm)"),
+                body_width_pt: bw,
+                page_width_pt: width,
+                margin_left_pt: margin_x,
+                margin_right_pt: margin_x,
+            }
+        }
+        "a4_landscape" => {
+            // A4 landscape: 841.89pt x 595.28pt, margin x: 2.5cm = 70.86614 pt.
+            let margin_x: f32 = 2.5 * 72.0 / 2.54;
+            let width: f32 = 841.89;
+            let bw: f32 = width - 2.0 * margin_x; // 700.1577 pt
+            PageGeometry {
+                page_width_str: format!("{width}pt"),
+                page_height_str: "595.28pt".to_string(),
+                page_margin_str: format!("(x: {margin_x}pt, top: 2cm, bottom: 2cm)"),
+                body_width_pt: bw,
+                page_width_pt: width,
+                margin_left_pt: margin_x,
+                margin_right_pt: margin_x,
+            }
+        }
+        "slide_16_9" => {
+            let margin_x = 48.0;
+            let width = 960.0;
+            PageGeometry {
+                page_width_str: format!("{width}pt"),
+                page_height_str: "540pt".to_string(),
+                page_margin_str: format!("(x: {margin_x}pt, top: 36pt, bottom: 36pt)"),
+                body_width_pt: width - 2.0 * margin_x,
+                page_width_pt: width,
+                margin_left_pt: margin_x,
+                margin_right_pt: margin_x,
+            }
+        }
+        "slide_4_3" => {
+            let margin_x = 48.0;
+            let width = 960.0;
+            PageGeometry {
+                page_width_str: format!("{width}pt"),
+                page_height_str: "720pt".to_string(),
+                page_margin_str: format!("(x: {margin_x}pt, top: 40pt, bottom: 40pt)"),
+                body_width_pt: width - 2.0 * margin_x,
+                page_width_pt: width,
+                margin_left_pt: margin_x,
+                margin_right_pt: margin_x,
+            }
+        }
+        _ => {
+            let margin_x: f32 = 2.0 * 72.0 / 2.54;
+            let width: f32 = 595.28;
+            let bw: f32 = width - 2.0 * margin_x;
+            PageGeometry {
+                page_width_str: format!("{width}pt"),
+                page_height_str: "841.89pt".to_string(),
+                page_margin_str: format!("(x: {margin_x}pt, top: 2.5cm, bottom: 2.5cm)"),
+                body_width_pt: bw,
+                page_width_pt: width,
+                margin_left_pt: margin_x,
+                margin_right_pt: margin_x,
+            }
+        }
+    }
 }
 
 struct ImageParagraph {
@@ -695,46 +815,16 @@ pub fn convert_markdown_to_typst(
         ("rgb(\"#f1f5f9\")", "rgb(\"#cbd5e1\")", "rgb(\"#334155\")")
     };
 
-    let (page_width, page_height, page_margin) = match normalized_format {
-        "fluid" if is_fluid_sliced => {
-            let slice_h = target_fluid_slice.unwrap();
-            (
-                format!("{}pt", options.viewport_width),
-                format!("{slice_h}pt"),
-                "(x: 24pt, top: 0pt, bottom: 0pt)".to_string(),
-            )
-        }
-        "fluid" => (
-            format!("{}pt", options.viewport_width),
-            "auto".to_string(),
-            "(x: 24pt, top: 0pt, bottom: 56pt)".to_string(),
-        ),
-        "a4" => (
-            "595.28pt".to_string(),
-            "841.89pt".to_string(),
-            "(x: 2cm, top: 2.5cm, bottom: 2.5cm)".to_string(),
-        ),
-        "a4_landscape" => (
-            "841.89pt".to_string(),
-            "595.28pt".to_string(),
-            "(x: 2.5cm, top: 2cm, bottom: 2cm)".to_string(),
-        ),
-        "slide_16_9" => (
-            "960pt".to_string(),
-            "540pt".to_string(),
-            "(x: 48pt, top: 36pt, bottom: 36pt)".to_string(),
-        ),
-        "slide_4_3" => (
-            "960pt".to_string(),
-            "720pt".to_string(),
-            "(x: 48pt, top: 40pt, bottom: 40pt)".to_string(),
-        ),
-        _ => (
-            "595.28pt".to_string(),
-            "841.89pt".to_string(),
-            "(x: 2cm, top: 2.5cm, bottom: 2.5cm)".to_string(),
-        ),
-    };
+    let geom = resolve_page_geometry(
+        normalized_format,
+        options.viewport_width,
+        is_fluid_sliced,
+        target_fluid_slice,
+    );
+    let body_width_pt = geom.body_width_pt;
+    let page_width = geom.page_width_str;
+    let page_height = geom.page_height_str;
+    let page_margin = geom.page_margin_str;
 
     out.push_str(&format!(
         r##"// Auto-generated Typst markup by SuperGoodViewer
@@ -895,6 +985,7 @@ pub fn convert_markdown_to_typst(
     } else {
         format!("({})", code_fonts_default.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
     };
+    let degraded_math_macro_str = crate::compiler::engine::default_degraded_math_macro(is_dark, Some(&code_font_str));
 
     out.push_str(&format!(
         r##")
@@ -947,12 +1038,280 @@ pub fn convert_markdown_to_typst(
 #let textbf(it) = text(weight: "bold", it)
 #let textit(it) = text(style: "italic", it)
 #let textrm(it) = text(it)
-#let textup(it) = text(style: "normal", it)
-#let textsf(it) = text(it)
-#let texttt(it) = text(it)
+#let textup(it) = math.upright(it)
+#let textsf(it) = math.sans(math.upright(it))
+#let texttt(it) = math.mono(math.upright(it))
 #let diff = math.partial
 #let pmod(n) = $(mod #n)$
+#let pod(n) = $(#n)$
 #let odot = sym.dot.o
+
+// TeX math atom classes
+#let mathord(it) = it
+#let mathop(it) = math.op(it)
+#let mathbin(it) = it
+#let mathrel(it) = it
+#let mathopen(it) = it
+#let mathclose(it) = it
+#let mathpunct(it) = it
+#let mathinner(it) = it
+
+// Matrices & multi-line environments
+#let matrix = math.mat.with(delim: none)
+#let pmatrix = math.mat.with(delim: "(")
+#let bmatrix = math.mat.with(delim: "[")
+#let Bmatrix = math.mat.with(delim: "{{")
+#let vmatrix = math.mat.with(delim: "|")
+#let Vmatrix = math.mat.with(delim: "‖")
+#let smallmatrix = (..args) => math.inline(math.mat(delim: none, ..args))
+#let aligned(..args) = {{
+  let it = if args.pos().len() > 0 {{ args.pos().sum() }} else {{ math.zws }}
+  pad(y: 0.2em, math.display(it))
+}}
+#let alignedat(..args) = {{
+  let it = if args.pos().len() > 0 {{ args.pos().last() }} else {{ math.zws }}
+  pad(y: 0.2em, math.display(it))
+}}
+#let rcases = math.cases.with(reverse: true)
+
+// Operators, limits & extensible arrows
+#let operatorname(it) = math.op(math.upright(it))
+#let overset(sup, base) = $limits(base)^(sup)$
+#let underset(sub, base) = $limits(base)_(sub)$
+#let stackrel(sup, base) = $limits(base)^(sup)$
+#let xrightarrow(it) = $limits(stretch(arrow.r)^#it)$
+#let xleftarrow(it) = $limits(stretch(arrow.l)^#it)$
+#let xleftrightarrow(it) = $limits(stretch(arrow.l.r)^#it)$
+#let overleftrightarrow(it) = $accent(it, \u{{20e1}})$
+#let overleftharpoon(it) = $accent(it, \u{{20d0}})$
+#let overrightharpoon(it) = $accent(it, \u{{20d1}})$
+#let overlinesegment(it) = $accent(it, \u{{20e9}})$
+
+// Extensible over/under braces and brackets
+#let mitexoverbrace = math.overbrace
+#let mitexunderbrace = math.underbrace
+#let mitexoverbracket = math.overbracket
+#let mitexunderbracket = math.underbracket
+
+// Formula-level graceful degradation placeholder
+{degraded_math_macro_str}
+
+// String & dimension helper for mitex arguments
+#let sgvbodywidth = {body_width_pt}pt
+#let sgv-body-width = sgvbodywidth
+#let mitexstr(it) = {{
+  if type(it) == str {{
+    it
+  }} else if type(it) == length {{
+    repr(it)
+  }} else if type(it) == content {{
+    if it.has("text") {{
+      it.text
+    }} else if it.has("children") {{
+      it.children.map(mitexstr).join("")
+    }} else if it.has("body") {{
+      mitexstr(it.body)
+    }} else {{
+      ""
+    }}
+  }} else {{
+    ""
+  }}
+}}
+#let mitex-str = mitexstr
+
+// LaTeX color support
+#let mitex-color-map = (
+  "red": rgb("#d73a49"),
+  "blue": rgb("#0366d6"),
+  "green": rgb("#28a745"),
+  "yellow": rgb("#d97706"),
+  "orange": rgb("#d97706"),
+  "purple": rgb("#6f42c1"),
+  "cyan": rgb("#005cc5"),
+  "magenta": rgb("#ea4aaa"),
+  "gray": rgb("#6a737d"),
+  "grey": rgb("#6a737d"),
+  "black": rgb("#000000"),
+  "white": rgb("#ffffff"),
+  "pink": rgb("#ea4aaa"),
+  "teal": rgb("#008080"),
+  "violet": rgb("#6f42c1"),
+  "brown": rgb("#a0522d"),
+  "lime": rgb("#32cd32"),
+  "olive": rgb("#808000"),
+)
+#let colortext(c, it) = {{
+  let c-str = lower(mitexstr(c).replace(" ", "").trim())
+  let is-hex = c-str.starts-with("#") and (c-str.len() == 4 or c-str.len() == 7 or c-str.len() == 9) and c-str.slice(1).clusters().all(ch => ch in ("0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f","A","B","C","D","E","F"))
+  let clr = if c-str in mitex-color-map {{
+    mitex-color-map.at(c-str)
+  }} else if is-hex {{
+    rgb(c-str)
+  }} else {{
+    rgb("#d73a49")
+  }}
+  text(fill: clr, it)
+}}
+#let mitexcolor = colortext
+
+#let mitexlen(it, default: 0pt) = {{
+  if type(it) == length or type(it) == relative or type(it) == ratio {{
+    return it
+  }}
+  let s = mitexstr(it).replace(" ", "").replace("\u{{200b}}", "").trim()
+  if s.ends-with("textwidth") or s.ends-with("linewidth") or s.ends-with("columnwidth") {{
+    let suffix-len = if s.ends-with("columnwidth") {{ 11 }} else {{ 9 }}
+    let num-str = s.slice(0, s.len() - suffix-len).trim()
+    let coeff = if num-str.len() == 0 {{ 1.0 }} else {{
+      let num-chars = num-str.clusters()
+      let i = 0
+      if num-chars.at(0) == "+" or num-chars.at(0) == "-" {{ i += 1 }}
+      let has-dot = false
+      let valid = i < num-chars.len()
+      while i < num-chars.len() {{
+        let c = num-chars.at(i)
+        if c == "." {{
+          if has-dot {{ valid = false; break }}
+          has-dot = true
+        }} else if c in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9") {{
+          // digit ok
+        }} else {{
+          valid = false; break
+        }}
+        i += 1
+      }}
+      if valid {{ float(num-str) }} else {{ 1.0 }}
+    }}
+    return coeff * sgvbodywidth
+  }}
+  let chars = s.clusters()
+  if chars.len() < 2 {{ return default }}
+  let units = (
+    "pt": 1pt,
+    "mm": 1mm,
+    "cm": 1cm,
+    "in": 1in,
+    "em": 1em,
+    "ex": 0.5em,
+    "bp": 1in / 72,
+    "pc": 12pt,
+    "mu": 1em / 18,
+  )
+  let suffix = chars.slice(chars.len() - 2).join("")
+  if suffix not in units {{ return default }}
+  let unit-mult = units.at(suffix)
+  let num-str = chars.slice(0, chars.len() - 2).join("")
+  if num-str.len() == 0 {{ return default }}
+  let num-chars = num-str.clusters()
+  let i = 0
+  if num-chars.at(0) == "+" or num-chars.at(0) == "-" {{
+    i += 1
+  }}
+  if i >= num-chars.len() {{ return default }}
+  let has-dot = false
+  let has-digit = false
+  while i < num-chars.len() {{
+    let c = num-chars.at(i)
+    if c == "." {{
+      if has-dot {{ return default }}
+      has-dot = true
+    }} else if c in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9") {{
+      has-digit = true
+    }} else {{
+      return default
+    }}
+    i += 1
+  }}
+  if not has-digit {{ return default }}
+  float(num-str) * unit-mult
+}}
+#let mitex-len = mitexlen
+
+// Spacing & sizing
+// Note on textwidth/linewidth/columnwidth:
+// In LaTeX math expressions (e.g. \hspace{{0.5\textwidth}}), MiTeX transpiles this to
+// `hspace(0.5 textwidth)`. In Typst math mode, relative lengths like `100%` cannot be
+// dynamically multiplied or resolved without a contextual parent container (evaluating
+// to 0pt in inline math).
+// By defining `#let textwidth = [textwidth]` as a content tag, `0.5 textwidth` produces
+// content that `mitexstr()` captures as the string "0.5textwidth".
+// `mitexlen()` then extracts the coefficient ("0.5") and computes `coeff * sgvbodywidth`,
+// where `sgvbodywidth` is the statically resolved body content width in points for the current page layout.
+#let textwidth = [textwidth]
+#let linewidth = [linewidth]
+#let columnwidth = [columnwidth]
+#let baselineskip = 1.2em
+#let hspace(it) = h(mitexlen(it, default: 1em))
+#let vspace(it) = v(mitexlen(it, default: 1em))
+#let smash(it) = box(height: 0pt, $it$)
+#let raisebox(sp, it) = {{
+  let dy = mitexlen(sp, default: 0pt)
+  move(dy: -dy, it)
+}}
+#let atop(a, b) = math.vec(delim: none, a, b)
+#let choose = math.binom
+#let brace(n, k) = math.vec(delim: "{{", n, k)
+#let brack(n, k) = math.vec(delim: "[", n, k)
+
+// Big delimiters
+#let big(it) = math.lr(size: 1.2em, it)
+#let Big(it) = math.lr(size: 1.8em, it)
+#let bigg(it) = math.lr(size: 2.4em, it)
+#let Bigg(it) = math.lr(size: 3em, it)
+#let bigl = big
+#let Bigl = Big
+#let biggl = bigg
+#let Biggl = Bigg
+#let bigm = big
+#let Bigm = Big
+#let biggm = bigg
+#let Biggm = Bigg
+#let bigr = big
+#let Bigr = Big
+#let biggr = bigg
+#let Biggr = Bigg
+
+// Boxes, frames & spacing
+#let boxed(it) = box(stroke: 0.65pt + {text_color}, inset: (x: 4.5pt, y: 3pt), baseline: 0%, $it$)
+#let fbox(it) = box(stroke: 0.65pt + {text_color}, inset: (x: 4.5pt, y: 3pt), baseline: 0%, $it$)
+#let hbox(it) = box(math.upright(it))
+#let phantom(it) = hide(it)
+#let hphantom(it) = box(height: 0pt, hide(it))
+#let vphantom(it) = box(width: 0pt, hide(it))
+#let mathclap(it) = context {{ let s = measure($it$); box(width: 0pt, move(dx: -s.width / 2, box(width: s.width, $it$))) }}
+#let mathllap(it) = context {{ let s = measure($it$); box(width: 0pt, move(dx: -s.width, box(width: s.width, $it$))) }}
+#let mathrlap(it) = box(width: 0pt, $it$)
+
+// Fractions & binomials
+#let cfrac(num, den) = math.display(math.frac(num, den))
+#let dfrac(num, den) = math.display(math.frac(num, den))
+#let tfrac(num, den) = math.inline(math.frac(num, den))
+#let dbinom(n, k) = math.display(math.binom(n, k))
+#let tbinom(n, k) = math.inline(math.binom(n, k))
+#let substack(it) = box($script(it)$)
+
+// Dirac bracket notation
+#let bra(it) = $chevron.l it|$
+#let ket(it) = $|it chevron.r$
+#let braket(it) = $chevron.l it chevron.r$
+#let Bra(it) = $lr(chevron.l it|)$
+#let Ket(it) = $lr(|it chevron.r)$
+#let Braket(it) = $lr(chevron.l it chevron.r)$
+
+// Cancellation & accents
+#let xcancel(it) = math.cancel(it, cross: true)
+#let bcancel(it) = math.cancel(it, inverted: true)
+#let sout(it) = strike(it)
+#let mathring(it) = math.circle(it)
+#let underbar(it) = math.underline(it)
+#let overgroup(it) = $accent(it, \u{{0311}})$
+#let undergroup(it) = $accent(it, \u{{032e}})$
+
+// Delimiters & sets
+#let middle(it) = math.mid(it)
+#let Set(it) = $lr(\\{{it\\}})$
+
 
 #let mitexsqrt(..args) = {{
   if args.pos().len() == 1 {{
@@ -1019,7 +1378,9 @@ pub fn convert_markdown_to_typst(
         table_stroke = table_stroke,
         table_header_bg = table_header_bg,
         body_font_str = body_font_str,
-        code_font_str = code_font_str
+        code_font_str = code_font_str,
+        degraded_math_macro_str = degraded_math_macro_str,
+        body_width_pt = body_width_pt
     ));
 
     if is_fluid {
@@ -1051,6 +1412,7 @@ pub fn convert_markdown_to_typst(
     let mut referenced_anchors: HashSet<String> = HashSet::new();
     let custom_cache = options.image_cache_dir.as_deref().map(Path::new);
     let mut html_transpiler = HtmlTranspiler::new(is_dark, is_fluid, badge_bg, badge_stroke, badge_fg, custom_cache);
+    let mut raw_equations: Vec<String> = Vec::new();
 
     for event in parser {
         // Only a paragraph containing one image (optionally linked/formatted)
@@ -1380,10 +1742,14 @@ pub fn convert_markdown_to_typst(
                 }
             }
             Event::InlineMath(latex) => {
-                out.push_str(&transpile_latex_math(&latex, false));
+                let eq_idx = raw_equations.len();
+                raw_equations.push(latex.to_string());
+                out.push_str(&transpile_latex_math_with_index(&latex, false, Some(eq_idx)));
             }
             Event::DisplayMath(latex) => {
-                out.push_str(&transpile_latex_math(&latex, true));
+                let eq_idx = raw_equations.len();
+                raw_equations.push(latex.to_string());
+                out.push_str(&transpile_latex_math_with_index(&latex, true, Some(eq_idx)));
             }
             Event::Rule => {
                 if is_slide_mode {
@@ -1428,12 +1794,41 @@ pub fn convert_markdown_to_typst(
         typst_source: out,
         virtual_files,
         is_fluid,
+        raw_equations,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_page_margin_and_body_width_consistency() {
+        let formats = ["fluid", "a4", "a4_landscape", "slide_16_9", "slide_4_3"];
+        for fmt in formats {
+            let geom = resolve_page_geometry(fmt, 800.0, false, None);
+            let expected_body_width = geom.page_width_pt - geom.margin_left_pt - geom.margin_right_pt;
+            let diff = (geom.body_width_pt - expected_body_width).abs();
+            assert!(
+                diff < 1e-5,
+                "Format {} body_width_pt {} drifts from page_width - margins (expected {}, diff {})",
+                fmt,
+                geom.body_width_pt,
+                expected_body_width,
+                diff
+            );
+
+            // Verify that page_margin_str is derived directly from margin_left_pt and reflects the exact pt margin
+            let expected_margin_str = format!("{}pt", geom.margin_left_pt);
+            assert!(
+                geom.page_margin_str.contains(&expected_margin_str),
+                "Format {} page_margin_str '{}' does not reflect margin_left_pt {}",
+                fmt,
+                geom.page_margin_str,
+                geom.margin_left_pt
+            );
+        }
+    }
 
     #[test]
     fn test_convert_markdown_full_suite() {

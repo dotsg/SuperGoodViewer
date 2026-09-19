@@ -4,7 +4,7 @@
 > - **硬件平台**: Apple Silicon (Mac M系列), 36 GB 统一内存, APFS 高速固态硬盘  
 > - **操作系统**: macOS Sonoma / Sequoia  
 > - **测试基准软件版本**:  
->   - **SuperGoodViewer**: v1.0.7 (Release 编译, Flutter 3.22+ Impeller Metal + Rust 1.80+ Core)  
+>   - **SuperGoodViewer**: v1.0.8 (Release 编译, Flutter 3.22+ Impeller Metal + Rust 1.80+ Core)  
 >   - **Obsidian**: v1.6+ (Electron 30+, Chromium V8, 官方发布版)  
 >   - **Typora**: v1.9+ (Native Cocoa + WebKit WKWebView 引擎)  
 >   - **MarkText**: v0.17+ (Electron + Muya 所见即所得引擎)  
