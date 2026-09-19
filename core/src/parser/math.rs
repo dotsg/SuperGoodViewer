@@ -98,6 +98,7 @@ mod tests {
         let test_cases = [
             r"\boxed{R_{target}=M+C-2}",
             r"\fbox{E=mc^2}",
+            r"\hbox{test abc}",
             r"\hbox{\text{test}}",
             r"\cfrac{1}{\sqrt{2}}",
             r"\dfrac{a}{b}",
@@ -134,5 +135,93 @@ mod tests {
             let compiled = crate::compiler::engine::compile_typst_to_pdf(&doc.typst_source, ".", std::collections::HashMap::new());
             assert!(compiled.is_ok(), "Failed for {}: {:?}", latex, compiled.err());
         }
+    }
+
+    #[test]
+    fn test_typst_macro_fidelity() {
+        use typst::layout::{Frame, FrameItem, Point};
+
+        fn find_texts(frame: &Frame, origin: Point, out: &mut Vec<(String, Point)>) {
+            for (pos, item) in frame.items() {
+                let p = origin + *pos;
+                match item {
+                    FrameItem::Group(g) => find_texts(&g.frame, p, out),
+                    FrameItem::Text(t) => out.push((t.text.clone().into(), p)),
+                    _ => {}
+                }
+            }
+        }
+
+        // 1. substack: verify vertical stacking and proper row separation
+        let md_sub = "# Substack\n\n$$\n\\sum_{\\substack{0 < i < m \\\\ 0 < j < n}} a_{i j}\n$$\n";
+        let doc_sub = crate::parser::markdown::convert_markdown_to_typst(md_sub, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled_sub = crate::compiler::engine::compile_typst_to_document(&doc_sub.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
+        let mut texts_sub = Vec::new();
+        find_texts(&compiled_sub.pages()[0].frame, Point::zero(), &mut texts_sub);
+        let i_row = texts_sub.iter().find(|(t, _)| t.contains('i') || t.contains('\u{1d456}')).expect("Row 1 'i' not found");
+        let j_row = texts_sub.iter().find(|(t, _)| t.contains('j') || t.contains('\u{1d457}')).expect("Row 2 'j' not found");
+        assert!(j_row.1.y > i_row.1.y, "Row 2 (j) must be positioned below row 1 (i) vertically");
+
+        // 2. sout: verify horizontal strikethrough using native Typst strike
+        let md_sout = "# Sout\n\n$$\n\\sout{x + y}\n$$\n";
+        let doc_sout = crate::parser::markdown::convert_markdown_to_typst(md_sout, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled_sout = crate::compiler::engine::compile_typst_to_document(&doc_sout.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
+        let mut has_strike = false;
+        fn check_strike(frame: &Frame, found: &mut bool) {
+            for (_, item) in frame.items() {
+                match item {
+                    FrameItem::Tag(tag) if format!("{:?}", tag).contains("strike") => *found = true,
+                    FrameItem::Group(g) => check_strike(&g.frame, found),
+                    _ => {}
+                }
+            }
+        }
+        check_strike(&compiled_sout.pages()[0].frame, &mut has_strike);
+        assert!(has_strike, "sout must generate a native strike element");
+
+        // 3. hbox: verify upright Latin text
+        let md_hbox = "# Hbox\n\n$$\n\\hbox{test}\n$$\n";
+        let doc_hbox = crate::parser::markdown::convert_markdown_to_typst(md_hbox, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled_hbox = crate::compiler::engine::compile_typst_to_document(&doc_hbox.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
+        let mut texts_hbox = Vec::new();
+        find_texts(&compiled_hbox.pages()[0].frame, Point::zero(), &mut texts_hbox);
+        let combined: String = texts_hbox.into_iter().map(|(t, _)| t).collect();
+        assert!(combined.contains("t e s t") || combined.contains("test"), "hbox must contain upright text 't e s t' or 'test': got {}", combined);
+
+        // 4. mathclap: verify centered zero-width overflow
+        let md_clap = "# Mathclap\n\n$$\nA \\mathclap{X Y Z} B\n$$\n";
+        let doc_clap = crate::parser::markdown::convert_markdown_to_typst(md_clap, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled_clap = crate::compiler::engine::compile_typst_to_document(&doc_clap.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
+        let mut texts_clap = Vec::new();
+        find_texts(&compiled_clap.pages()[0].frame, Point::zero(), &mut texts_clap);
+        let a_pos = texts_clap.iter().find(|(t, _)| t == "𝐴").expect("A not found").1;
+        let b_pos = texts_clap.iter().find(|(t, _)| t == "𝐵").expect("B not found").1;
+        let y_pos = texts_clap.iter().find(|(t, _)| t == "𝑌").expect("Y not found").1;
+        let midpoint = (a_pos.x + b_pos.x) / 2.0;
+        // Y (center of XYZ) should be near the midpoint between A and B
+        assert!((y_pos.x - midpoint).abs().to_pt() < 5.0, "mathclap must center content between delimiters");
+
+        // 5. xcancel: verify cross of 2 lines
+        let md_xcancel = "# XCancel\n\n$$\n\\xcancel{x}\n$$\n";
+        let doc_xcancel = crate::parser::markdown::convert_markdown_to_typst(md_xcancel, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled_xcancel = crate::compiler::engine::compile_typst_to_document(&doc_xcancel.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
+        let mut line_count = 0;
+        fn count_lines(frame: &Frame, count: &mut usize) {
+            for (_, item) in frame.items() {
+                match item {
+                    FrameItem::Group(g) => count_lines(&g.frame, count),
+                    FrameItem::Shape(..) => *count += 1,
+                    _ => {}
+                }
+            }
+        }
+        count_lines(&compiled_xcancel.pages()[0].frame, &mut line_count);
+        assert_eq!(line_count, 2, "xcancel must generate an X cross (2 lines)");
+
+        // 6. hphantom and vphantom dimensions
+        let md_phan = "# Phantom\n\n$$\n\\hphantom{X}\n$$\n$$\n\\vphantom{X}\n$$\n";
+        let doc_phan = crate::parser::markdown::convert_markdown_to_typst(md_phan, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled_phan = crate::compiler::engine::compile_typst_to_pdf(&doc_phan.typst_source, ".", std::collections::HashMap::new());
+        assert!(compiled_phan.is_ok(), "Phantom compilation failed: {:?}", compiled_phan.err());
     }
 }
