@@ -96,6 +96,13 @@ void main() {
       expect(controller.renderOptions.isDark, false);
     });
 
+    test('demo document contains font alignment tip', () {
+      final controller = ReaderController();
+      expect(controller.currentMarkdown, contains('Maple Mono'));
+      expect(controller.currentMarkdown, contains('关于排版对齐'));
+      expect(controller.currentMarkdown, contains('https://github.com/subframe7536/maple-font'));
+    });
+
     test('toggles mode and theme', () {
       final controller = ReaderController();
       controller.toggleMode();

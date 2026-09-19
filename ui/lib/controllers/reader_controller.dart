@@ -1346,11 +1346,7 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
-  void _setSampleDocumentContent() {
-    _currentFilePath = null;
-    _documentTitle = 'SuperGoodViewer Demo';
-    _currentMarkdown = r'''
-# SuperGoodViewer 🚀
+  static const String _sampleMarkdown = r'''# SuperGoodViewer 🚀
 ### 出版级排版 Markdown 桌面阅读器
 
 欢迎体验 **SuperGoodViewer**！本应用通过 **Typst 嵌入式编译 + PDFium 矢量渲染**，为您提供极致的阅读美感与跨平台 100% 像素级一致性。
@@ -1393,7 +1389,10 @@ graph LR
 
 ## 🔤 CJK 1:2 等宽代码与 ASCII 字符表
 
-搭配 **Maple Mono** 字体，实现中英文全角半角严格 1:2 绝对对齐：
+搭配 **Maple Mono** 或中英文严格 1:2 等宽字体，实现全角半角绝对对齐：
+
+> [!TIP]
+> **关于排版对齐**：若下方字符画表格右侧边框存在轻微错位，是因为当前环境所用等宽字体的全角汉字与半角英文未达到严格 1:2 宽度比例（常见于英文等宽字体回退至系统通用黑体）。推荐下载安装开源 [Maple Mono](https://github.com/subframe7536/maple-font) 或更纱黑体（Sarasa Gothic）。若您已配置魔改 Consolas 等 1:2 等宽字体，可按快捷键 **Cmd/Ctrl + ,** 进入 **「字体与排版」** 设置中指定代码字体。
 
 ```
 ┌─────────────────────────────────────┬─────────────────────────────────────┐
@@ -1432,6 +1431,10 @@ graph LR
     > 点击顶部工具栏的 **视图切换** 按钮，可在自适应屏幕长卷轴与标准 A4 打印预览间丝滑切换。
 ''';
 
+  void _setSampleDocumentContent() {
+    _currentFilePath = null;
+    _documentTitle = 'SuperGoodViewer Demo';
+    _currentMarkdown = _sampleMarkdown;
     _extractOutline(_currentMarkdown);
   }
 
