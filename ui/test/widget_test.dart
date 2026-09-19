@@ -5,7 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sogoodviewer/controllers/reader_controller.dart';
 import 'package:sogoodviewer/models/render_options.dart';
+import 'package:sogoodviewer/models/update_info.dart';
+import 'package:sogoodviewer/services/cli_ipc_service.dart';
 import 'package:sogoodviewer/services/preferences_service.dart';
+import 'package:sogoodviewer/services/update_service.dart';
 import 'package:sogoodviewer/views/pdf_canvas_view.dart';
 import 'package:sogoodviewer/views/sidebar_view.dart';
 import 'package:sogoodviewer/views/workspace_view.dart';
@@ -894,22 +897,79 @@ void main() {
       controllerScrolled.dispose();
     });
 
-    testWidgets('WorkspaceView defaults enableStartupUpdateCheck to false in test environment', (tester) async {
-      expect(WorkspaceView.enableStartupUpdateCheckForTesting, isFalse);
+    testWidgets('WorkspaceView defaults enableStartupUpdateCheck to false in test environment and does not trigger check', (tester) async {
+      expect(WorkspaceView.defaultEnableStartupUpdateCheck, isFalse);
+      expect(WorkspaceView.defaultEnableSystemIntegration, isFalse);
+      expect(CliIpcService.isEnabled, isFalse);
 
-      final controller = ReaderController(autoRestorePreferences: false);
+      final mockUpdateService = _MockCheckUpdateService();
+      UpdateService.setInstanceForTesting(mockUpdateService);
+      addTearDown(() => UpdateService.setInstanceForTesting(null));
+
+      final controller = ReaderController(autoRestorePreferences: true);
       addTearDown(controller.dispose);
 
       final workspace = WorkspaceView(controller: controller);
       expect(workspace.enableStartupUpdateCheck, isNull);
+      expect(workspace.enableSystemIntegration, isNull);
 
       await tester.pumpWidget(
         MaterialApp(
           home: workspace,
         ),
       );
-      await tester.pump();
+
+      // Advance fake clock past the 5-second window.
+      // Since enableStartupUpdateCheckForTesting is false, the timer was never scheduled.
+      await tester.pump(const Duration(seconds: 6));
+      expect(mockUpdateService.checkCalls, equals(0));
+    });
+
+    testWidgets('WorkspaceView honors explicit enableStartupUpdateCheck: true by scheduling check', (tester) async {
+      final mockUpdateService = _MockCheckUpdateService();
+      UpdateService.setInstanceForTesting(mockUpdateService);
+      addTearDown(() => UpdateService.setInstanceForTesting(null));
+
+      final controller = ReaderController(autoRestorePreferences: true);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WorkspaceView(
+            controller: controller,
+            enableStartupUpdateCheck: true,
+          ),
+        ),
+      );
+
+      // Before 5 seconds, checkUpdate has not been called yet
+      await tester.pump(const Duration(seconds: 3));
+      expect(mockUpdateService.checkCalls, equals(0));
+
+      // After passing the 5-second mark, the timer fires and executes checkUpdate
+      await tester.pump(const Duration(seconds: 3));
+      expect(mockUpdateService.checkCalls, equals(1));
     });
   });
+}
+
+class _MockCheckUpdateService extends UpdateService {
+  int checkCalls = 0;
+
+  @override
+  Future<UpdateInfo> checkUpdate({
+    required String currentVersion,
+    bool isManual = false,
+  }) async {
+    checkCalls++;
+    return UpdateInfo(
+      currentVersion: currentVersion,
+      latestVersion: currentVersion,
+      title: '',
+      releaseNotes: '',
+      htmlUrl: '',
+      hasUpdate: false,
+    );
+  }
 }
 

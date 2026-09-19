@@ -24,13 +24,24 @@ class WorkspaceView extends StatefulWidget {
   final ReaderController controller;
 
   /// Whether to automatically schedule a background startup update check after launch.
-  /// Defaults to null, falling back to [enableStartupUpdateCheckForTesting].
+  /// Defaults to null, falling back to [defaultEnableStartupUpdateCheck].
   final bool? enableStartupUpdateCheck;
 
-  /// Global switch for testing environments.
+  /// Default fallback value for [enableStartupUpdateCheck].
   /// Automatically defaults to `false` in test environments (`FLUTTER_TEST` is present),
   /// preventing background network requests and socket timer leaks in widget tests.
-  static bool enableStartupUpdateCheckForTesting = !Platform.environment.containsKey('FLUTTER_TEST');
+  @visibleForTesting
+  static bool defaultEnableStartupUpdateCheck = !Platform.environment.containsKey('FLUTTER_TEST');
+
+  /// Whether to enable system integration services on startup (CLI IPC socket, initial system file check).
+  /// Defaults to null, falling back to [defaultEnableSystemIntegration].
+  final bool? enableSystemIntegration;
+
+  /// Default fallback value for [enableSystemIntegration].
+  /// Automatically defaults to `false` in test environments (`FLUTTER_TEST` is present),
+  /// preventing local IPC socket probing and system file checks in widget tests.
+  @visibleForTesting
+  static bool defaultEnableSystemIntegration = !Platform.environment.containsKey('FLUTTER_TEST');
 
   // Floating HUD bottom tier metrics (in logical pixels)
   static const double toolbarBottom = 24.0;
@@ -43,6 +54,7 @@ class WorkspaceView extends StatefulWidget {
     super.key,
     required this.controller,
     this.enableStartupUpdateCheck,
+    this.enableSystemIntegration,
   });
 
   @override
@@ -112,18 +124,21 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       _syncWindowTitle();
     });
     widget.controller.addListener(_onControllerChanged);
-    NativeCliService.channel.setMethodCallHandler(_handleNativeMethodCall);
-    _checkInitialFileFromSystem();
-    CliIpcService.start((filePath) {
-      if (mounted) {
-        widget.controller.openFile(filePath);
-      }
-    });
+    final enableIntegration = widget.enableSystemIntegration ?? WorkspaceView.defaultEnableSystemIntegration;
+    if (enableIntegration) {
+      NativeCliService.channel.setMethodCallHandler(_handleNativeMethodCall);
+      _checkInitialFileFromSystem();
+      CliIpcService.start((filePath) {
+        if (mounted) {
+          widget.controller.openFile(filePath);
+        }
+      });
+    }
     _scheduleStartupUpdateCheck();
   }
 
   void _scheduleStartupUpdateCheck() {
-    final shouldCheck = widget.enableStartupUpdateCheck ?? WorkspaceView.enableStartupUpdateCheckForTesting;
+    final shouldCheck = widget.enableStartupUpdateCheck ?? WorkspaceView.defaultEnableStartupUpdateCheck;
     if (!shouldCheck) return;
     if (!widget.controller.autoRestorePreferences) return;
 
@@ -221,8 +236,11 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   @override
   void dispose() {
     _windowChannel.setMethodCallHandler(null);
-    CliIpcService.stop();
-    NativeCliService.channel.setMethodCallHandler(null);
+    final enableIntegration = widget.enableSystemIntegration ?? WorkspaceView.defaultEnableSystemIntegration;
+    if (enableIntegration) {
+      CliIpcService.stop();
+      NativeCliService.channel.setMethodCallHandler(null);
+    }
     widget.controller.removeListener(_onControllerChanged);
     _toolbarTimer?.cancel();
     _zoomHudTimer?.cancel();
