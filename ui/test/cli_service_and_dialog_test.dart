@@ -92,6 +92,30 @@ void main() {
       expect(status.isInstalled, isFalse);
       expect(status.isPartial, isTrue);
       expect(status.path, equals('/usr/local/bin/sgv'));
+      expect(status.warning, isNull);
+    });
+
+    test('checkStatus parses response correctly when partially installed with custom warning', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'checkCliStatus') {
+          return {
+            'isInstalled': false,
+            'isPartial': true,
+            'path': r'C:\Users\test\AppData\Local\SuperGoodViewer\bin\sgv.cmd',
+            'target': r'C:\Program Files\SuperGoodViewer\sgv.exe',
+            'isCurrentApp': true,
+            'warning': '安装不完整 (未添加到系统 PATH)',
+          };
+        }
+        return null;
+      });
+
+      final status = await NativeCliService.checkStatus();
+      expect(status.isInstalled, isFalse);
+      expect(status.isPartial, isTrue);
+      expect(status.path, equals(r'C:\Users\test\AppData\Local\SuperGoodViewer\bin\sgv.cmd'));
+      expect(status.warning, equals('安装不完整 (未添加到系统 PATH)'));
     });
 
     test('uninstall handles success and cancelled states', () async {
@@ -202,6 +226,43 @@ void main() {
       expect(find.text('重新安装 / 修复'), findsOneWidget);
       expect(find.text('卸载清理'), findsOneWidget);
       expect(find.text('软链接路径: /usr/local/bin/sgv'), findsOneWidget);
+    });
+
+    testWidgets('renders dialog in partially installed state with custom warning message', (tester) async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'checkCliStatus') {
+          return {
+            'isInstalled': false,
+            'isPartial': true,
+            'path': r'C:\Users\test\AppData\Local\SuperGoodViewer\bin\sgv.cmd',
+            'target': r'C:\Program Files\SuperGoodViewer\sgv.exe',
+            'isCurrentApp': true,
+            'warning': '安装不完整 (未添加到系统 PATH)',
+          };
+        }
+        return null;
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () => showCliToolsDialog(context),
+                child: const Text('Open Dialog'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Open Dialog'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('安装不完整 (未添加到系统 PATH)'), findsOneWidget);
+      expect(find.text('重新安装 / 修复'), findsOneWidget);
+      expect(find.text('卸载清理'), findsOneWidget);
     });
 
     testWidgets('shows warning snackbar when install partially succeeds with warning', (tester) async {

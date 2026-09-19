@@ -39,7 +39,6 @@ class FlutterWindow : public Win32Window {
   flutter::EncodableMap CheckCliStatus();
   flutter::EncodableMap InstallCli();
   flutter::EncodableMap UninstallCli();
-  std::wstring GetInstalledCliPath();
 
   // The project to run.
   flutter::DartProject project_;

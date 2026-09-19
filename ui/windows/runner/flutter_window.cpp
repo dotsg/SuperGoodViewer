@@ -341,9 +341,9 @@ bool AreDirsEqual(const std::wstring& a, const std::wstring& b) {
   return NormalizeDirPath(a) == NormalizeDirPath(b);
 }
 
-bool ReadUserPath(std::wstring& out_path, DWORD& out_type) {
+bool ReadRegistryPath(HKEY root, const wchar_t* subkey, std::wstring& out_path, DWORD& out_type) {
   HKEY hkey;
-  if (::RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_READ, &hkey) != ERROR_SUCCESS) {
+  if (::RegOpenKeyExW(root, subkey, 0, KEY_READ, &hkey) != ERROR_SUCCESS) {
     return false;
   }
   DWORD size = 0;
@@ -385,7 +385,15 @@ bool ReadUserPath(std::wstring& out_path, DWORD& out_type) {
   }
 
   ::RegCloseKey(hkey);
-  return false; // Second read failed; return false to avoid treating it as empty and clobbering user PATH
+  return false;
+}
+
+bool ReadUserPath(std::wstring& out_path, DWORD& out_type) {
+  return ReadRegistryPath(HKEY_CURRENT_USER, L"Environment", out_path, out_type);
+}
+
+bool ReadSystemPath(std::wstring& out_path, DWORD& out_type) {
+  return ReadRegistryPath(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment", out_path, out_type);
 }
 
 bool WriteUserPathAndBroadcast(const std::wstring& new_path, DWORD type) {
@@ -407,17 +415,21 @@ bool WriteUserPathAndBroadcast(const std::wstring& new_path, DWORD type) {
   return true;
 }
 
-bool IsDirInUserPath(const std::wstring& dir) {
+bool IsDirInPath(const std::wstring& dir) {
   if (dir.empty()) return false;
-  std::wstring current_path;
+  // 1. Check User PATH
+  std::wstring user_path;
   DWORD type = REG_EXPAND_SZ;
-  if (!ReadUserPath(current_path, type) || current_path.empty()) {
-    return false;
+  if (ReadUserPath(user_path, type) && !user_path.empty()) {
+    for (const auto& seg : GetPathSegments(user_path)) {
+      if (AreDirsEqual(seg, dir)) return true;
+    }
   }
-  std::vector<std::wstring> segments = GetPathSegments(current_path);
-  for (const auto& seg : segments) {
-    if (AreDirsEqual(seg, dir)) {
-      return true;
+  // 2. Check System PATH
+  std::wstring sys_path;
+  if (ReadSystemPath(sys_path, type) && !sys_path.empty()) {
+    for (const auto& seg : GetPathSegments(sys_path)) {
+      if (AreDirsEqual(seg, dir)) return true;
     }
   }
   return false;
@@ -425,14 +437,24 @@ bool IsDirInUserPath(const std::wstring& dir) {
 
 bool AddToUserPathIfMissing(const std::wstring& dir_to_add) {
   if (dir_to_add.empty()) return false;
+  // If already active via System PATH, no need to add a duplicate to User PATH
+  std::wstring sys_path;
+  DWORD sys_type = REG_EXPAND_SZ;
+  if (ReadSystemPath(sys_path, sys_type) && !sys_path.empty()) {
+    for (const auto& seg : GetPathSegments(sys_path)) {
+      if (AreDirsEqual(seg, dir_to_add)) {
+        return true;
+      }
+    }
+  }
+
   std::wstring current_path;
   DWORD type = REG_EXPAND_SZ;
   if (!ReadUserPath(current_path, type)) {
     return false; // Read failed; abort immediately to prevent clobbering user PATH
   }
 
-  std::vector<std::wstring> segments = GetPathSegments(current_path);
-  for (const auto& seg : segments) {
+  for (const auto& seg : GetPathSegments(current_path)) {
     if (AreDirsEqual(seg, dir_to_add)) {
       return true;
     }
@@ -569,12 +591,6 @@ void RemoveCliFiles(const std::wstring& cmd_path) {
 
 }  // namespace
 
-std::wstring FlutterWindow::GetInstalledCliPath() {
-  CliLocations loc;
-  if (!CliLocations::TryGet(loc)) return L"";
-  return ResolveCliPath(loc);
-}
-
 flutter::EncodableMap FlutterWindow::CheckCliStatus() {
   CliLocations loc;
   bool has_loc = CliLocations::TryGet(loc);
@@ -598,12 +614,21 @@ flutter::EncodableMap FlutterWindow::CheckCliStatus() {
   if (has_loc && any_file_exists) {
     std::wstring parent_dir_str = std::filesystem::path(cli_path).parent_path().wstring();
     if (AreDirsEqual(parent_dir_str, loc.custom_dir)) {
-      path_ok = IsDirInUserPath(loc.custom_dir);
+      path_ok = IsDirInPath(loc.custom_dir);
     }
   }
 
   bool is_installed = files_ok && path_ok;
   bool is_partial = !is_installed && any_file_exists;
+
+  std::string warning_utf8 = "";
+  if (is_partial) {
+    if (files_ok && !path_ok) {
+      warning_utf8 = "安装不完整 (未添加到系统 PATH)";
+    } else {
+      warning_utf8 = "安装不完整 (部分工具未就绪)";
+    }
+  }
 
   std::wstring exe_path = GetCurrentExecutablePath();
 
@@ -636,6 +661,9 @@ flutter::EncodableMap FlutterWindow::CheckCliStatus() {
   res[flutter::EncodableValue("path")] = flutter::EncodableValue(path_utf8);
   res[flutter::EncodableValue("target")] = flutter::EncodableValue(target_utf8);
   res[flutter::EncodableValue("isCurrentApp")] = flutter::EncodableValue(is_current_app);
+  if (!warning_utf8.empty()) {
+    res[flutter::EncodableValue("warning")] = flutter::EncodableValue(warning_utf8);
+  }
   return res;
 }
 
@@ -928,14 +956,34 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
   std::string cli_path_utf8 = Utf8FromUtf16(cli_path.c_str());
   res[flutter::EncodableValue("status")] = flutter::EncodableValue("success");
   res[flutter::EncodableValue("path")] = flutter::EncodableValue(cli_path_utf8);
+  std::vector<std::string> warnings;
   if (!path_ok) {
-    res[flutter::EncodableValue("warning")] = flutter::EncodableValue(
-        "脚本已生成，但未能将安装目录添加到用户环境变量 PATH（注册表受限），命令行可能无法直接调用");
-  } else if (!ps1_written) {
-    res[flutter::EncodableValue("warning")] = flutter::EncodableValue(
+    warnings.push_back("未能将安装目录添加到环境变量 PATH（注册表受限），命令行可能无法直接调用");
+  }
+  if (!ps1_written) {
+    warnings.push_back(
         ps1_exists_now
+            ? "sgv.ps1 未能更新（可能被占用），PowerShell 下可能仍指向旧版本"
+            : "未能创建 sgv.ps1 脚本");
+  }
+
+  if (!warnings.empty()) {
+    std::string combined_warning;
+    if (warnings.size() == 1) {
+      if (!path_ok) {
+        combined_warning = "脚本已生成，但未能将安装目录添加到用户环境变量 PATH（注册表受限），命令行可能无法直接调用";
+      } else {
+        combined_warning = ps1_exists_now
             ? "sgv.cmd 安装成功，但 sgv.ps1 未能更新（可能被占用），PowerShell 下可能仍指向旧版本"
-            : "sgv.cmd 安装成功，但未能创建 sgv.ps1 脚本");
+            : "sgv.cmd 安装成功，但未能创建 sgv.ps1 脚本";
+      }
+    } else {
+      combined_warning = "脚本已生成，但未能添加到环境变量 PATH（注册表受限）；且 " +
+          std::string(ps1_exists_now
+              ? "sgv.ps1 未能更新（可能被占用），PowerShell 下可能仍指向旧版本"
+              : "未能创建 sgv.ps1 脚本");
+    }
+    res[flutter::EncodableValue("warning")] = flutter::EncodableValue(combined_warning);
   }
   return res;
 }

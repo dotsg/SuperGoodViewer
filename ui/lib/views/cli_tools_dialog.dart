@@ -260,7 +260,7 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
                                 _status.isInstalled
                                     ? '已就绪 (已安装在系统 PATH)'
                                     : (_status.isPartial
-                                        ? '安装不完整 (部分工具未就绪)'
+                                        ? (_status.warning ?? '安装不完整 (部分工具未就绪)')
                                         : '尚未安装到系统终端'),
                                 style: TextStyle(
                                   fontSize: 13.5,

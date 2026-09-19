@@ -7,6 +7,7 @@ class CliStatus {
   final String path;
   final String target;
   final bool isCurrentApp;
+  final String? warning;
   final String? error;
 
   const CliStatus({
@@ -15,6 +16,7 @@ class CliStatus {
     required this.path,
     required this.target,
     required this.isCurrentApp,
+    this.warning,
     this.error,
   });
 
@@ -65,6 +67,7 @@ class NativeCliService {
           path: res['path'] as String? ?? '',
           target: res['target'] as String? ?? '',
           isCurrentApp: res['isCurrentApp'] == true,
+          warning: res['warning'] as String?,
         );
       }
     } catch (e) {
