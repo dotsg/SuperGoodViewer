@@ -127,6 +127,10 @@ static FlValue* check_cli_status() {
   fl_value_set_string_take(map, "path", fl_value_new_string(symlink_path));
   fl_value_set_string_take(map, "target", fl_value_new_string(current_target ? current_target : (target ? target : "")));
   fl_value_set_string_take(map, "isCurrentApp", fl_value_new_bool(is_current_app));
+  if (is_partial) {
+    fl_value_set_string_take(map, "warningCode", fl_value_new_string("incomplete_tools"));
+    fl_value_set_string_take(map, "warning", fl_value_new_string("安装不完整 (部分工具未就绪)"));
+  }
 
   g_free(symlink_path);
   g_free(cli_bin_symlink);
@@ -187,6 +191,10 @@ static FlValue* install_cli() {
     fl_value_set_string_take(map, "status", fl_value_new_string("success"));
     fl_value_set_string_take(map, "path", fl_value_new_string(symlink_path));
     if (cli_bin_failed) {
+      fl_value_set_string_take(map, "warningCode", fl_value_new_string("cli_tool_failed"));
+      FlValue* codes = fl_value_new_list();
+      fl_value_append_take(codes, fl_value_new_string("cli_tool_failed"));
+      fl_value_set_string_take(map, "warningCodes", codes);
       fl_value_set_string_take(map, "warning", fl_value_new_string("sgv 安装成功，但未能创建 sgv-cli 快捷方式"));
     }
   } else {

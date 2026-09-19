@@ -531,9 +531,16 @@ class EnStrings implements AppStrings {
   String get cliDescWin =>
       'Open Markdown or PDF files instantly from CMD or PowerShell using the sgv command';
   @override
+  String get cliDescLinux =>
+      'Open Markdown or PDF files instantly from Linux Terminal using the sgv command';
+  @override
   String get cliStatusReady => 'Ready (Installed in system PATH)';
   @override
   String get cliStatusNotInstalled => 'Not installed in system PATH';
+  @override
+  String get cliStatusPartialPath => 'Incomplete installation (Not added to system PATH)';
+  @override
+  String get cliStatusPartialTools => 'Incomplete installation (Some tools not ready)';
   @override
   String cliSymlinkPath(String path) => 'Symlink path: $path';
   @override
@@ -541,7 +548,11 @@ class EnStrings implements AppStrings {
   @override
   String get cliRelink => 'Relink / Repair';
   @override
+  String get cliReinstallRepair => 'Reinstall / Repair';
+  @override
   String get cliUninstall => 'Uninstall';
+  @override
+  String get cliCleanUninstall => 'Clean Uninstall';
   @override
   String get cliInstallSuccess =>
       '🎉 \'sgv\' command-line tool installed successfully! Ready to use in your terminal.';
@@ -554,6 +565,26 @@ class EnStrings implements AppStrings {
   @override
   String cliUninstallFailed(String msg) => 'Uninstall failed: $msg';
   @override
+  String get cliWarningPathFailed =>
+      'Failed to add install directory to environment PATH (registry restricted), command may not be directly accessible';
+  @override
+  String get cliWarningPs1UpdateFailed =>
+      'sgv.ps1 could not be updated (may be in use), PowerShell may still point to older version';
+  @override
+  String get cliWarningPs1CreateFailed => 'Failed to create sgv.ps1 script';
+  @override
+  String get cliWarningCliToolFailed => 'Failed to create sgv-cli shortcut';
+  @override
+  String cliWarningCombined(List<String> warnings) {
+    if (warnings.isEmpty) return '';
+    final buffer = StringBuffer('Scripts generated, but ')..write(warnings[0]);
+    for (var i = 1; i < warnings.length; i++) {
+      buffer.write('; and ');
+      buffer.write(warnings[i]);
+    }
+    return buffer.toString();
+  }
+  @override
   String get cliUsageExamples => 'Usage Examples';
   @override
   String get cliExampleCurrentDir => 'Open Markdown file in current directory';
@@ -562,11 +593,24 @@ class EnStrings implements AppStrings {
   @override
   String get cliExampleLaunch => 'Quickly launch or activate SuperGoodViewer';
   @override
+  String get cliExampleStdin => 'Instant preview via stdin pipe';
+  @override
+  String get cliExampleOpenMarkdown => 'Open Markdown document in viewer';
+  @override
+  String get cliExampleExportSingle => 'Headlessly export single Markdown to publication-grade PDF';
+  @override
+  String get cliExampleExportBatch => 'Batch export all Markdown files in directory to PDF';
+  @override
+  String get cliHintQuickPreview => 'Once installed, run \'sgv README.md\' in terminal for instant document preview';
+  @override
   String get cliTipMac =>
       'Note: If macOS prompts for authorization, provide fingerprint or admin password. No manual terminal commands needed.';
   @override
   String get cliTipWin =>
       'Note: After installation, sgv can be run from Command Prompt, PowerShell, or Windows Terminal.';
+  @override
+  String get cliTipLinux =>
+      'Tip: Installation creates an sgv symlink in ~/.local/bin. Ensure this directory is in your PATH.';
   @override
   String get copyCommandTooltip => 'Copy Command';
   @override

@@ -214,13 +214,18 @@ class AppDelegate: FlutterAppDelegate {
       }
     }
 
-    return [
+    var res: [String: Any] = [
       "isInstalled": isInstalled,
       "isPartial": isPartial,
       "path": cliSymlinkPath,
       "target": destination,
       "isCurrentApp": isCurrentApp
     ]
+    if isPartial {
+      res["warningCode"] = "incomplete_tools"
+      res["warning"] = "安装不完整 (部分工具未就绪)"
+    }
+    return res
   }
 
   private func installCli(result: @escaping FlutterResult) {

@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/services.dart';
+import '../i18n/app_strings.dart';
 
 class CliStatus {
   final bool isInstalled;
@@ -7,6 +8,7 @@ class CliStatus {
   final String path;
   final String target;
   final bool isCurrentApp;
+  final String? warningCode;
   final String? warning;
   final String? error;
 
@@ -16,6 +18,7 @@ class CliStatus {
     required this.path,
     required this.target,
     required this.isCurrentApp,
+    this.warningCode,
     this.warning,
     this.error,
   });
@@ -29,6 +32,20 @@ class CliStatus {
       isCurrentApp: false,
     );
   }
+
+  String? localizedWarning(AppStrings s) {
+    if (warningCode == 'missing_path') {
+      return s.cliStatusPartialPath;
+    } else if (warningCode == 'incomplete_tools') {
+      return s.cliStatusPartialTools;
+    }
+    if (warning == '安装不完整 (未添加到系统 PATH)') {
+      return s.cliStatusPartialPath;
+    } else if (warning == '安装不完整 (部分工具未就绪)') {
+      return s.cliStatusPartialTools;
+    }
+    return warning;
+  }
 }
 
 class CliOperationResult {
@@ -36,6 +53,8 @@ class CliOperationResult {
   final bool isCancelled;
   final String? message;
   final String? warning;
+  final String? warningCode;
+  final List<String>? warningCodes;
   final String? path;
 
   const CliOperationResult({
@@ -43,8 +62,32 @@ class CliOperationResult {
     this.isCancelled = false,
     this.message,
     this.warning,
+    this.warningCode,
+    this.warningCodes,
     this.path,
   });
+
+  String? localizedWarning(AppStrings s) {
+    final codes = warningCodes ?? (warningCode != null ? [warningCode!] : null);
+    if (codes != null && codes.isNotEmpty) {
+      final parts = <String>[];
+      for (final code in codes) {
+        if (code == 'path_failed') {
+          parts.add(s.cliWarningPathFailed);
+        } else if (code == 'ps1_update_failed') {
+          parts.add(s.cliWarningPs1UpdateFailed);
+        } else if (code == 'ps1_create_failed') {
+          parts.add(s.cliWarningPs1CreateFailed);
+        } else if (code == 'cli_tool_failed') {
+          parts.add(s.cliWarningCliToolFailed);
+        }
+      }
+      if (parts.isNotEmpty) {
+        return s.cliWarningCombined(parts);
+      }
+    }
+    return warning;
+  }
 }
 
 class NativeCliService {
@@ -61,13 +104,24 @@ class NativeCliService {
     try {
       final res = await channel.invokeMapMethod<String, dynamic>('checkCliStatus');
       if (res != null) {
+        final warningCode = res['warningCode'] as String?;
+        final warning = res['warning'] as String?;
+        String? resolvedWarningCode = warningCode;
+        if (resolvedWarningCode == null && res['isPartial'] == true) {
+          if (warning == '安装不完整 (未添加到系统 PATH)') {
+            resolvedWarningCode = 'missing_path';
+          } else {
+            resolvedWarningCode = 'incomplete_tools';
+          }
+        }
         return CliStatus(
           isInstalled: res['isInstalled'] == true,
           isPartial: res['isPartial'] == true,
           path: res['path'] as String? ?? '',
           target: res['target'] as String? ?? '',
           isCurrentApp: res['isCurrentApp'] == true,
-          warning: res['warning'] as String?,
+          warningCode: resolvedWarningCode,
+          warning: warning,
         );
       }
     } catch (e) {
@@ -96,10 +150,19 @@ class NativeCliService {
       if (res != null) {
         final status = res['status'] as String?;
         if (status == 'success') {
+          final warningCodesRaw = res['warningCodes'];
+          List<String>? warningCodes;
+          if (warningCodesRaw is List) {
+            warningCodes = warningCodesRaw.map((e) => e.toString()).toList();
+          }
+          final warningCode = res['warningCode'] as String? ??
+              (warningCodes != null && warningCodes.isNotEmpty ? warningCodes.first : null);
           return CliOperationResult(
             isSuccess: true,
             message: res['message'] as String?,
             warning: res['warning'] as String?,
+            warningCode: warningCode,
+            warningCodes: warningCodes,
             path: res['path'] as String?,
           );
         } else if (status == 'cancelled') {

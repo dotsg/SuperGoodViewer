@@ -615,17 +615,22 @@ flutter::EncodableMap FlutterWindow::CheckCliStatus() {
     std::wstring parent_dir_str = std::filesystem::path(cli_path).parent_path().wstring();
     if (AreDirsEqual(parent_dir_str, loc.custom_dir)) {
       path_ok = IsDirInPath(loc.custom_dir);
+    } else {
+      path_ok = IsDirInPath(loc.winapps_dir);
     }
   }
 
   bool is_installed = files_ok && path_ok;
   bool is_partial = !is_installed && any_file_exists;
 
+  std::string warning_code = "";
   std::string warning_utf8 = "";
   if (is_partial) {
     if (files_ok && !path_ok) {
+      warning_code = "missing_path";
       warning_utf8 = "安装不完整 (未添加到系统 PATH)";
     } else {
+      warning_code = "incomplete_tools";
       warning_utf8 = "安装不完整 (部分工具未就绪)";
     }
   }
@@ -661,6 +666,9 @@ flutter::EncodableMap FlutterWindow::CheckCliStatus() {
   res[flutter::EncodableValue("path")] = flutter::EncodableValue(path_utf8);
   res[flutter::EncodableValue("target")] = flutter::EncodableValue(target_utf8);
   res[flutter::EncodableValue("isCurrentApp")] = flutter::EncodableValue(is_current_app);
+  if (!warning_code.empty()) {
+    res[flutter::EncodableValue("warningCode")] = flutter::EncodableValue(warning_code);
+  }
   if (!warning_utf8.empty()) {
     res[flutter::EncodableValue("warning")] = flutter::EncodableValue(warning_utf8);
   }
@@ -956,34 +964,34 @@ flutter::EncodableMap FlutterWindow::InstallCli() {
   std::string cli_path_utf8 = Utf8FromUtf16(cli_path.c_str());
   res[flutter::EncodableValue("status")] = flutter::EncodableValue("success");
   res[flutter::EncodableValue("path")] = flutter::EncodableValue(cli_path_utf8);
+  std::vector<std::string> warning_codes;
   std::vector<std::string> warnings;
   if (!path_ok) {
+    warning_codes.push_back("path_failed");
     warnings.push_back("未能将安装目录添加到环境变量 PATH（注册表受限），命令行可能无法直接调用");
   }
   if (!ps1_written) {
+    warning_codes.push_back(ps1_exists_now ? "ps1_update_failed" : "ps1_create_failed");
     warnings.push_back(
         ps1_exists_now
             ? "sgv.ps1 未能更新（可能被占用），PowerShell 下可能仍指向旧版本"
             : "未能创建 sgv.ps1 脚本");
   }
 
-  if (!warnings.empty()) {
-    std::string combined_warning;
-    if (warnings.size() == 1) {
-      if (!path_ok) {
-        combined_warning = "脚本已生成，但未能将安装目录添加到用户环境变量 PATH（注册表受限），命令行可能无法直接调用";
-      } else {
-        combined_warning = ps1_exists_now
-            ? "sgv.cmd 安装成功，但 sgv.ps1 未能更新（可能被占用），PowerShell 下可能仍指向旧版本"
-            : "sgv.cmd 安装成功，但未能创建 sgv.ps1 脚本";
-      }
-    } else {
-      combined_warning = "脚本已生成，但未能添加到环境变量 PATH（注册表受限）；且 " +
-          std::string(ps1_exists_now
-              ? "sgv.ps1 未能更新（可能被占用），PowerShell 下可能仍指向旧版本"
-              : "未能创建 sgv.ps1 脚本");
+  if (!warning_codes.empty()) {
+    flutter::EncodableList code_list;
+    for (const auto& c : warning_codes) {
+      code_list.push_back(flutter::EncodableValue(c));
     }
-    res[flutter::EncodableValue("warning")] = flutter::EncodableValue(combined_warning);
+    res[flutter::EncodableValue("warningCodes")] = flutter::EncodableValue(code_list);
+    res[flutter::EncodableValue("warningCode")] = flutter::EncodableValue(warning_codes[0]);
+  }
+  if (!warnings.empty()) {
+    std::string combined = "脚本已生成，但" + warnings[0];
+    for (size_t i = 1; i < warnings.size(); ++i) {
+      combined += "；且 " + warnings[i];
+    }
+    res[flutter::EncodableValue("warning")] = flutter::EncodableValue(combined);
   }
   return res;
 }

@@ -309,14 +309,26 @@ class _SettingsDialogState extends State<SettingsDialog> {
     if (mounted) {
       setState(() => _isOperatingCli = false);
       if (res.isSuccess) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(widget.controller.strings.cliInstallSuccess),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: const Color(0xFF10B981),
-            duration: const Duration(seconds: 3),
-          ),
-        );
+        final warnMsg = res.localizedWarning(widget.controller.strings);
+        if (warnMsg != null && warnMsg.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('⚠️ $warnMsg'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.orange.shade800,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(widget.controller.strings.cliInstallSuccess),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: const Color(0xFF10B981),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
       } else if (!res.isCancelled) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -2459,6 +2471,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     }
 
     final isInstalled = _cliStatus.isInstalled;
+    final isPartial = _cliStatus.isPartial;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2488,7 +2501,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      isInstalled ? s.cliStatusReady : s.cliStatusNotInstalled,
+                      isInstalled
+                          ? s.cliStatusReady
+                          : (isPartial
+                              ? (_cliStatus.localizedWarning(s) ?? s.cliStatusPartialTools)
+                              : s.cliStatusNotInstalled),
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 13.5,
@@ -2501,7 +2518,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     Text(
                       isInstalled
                           ? (Platform.isWindows ? 'PATH: ${_cliStatus.path}' : s.cliSymlinkPath(_cliStatus.path))
-                          : '安装后可直接在终端中输入 sgv README.md 极速预览任何文档',
+                          : s.cliHintQuickPreview,
                       style: TextStyle(
                         fontSize: 11.5,
                         color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
@@ -2525,7 +2542,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                   child: Text(s.cliUninstall, style: const TextStyle(fontSize: 12)),
                 )
-              else
+              else ...[
                 ElevatedButton(
                   onPressed: _handleInstallCli,
                   style: ElevatedButton.styleFrom(
@@ -2533,8 +2550,20 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     foregroundColor: Colors.white,
                     visualDensity: VisualDensity.compact,
                   ),
-                  child: Text(s.cliInstall, style: const TextStyle(fontSize: 12)),
+                  child: Text(isPartial ? s.cliReinstallRepair : s.cliInstall, style: const TextStyle(fontSize: 12)),
                 ),
+                if (isPartial) ...[
+                  const SizedBox(width: 8),
+                  OutlinedButton(
+                    onPressed: _handleUninstallCli,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.redAccent,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    child: Text(s.cliCleanUninstall, style: const TextStyle(fontSize: 12)),
+                  ),
+                ],
+              ],
             ],
           ),
         ),
@@ -2547,7 +2576,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         const SizedBox(height: 8),
         _buildCliCodeSnippet(s.cliExampleAnyFile, 'sgv --a4 report.md', isDark),
         const SizedBox(height: 8),
-        _buildCliCodeSnippet('通过管道即时预览 stdin', 'cat note.md | sgv', isDark),
+        _buildCliCodeSnippet(s.cliExampleStdin, 'cat note.md | sgv', isDark),
       ],
     );
   }
