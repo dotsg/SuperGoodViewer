@@ -10,6 +10,7 @@ import '../services/native_cli_service.dart';
 import '../services/shortcut_service.dart';
 import '../services/update_service.dart';
 import '../services/preferences_service.dart';
+import 'cli_tools_dialog.dart';
 import 'update_dialog.dart';
 
 /// Available tabs within the unified SettingsDialog.
@@ -308,43 +309,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final res = await NativeCliService.install();
     if (mounted) {
       setState(() => _isOperatingCli = false);
-      if (res.isSuccess) {
-        final warnMsg = res.localizedWarning(widget.controller.strings);
-        if (warnMsg != null && warnMsg.isNotEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('⚠️ $warnMsg'),
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: Colors.orange.shade800,
-              duration: const Duration(seconds: 4),
-            ),
-          );
-        } else {
-          final customMsg = res.localizedMessage(widget.controller.strings);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                (customMsg != null && customMsg.isNotEmpty)
-                    ? customMsg
-                    : widget.controller.strings.cliInstallSuccess,
-              ),
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: const Color(0xFF10B981),
-              duration: const Duration(seconds: 3),
-            ),
-          );
-        }
-      } else if (!res.isCancelled) {
-        final detail = res.localizedMessage(widget.controller.strings) ?? '';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(widget.controller.strings.cliInstallFailed(detail)),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Colors.redAccent,
-            duration: const Duration(seconds: 4),
-          ),
-        );
-      }
+      showCliOperationFeedback(
+        context,
+        result: res,
+        strings: widget.controller.strings,
+        isInstall: true,
+      );
       _loadCliStatus();
     }
   }
@@ -354,30 +324,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final res = await NativeCliService.uninstall();
     if (mounted) {
       setState(() => _isOperatingCli = false);
-      if (res.isSuccess) {
-        final customMsg = res.localizedMessage(widget.controller.strings);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              (customMsg != null && customMsg.isNotEmpty)
-                  ? customMsg
-                  : widget.controller.strings.cliUninstallSuccess,
-            ),
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      } else if (!res.isCancelled) {
-        final detail = res.localizedMessage(widget.controller.strings) ?? '';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(widget.controller.strings.cliUninstallFailed(detail)),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Colors.redAccent,
-            duration: const Duration(seconds: 4),
-          ),
-        );
-      }
+      showCliOperationFeedback(
+        context,
+        result: res,
+        strings: widget.controller.strings,
+        isInstall: false,
+      );
       _loadCliStatus();
     }
   }
