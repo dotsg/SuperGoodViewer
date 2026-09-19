@@ -505,11 +505,11 @@ impl<'a> HtmlTranspiler<'a> {
         } else if trimmed_lower == "<strong>" || trimmed_lower == "<b>" {
             out.push_str("#strong[");
         } else if trimmed_lower == "</strong>" || trimmed_lower == "</b>" {
-            out.push_str("]\u{200B}");
+            out.push_str("]/**/");
         } else if trimmed_lower == "<em>" || trimmed_lower == "<i>" {
             out.push_str("#emph[");
         } else if trimmed_lower == "</em>" || trimmed_lower == "</i>" {
-            out.push_str("]\u{200B}");
+            out.push_str("]/**/");
         } else if trimmed_lower == "<br>" || trimmed_lower == "<br/>" || trimmed_lower == "<br />" {
             out.push_str("\\ \n");
         } else if trimmed_lower.starts_with("<a ") {
@@ -520,7 +520,7 @@ impl<'a> HtmlTranspiler<'a> {
                 out.push('[');
             }
         } else if trimmed_lower == "</a>" {
-            out.push(']');
+            out.push_str("]/**/");
         }
     }
 
@@ -671,7 +671,10 @@ pub fn convert_markdown_to_typst(
     };
 
     let is_fluid = normalized_format == "fluid";
-    let cap_fluid_height = is_fluid && fluid_needs_page_height_cap(markdown_body);
+    let cap_fluid_height = is_fluid
+        && options
+            .cap_fluid_height
+            .unwrap_or_else(|| fluid_needs_page_height_cap(markdown_body));
     let is_slide = normalized_format == "slide_16_9" || normalized_format == "slide_4_3";
     let is_slide_mode = is_slide;
 
@@ -1280,12 +1283,12 @@ pub fn convert_markdown_to_typst(
                 TagEnd::Item => {
                     out.push('\n');
                 }
-                TagEnd::Emphasis => out.push_str("]\u{200B}"),
-                TagEnd::Strong => out.push_str("]\u{200B}"),
-                TagEnd::Strikethrough => out.push(']'),
+                TagEnd::Emphasis => out.push_str("]/**/"),
+                TagEnd::Strong => out.push_str("]/**/"),
+                TagEnd::Strikethrough => out.push_str("]/**/"),
                 TagEnd::Link => {
                     if link_stack.pop() == Some(true) {
-                        out.push(']');
+                        out.push_str("]/**/");
                     }
                 }
                 TagEnd::Image => {
@@ -1341,7 +1344,7 @@ pub fn convert_markdown_to_typst(
                 TagEnd::TableRow => {}
                 TagEnd::TableCell => {
                     if in_table_head {
-                        out.push(']');
+                        out.push_str("]/**/");
                     }
                     out.push_str("],\n");
                 }
@@ -1584,10 +1587,11 @@ LPC window from (10000_0000h + 64K*LPCMWMRS) to (FFFF_FFFFh + 64K*(LPCMWMRS + 1)
             ".",
             parsed.virtual_files,
         );
-        if let Err(ref e) = res {
-            eprintln!("Generated typst:\n{}", parsed.typst_source);
-            eprintln!("error: {e:?}");
-        }
+        assert!(
+            parsed.typst_source.contains("]/**/"),
+            "emphasis and table headers must emit ]/**/ delimiters:\n{}",
+            parsed.typst_source
+        );
         assert!(res.is_ok(), "Hardware-style emphasis/table failed: {:?}", res.err());
     }
 
@@ -1878,6 +1882,31 @@ Local image with dark border:
         let long_parsed = convert_markdown_to_typst(&long_md, "Long", &fluid_opts);
         assert!(long_parsed.typst_source.contains("height: auto"));
         assert!(long_parsed.typst_source.contains("bottom: 56pt"));
+    }
+
+    #[test]
+    fn test_inline_formatting_boundaries_and_no_zero_width_space() {
+        let md = r#"
+**bold**(parens) and *italic*(parens) and ~~deleted~~(parens) and [link](https://example.com)(parens).
+
+**bold**[brackets] and *italic*[brackets] and ~~deleted~~[brackets] and [link](https://example.com)[brackets].
+
+**bold**.dot and *italic*.dot and ~~deleted~~.dot and [link](https://example.com).dot.
+
+HTML: <b>bold</b>(parens) and <i>italic</i>(parens) and <a href="https://example.com">link</a>(parens).
+"#;
+        let parsed = convert_markdown_to_typst(md, "Boundary Test", &RenderOptions::default());
+        assert!(!parsed.typst_source.contains('\u{200B}'), "Generated Typst source must not contain zero-width space");
+        assert!(parsed.typst_source.contains("]/**/"));
+
+        let res = crate::compiler::engine::compile_typst_to_pdf(
+            &parsed.typst_source,
+            ".",
+            parsed.virtual_files,
+        );
+        assert!(res.is_ok(), "Formatting boundary compilation failed: {:?}", res.err());
+        let pdf = res.unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
     }
 
     #[test]

@@ -59,6 +59,8 @@ pub struct RenderOptions {
     pub skip_first_page_header_footer: Option<bool>,
     #[serde(default)]
     pub marp_enabled: Option<bool>,
+    #[serde(default)]
+    pub cap_fluid_height: Option<bool>,
 }
 
 impl RenderOptions {
@@ -108,6 +110,7 @@ impl Default for RenderOptions {
             show_footer_rule: None,
             skip_first_page_header_footer: None,
             marp_enabled: None,
+            cap_fluid_height: None,
         }
     }
 }

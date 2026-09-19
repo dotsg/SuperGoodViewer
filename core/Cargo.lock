@@ -2433,6 +2433,7 @@ dependencies = [
  "ttf-parser",
  "typst",
  "typst-assets",
+ "typst-layout",
  "typst-pdf",
  "typst-syntax",
 ]

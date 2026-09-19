@@ -16,8 +16,51 @@ pub fn compile_markdown_to_pdf(
     doc_dir: impl AsRef<Path>,
     options: &RenderOptions,
 ) -> Result<Vec<u8>, CompileError> {
-    let parsed = convert_markdown_to_typst(markdown, title, options);
     let cache_dir = options.image_cache_dir.as_ref().map(PathBuf::from);
+
+    // In fluid mode when no explicit cap is forced, use a robust two-pass strategy:
+    // Pass 1: Compile with height: auto (natural height, zero blank trailing space).
+    // If the measured layout height exceeds the PDF 1.7 default user space limit (14,400pt),
+    // Pass 2: Re-compile with capped height (14,000pt per slice) to prevent PDFium clipping/refusal.
+    if options.is_fluid() && options.cap_fluid_height.is_none() {
+        let mut auto_opts = options.clone();
+        auto_opts.cap_fluid_height = Some(false);
+        let parsed_auto = convert_markdown_to_typst(markdown, title, &auto_opts);
+
+        let world = compiler::world::MemoryWorld::new_with_cache_dir(
+            &parsed_auto.typst_source,
+            doc_dir.as_ref(),
+            parsed_auto.virtual_files.clone(),
+            cache_dir.clone(),
+        );
+        let warned = typst::compile::<typst_layout::PagedDocument>(&world);
+        let document = warned.output.map_err(|errs| {
+            let msgs: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
+            CompileError::Typst(msgs.join("\n"))
+        })?;
+
+        let max_height = document
+            .pages()
+            .iter()
+            .map(|p| p.frame.size().y.to_pt())
+            .fold(0.0f64, f64::max);
+        if max_height > 14000.0 {
+            let mut capped_opts = options.clone();
+            capped_opts.cap_fluid_height = Some(true);
+            let parsed_capped = convert_markdown_to_typst(markdown, title, &capped_opts);
+            return compile_typst_to_pdf_with_options(
+                &parsed_capped.typst_source,
+                doc_dir,
+                parsed_capped.virtual_files,
+                cache_dir,
+            );
+        }
+
+        return typst_pdf::pdf(&document, &typst_pdf::PdfOptions::default())
+            .map_err(|e| CompileError::Pdf(format!("{:?}", e)));
+    }
+
+    let parsed = convert_markdown_to_typst(markdown, title, options);
     compile_typst_to_pdf_with_options(&parsed.typst_source, doc_dir, parsed.virtual_files, cache_dir)
 }
 
@@ -176,7 +219,54 @@ fn main() {
             assert!(res.is_ok(), "Failed to compile test.md: {:?}", res.err());
             let pdf = res.unwrap();
             assert!(pdf.starts_with(b"%PDF-"));
+            assert!(
+                parsed.typst_source.contains("]/**/"),
+                "test.md parsed typst source should use ]/**/ delimiter"
+            );
             println!("Compiled rich test.md spec in {:?}, generated PDF bytes: {}", elapsed, pdf.len());
+        }
+    }
+
+    #[test]
+    fn test_fluid_two_pass_auto_height_and_capped_fallback() {
+        // Construct a document with 1480 lines / ~19k chars whose rendered height
+        // exceeds 14,400pt (PDF 1.7 limit). The two-pass strategy must detect the
+        // actual height and automatically re-compile with capped height to prevent
+        // PDFium clipping/refusal.
+        let mut tall_md = String::new();
+        for i in 0..740 {
+            tall_md.push_str(&format!("Line {i}\n\n"));
+        }
+
+        let options = RenderOptions {
+            mode: "fluid".to_string(),
+            theme: "light".to_string(),
+            viewport_width: 850.0,
+            font_size: 10.5,
+            ..Default::default()
+        };
+
+        let res = compile_markdown_to_pdf(&tall_md, "Tall Document", ".", &options);
+        assert!(res.is_ok(), "Tall document failed two-pass compile: {:?}", res.err());
+        let pdf = res.unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
+
+        // Verify with MemoryWorld that the capped compilation produced multiple pages <= 14000.5pt
+        let capped_parsed = convert_markdown_to_typst(&tall_md, "Tall Document", &RenderOptions {
+            cap_fluid_height: Some(true),
+            ..options.clone()
+        });
+        let world = compiler::world::MemoryWorld::new_with_cache_dir(
+            &capped_parsed.typst_source,
+            Path::new("."),
+            capped_parsed.virtual_files,
+            None,
+        );
+        let doc = typst::compile::<typst_layout::PagedDocument>(&world).output.expect("Capped doc compile");
+        assert!(doc.pages().len() > 1, "Tall document must be paginated across multiple pages");
+        for (i, p) in doc.pages().iter().enumerate() {
+            let h = p.frame.size().y.to_pt();
+            assert!(h <= 14000.5, "Page {i} height {h}pt exceeds 14,000pt limit");
         }
     }
 
