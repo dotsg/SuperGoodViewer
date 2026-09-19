@@ -23,10 +23,12 @@ fn preprocess_laps(input: &str) -> String {
 
         if is_llap || is_rlap {
             let cmd_name = if is_llap { "mathllap" } else { "mathrlap" };
-            let cmd_len = 9; // r"\mathllap".len() == 9
+            let cmd_len = cmd_name.len() + 1; // +1 for leading '\'
             let after_cmd = i + cmd_len;
 
-            let is_escaped = i > 0 && bytes[i - 1] == b'\\';
+            // Preceded by an odd number of backslashes means it is truly escaped (e.g. \\mathllap)
+            let num_backslashes = input[..i].chars().rev().take_while(|&c| c == '\\').count();
+            let is_escaped = num_backslashes % 2 == 1;
             let is_boundary = after_cmd >= len || !bytes[after_cmd].is_ascii_alphabetic();
 
             if !is_escaped && is_boundary {
@@ -53,13 +55,19 @@ fn preprocess_laps(input: &str) -> String {
                     if depth == 0 {
                         let inner = &input[brace_start + 1..j - 1];
                         let processed_inner = preprocess_laps(inner);
-                        let inner_typst = match mitex::convert_math(&processed_inner, None) {
-                            Ok(t) => t.trim().to_string(),
-                            Err(_) => processed_inner,
-                        };
-                        result.push_str(&format!(r"\iftypst {}({}) \fi", cmd_name, inner_typst));
-                        i = j;
-                        continue;
+                        if let Ok(inner_typst) = mitex::convert_math(&processed_inner, None) {
+                            let trimmed_typst = inner_typst.trim();
+                            result.push_str(&format!(r"\iftypst {}({}) \fi", cmd_name, trimmed_typst));
+                            i = j;
+                            continue;
+                        } else {
+                            // If inner conversion failed, do NOT rewrite to \iftypst!
+                            // Leave \mathllap{...} / \mathrlap{...} as raw input so outer mitex fails
+                            // and triggers transpile_latex_math's graceful fallback.
+                            result.push_str(&input[i..j]);
+                            i = j;
+                            continue;
+                        }
                     }
                 }
             }
@@ -140,8 +148,10 @@ mod tests {
     #[test]
     fn test_transpile_matrix() {
         let latex = r"\begin{matrix} 1 & 2 \\ 3 & 4 \end{matrix}";
-        let res = transpile_latex_math(latex, true);
-        assert!(res.contains('$'));
+        let md = format!("# Matrix\n\n$$\n{}\n$$\n", latex);
+        let doc = crate::parser::markdown::convert_markdown_to_typst(&md, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled = crate::compiler::engine::compile_typst_to_document(&doc.typst_source, ".", std::collections::HashMap::new(), None);
+        assert!(compiled.is_ok(), "Matrix compilation failed: {:?}", compiled.err());
     }
 
     #[test]
@@ -393,5 +403,47 @@ mod tests {
         let doc = crate::parser::markdown::convert_markdown_to_typst(md, "Test", &crate::compiler::engine::RenderOptions::default());
         let compiled = crate::compiler::engine::compile_typst_to_document(&doc.typst_source, ".", std::collections::HashMap::new(), None);
         assert!(compiled.is_ok(), "TeX atom classes compilation failed: {:?}", compiled.err());
+    }
+
+    #[test]
+    fn test_common_latex_structures_compilation() {
+        // Smoke test all common environments and commands reported:
+        // matrix, pmatrix, bmatrix, Bmatrix, vmatrix, Vmatrix, smallmatrix, aligned,
+        // operatorname, overset, underset, stackrel, xrightarrow, xleftarrow, hspace,
+        // overleftrightarrow, atop, choose, brace, brack
+        let md = r#"# Common LaTeX Constructs
+
+$$\begin{matrix} 1 & 2 \\ 3 & 4 \end{matrix}$$
+$$\begin{pmatrix} a & b \\ c & d \end{pmatrix}$$
+$$\begin{bmatrix} x & y \\ z & w \end{bmatrix}$$
+$$\begin{Bmatrix} 1 & 0 \\ 0 & 1 \end{Bmatrix}$$
+$$\begin{vmatrix} a & b \\ c & d \end{vmatrix}$$
+$$\begin{Vmatrix} a & b \\ c & d \end{Vmatrix}$$
+$$\begin{aligned} a &= b \\ c &= d \end{aligned}$$
+$$\operatorname{sgn}(x) + \operatorname*{max}_{i} x_i$$
+$$\overset{a}{b} + \underset{a}{b} + \stackrel{a}{=}$$
+$$\xrightarrow{f} + \xleftarrow{g}$$
+$$A \hspace{1em} B \vspace{1em} C$$
+$$\overleftrightarrow{AB} + \overleftharpoon{CD} + \overrightharpoon{EF}$$
+$$a \atop b$$
+$$n \choose k$$
+"#;
+        let doc = crate::parser::markdown::convert_markdown_to_typst(md, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled = crate::compiler::engine::compile_typst_to_document(&doc.typst_source, ".", std::collections::HashMap::new(), None);
+        assert!(compiled.is_ok(), "Common LaTeX structures compilation failed: {:?}", compiled.err());
+    }
+
+    #[test]
+    fn test_invalid_lap_graceful_fallback() {
+        // An invalid command inside \mathrlap must NOT inject uncompilable raw LaTeX into Typst.
+        // It must trigger graceful fallback for that equation without crashing document compilation.
+        let raw = r"\mathrlap{\invalidcommandhere}";
+        let trans = transpile_latex_math(raw, false);
+        assert!(trans.starts_with("$ \"") && trans.ends_with("\" $"), "Invalid lap must fall back to string literal: got {}", trans);
+
+        let md = format!("# Test\n\n$$\n{}\n$$\n", raw);
+        let doc = crate::parser::markdown::convert_markdown_to_typst(&md, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled = crate::compiler::engine::compile_typst_to_document(&doc.typst_source, ".", std::collections::HashMap::new(), None);
+        assert!(compiled.is_ok(), "Document compilation must not fail on invalid lap: {:?}", compiled.err());
     }
 }

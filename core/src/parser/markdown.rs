@@ -965,6 +965,64 @@ pub fn convert_markdown_to_typst(
 #let mathpunct(it) = it
 #let mathinner(it) = it
 
+// Matrices & multi-line environments
+#let matrix = math.mat.with(delim: none)
+#let pmatrix = math.mat.with(delim: "(")
+#let bmatrix = math.mat.with(delim: "[")
+#let Bmatrix = math.mat.with(delim: "{{")
+#let vmatrix = math.mat.with(delim: "|")
+#let Vmatrix = math.mat.with(delim: "‖")
+#let smallmatrix = (..args) => math.inline(math.mat.with(delim: none, ..args))
+#let aligned(..args) = {{
+  let it = if args.pos().len() > 0 {{ args.pos().sum() }} else {{ math.zws }}
+  pad(y: 0.2em, math.display(it))
+}}
+#let alignedat(..args) = {{
+  let it = if args.pos().len() > 0 {{ args.pos().last() }} else {{ math.zws }}
+  pad(y: 0.2em, math.display(it))
+}}
+#let rcases = math.cases.with(reverse: true)
+
+// Operators, limits & extensible arrows
+#let operatorname(it) = math.op(math.upright(it))
+#let overset(sup, base) = $limits(base)^(sup)$
+#let underset(sub, base) = $limits(base)_(sub)$
+#let stackrel(sup, base) = $limits(base)^(sup)$
+#let xrightarrow(it) = $limits(stretch(arrow.r)^#it)$
+#let xleftarrow(it) = $limits(stretch(arrow.l)^#it)$
+#let overleftrightarrow(it) = $accent(it, \u{{20e1}})$
+#let overleftharpoon(it) = $accent(it, \u{{20d0}})$
+#let overrightharpoon(it) = $accent(it, \u{{20d1}})$
+#let overlinesegment(it) = $accent(it, \u{{20e9}})$
+
+// Spacing & sizing
+#let hspace(it) = h(1em)
+#let vspace(it) = v(1em)
+#let smash(it) = box(height: 0pt, $it$)
+#let raisebox(sp, it) = it
+#let atop(a, b) = $mat(delim: #none, #a; #b)$
+#let choose = math.binom
+#let brace(n, k) = $mat(delim: "{{", #n; #k)$
+#let brack(n, k) = $mat(delim: "[", #n; #k)$
+
+// Big delimiters
+#let big(it) = math.lr(size: 1.2em, it)
+#let Big(it) = math.lr(size: 1.8em, it)
+#let bigg(it) = math.lr(size: 2.4em, it)
+#let Bigg(it) = math.lr(size: 3em, it)
+#let bigl = big
+#let Bigl = Big
+#let biggl = bigg
+#let Biggl = Bigg
+#let bigm = big
+#let Bigm = Big
+#let biggm = bigg
+#let Biggm = Bigg
+#let bigr = big
+#let Bigr = Big
+#let biggr = bigg
+#let Biggr = Bigg
+
 // Boxes, frames & spacing
 #let boxed(it) = box(stroke: 0.65pt + {text_color}, inset: (x: 4.5pt, y: 3pt), baseline: 0%, $it$)
 #let fbox(it) = box(stroke: 0.65pt + {text_color}, inset: (x: 4.5pt, y: 3pt), baseline: 0%, $it$)
