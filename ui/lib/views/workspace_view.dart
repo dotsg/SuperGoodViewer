@@ -44,7 +44,6 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   bool _isHoveringTitleBar = false;
   Timer? _titleBarHoverTimer;
   bool _isDraggingFileOver = false;
-  bool _isDraggingSidebar = false;
 
   bool get _shouldShowTitleBar {
     if (_isFullScreen) return false;
@@ -837,8 +836,6 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                   controller: controller,
                   onClose: () => _setSidebarOpen(false),
                   onJumpToOutline: (item) => _pdfCanvasKey.currentState?.jumpToOutline(item),
-                  onDragStarted: () => setState(() => _isDraggingSidebar = true),
-                  onDragEnded: () => setState(() => _isDraggingSidebar = false),
                 ),
 
               // Main Canvas + Zen Floating Toolbar Stack
@@ -1096,13 +1093,9 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                   controller: controller,
                   onClose: () => _setSidebarOpen(false),
                   onJumpToOutline: (item) => _pdfCanvasKey.currentState?.jumpToOutline(item),
-                  onDragStarted: () => setState(() => _isDraggingSidebar = true),
-                  onDragEnded: () => setState(() => _isDraggingSidebar = false),
                 ),
             ],
           ),
-          if (_isDraggingSidebar)
-            _buildSidebarDockTarget(theme, isDark, controller),
           if (_isDraggingFileOver)
             _buildDragDropOverlay(theme, isDark),
         ],
@@ -1114,66 +1107,6 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 },
 );
 }
-
-  Widget _buildSidebarDockTarget(ThemeData theme, bool isDark, ReaderController controller) {
-    return Positioned(
-      top: _shouldShowTitleBar ? 32.0 : 0.0,
-      bottom: 0,
-      left: controller.isSidebarOnRight ? 0 : null,
-      right: !controller.isSidebarOnRight ? 0 : null,
-      width: controller.sidebarWidth.clamp(200.0, 360.0),
-      child: DragTarget<String>(
-        onWillAcceptWithDetails: (details) => details.data == 'sidebar_dock',
-        onAcceptWithDetails: (_) {
-          setState(() => _isDraggingSidebar = false);
-          controller.toggleSidebarPosition();
-        },
-        builder: (context, candidateData, rejectedData) {
-          final isHovered = candidateData.isNotEmpty;
-          return AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            margin: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: isHovered
-                  ? theme.colorScheme.primary.withValues(alpha: 0.22)
-                  : theme.colorScheme.primary.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: theme.colorScheme.primary.withValues(alpha: isHovered ? 0.9 : 0.4),
-                width: isHovered ? 2.5 : 1.5,
-              ),
-            ),
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Transform.flip(
-                    flipX: !controller.isSidebarOnRight,
-                    child: Icon(
-                      Icons.view_sidebar_rounded,
-                      size: isHovered ? 40 : 32,
-                      color: theme.colorScheme.primary,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    controller.isSidebarOnRight
-                        ? controller.strings.moveSidebarToLeft
-                        : controller.strings.moveSidebarToRight,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      color: theme.colorScheme.primary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
 
   Widget _buildDragDropOverlay(ThemeData theme, bool isDark) {
     return Positioned.fill(

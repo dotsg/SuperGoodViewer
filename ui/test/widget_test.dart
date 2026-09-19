@@ -446,45 +446,6 @@ void main() {
       expect(controller.sidebarWidth, ReaderController.defaultSidebarWidth);
     });
 
-    testWidgets('dragging sidebar grip handle and dropping onto dock target flips side', (tester) async {
-      tester.view.physicalSize = const Size(1200, 800);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-
-      final controller = ReaderController(autoRestorePreferences: false);
-      controller.setSidebarOpen(true);
-      addTearDown(controller.dispose);
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: WorkspaceView(controller: controller),
-        ),
-      );
-      await tester.pump();
-
-      expect(controller.sidebarPosition, 'left');
-
-      final dragGrip = find.byIcon(Icons.drag_indicator_rounded);
-      expect(dragGrip, findsOneWidget);
-
-      final firstLocation = tester.getCenter(dragGrip);
-      final gesture = await tester.startGesture(firstLocation);
-      // Move beyond drag slop so Draggable recognizes drag and calls onDragStarted
-      await gesture.moveBy(const Offset(30, 0));
-      await tester.pump();
-
-      // Move toward right edge (x = 1100) where DragTarget is mounted
-      await gesture.moveTo(const Offset(1100, 400));
-      await tester.pump();
-
-      // Drop
-      await gesture.up();
-      await tester.pump();
-
-      expect(controller.sidebarPosition, 'right');
-    });
-
     testWidgets('mode and page zoom controls render and trigger actions', (tester) async {
       tester.view.physicalSize = const Size(1200, 800);
       tester.view.devicePixelRatio = 1.0;
