@@ -23,6 +23,15 @@ import '../services/update_service.dart';
 class WorkspaceView extends StatefulWidget {
   final ReaderController controller;
 
+  /// Whether to automatically schedule a background startup update check after launch.
+  /// Defaults to null, falling back to [enableStartupUpdateCheckForTesting].
+  final bool? enableStartupUpdateCheck;
+
+  /// Global switch for testing environments.
+  /// Automatically defaults to `false` in test environments (`FLUTTER_TEST` is present),
+  /// preventing background network requests and socket timer leaks in widget tests.
+  static bool enableStartupUpdateCheckForTesting = !Platform.environment.containsKey('FLUTTER_TEST');
+
   // Floating HUD bottom tier metrics (in logical pixels)
   static const double toolbarBottom = 24.0;
   static const double zoomHudBottom = 84.0;
@@ -30,7 +39,11 @@ class WorkspaceView extends StatefulWidget {
   static const double bannerTierToolbar = zoomHudBottom; // 84.0: floats above reading toolbar
   static const double bannerTierZoomHud = 140.0; // 140.0: floats above zoom HUD capsule
 
-  const WorkspaceView({super.key, required this.controller});
+  const WorkspaceView({
+    super.key,
+    required this.controller,
+    this.enableStartupUpdateCheck,
+  });
 
   @override
   State<WorkspaceView> createState() => _WorkspaceViewState();
@@ -110,6 +123,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _scheduleStartupUpdateCheck() {
+    final shouldCheck = widget.enableStartupUpdateCheck ?? WorkspaceView.enableStartupUpdateCheckForTesting;
+    if (!shouldCheck) return;
     if (!widget.controller.autoRestorePreferences) return;
 
     _updateCheckTimer = Timer(const Duration(seconds: 5), () async {

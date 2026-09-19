@@ -893,6 +893,23 @@ void main() {
       expect(titleBarHidden, findsOneWidget);
       controllerScrolled.dispose();
     });
+
+    testWidgets('WorkspaceView defaults enableStartupUpdateCheck to false in test environment', (tester) async {
+      expect(WorkspaceView.enableStartupUpdateCheckForTesting, isFalse);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      final workspace = WorkspaceView(controller: controller);
+      expect(workspace.enableStartupUpdateCheck, isNull);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: workspace,
+        ),
+      );
+      await tester.pump();
+    });
   });
 }
 
