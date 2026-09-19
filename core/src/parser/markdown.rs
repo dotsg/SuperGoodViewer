@@ -972,7 +972,7 @@ pub fn convert_markdown_to_typst(
 #let Bmatrix = math.mat.with(delim: "{{")
 #let vmatrix = math.mat.with(delim: "|")
 #let Vmatrix = math.mat.with(delim: "‖")
-#let smallmatrix = (..args) => math.inline(math.mat.with(delim: none, ..args))
+#let smallmatrix = (..args) => math.inline(math.mat(delim: none, ..args))
 #let aligned(..args) = {{
   let it = if args.pos().len() > 0 {{ args.pos().sum() }} else {{ math.zws }}
   pad(y: 0.2em, math.display(it))
@@ -995,15 +995,50 @@ pub fn convert_markdown_to_typst(
 #let overrightharpoon(it) = $accent(it, \u{{20d1}})$
 #let overlinesegment(it) = $accent(it, \u{{20e9}})$
 
+// String & dimension helper for mitex arguments
+#let mitex-str(it) = {{
+  if type(it) == str {{
+    it
+  }} else if type(it) == content {{
+    if it.has("text") {{
+      it.text
+    }} else if it.has("children") {{
+      it.children.map(mitex-str).join("")
+    }} else if it.has("body") {{
+      mitex-str(it.body)
+    }} else {{
+      ""
+    }}
+  }} else {{
+    ""
+  }}
+}}
+#let mitex-len(it, default: 0pt) = {{
+  let s = mitex-str(it).replace(" ", "").replace("\u{{200b}}", "").trim()
+  if s.len() == 0 {{ return default }}
+  if s.ends-with("ex") {{
+    let num = s.slice(0, -2)
+    return eval(num + " * 0.5em")
+  }}
+  let valid-units = ("pt", "mm", "cm", "in", "em")
+  if valid-units.any(u => s.ends-with(u)) {{
+    return eval(s)
+  }}
+  default
+}}
+
 // Spacing & sizing
-#let hspace(it) = h(1em)
-#let vspace(it) = v(1em)
+#let hspace(it) = h(mitex-len(it, default: 1em))
+#let vspace(it) = v(mitex-len(it, default: 1em))
 #let smash(it) = box(height: 0pt, $it$)
-#let raisebox(sp, it) = it
-#let atop(a, b) = $mat(delim: #none, #a; #b)$
+#let raisebox(sp, it) = {{
+  let dy = mitex-len(sp, default: 0pt)
+  move(dy: -dy, it)
+}}
+#let atop(a, b) = math.vec(delim: none, a, b)
 #let choose = math.binom
-#let brace(n, k) = $mat(delim: "{{", #n; #k)$
-#let brack(n, k) = $mat(delim: "[", #n; #k)$
+#let brace(n, k) = math.vec(delim: "{{", n, k)
+#let brack(n, k) = math.vec(delim: "[", n, k)
 
 // Big delimiters
 #let big(it) = math.lr(size: 1.2em, it)

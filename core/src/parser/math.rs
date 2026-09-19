@@ -8,7 +8,7 @@ use super::markdown::escape_typst_string;
 /// Helper to preprocess \mathllap and \mathrlap using MiTeX's native `\iftypst ... \fi` pass-through,
 /// avoiding any pollution of TeX commands like \mathinner or \mathpunct.
 fn preprocess_laps(input: &str) -> String {
-    if !input.contains(r"\mathllap") && !input.contains(r"\mathrlap") {
+    if !input.contains(r"\mathllap") && !input.contains(r"\mathrlap") && !input.contains(r"\smash") {
         return input.to_string();
     }
 
@@ -20,9 +20,16 @@ fn preprocess_laps(input: &str) -> String {
     while i < len {
         let is_llap = input[i..].starts_with(r"\mathllap");
         let is_rlap = input[i..].starts_with(r"\mathrlap");
+        let is_smash = input[i..].starts_with(r"\smash");
 
-        if is_llap || is_rlap {
-            let cmd_name = if is_llap { "mathllap" } else { "mathrlap" };
+        if is_llap || is_rlap || is_smash {
+            let cmd_name = if is_llap {
+                "mathllap"
+            } else if is_rlap {
+                "mathrlap"
+            } else {
+                "smash"
+            };
             let cmd_len = cmd_name.len() + 1; // +1 for leading '\'
             let after_cmd = i + cmd_len;
 
@@ -130,6 +137,7 @@ mod tests {
         let res = transpile_latex_math("E = mc^2", false);
         assert!(res.starts_with('$') && res.ends_with('$'));
     }
+
 
     #[test]
     fn test_transpile_maxwell() {
@@ -367,6 +375,72 @@ mod tests {
         let doc_phan = crate::parser::markdown::convert_markdown_to_typst(md_phan, "Test", &crate::compiler::engine::RenderOptions::default());
         let compiled_phan = crate::compiler::engine::compile_typst_to_pdf(&doc_phan.typst_source, ".", std::collections::HashMap::new());
         assert!(compiled_phan.is_ok(), "Phantom compilation failed: {:?}", compiled_phan.err());
+
+        // 8. atop, brace, brack: verify vertical stacking
+        let md_atop = "# Atop\n\n$$\nX + {A \\atop B} + Y\n$$\n$$\n{N \\brace K}\n$$\n$$\n{M \\brack L}\n$$\n";
+        let doc_atop = crate::parser::markdown::convert_markdown_to_typst(md_atop, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled_atop = crate::compiler::engine::compile_typst_to_document(&doc_atop.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
+        let mut runs_atop = Vec::new();
+        find_text_runs(&compiled_atop.pages()[0].frame, Point::zero(), &mut runs_atop);
+
+        let a_run = runs_atop.iter().find(|r| r.text == "𝐴").expect("atop row 1 A not found");
+        let b_run = runs_atop.iter().find(|r| r.text == "𝐵").expect("atop row 2 B not found");
+        assert!(b_run.pos.y > a_run.pos.y, "atop row B must be vertically below row A (found y_B={:?}, y_A={:?})", b_run.pos.y, a_run.pos.y);
+
+        let n_run = runs_atop.iter().find(|r| r.text == "𝑁").expect("brace row 1 N not found");
+        let k_run = runs_atop.iter().find(|r| r.text == "𝐾").expect("brace row 2 K not found");
+        assert!(k_run.pos.y > n_run.pos.y, "brace row K must be vertically below row N (found y_K={:?}, y_N={:?})", k_run.pos.y, n_run.pos.y);
+
+        let m_run = runs_atop.iter().find(|r| r.text == "𝑀").expect("brack row 1 M not found");
+        let l_run = runs_atop.iter().find(|r| r.text == "𝐿").expect("brack row 2 L not found");
+        assert!(l_run.pos.y > m_run.pos.y, "brack row L must be vertically below row M (found y_L={:?}, y_M={:?})", l_run.pos.y, m_run.pos.y);
+
+        // 9. hspace: verify proportional horizontal spacing
+        let md_hsp1 = "$$\nA \\hspace{1em} B\n$$\n";
+        let doc_hsp1 = crate::parser::markdown::convert_markdown_to_typst(md_hsp1, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled_hsp1 = crate::compiler::engine::compile_typst_to_document(&doc_hsp1.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
+        let mut runs_hsp1 = Vec::new();
+        find_text_runs(&compiled_hsp1.pages()[0].frame, Point::zero(), &mut runs_hsp1);
+        let a1 = runs_hsp1.iter().find(|r| r.text == "𝐴").expect("A1 not found");
+        let b1 = runs_hsp1.iter().find(|r| r.text == "𝐵").expect("B1 not found");
+        let gap_1em = (b1.pos.x - a1.pos.x).to_pt();
+
+        let md_hsp5 = "$$\nA \\hspace{5em} B\n$$\n";
+        let doc_hsp5 = crate::parser::markdown::convert_markdown_to_typst(md_hsp5, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled_hsp5 = crate::compiler::engine::compile_typst_to_document(&doc_hsp5.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
+        let mut runs_hsp5 = Vec::new();
+        find_text_runs(&compiled_hsp5.pages()[0].frame, Point::zero(), &mut runs_hsp5);
+        let a5 = runs_hsp5.iter().find(|r| r.text == "𝐴").expect("A5 not found");
+        let b5 = runs_hsp5.iter().find(|r| r.text == "𝐵").expect("B5 not found");
+        let gap_5em = (b5.pos.x - a5.pos.x).to_pt();
+
+        assert!(gap_5em > 2.5 * gap_1em, "hspace{{5em}} ({:.2}pt) must produce a much wider gap than hspace{{1em}} ({:.2}pt)", gap_5em, gap_1em);
+
+        // 10. raisebox: verify vertical displacement and baseline preservation
+        let md_raise = "# Raisebox\n\n$$\nA \\raisebox{10pt}{B} C\n$$\n";
+        let doc_raise = crate::parser::markdown::convert_markdown_to_typst(md_raise, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled_raise = crate::compiler::engine::compile_typst_to_document(&doc_raise.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
+        let mut runs_raise = Vec::new();
+        find_text_runs(&compiled_raise.pages()[0].frame, Point::zero(), &mut runs_raise);
+        let a_raise = runs_raise.iter().find(|r| r.text == "𝐴").expect("A not found");
+        let b_raise = runs_raise.iter().find(|r| r.text == "𝐵" || r.text == "B").expect("B not found");
+        let c_raise = runs_raise.iter().find(|r| r.text == "𝐶").expect("C not found");
+        let raise_amount = (a_raise.pos.y - b_raise.pos.y).to_pt();
+        assert!(raise_amount > 8.0, "raisebox{{10pt}} must displace B upwards by ~10pt: got {:.2}pt", raise_amount);
+        assert!((a_raise.pos.y - c_raise.pos.y).abs().to_pt() < 0.01, "A and C must remain on identical baseline");
+
+        // 11. smallmatrix: verify inline multi-row multi-column layout
+        let md_smat = "# Smallmatrix\n\n$$\n\\begin{smallmatrix} 1 & 2 \\\\ 3 & 4 \\end{smallmatrix}\n$$\n";
+        let doc_smat = crate::parser::markdown::convert_markdown_to_typst(md_smat, "Test", &crate::compiler::engine::RenderOptions::default());
+        let compiled_smat = crate::compiler::engine::compile_typst_to_document(&doc_smat.typst_source, ".", std::collections::HashMap::new(), None).unwrap();
+        let mut runs_smat = Vec::new();
+        find_text_runs(&compiled_smat.pages()[0].frame, Point::zero(), &mut runs_smat);
+        let r1 = runs_smat.iter().find(|r| r.text == "1").expect("1 not found");
+        let r2 = runs_smat.iter().find(|r| r.text == "2").expect("2 not found");
+        let r3 = runs_smat.iter().find(|r| r.text == "3").expect("3 not found");
+        let _r4 = runs_smat.iter().find(|r| r.text == "4").expect("4 not found");
+        assert!(r3.pos.y > r1.pos.y, "Row 2 must be below row 1: y3={:?} vs y1={:?}", r3.pos.y, r1.pos.y);
+        assert!(r2.pos.x > r1.pos.x, "Column 2 must be to the right of col 1: x2={:?} vs x1={:?}", r2.pos.x, r1.pos.x);
     }
 
     #[test]
@@ -408,9 +482,10 @@ mod tests {
     #[test]
     fn test_common_latex_structures_compilation() {
         // Smoke test all common environments and commands reported:
-        // matrix, pmatrix, bmatrix, Bmatrix, vmatrix, Vmatrix, smallmatrix, aligned,
-        // operatorname, overset, underset, stackrel, xrightarrow, xleftarrow, hspace,
-        // overleftrightarrow, atop, choose, brace, brack
+        // matrix, pmatrix, bmatrix, Bmatrix, vmatrix, Vmatrix, smallmatrix, aligned, alignedat, rcases,
+        // operatorname, overset, underset, stackrel, xrightarrow, xleftarrow, hspace, vspace, raisebox, smash,
+        // overleftrightarrow, overleftharpoon, overrightharpoon, overlinesegment, atop, choose, brace, brack,
+        // and big delimiters (big, Big, bigg, Bigg, bigl, Bigl, biggl, Biggl, bigm, Bigm, biggm, Biggm, bigr, Bigr, biggr, Biggr)
         let md = r#"# Common LaTeX Constructs
 
 $$\begin{matrix} 1 & 2 \\ 3 & 4 \end{matrix}$$
@@ -419,14 +494,20 @@ $$\begin{bmatrix} x & y \\ z & w \end{bmatrix}$$
 $$\begin{Bmatrix} 1 & 0 \\ 0 & 1 \end{Bmatrix}$$
 $$\begin{vmatrix} a & b \\ c & d \end{vmatrix}$$
 $$\begin{Vmatrix} a & b \\ c & d \end{Vmatrix}$$
+$$\begin{smallmatrix} 1 & 2 \\ 3 & 4 \end{smallmatrix}$$
 $$\begin{aligned} a &= b \\ c &= d \end{aligned}$$
+$$\begin{alignedat}{2} a &= b & c &= d \\ e &= f & g &= h \end{alignedat}$$
+$$\begin{rcases} a & \text{if } b \\ c & \text{if } d \end{rcases}$$
 $$\operatorname{sgn}(x) + \operatorname*{max}_{i} x_i$$
 $$\overset{a}{b} + \underset{a}{b} + \stackrel{a}{=}$$
 $$\xrightarrow{f} + \xleftarrow{g}$$
 $$A \hspace{1em} B \vspace{1em} C$$
-$$\overleftrightarrow{AB} + \overleftharpoon{CD} + \overrightharpoon{EF}$$
+$$\raisebox{5pt}{B} + \smash{x}$$
+$$\overleftrightarrow{AB} + \overleftharpoon{CD} + \overrightharpoon{EF} + \overlinesegment{GH}$$
 $$a \atop b$$
 $$n \choose k$$
+$${n \brace k} + {n \brack k}$$
+$$\big( \Big( \bigg( \Bigg( \bigl( \Bigl( \biggl( \Biggl( \bigm| \Bigm| \biggm| \Biggm| \bigr) \Bigr) \biggr) \Biggr)$$
 "#;
         let doc = crate::parser::markdown::convert_markdown_to_typst(md, "Test", &crate::compiler::engine::RenderOptions::default());
         let compiled = crate::compiler::engine::compile_typst_to_document(&doc.typst_source, ".", std::collections::HashMap::new(), None);
