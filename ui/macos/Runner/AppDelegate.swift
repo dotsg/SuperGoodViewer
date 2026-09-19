@@ -226,6 +226,9 @@ class AppDelegate: FlutterAppDelegate {
     let cliBinPath = getCliBinaryPath()
     let fm = FileManager.default
 
+    let oldSgvDestination = try? fm.destinationOfSymbolicLink(atPath: cliSymlinkPath)
+    let oldCliToolDestination = try? fm.destinationOfSymbolicLink(atPath: cliToolSymlinkPath)
+
     try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: sourcePath)
     if let bin = cliBinPath {
       try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin)
@@ -263,6 +266,12 @@ class AppDelegate: FlutterAppDelegate {
         if let err = errorDict {
           let errCode = err[NSAppleScript.errorNumber] as? Int ?? 0
           if errCode == -128 {
+            if !itemExists(atPath: cliSymlinkPath), let old = oldSgvDestination {
+              try? fm.createSymbolicLink(atPath: cliSymlinkPath, withDestinationPath: old)
+            }
+            if !itemExists(atPath: cliToolSymlinkPath), let old = oldCliToolDestination {
+              try? fm.createSymbolicLink(atPath: cliToolSymlinkPath, withDestinationPath: old)
+            }
             result(["status": "cancelled", "message": "用户取消了授权"])
           } else {
             let errMsg = err[NSAppleScript.errorMessage] as? String ?? "未知权限错误"

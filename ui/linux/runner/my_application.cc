@@ -139,9 +139,11 @@ static FlValue* install_cli() {
   g_mkdir_with_parents(bin_dir, 0755);
   g_free(bin_dir);
 
+  gchar* old_sgv_target = g_file_read_link(symlink_path, nullptr);
   unlink(symlink_path);
 
   if (symlink(target, symlink_path) == 0) {
+    gboolean cli_bin_failed = FALSE;
     // Also link sgv-cli binary if available adjacent to sgv
     gchar* target_dir = g_path_get_dirname(target);
     gchar* cli_bin_target = g_build_filename(target_dir, "sgv-cli", nullptr);
@@ -151,15 +153,7 @@ static FlValue* install_cli() {
     if (g_file_test(cli_bin_target, G_FILE_TEST_EXISTS)) {
       unlink(cli_bin_symlink);
       if (symlink(cli_bin_target, cli_bin_symlink) != 0) {
-        unlink(symlink_path);
-        g_free(target_dir);
-        g_free(cli_bin_target);
-        g_free(cli_bin_symlink);
-        g_free(symlink_path);
-        g_free(target);
-        fl_value_set_string_take(map, "status", fl_value_new_string("error"));
-        fl_value_set_string_take(map, "message", fl_value_new_string("创建 sgv-cli 符号链接失败"));
-        return map;
+        cli_bin_failed = TRUE;
       }
     }
     g_free(target_dir);
@@ -168,11 +162,19 @@ static FlValue* install_cli() {
 
     fl_value_set_string_take(map, "status", fl_value_new_string("success"));
     fl_value_set_string_take(map, "path", fl_value_new_string(symlink_path));
+    if (cli_bin_failed) {
+      fl_value_set_string_take(map, "message", fl_value_new_string("sgv 安装成功，但未能创建 sgv-cli 快捷方式"));
+    }
   } else {
+    // Restore previous sgv link if replacement failed
+    if (old_sgv_target != nullptr) {
+      symlink(old_sgv_target, symlink_path);
+    }
     fl_value_set_string_take(map, "status", fl_value_new_string("error"));
     fl_value_set_string_take(map, "message", fl_value_new_string("创建符号链接失败"));
   }
 
+  g_free(old_sgv_target);
   g_free(symlink_path);
   g_free(target);
   return map;

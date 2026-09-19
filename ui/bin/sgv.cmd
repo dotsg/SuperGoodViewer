@@ -42,25 +42,7 @@ if "%~1"=="--version" goto version
 rem 3. Check for export mode or flags
 set "IS_EXPORT=0"
 if /i "%~1"=="export" set "IS_EXPORT=1"
-for %%A in (%*) do (
-    if /i "%%~A"=="-o" set "IS_EXPORT=1"
-    if /i "%%~A"=="--output" set "IS_EXPORT=1"
-    if /i "%%~A"=="--export" set "IS_EXPORT=1"
-    if /i "%%~A"=="-f" set "IS_EXPORT=1"
-    if /i "%%~A"=="--format" set "IS_EXPORT=1"
-    if /i "%%~A"=="--page-format" set "IS_EXPORT=1"
-    if /i "%%~A"=="--fluid" set "IS_EXPORT=1"
-    if /i "%%~A"=="-t" set "IS_EXPORT=1"
-    if /i "%%~A"=="--theme" set "IS_EXPORT=1"
-    if /i "%%~A"=="--dark" set "IS_EXPORT=1"
-    if /i "%%~A"=="-s" set "IS_EXPORT=1"
-    if /i "%%~A"=="--font-size" set "IS_EXPORT=1"
-    if /i "%%~A"=="--title" set "IS_EXPORT=1"
-    if /i "%%~A"=="-r" set "IS_EXPORT=1"
-    if /i "%%~A"=="--recursive" set "IS_EXPORT=1"
-    if /i "%%~A"=="--no-recursive" set "IS_EXPORT=1"
-    if /i "%%~A"=="--image-cache-dir" set "IS_EXPORT=1"
-)
+if "!IS_EXPORT!"=="0" call :check_export %*
 
 if "!IS_EXPORT!"=="1" (
     if not defined CLI_BIN (
@@ -163,5 +145,27 @@ echo Examples:
 echo   sgv README.md                             # View in GUI
 echo   sgv export README.md                      # Export to README.pdf
 echo   sgv export .\docs -o .\dist               # Batch export .\docs to .\dist
-echo   cat draft.md ^| sgv export - -o draft.pdf  # Export from stdin
+echo   type draft.md ^| sgv export - -o draft.pdf  # Export from stdin
 exit /b 0
+
+:check_export
+if "%~1"=="" goto :eof
+if /i "%~1"=="-o" (set "IS_EXPORT=1" & goto :eof)
+if /i "%~1"=="--output" (set "IS_EXPORT=1" & goto :eof)
+if /i "%~1"=="--export" (set "IS_EXPORT=1" & goto :eof)
+if /i "%~1"=="-f" (set "IS_EXPORT=1" & goto :eof)
+if /i "%~1"=="--format" (set "IS_EXPORT=1" & goto :eof)
+if /i "%~1"=="--page-format" (set "IS_EXPORT=1" & goto :eof)
+if /i "%~1"=="--fluid" (set "IS_EXPORT=1" & goto :eof)
+if /i "%~1"=="-t" (set "IS_EXPORT=1" & goto :eof)
+if /i "%~1"=="--theme" (set "IS_EXPORT=1" & goto :eof)
+if /i "%~1"=="--dark" (set "IS_EXPORT=1" & goto :eof)
+if /i "%~1"=="-s" (set "IS_EXPORT=1" & goto :eof)
+if /i "%~1"=="--font-size" (set "IS_EXPORT=1" & goto :eof)
+if /i "%~1"=="--title" (set "IS_EXPORT=1" & goto :eof)
+if /i "%~1"=="-r" (set "IS_EXPORT=1" & goto :eof)
+if /i "%~1"=="--recursive" (set "IS_EXPORT=1" & goto :eof)
+if /i "%~1"=="--no-recursive" (set "IS_EXPORT=1" & goto :eof)
+if /i "%~1"=="--image-cache-dir" (set "IS_EXPORT=1" & goto :eof)
+shift
+goto check_export

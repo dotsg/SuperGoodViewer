@@ -130,8 +130,8 @@ if ($args.Count -eq 0) {
 }
 
 foreach ($f in $args) {
-    if (Test-Path $f) {
-        $absPath = (Resolve-Path $f).Path
+    if (Test-Path -LiteralPath $f) {
+        $absPath = (Resolve-Path -LiteralPath $f).Path
         Start-Process -FilePath $exePath -ArgumentList "`"$absPath`""
     } else {
         Write-Error "sgv: error: file not found: $f"
