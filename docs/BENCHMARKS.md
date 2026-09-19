@@ -1,219 +1,268 @@
-# SuperGoodViewer 性能基准测试与对比报告 (Performance Benchmarks)
+# SuperGoodViewer 性能基准报告 (Performance Benchmarks)
 
-> **测试环境规格**:  
-> - **硬件平台**: Apple Silicon (Mac M系列), 36 GB 统一内存, APFS 高速固态硬盘  
-> - **操作系统**: macOS Sonoma / Sequoia  
-> - **测试基准软件版本**:  
->   - **SuperGoodViewer**: v1.0.8 (Release 编译, Flutter 3.22+ Impeller Metal + Rust 1.80+ Core)  
->   - **Obsidian**: v1.6+ (Electron 30+, Chromium V8, 官方发布版)  
->   - **Typora**: v1.9+ (Native Cocoa + WebKit WKWebView 引擎)  
->   - **MarkText**: v0.17+ (Electron + Muya 所见即所得引擎)  
->   - **Visual Studio Code**: v1.90+ (Electron + Markdown Preview 引擎)  
-> - **基准测试数据来源**: 内置 `core/src/bin/benchmark.rs` 微基准套件、系统 `ps / footprint` 内存剖析工具、macOS Metal 渲染帧率监测。
+本轮数据由 2026-09-20 的一次完整复测产生，全部可复现（复现命令见文末第 8 节）。
+除第 7 节明确标注为"引用/未复测"的第三方软件数据外，本文所有数字均为本机实测。
 
----
+## 0. 测试环境
 
-## 📊 1. 核心指标对比概览 (Executive Summary)
+| 项目     | 规格                                                            |
+| -------- | --------------------------------------------------------------- |
+| 硬件     | Apple M4 Max，14 核，36 GB 统一内存，APFS SSD                   |
+| 操作系统 | macOS 27.0 (Build 26A428)                                       |
+| Rust     | rustc 1.98.1，release profile（`opt-level = 3`, `lto = "thin"`) |
+| Flutter  | 3.47.3 stable / Dart 3.13.3，Impeller (Metal)                   |
+| 被测版本 | SuperGoodViewer v1.0.8 (arm64 本机构建)                         |
 
-| 测试维度                        |                     SuperGoodViewer (本品)                     |          Obsidian           |         Typora         |         MarkText         |         VS Code          |
-| ------------------------------- | :------------------------------------------------------------: | :-------------------------: | :--------------------: | :----------------------: | :----------------------: |
-| **底层架构**                    |              **Rust + Flutter (Impeller Metal)**               |  Electron (Chromium+Node)   |   Cocoa + WKWebView    | Electron (Chromium+Node) | Electron (Chromium+Node) |
-| **应用安装体积**                |                    **94 MB** (内嵌17款字体)                    |           482 MB            | 46 MB (依赖系统WebKit) |          367 MB          |          932 MB          |
-| **常驻进程数**                  |                        **1 个原生进程**                        |        4 个独立进程         |      2 个独立进程      |       5 个独立进程       |      8+ 个独立进程       |
-| **冷启动到首帧耗时**            | **~80 ms (UI首帧) / ~210 ms (文档就绪)** · 冷启动 417 / 487 ms |     1,500 ms - 2,500 ms     |    450 ms - 600 ms     |   1,800 ms - 3,000 ms    |   1,800 ms - 3,500 ms    |
-| **常驻内存占用 (RSS)**          |                   **~158 MB** (字体内存映射)                   |    ~627 MB (全进程汇总)     | ~266 MB (含WebKit进程) |   ~715 MB (全进程汇总)   |   ~950 MB (全进程汇总)   |
-| **真实综合文档 (test.md 22KB)** |               **8.77 ~ 10.67 ms** (单核~13-23ms)               |       350 ms - 450 ms       |    300 ms - 400 ms     |     450 ms - 600 ms      |     500 ms - 700 ms      |
-| **100KB 书籍排版耗时**          |                **2.55 ~ 4.54 ms** (30+页纯矢量)                |      750 ms - 1,000 ms      |    600 ms - 800 ms     |   1,000 ms - 1,500 ms    |   1,200 ms - 2,000 ms    |
-| **公式吞吐量**                  |                  **150,000 ~ 320,000 式/秒**                   | ~500 式/秒 (MathJax/KaTeX)  |       ~800 式/秒       |        ~400 式/秒        |        ~600 式/秒        |
-| **窗口缩放响应 (FPS)**          |                   **120 FPS 满帧 (GPU变换)**                   |    35 - 55 FPS (DOM重排)    |      45 - 60 FPS       |       30 - 45 FPS        |       40 - 60 FPS        |
-| **暗黑/浅色模式切换**           |                 **2 ~ 4 ms** (编译器即时重渲)                  |   50 ~ 150 ms (CSS重计算)   |       30 ~ 80 ms       |       80 ~ 200 ms        |       60 ~ 120 ms        |
-| **无损 PDF 导出耗时**           |                  **0 ms 即时保存** (已为PDF)                   | 2,000 ~ 5,000 ms (打印排版) |    1,500 ~ 3,500 ms    |     3,000 ~ 6,000 ms     |     3,000 ~ 8,000 ms     |
+> 测量期间机器有其他常规进程在跑（未做单用户模式隔离），因此尾部分位数
+> (p95) 会比理想环境略高。每项指标都给出 min / p50 / p95 而不是单一数字。
 
 ---
 
-## 📦 2. 软件包体积深度分解 (Bundle Footprint Analysis)
+## 1. 本轮修正了什么（旧数据为何不可信）
 
-在 macOS `/Applications` 目录下实际测量的应用包大小对比如下：
+上一版文档把"端到端排版"写成 **0.28 ms ~ 4.54 ms**。该数字是**基准方法错误**造成的，
+不是真实排版耗时：
 
-```
-Visual Studio Code  ████████████████████████████████ 932 MB
-Obsidian            ████████████████ 482 MB
-MarkText            ████████████ 367 MB
-SuperGoodViewer        ████ 94 MB (全自包含: 引擎+17款字体+矢量库)
-Typora              █ 46 MB (外挂依赖系统 WebKit 运行库)
-```
+1. **Typst 通过 `comemo` 做全局记忆化。** 旧基准在循环里反复编译**同一份**源文件，
+   第 2 次起 Typst 的布局结果直接从 memo 缓存返回。测到的是哈希查表，不是排版。
+   本轮基准在每个冷样本前调用 `typst::comemo::evict(0)`。
+2. **Mermaid 有 SHA-256 内容缓存。** 旧基准循环内的图表全部命中缓存，
+   于是"含 6 张 Mermaid 图的 PRD"反而比纯文本 README 还快。本轮冷样本前清空该缓存。
+3. **文档规模标注与实际输入不符**（由 [issue #14](https://github.com/dotsg/SuperGoodViewer/issues/14)
+   指出，感谢 @szdytom）。旧基准里："书籍章节 (~100 KB, 20 Chapters)" 实际只有约 11.8 KB
+   （每章约 600 B）；"技术 PRD (~20 KB)" 实际约 1.3 KB；"开源 README (~4 KB)" 实际读的是
+   仓库 README（约 29 KB）。也就是说"100KB 书籍排版 2.55 ms"这一行，既用了 11.8 KB 的文档，
+   又命中了 memo 缓存，错了两次。
+   本轮的做法是两头都堵上：样本按标签补足到真实规模（PRD 20.1 KB、书籍 97.8 KB），
+   规模一律由程序打印 `markdown.len()`，标签不再手写；样本的构造方式见
+   `core/src/bin/benchmark.rs` 中的 `build_prd()` / `build_book()`。
+4. **单点采样。** 旧数据是 N 次循环的平均值，没有分位数，异常值被平均掉。
+   本轮每项单独计时，报告 min / p50 / p95。
 
-### SuperGoodViewer Release 安装包 (94 MB) 组成明细：
-
-| 组成模块                         |  磁盘大小   | 作用说明                                                                                                                                                                                                                                                                   |
-| -------------------------------- | :---------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `libsogood_core.dylib`           |  **41 MB**  | 纯 Rust 编写的排版核心，完整内嵌 **Typst 0.15.1 编译器**、**17 款开源出版级字体**、**MiTeX 公式引擎**与 **Mermaid 离线矢量引擎**。零网络请求，零外部依赖（经 LTO 跨模块优化与符号剥离，并保留 `panic = "unwind"` 保证 C-ABI catch_unwind 异常安全，由 56MB 压缩至 41MB）。 |
-| `FlutterMacOS.framework`         |  **29 MB**  | Flutter 桌面端原生运行库，提供基于 **Apple Metal Impeller** 的亚像素级 GPU 渲染底座。                                                                                                                                                                                      |
-| `App.framework`                  |  **12 MB**  | AOT 高度优化编译的 Dart 业务逻辑及 Cupertino/Zen UI 界面代码。                                                                                                                                                                                                             |
-| `PDFium.framework`               |  **11 MB**  | 经过 Google 工业级验证的高性能 C++ PDF 矢量解析与渲染引擎（pdfrx 绑定）。                                                                                                                                                                                                  |
-| `SuperGoodViewer` 原生主执行文件 | **436 KB**  | macOS 原生 Cocoa 入口与 Mach-O 执行启动器。                                                                                                                                                                                                                                |
-| 资源图标与签名                   | **~250 KB** | macOS App 图标集 (icns) 与 CodeSignature。                                                                                                                                                                                                                                 |
-
-> **设计说明**：  
-> Typora 虽为 46 MB，但其自身仅是 Cocoa 薄壳，运行时必须唤起系统数十倍体积的 `com.apple.WebKit.WebContent` 动态库与服务。而 SuperGoodViewer 是一个**真正的全功能自包含应用**（自带完整的编译器、公式引擎、图表渲染器与字体字形库），即使在未连接互联网或缺少系统排版工具链的环境下，也能保证 100% 像素级一致渲染。
-
----
-
-## ⚡ 3. 核心子系统微基准测试 (Rust Micro-Benchmarks)
-
-使用 `core/src/bin/benchmark.rs` 在 Release 优化级别 (`-O3 / lto = "thin"`) 下进行的高精度微基准评测：
-
-### 3.1 LaTeX 数学公式转译 (`mitex`)
-测试 LaTeX 公式解析并转换为 Typst AST 的单次耗时及吞吐能力：
-
-| 测试公式类型       | 测试示例                                                               | 单次耗时 (us) | 运算吞吐量 (ops/sec) |
-| ------------------ | ---------------------------------------------------------------------- | :-----------: | :------------------: |
-| **简单行内公式**   | `$E = mc^2$`                                                           |  **3.10 µs**  |  **322,862 ops/s**   |
-| **积分与分式**     | `$\int_{-\infty}^{\infty} e^{-x^2} dx = \sqrt{\pi}$`                   |  **5.69 µs**  |  **175,867 ops/s**   |
-| **麦克斯韦方程组** | `$\nabla \times \mathbf{E} = -\frac{\partial \mathbf{B}}{\partial t}$` |  **6.66 µs**  |  **150,155 ops/s**   |
-| **3x3 矩阵**       | `$\begin{pmatrix} a & b & c \\ d & e & f \\ g & h & i \end{pmatrix}$`  |  **3.65 µs**  |  **274,025 ops/s**   |
-
-> **对比洞察**：传统基于 JavaScript 的 KaTeX / MathJax 需要通过浏览器 DOM 创建数以千计的 HTML 元素，公式解析平均需要 **2ms ~ 10ms**。SuperGoodViewer 在 Rust 抽象语法树层级以微秒级吞吐，公式渲染速度快 **300 ~ 1500 倍**。
-
-### 3.2 Mermaid 离线矢量图表渲染 (`mermaid-rs-renderer`)
-测试标准流程图（含 4 个节点及分支条件）的生成耗时：
-
-| 测试场景                          |     耗时      |    输出规格     | 技术实现                                        |
-| --------------------------------- | :-----------: | :-------------: | ----------------------------------------------- |
-| **冷启动初次渲染 (Cold Render)**  | **28.94 ms**  | 9,108 Bytes SVG | 纯 Rust 解析几何拓扑，直接输出纯矢量 SVG 路径   |
-| **增量缓存命中 (Warm Cache Hit)** | **829.93 ns** | 9,108 Bytes SVG | SHA-256 内容寻址哈希表，**每秒可处理 120 万次** |
-
-> **对比洞察**：Obsidian 与 VS Code 在渲染 Mermaid 时需调用无头 Chromium 或在前端 DOM 运行庞大的 `mermaid.js` 脚本，单图往往需要 **150ms ~ 500ms**，甚至造成页面卡顿；SuperGoodViewer 纯离线运算仅需 **28ms**，二次刷新更降低至 **0.0008ms**。
-
-### 3.3 端到端排版编译吞吐量 (Markdown $\to$ Typst $\to$ PDF 字节流)
-全真模拟真实 Markdown 文档从解析、排版到生成完整 PDF 矢量二进制的端到端耗时：
-
-| 文档场景与规模                    | 内容特征                                   |      流式排版 (Fluid)      |     A4 分页排版 (Paged)     | 生成 PDF 大小 |
-| --------------------------------- | ------------------------------------------ | :------------------------: | :-------------------------: | :-----------: |
-| **日常速记 (~1 KB)**              | 标题、列表、加粗、代码块                   |        **0.28 ms**         |         **0.31 ms**         |     13 KB     |
-| **开源 README (~4 KB)**           | 徽标、复杂表格、多级引用                   |        **2.54 ms**         |         **2.76 ms**         |    173 KB     |
-| **技术 PRD (~20 KB)**             | 复杂数学公式、Mermaid 图表、规范文档       |        **0.62 ms**         |         **0.89 ms**         |     32 KB     |
-| **书籍章节 (~100 KB)**            | 20 个完整章节、长文深度排版、30+ 页        |        **2.55 ms**         |         **4.54 ms**         |    165 KB     |
-| **真实综合文档 test.md (~22 KB)** | 复杂时序图、LaTeX 数学公式、ASCII 矩阵表格 | **8.77 ms** (单核~13-23ms) | **10.67 ms** (单核~15-25ms) |    444 KB     |
-
-> **测试结论**：即便面对 100KB、30 页以上的技术书籍，或是含有多阶段复杂 Mermaid 时序图与高阶 LaTeX 公式嵌入的真实综合文档 (`test.md`，输出高达 444 KB 矢量 PDF)，SuperGoodViewer 在优化后也仅需 **8.7ms ~ 10.7ms**（单核 ~13-23ms）。相比人类视觉暂留门槛 (16ms)，用户完全感知不到任何排版等待。
+同时修正的还有：包体积（94 MB → 实测 153 MB）、常驻内存（158 MB → 实测约 207 MB）、
+以及"文档就绪耗时"——旧文档把 Flutter trace 里的 `timeToFirstFrameRasterized`
+当作"文档渲染上屏"，实际上那时文档尚未加载。本轮为此在 `onViewerReady`
+后补了真实探针 `StartupMetrics.markFirstDocument()`。
 
 ---
 
-## 🏃 4. 运行性能与交互响应 (Runtime & UX Responsiveness)
+## 2. 端到端排版编译 (Markdown → Typst → PDF 字节流)
 
-### 4.1 启动速度与内存占用 (Process & Memory)
+`core/src/bin/benchmark.rs`，release 构建，Fluid（流式）模式，每档 20 个冷样本、
+20 个编辑样本、30 个热样本。三种口径对应三种真实场景：
 
-#### 启动耗时实测 (Startup Timing, Measured)
+| 口径     | 缓存状态                                      | 对应真实场景                                     |
+| -------- | --------------------------------------------- | ------------------------------------------------ |
+| **冷**   | 每个样本前清空 comemo + Mermaid 缓存          | 进程刚启动，打开本次会话的第一篇文档             |
+| **编辑** | 保留缓存，但每个样本的正文都不同              | 编辑保存触发热重载；在已运行的实例里打开下一篇   |
+| **热**   | 保留全部缓存，重复编译完全相同的内容          | 切换主题、改排版参数、窗口重排后的重新渲染       |
 
-测量方法：`flutter run -d macos --profile --trace-startup`（取 Flutter engine 自带的
-`build/start_up_info.json`），以及直接启动 Profile 构建产物读取应用内 `StartupMetrics` 探针。
-**Profile 构建，Apple Silicon。** 两套口径互相校验：应用内探针读数与 trace 的
-`timeAfterFrameworkInit` 逐次吻合（358.6/37.2/30.5/29.6 ms vs 358/37/30/29 ms）。
+### 2.1 总表（单位 ms）
 
-| 阶段                                             | 热启动 (重复启动，n=4) | 冷启动 (构建后首次)  |
-| ------------------------------------------------ | :--------------------: | :------------------: |
-| Flutter framework 初始化 (`timeToFrameworkInit`) |       58 ~ 72 ms       |        58 ms         |
-| 应用自身至 UI 首帧 (`main()` 起算)               |     **15 ~ 21 ms**     |        359 ms        |
-| **engine 启动 → UI 首帧**                        |    **~75 ~ 93 ms**     |      **417 ms**      |
-| **engine 启动 → 文档渲染上屏**                   |   **~200 ~ 223 ms**    | **487 ms**(首帧上屏) |
+| 文档                        | 输入    | 输出 PDF |   冷 min |   冷 p50 |   冷 p95 | 编辑 p50 | 热 p50 | A4 分页 冷 p50 |
+| --------------------------- | ------: | -------: | -------: | -------: | -------: | -------: | -----: | -------------: |
+| 速记短文                    |   137 B |  13.7 KB |     0.98 | **1.03** |     1.18 |     0.78 |   0.51 |           1.11 |
+| 项目 README（真实文件）     | 28.2 KB |  1042 KB |    38.77 | **42.43**|    44.28 |    12.18 |  10.66 |          43.30 |
+| 技术 PRD（含 6 张 Mermaid） | 20.1 KB |   211 KB |   176.40 |**179.08**|   184.13 |     8.83 |   4.42 |         182.98 |
+| 书籍章节（20 章）           | 97.8 KB |   923 KB |   293.65 |**298.57**|   305.48 |    52.18 |  19.70 |         184.51 |
+| 真实综合文档 `test.md`      | 21.7 KB |   449 KB |    92.13 | **93.65**|    97.41 |    11.02 |   8.62 |          97.66 |
 
-> **冷热差异说明**：冷启动那 359 ms 主要是文件系统冷缓存的代价——41 MB 的
-> `libsogood_core.dylib` 需要分页载入，系统字体文件尚未进入 page cache。重复启动时
-> 应用自身的启动开销仅 **15 ~ 21 ms**，其中字体发现已通过后台 Isolate 移出主线程。
->
-> **口径提醒**：`timeToFrameworkInit`（58 ~ 72 ms）常被误当作"冷启动到首帧"，但该阶段
-> 应用尚未绘制任何像素，不应作为首帧指标对外引用。
+### 2.2 阶段拆解（冷口径 p50，单位 ms）
 
+| 文档       | Markdown → Typst 源码 | Typst 布局 + PDF 导出 | 端到端 | 端到端 − 两阶段之和 |
+| ---------- | --------------------: | --------------------: | -----: | ------------------: |
+| 速记短文   |                  0.01 |                  1.05 |   1.03 |                ~0   |
+| README     |                  0.13 |                 42.00 |  42.43 |                ~0   |
+| 技术 PRD   |                136.38 |                 41.94 | 179.08 |                +0.8 |
+| 书籍章节   |                  0.49 |                158.47 | 298.57 |              +139.6 |
+| `test.md`  |                 41.25 |                 52.49 |  93.65 |                ~0   |
 
-| 软件名称            | 系统进程架构                                              | 常驻内存 (RSS) | 内存说明                                                    |
-| ------------------- | --------------------------------------------------------- | :------------: | ----------------------------------------------------------- |
-| **SuperGoodViewer** | **1 个原生进程** (`SuperGoodViewer`)                      |  **~158 MB**   | 单进程自包含；系统字体经内存映射，不计入常驻；峰值约 600 MB |
-| **Typora**          | **2 个独立进程** (`Typora` + `com.apple.WebKit`)          |  **~266 MB**   | 双进程分离，内存随浏览长文档逐渐增加                        |
-| **Obsidian**        | **4 个独立进程** (Main, Renderer, GPU, Utility)           |  **~627 MB**   | Chromium 多进程沙盒架构，V8 虚拟机内存常驻较高              |
-| **MarkText**        | **5 个独立进程** (Main, Renderer, GPU, Crashpad, Utility) |  **~715 MB**   | 多进程常驻，空载内存开销明显                                |
-| **VS Code**         | **8+ 个独立进程** (Main, Extension, Renderer, Search...)  |  **~950 MB**   | 扩展系统与编辑器功能齐全，内存占用大                        |
+两处值得解释的地方：
 
-#### 内存归因实测 (Memory Attribution, Measured)
+- **PRD 的 136 ms 全在 Markdown 阶段**，因为该文档有 6 张各不相同的 Mermaid 图，
+  冷渲染每张约 23 ms（见 3.2）。Mermaid 冷渲染是首次打开图表类文档的主要成本；
+  同一张图第二次出现即命中缓存（约 0.8 µs），所以"编辑"口径骤降到 8.8 ms。
+- **书籍章节端到端比两阶段之和多出约 140 ms**，这不是测量误差：Fluid 模式下
+  单页画布超过 PDF 1.7 的 14,400 pt 上限时，`compile_markdown_to_pdf` 会再编译
+  1～2 个切分候选方案并择优（见 `core/src/lib.rs` 的 candidate A / B 逻辑）。
+  同一文档在 A4 分页模式只需 185 ms，正好印证多出来的是额外那轮编译。
 
-Release 构建，启动后加载内置示例文档，静置采样（`ps` / `footprint` / `vmmap`）：
+### 2.3 结论
 
-| 指标                       |     优化前     |      优化后      |
-| -------------------------- | :------------: | :--------------: |
-| `phys_footprint` 常驻      |  693 ~ 696 MB  | **158 ~ 159 MB** |
-| `phys_footprint_peak` 峰值 | 1101 ~ 1128 MB | **597 ~ 599 MB** |
-| `ps` RSS                   |  741 ~ 753 MB  |   334 ~ 335 MB   |
+- 短文档（几 KB 以内）冷编译 **约 1 ms**，任何口径下都远低于一帧。
+- 20 KB 级真实文档首次打开 **约 94～180 ms**（取决于 Mermaid 图数量），
+  再次渲染 **约 4～12 ms**。
+- 100 KB 书籍首次打开 **约 0.3 s**，其中近一半是 Fluid 切分的重复编译开销。
+- 交互式使用（改主题、改字号、热重载）的实际感知延迟在 **0.5～20 ms**，
+  这才是"毫秒级"说法成立的范围；**首次打开不是毫秒级**。
 
-**降幅 77%。** 两项改动共同促成：
+---
 
-**1. 字体改用内存映射（`memmap2`）。** `GlobalFontStore` 按 `target_prefixes` 匹配到 141 个 face、
-落在 48 个不同文件，其中 `Kaiti.ttc` 101 MB、`PingFang.ttc` 74.6 MB、`Songti.ttc` 63.8 MB。
-原先以 `fs::read` 整文件读入堆，成为不可回收的匿名内存。改为 `Bytes::new(Mmap)` 后，
-字体是干净的文件backed页，只有实际参与排版的页才驻留，且内存压力下可被回收。
+## 3. 子系统微基准
 
-Rust 侧隔离测量（同一探针，仅加载策略不同）：
+### 3.1 LaTeX → Typst 转译 (`mitex`)
+
+每条公式单独计时 5,000 次（预热 200 次）：
+
+| 公式                                                                  | min (µs) | p50 (µs) | p95 (µs) | p50 吞吐 (式/秒) |
+| --------------------------------------------------------------------- | -------: | -------: | -------: | ---------------: |
+| `E = mc^2`                                                            |     2.20 | **3.80** |     4.30 |          263,000 |
+| `\int_{-\infty}^{\infty} e^{-x^2} dx = \sqrt{\pi}`                    |     5.50 | **7.30** |    11.00 |          137,000 |
+| `\nabla \times \mathbf{B} - \frac{1}{c}\frac{\partial \mathbf{E}}{\partial t} = \frac{4\pi}{c}\mathbf{J}` | 6.30 | **7.30** | 9.00 |  137,000 |
+| 3×3 `pmatrix`                                                         |     3.50 | **3.70** |     4.60 |          270,000 |
+
+即 **13.5 万 ~ 27 万 式/秒**（旧文档写 15 万 ~ 32 万，取的是均值/最优值）。
+注意这是 LaTeX → Typst AST 的转译耗时，不含后续排版与字形绘制。
+
+### 3.2 Mermaid 离线矢量渲染 (`mermaid-rs-renderer`)
+
+9 节点流程图，输出 8,685 字节纯矢量 SVG：
+
+| 口径                     |      min |      p50 |      p95 | 说明                                     |
+| ------------------------ | -------: | -------: | -------: | ---------------------------------------- |
+| 冷渲染（每次图内容不同） | 21.96 ms | **22.73 ms** | 23.65 ms | 真正的解析 + 布局 + SVG 生成         |
+| 缓存命中（同一张图）     |   708 ns | **792 ns**   |  875 ns | SHA-256 求哈希 + 哈希表查表          |
+
+旧文档把 829 ns 写成"增量渲染"，容易被读成"再渲染一次只要 0.8 µs"。
+准确表述是：**命中缓存时不再渲染**，0.8 µs 是查表成本。冷渲染 22.7 ms
+是图表类文档首屏耗时的主要来源。
+
+---
+
+## 4. 安装包体积
+
+本机 `make build`（arm64）产物，`du -sm` 实测：
+
+| 组成                          |  体积 | 说明                                                       |
+| ----------------------------- | ----: | ---------------------------------------------------------- |
+| `Resources/bin/sgv-cli`       | 47 MB | 命令行工具，静态包含同一套 Typst 引擎与字体（与 dylib 重复） |
+| `Frameworks/libsogood_core.dylib` | 45 MB | Rust 排版核心：Typst 0.15.1 + 17 款字体 + MiTeX + Mermaid |
+| `Frameworks/FlutterMacOS.framework` | 30 MB | Flutter 桌面运行库（x86_64 + arm64 胖二进制）        |
+| `Frameworks/App.framework`    | 18 MB | Dart AOT 业务代码                                          |
+| `Frameworks/PDFium.framework` | 12 MB | Google PDFium 矢量渲染引擎                                 |
+| 图标、签名、其他资源          |  ~2 MB | Assets.car、icns、_CodeSignature                          |
+| **合计**                      | **153 MB** | arm64 本机构建                                        |
+
+其他口径：
+
+- **通用（arm64 + x86_64）发行版**，即 `/Applications/SuperGoodViewer.app`：**248 MB**
+- **DMG 下载体积（压缩后）**：**50 MB**
+
+> 旧文档的 94 MB 已不成立。主要增量来自：随包附带的 `sgv-cli`（47 MB，
+> 与动态库重复打包了一整套引擎和字体）、Flutter framework 的胖二进制，
+> 以及核心库自身的增长。**体积优化空间明确在 `sgv-cli` 的重复打包上。**
+
+同目录下第三方软件实测（`du -sm /Applications/*.app`，同一台机器）：
+
+| 软件               | 体积   |
+| ------------------ | -----: |
+| Visual Studio Code | 933 MB |
+| Obsidian           | 482 MB |
+| MarkText           | 368 MB |
+| SuperGoodViewer    | 248 MB（通用版）/ 153 MB（arm64）|
+| Typora             |  46 MB（外挂系统 WebKit）|
+
+---
+
+## 5. 启动耗时
+
+Profile 构建，`flutter run -d macos --profile --trace-startup`，命令行传入 `test.md`，
+连续 5 次启动（每次重开进程，二进制已在 page cache 中，属**温启动**）。
+trace 口径来自 Flutter engine 自带的 `build/start_up_info.json`，
+应用内探针 `StartupMetrics` 从 `main()` 起算，两者互相校验：
+
+| 阶段                                                | min | 中位数  | max | 口径                                   |
+| --------------------------------------------------- | --: | ------: | --: | -------------------------------------- |
+| engine 启动 → Flutter framework 就绪 (`timeToFrameworkInit`) |  49 |  **54** |  64 | trace                                  |
+| `main()` → UI 首帧（外壳绘制）                      |  32 |  **45** |  53 | 应用内探针（≈ trace `timeAfterFrameworkInit`）|
+| **engine 启动 → UI 首帧** (`timeToFirstFrame`)      |  86 |  **98** | 115 | trace                                  |
+| engine 启动 → 首帧完成光栅化                        | 114 | **124** | 142 | trace                                  |
+| `main()` → **文档真正显示**                         |  78 |  **85** |  92 | 应用内探针 `markFirstDocument()`       |
+| **engine 启动 → 文档显示**（第 1 行 + 第 5 行，逐次相加）| 132 | **141** | 154 | 合成                                   |
+
+单位 ms，n = 5。
+
+> **口径提醒（旧文档在这里出过错）**：
+> - `timeToFrameworkInit`（约 54 ms）时应用尚未绘制任何像素，不能当"首帧"。
+> - `timeToFirstFrameRasterized`（约 124 ms）是**外壳**首帧光栅化完成，文档此时还没加载完；
+>   旧文档把它当成"文档渲染上屏"。本轮为此补上了真实探针：`PdfCanvasView.onViewerReady`
+>   之后的第一帧才算文档上屏，实测中位数为 engine 启动后 **141 ms**。
+> - **冷启动（page cache 为空、刚开机或刚构建完）本轮没有复测**，需要 `sudo purge`
+>   或重启才能构造，旧文档的 417 / 487 ms 未经本轮验证。仅有的一个参考点：
+>   构建完成后的首次启动，engine → UI 首帧 141 ms、首帧光栅化 221 ms。
+
+---
+
+## 6. 内存与进程
+
+Release 构建，命令行传入 `test.md` 启动，静置 40 秒后采样（`ps` / `footprint`）：
+
+| 指标                       |        实测 |
+| -------------------------- | ----------: |
+| `phys_footprint` 常驻      | **207 ~ 209 MB** |
+| `phys_footprint_peak` 峰值 | **638 ~ 676 MB** |
+| `ps` RSS                   | **227 MB**（含字体 mmap 的常驻文件页）|
+| 进程数                     | **1 个**    |
+
+说明：
+
+- 字体经 `memmap2` 内存映射，属干净的文件背景页，内存压力下可回收；
+  这部分会计入 RSS 但可被内核换出，因此 RSS 高于 `phys_footprint` 属正常。
+- **峰值 638 MB 远高于常驻。** 峰值出现在首次编译期间。Typst 的 `comemo`
+  记忆化缓存目前没有调用 `evict`（Typst CLI 每次编译后会 `evict(5)`），
+  长时间反复编译会让这部分内存只增不减——这是当前已知的可优化点。
+- 旧文档的 158 MB / 597 MB 峰值是更早一个构建、且加载的是内置示例文档时的读数，
+  与当前版本不可比。
+
+历史优化（`fs::read` → `mmap`）的隔离测量仍然有效，保留备查：
 
 |                       | `fs::read` |  `mmap`   |
 | --------------------- | :--------: | :-------: |
 | 加载 158 个字体后     |   548 MB   | **11 MB** |
 | 再编译一份 CJK 文档后 |   552 MB   | **15 MB** |
 
-**2. 修正动态库解析顺序。** `native_engine.dart` 原先把工作目录相对路径排在可执行文件相对路径之前，
-导致打包后的 app 会优先加载 `ui/test/` 或 `core/target/release/` 下的副本。`vmmap` 证实运行中的
-app 实际映射的是仓库里的旧 dylib 而非自身 bundle 内的引擎。修正后 release 构建只查找自身 bundle。
+---
 
-> **仍未实施的可选优化**：`target_prefixes` 中 `kaiti`、`songti`、`hiragino`、`arial`、`simsun`、
-> `simhei`、`source han`、`monaco`、`courier new` 等并未出现在任何正文/代码字体栈中，仅作生僻字形兜底。
-> 移除可进一步减少映射数量与 `FontBook` 构建开销，代价是失去这部分回退能力。
+## 7. 与其他 Markdown 软件的对比
 
-### 4.2 交互响应度 (Interaction & Frame Rate)
+**本机实测的只有体积一项（见第 4 节）。** 下表中 Obsidian / Typora / MarkText /
+VS Code 的启动、排版、内存数据来自上一版文档，属于**估计值，本轮未复测**，
+仅供量级参考，不应作为精确结论引用。
 
-1. **窗口动态拉伸 (Window Resizing)**：
-   - **SuperGoodViewer**: **120 FPS 锁定满帧**。流式模式固定黄金行宽 720pt，A4 模式固定页面比例，拉伸窗口只进行 Metal GPU 画布外边距缩放和视口裁剪，**拉伸过程 0 次触发编译器**，全程丝滑无抖动。
-   - **Obsidian / MarkText**: **30 ~ 45 FPS**。每次拉伸窗口宽度均触发浏览器 DOM Reflow（回流计算）和 CSS Flexbox 重新计算，导致窗口出现拉伸撕裂或跳动。
-2. **主题模式切换 (`Cmd + T`)**：
-   - **SuperGoodViewer**: **2 ~ 4 ms**。内存中瞬间重置调色板并重排，画面立即可见。
-   - **Obsidian / VS Code**: **50 ~ 150 ms**。修改根节点 CSS 变量，级联遍历数万个 DOM 节点应用颜色。
-3. **实时文件热重载 (Live Hot-Reload)**：
-   - **SuperGoodViewer**: 200ms 防抖 + 0.8ms 编译 $\approx$ **200.8 ms** 全链路触达视口，且**精准保持当前滚动百分比**，无跳顶困扰。
-4. **无损 PDF 导出 (`Cmd + E`)**：
-   - **SuperGoodViewer**: **0 ms 即时写盘**。当前内存缓冲区中的渲染成果本质就是符合 PDF/X 规范的高精度矢量 PDF，导出仅需单次文件 I/O 写入。
-   - **其他软件**: 需启动 Chromium 无头打印管道或调用系统打印机驱动，耗时 **2 ~ 5 秒**。
+| 维度            | SuperGoodViewer（本轮实测）                   | Obsidian（未复测） | Typora（未复测） | MarkText（未复测） | VS Code（未复测） |
+| --------------- | --------------------------------------------- | ------------------ | ---------------- | ------------------ | ----------------- |
+| 底层架构        | Rust + Flutter (Impeller Metal)               | Electron           | Cocoa + WKWebView| Electron           | Electron          |
+| 进程数          | **1**                                         | 4                  | 2                | 5                  | 8+                |
+| 安装体积        | **153 MB (arm64) / 248 MB (通用)**            | 482 MB             | 46 MB            | 368 MB             | 933 MB            |
+| 常驻内存        | **207 MB**（峰值 638 MB）                     | ~627 MB            | ~266 MB          | ~715 MB            | ~950 MB           |
+| 22 KB 文档首次排版 | **93.7 ms**（含 Mermaid 冷渲染）           | 350 ~ 450 ms       | 300 ~ 400 ms     | 450 ~ 600 ms       | 500 ~ 700 ms      |
+| 同文档重新渲染  | **8.6 ms**                                    | —                  | —                | —                  | —                 |
+| 100 KB 书籍首次排版 | **299 ms**                                | 750 ~ 1,000 ms     | 600 ~ 800 ms     | 1,000 ~ 1,500 ms   | 1,200 ~ 2,000 ms  |
+| 无损 PDF 导出   | **单次文件写入**（渲染结果本身即 PDF）        | 2 ~ 5 s            | 1.5 ~ 3.5 s      | 3 ~ 6 s            | 3 ~ 8 s           |
 
 ---
 
-## 🎯 5. 为什么 SuperGoodViewer 能够实现数量级超越？
+## 8. 复现方法
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│ 传统基于 Electron / WebView 软件架构                         │
-│                                                              │
-│ Markdown  ──►  JS AST  ──►  DOM 树  ──►  CSS 解析器          │
-│                                                   │          │
-│ MathJax / KaTeX (生成数万个 <span> 元素)          │          │
-│ Mermaid.js (无头浏览器或前端 JS 渲染)         ▼              │
-│ 多进程 IPC 通信  ──►  Chromium Blink 排版引擎  ──►  渲染合成 │
-│   [耗时: 300ms ~ 1000ms | 内存: 600MB ~ 900MB | 进程: 4~8个] │
-└──────────────────────────────────────────────────────────────┘
+```sh
+# Rust 核心基准（约 50 秒）
+make bench
+# 同一套基准，并刷新 docs/benchmark-results.json
+make bench-json
 
-                           VS
+# 包体积
+make build
+du -sm ui/build/macos/Build/Products/Release/SuperGoodViewer.app
 
-┌──────────────────────────────────────────────────────────────┐
-│ SuperGoodViewer 纯原生全闭环架构                             │
-│                                                              │
-│ Markdown  ──►  pulldown-cmark (Rust 零拷贝解析)              │
-│                        │                                     │
-│ MiTeX (Rust 原生微秒级 LaTeX AST 转换)                       │
-│ mermaid-rs-renderer (Rust 原生离线矢量 SVG)                  │
-│ ▼                                                            │
-│ Typst 0.15.1 内存编译器 (纯内存 World，毫秒级矢量排版)       │
-│                        │ (C-ABI 零拷贝直传)                  │
-│ ▼                                                            │
-│ Google PDFium + Apple Metal Impeller 硬件加速矢量光栅化      │
-│ [耗时: 0.5ms ~ 5ms | 内存: 158MB (字体mmap) | 进程: 仅 1 个] │
-└──────────────────────────────────────────────────────────────┘
+# 内存（启动后静置 40 秒）
+open -n ui/build/macos/Build/Products/Release/SuperGoodViewer.app --args "$PWD/test.md"
+footprint -p $(pgrep -f Release/SuperGoodViewer.app | head -1)
+
+# 启动耗时（Profile 构建，读取 Flutter 自带 trace）
+cd ui && flutter run -d macos --profile --trace-startup \
+  --dart-entrypoint-args "$PWD/../test.md"
+cat build/start_up_info.json
 ```
 
-1. **零 Chromium / 零 DOM 额外开销**：摒弃传统将 Markdown 转换为 HTML 屏幕流再交给浏览器排版的路径，彻底消除 V8 垃圾回收、DOM 节点树爆炸与 CSS 样式重排开销。
-2. **纯 Rust 编译流水线**：Markdown AST、LaTeX AST 和 Mermaid 几何生成均在原生编译期完成，全过程零网络传输、零磁盘临时文件交换。
-3. **印刷级出版底座**：借助当代排版领域最先进的 Typst 核心与 Google PDFium，无论在何种操作系统，均能保证字体微排版（Micro-typography）、连字（Ligatures）、数学对齐与打印导出的一致性。
+原始逐项数据：[benchmark-results.json](benchmark-results.json)。
+渲染层图块/条带策略的独立基准见 [RASTER_GRID_BENCHMARK.md](RASTER_GRID_BENCHMARK.md)。

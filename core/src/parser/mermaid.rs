@@ -32,6 +32,11 @@ impl BoundedCache {
         }
     }
 
+    fn clear(&mut self) {
+        self.map.clear();
+        self.order.clear();
+    }
+
     fn insert(&mut self, key: String, val: Bytes) {
         if self.map.contains_key(&key) {
             self.map.insert(key.clone(), val);
@@ -55,6 +60,13 @@ static MERMAID_CACHE: OnceLock<RwLock<BoundedCache>> = OnceLock::new();
 
 fn get_cache() -> &'static RwLock<BoundedCache> {
     MERMAID_CACHE.get_or_init(|| RwLock::new(BoundedCache::new(128)))
+}
+
+/// Clears the global Mermaid SVG cache.
+/// Used by the benchmark suite to measure true cold-render latency, and by tests
+/// that need a deterministic starting state.
+pub fn clear_cache() {
+    get_cache().write().clear();
 }
 
 pub struct RenderedMermaid {

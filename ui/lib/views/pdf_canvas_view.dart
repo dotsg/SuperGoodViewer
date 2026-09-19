@@ -11,6 +11,7 @@ import 'package:pdfrx/pdfrx.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vector_math/vector_math_64.dart' as vec;
 import '../controllers/reader_controller.dart';
+import '../services/startup_metrics.dart';
 import '../models/render_options.dart';
 
 const List<double> kZoomLadder = [
@@ -2332,6 +2333,12 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         },
         onViewerReady: (document, controller) {
           if (!isCurrentSlot()) return;
+          // Startup probe: the first frame after the viewer is ready is the first
+          // frame that actually shows a document. No-op after the first call, and
+          // silent in release builds.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            StartupMetrics.markFirstDocument();
+          });
           _textSearchers[slotIndex]?.removeListener(_onSearchUpdated);
           _textSearchers[slotIndex]?.dispose();
           _textSearchers[slotIndex] = PdfTextSearcher(controller)..addListener(_onSearchUpdated);

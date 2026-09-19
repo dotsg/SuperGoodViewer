@@ -4,7 +4,7 @@ else
   FLUTTER ?= flutter
 endif
 
-.PHONY: all build build-universal build-core build-core-universal build-app build-windows build-windows-arm64 build-linux test test-core test-app test-release-local bench benchmark clean run-macos run-windows run-linux dmg dmg-arm64 dmg-x64 package-windows package-windows-arm64 package-linux
+.PHONY: all build build-universal build-core build-core-universal build-app build-windows build-windows-arm64 build-linux test test-core test-app test-release-local bench bench-json benchmark clean run-macos run-windows run-linux dmg dmg-arm64 dmg-x64 package-windows package-windows-arm64 package-linux
 
 all: build test
 
@@ -90,6 +90,11 @@ benchmark: bench
 bench:
 	@echo "==> Running SuperGoodViewer Rust Core Micro-Benchmarks..."
 	@cd core && cargo run --release --bin benchmark
+
+# Same suite, also refreshing the machine-readable results committed under docs/
+bench-json:
+	@echo "==> Running benchmarks and refreshing docs/benchmark-results.json..."
+	@cd core && cargo run --release --bin benchmark -- --json ../docs/benchmark-results.json
 
 run-macos: build-core
 	@echo "==> Launching SuperGoodViewer in dev mode (macOS)..."
