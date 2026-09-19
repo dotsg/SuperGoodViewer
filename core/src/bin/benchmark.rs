@@ -10,15 +10,17 @@
 //!   sample, so they represent "user opens this document for the first time".
 //! * Warm runs keep both caches, representing "same document re-rendered"
 //!   (theme switch, window resize, hot reload with unchanged content).
-//! * Document labels carry the measured byte size of the actual input, never a
-//!   hand-written estimate.
+//! * Inputs come from the frozen corpus in `docs/samples/bench/`, and every label
+//!   carries the measured byte size of the file, never a hand-written estimate.
+//!   Nothing in the repo that people edit (the README, `test.md`) feeds the
+//!   benchmark, so numbers stay comparable across runs.
 //!
 //! Run with `make bench`. Pass `--json <path>` to also emit machine-readable
 //! results.
 
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::PathBuf;
 use std::time::Instant;
 
 use sogood_core::compile_markdown_to_pdf;
@@ -230,23 +232,18 @@ fn main() {
     );
     println!();
 
-    let mut docs: Vec<(String, String)> = Vec::new();
-
-    docs.push((
-        "Quick note".to_string(),
-        "# Quick Meeting Note\n\n- Discuss project timeline\n- Action items assigned to team\n- Follow up next Monday\n\nFormula: $f(x) = x^2 + 2x + 1$\n".to_string(),
-    ));
-
-    if let Some(readme) = read_first(&["../README.md", "README.md"]) {
-        docs.push(("Project README".to_string(), readme));
-    }
-
-    docs.push(("Technical PRD".to_string(), build_prd()));
-    docs.push(("Book chapter".to_string(), build_book()));
-
-    if let Some(test_md) = read_first(&["../test.md", "test.md"]) {
-        docs.push(("Real-world test.md".to_string(), test_md));
-    }
+    let corpus_dir = corpus_dir();
+    println!("  Corpus: {}", corpus_dir.display());
+    println!();
+    let docs: Vec<(String, String)> = CORPUS
+        .iter()
+        .map(|(file, label)| {
+            let path = corpus_dir.join(file);
+            let text = fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("cannot read corpus file {}: {e}", path.display()));
+            (label.to_string(), text)
+        })
+        .collect();
 
     let mut results: Vec<DocResult> = Vec::new();
     for (label, md) in &docs {
@@ -290,14 +287,33 @@ fn main() {
     println!("============================================================");
 }
 
+/// The frozen corpus under `docs/samples/bench/`, in report order.
+///
+/// These files are inputs, not documentation: they are deliberately never edited,
+/// so numbers stay comparable across runs and across machines. Editing the repo's
+/// own README or `test.md` must not move the benchmark.
+const CORPUS: [(&str, &str); 5] = [
+    ("01-note.md", "Quick note"),
+    ("02-readme.md", "Project README"),
+    ("03-prd.md", "Technical PRD"),
+    ("04-book.md", "Book chapter"),
+    ("05-real-world.md", "Real-world doc"),
+];
+
+/// Resolves `docs/samples/bench/` whether the binary is run from `core/` (as
+/// `make bench` does) or from the repository root.
+fn corpus_dir() -> PathBuf {
+    for candidate in ["../docs/samples/bench", "docs/samples/bench"] {
+        let path = PathBuf::from(candidate);
+        if path.is_dir() {
+            return path;
+        }
+    }
+    panic!("benchmark corpus not found: expected docs/samples/bench/ relative to the repo root or core/");
+}
+
 const COLD_SAMPLES: usize = 20;
 const WARM_SAMPLES: usize = 30;
-
-fn read_first(paths: &[&str]) -> Option<String> {
-    paths
-        .iter()
-        .find_map(|p| fs::read_to_string(Path::new(p)).ok())
-}
 
 fn benchmark_document(label: &str, markdown: &str) -> DocResult {
     let fluid = fluid_options();
@@ -368,85 +384,6 @@ fn benchmark_document(label: &str, markdown: &str) -> DocResult {
         e2e_warm,
         paged_cold,
     }
-}
-
-/// A technical specification with Mermaid, math, tables and code, repeated until
-/// it reaches roughly 20 KB of real Markdown.
-fn build_prd() -> String {
-    let section = r#"
-## Section {N}: System Topology
-
-```mermaid
-graph LR
-    User{N}[Desktop User] --> Shell{N}[Flutter Native UI]
-    Shell{N} --> Bridge{N}[C-ABI FFI Bridge]
-    Bridge{N} --> Core{N}[Rust Native Core]
-    Core{N} --> Typst{N}[Typst Compiler]
-    Typst{N} --> PDF{N}[Vector PDF Stream]
-```
-
-> [!NOTE]
-> All measurements in section {N} were taken on Apple Silicon with Metal acceleration.
-
-### Mathematical Foundations
-
-The thermodynamic entropy is given by:
-
-$ S = -k_B sum_i p_i ln p_i $
-
-The electromagnetic field tensor satisfies:
-
-$ F^(mu nu) = partial^mu A^nu - partial^nu A^mu $
-
-### Benchmark Matrix
-
-| Component | Implementation | Target Latency | Status |
-| :--- | :--- | :--- | :--- |
-| Markdown Parser | pulldown-cmark | < 1 ms | Exceeded |
-| Math Transpiler | mitex | < 50 us | Exceeded |
-| Mermaid Vector | mermaid-rs-renderer | < 5 ms | Exceeded |
-| Memory World | Typst In-Memory | < 15 ms | Exceeded |
-| Vector PDFium | pdfrx + Metal | < 16 ms | Exceeded |
-
-### Implementation Sample
-
-```rust
-pub fn compile_document_{N}(md: &str) -> Vec<u8> {
-    compile_markdown_to_pdf(md, "Arch", ".", &RenderOptions::default()).unwrap()
-}
-```
-
-This section specifies the end-to-end architecture, the failure modes we tolerate,
-and the latency budget each stage of the pipeline is allowed to consume.
-"#;
-    let mut out = String::from("# System Technical Architecture Document\n");
-    let mut n = 1;
-    while out.len() < 20_000 {
-        out.push_str(&section.replace("{N}", &n.to_string()));
-        n += 1;
-    }
-    out
-}
-
-/// A 20-chapter book-length document of roughly 100 KB.
-fn build_book() -> String {
-    let mut out = String::with_capacity(120_000);
-    out.push_str("# High-Performance Distributed Systems Handbook\n\n");
-    let mut i = 1;
-    while out.len() < 100_000 {
-        out.push_str(&format!(
-            "\n## Chapter {}: Architectural Patterns and Scalability\n\n",
-            i
-        ));
-        out.push_str("In this chapter we analyze consensus protocols and latency mitigation strategies.\n\n");
-        out.push_str("> [!TIP]\n> Always profile under maximum sustained throughput before tuning concurrency limits.\n\n");
-        out.push_str("Consider the equation:\n\n$ E = m c^2 $\n\n");
-        out.push_str("| Metric | Node A | Node B | Node C | P99 Latency |\n| :--- | :--- | :--- | :--- | :--- |\n| Throughput | 12,000 rps | 14,500 rps | 13,200 rps | 1.8 ms |\n| P50 | 0.4 ms | 0.35 ms | 0.42 ms | 0.9 ms |\n| Error Rate | 0.001% | 0.000% | 0.002% | 0.005% |\n\n");
-        out.push_str("```rust\nfn calculate_quorum(nodes: usize) -> usize {\n    (nodes / 2) + 1\n}\n```\n\n");
-        out.push_str("Replication lag is bounded by the slowest follower in the quorum, so the tail of the\nlatency distribution -- not its mean -- determines the user-visible behaviour of the system.\n");
-        i += 1;
-    }
-    out
 }
 
 fn build_json(
