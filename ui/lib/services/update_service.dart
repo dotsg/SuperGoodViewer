@@ -13,7 +13,7 @@ import 'preferences_service.dart';
 class UpdateService {
   static const String repoOwner = 'dotsg';
   static const String repoName = 'supergoodviewer';
-  static const String defaultAppVersion = '1.0.7';
+  static const String defaultAppVersion = '1.0.8';
 
   static const String prefAutoCheck = 'autoCheckUpdates';
   static const String prefLastCheckTime = 'lastUpdateCheckTime';
