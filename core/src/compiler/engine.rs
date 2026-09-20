@@ -420,14 +420,40 @@ pub(crate) fn export_document_to_pdf(document: &typst_layout::PagedDocument) -> 
         .map_err(|e| CompileError::Pdf(format!("{:?}", e)))
 }
 
+/// How many compilations a memoized Typst layout result survives without being
+/// used again. Matches the Typst CLI's own policy.
+const MEMO_RETAINED_GENERATIONS: usize = 5;
+
+/// Drops Typst memo entries that have gone unused for the last
+/// [`MEMO_RETAINED_GENERATIONS`] compilations.
+///
+/// Typst memoizes layout through `comemo` in a process-global cache that never
+/// shrinks on its own. Without this, every compilation of *new* content adds
+/// roughly 2.4 MB that is never reclaimed, so a long editing session (hot reload
+/// recompiles on every save) grows without bound. Retaining 5 generations keeps
+/// re-rendering the current document (theme switch, font-size change) on the
+/// fast path: measured cost is within noise.
+///
+/// Call this once per top-level compilation, never inside one: a single
+/// `compile_markdown_to_pdf_result` may run several internal compilations
+/// (fluid slice candidates), and bumping the generation between them would
+/// evict entries those passes still share.
+pub fn evict_memo_cache() {
+    typst::comemo::evict(MEMO_RETAINED_GENERATIONS);
+}
+
 pub fn compile_typst_to_pdf_with_options(
     typst_source: &str,
     doc_dir: impl AsRef<Path>,
     virtual_files: HashMap<PathBuf, Bytes>,
     image_cache_dir: Option<PathBuf>,
 ) -> Result<Vec<u8>, CompileError> {
-    let document = compile_typst_to_document(typst_source, doc_dir, virtual_files, image_cache_dir)?;
-    export_document_to_pdf(&document)
+    let result = (|| {
+        let document = compile_typst_to_document(typst_source, doc_dir, virtual_files, image_cache_dir)?;
+        export_document_to_pdf(&document)
+    })();
+    evict_memo_cache();
+    result
 }
 
 pub fn compile_typst_to_pdf(
