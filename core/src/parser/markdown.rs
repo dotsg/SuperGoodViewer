@@ -1403,7 +1403,7 @@ pub fn convert_markdown_to_typst(
     let mut code_block_lang = String::new();
     let mut code_block_content = String::new();
     let mut in_table_head = false;
-    let mut list_depth: usize = 0;
+    let mut list_stack: Vec<Option<u64>> = Vec::new();
     let mut link_stack: Vec<bool> = Vec::new();
     let mut current_image: Option<(String, String)> = None;
     let mut image_paragraph: Option<ImageParagraph> = None;
@@ -1509,16 +1509,27 @@ pub fn convert_markdown_to_typst(
                     };
                 }
                 Tag::List(first_number) => {
-                    list_depth += 1;
+                    if !out.ends_with('\n') {
+                        out.push('\n');
+                    }
                     if let Some(start) = first_number {
                         if start > 1 {
                             out.push_str(&format!("#set enum(start: {})\n", start));
                         }
                     }
+                    list_stack.push(first_number);
                 }
                 Tag::Item => {
-                    let indent = "  ".repeat(list_depth.saturating_sub(1));
-                    out.push_str(&format!("{}- ", indent));
+                    if !out.ends_with('\n') {
+                        out.push('\n');
+                    }
+                    let depth = list_stack.len().saturating_sub(1);
+                    let indent = "  ".repeat(depth);
+                    let marker = match list_stack.last() {
+                        Some(Some(_)) => "+ ",
+                        _ => "- ",
+                    };
+                    out.push_str(&format!("{}{}", indent, marker));
                 }
                 Tag::Emphasis => out.push_str("#emph["),
                 Tag::Strong => out.push_str("#strong["),
@@ -1633,11 +1644,25 @@ pub fn convert_markdown_to_typst(
                     }
                 }
                 TagEnd::List(_) => {
-                    list_depth = list_depth.saturating_sub(1);
-                    out.push('\n');
+                    let was_custom_start = if let Some(Some(start)) = list_stack.pop() {
+                        start > 1
+                    } else {
+                        false
+                    };
+                    if was_custom_start {
+                        out.push_str("#set enum(start: 1)\n");
+                    }
+                    if !out.ends_with('\n') {
+                        out.push('\n');
+                    }
+                    if list_stack.is_empty() && !out.ends_with("\n\n") {
+                        out.push('\n');
+                    }
                 }
                 TagEnd::Item => {
-                    out.push('\n');
+                    if !out.ends_with('\n') {
+                        out.push('\n');
+                    }
                 }
                 TagEnd::Emphasis => out.push_str("]/**/"),
                 TagEnd::Strong => out.push_str("]/**/"),
@@ -2630,5 +2655,36 @@ size: 16:9
         let marp_override_parsed = convert_markdown_to_typst(marp_md, "Marp as A4", &override_opts);
         assert!(marp_override_parsed.typst_source.contains("width: 595.28pt"));
         assert!(!marp_override_parsed.typst_source.contains("width: 960pt"));
+    }
+
+    #[test]
+    fn test_nested_and_ordered_lists() {
+        let md = r#"- 第一阶段：先治制度与主数据（1~2 周，零技术开发）
+  - 统一定义 Project ID 编码规范：如 `[客户代码]-[供应商代码]-[产品名]-[序号]`，销售必须持 ID 向供应商报备开户。
+  - 引入财务初级闭环：销售提报收款必须附带银行到账流水号或让财务在多维表格上勾选“已实收到账”，堵住风控漏洞。
+- 第二阶段：梳理底座模型（开发规范期）
+  - 建立标准的三方产品字典、供应商账目对应关系。
+  - 统一 Excel 结算模板字段，消除各销售混乱的私表。
+- 第三阶段：正式系统化（先轻量后系统）
+  - 若自研账单系统，先做“项目主表 + 导入核验 + 财务核销认领”三个最小可用闭环（MVP），验证跑通后再把提成自动计算接入，切忌一上来做大而全的“空壳上传”。
+"#;
+        let opts = RenderOptions::default();
+        let parsed = convert_markdown_to_typst(md, "Test", &opts);
+
+        // Verify that sub-items are properly on their own lines with indentation and bullet marker
+        assert!(parsed.typst_source.contains("- 第一阶段：先治制度与主数据（1\\~2 周，零技术开发）\n  - 统一定义"));
+        assert!(parsed.typst_source.contains("向供应商报备开户。\n  - 引入财务初级闭环"));
+        assert!(parsed.typst_source.contains("- 第二阶段：梳理底座模型（开发规范期）\n  - 建立标准的三方"));
+        assert!(parsed.typst_source.contains("对应关系。\n  - 统一 Excel"));
+        assert!(parsed.typst_source.contains("- 第三阶段：正式系统化（先轻量后系统）\n  - 若自研账单系统"));
+
+        // Verify PDF compilation succeeds
+        let res = crate::compile_markdown_to_pdf(md, "Test", ".", &opts);
+        assert!(res.is_ok());
+
+        // Verify ordered list produces `+ ` markers instead of `- `
+        let ordered_md = "1. Item one\n2. Item two\n   1. Nested one\n   2. Nested two\n";
+        let ordered_parsed = convert_markdown_to_typst(ordered_md, "Ordered", &opts);
+        assert!(ordered_parsed.typst_source.contains("+ Item one\n+ Item two\n  + Nested one\n  + Nested two"));
     }
 }
