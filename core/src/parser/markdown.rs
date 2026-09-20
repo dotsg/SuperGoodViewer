@@ -1677,6 +1677,7 @@ pub fn convert_markdown_to_typst(
 
                 Tag::TableHead => {
                     in_table_head = true;
+                    out.push_str("  table.header(\n");
                 }
                 Tag::TableRow => {}
                 Tag::TableCell => {
@@ -1827,6 +1828,7 @@ pub fn convert_markdown_to_typst(
                 }
                 TagEnd::TableHead => {
                     in_table_head = false;
+                    out.push_str("  ),\n");
                 }
                 TagEnd::TableRow => {}
                 TagEnd::TableCell => {
@@ -2086,6 +2088,7 @@ LPC window from (10000_0000h + 64K*LPCMWMRS) to (FFFF_FFFFh + 64K*(LPCMWMRS + 1)
 | a  | b  | c  | d      |
 "#;
         let parsed = convert_markdown_to_typst(md, "HW", &RenderOptions::default());
+        assert!(parsed.typst_source.contains("table.header("));
         assert!(parsed.typst_source.contains("#emph["));
         assert!(parsed.typst_source.contains("#strong["));
         assert!(

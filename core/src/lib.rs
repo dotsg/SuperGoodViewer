@@ -1151,4 +1151,23 @@ Second index.
             .expect("Non-image files must fall back to placeholder badges and compile successfully");
         assert!(pdf_non_image.starts_with(b"%PDF-"));
     }
+
+    #[test]
+    fn test_table_header_repeats_on_page_break() {
+        let mut md = String::from("# Multi-page Table\n\n| Col A | Col B | Col C |\n|---|---|---|\n");
+        for i in 1..=80 {
+            md.push_str(&format!("| Val A{} | Val B{} | Val C{} |\n", i, i, i));
+        }
+        let temp_dir = std::env::temp_dir().join(format!("sgv_table_test_{}", std::process::id()));
+        let _guard = TempDirGuard(temp_dir.clone());
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let opts = RenderOptions::default();
+        let res = compile_markdown_to_pdf_result(&md, "Table Test", &temp_dir, &opts)
+            .expect("Multi-page table should compile successfully");
+        assert!(res.pdf_bytes.starts_with(b"%PDF-"));
+
+        // Verify that Typst source contains table.header
+        let parsed = crate::parser::markdown::convert_markdown_to_typst(&md, "Table Test", &opts);
+        assert!(parsed.typst_source.contains("table.header("));
+    }
 }
