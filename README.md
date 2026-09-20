@@ -60,7 +60,7 @@
 | 测试维度 | SuperGoodViewer (本品) | Obsidian | Typora | MarkText | VS Code |
 | --- | :---: | :---: | :---: | :---: | :---: |
 | **底层引擎** | **Rust + Metal Impeller** | Electron (Chromium) | Cocoa + WKWebView | Electron (Chromium) | Electron (Chromium) |
-| **应用体积** | **107 MB** (arm64) | 482 MB | 46 MB (依附系统WebKit) | 368 MB | 933 MB |
+| **应用体积** | **107 MB** (arm64) / **154 MB** (通用版) | 482 MB | 46 MB (依附系统WebKit) | 368 MB | 933 MB |
 | **操作系统进程** | **1 个原生进程** | 4 个独立进程 | 2 个独立进程 | 5 个独立进程 | 8+ 个独立进程 |
 | **常驻内存** | **200 MB** (峰值约 630 MB) | ~627 MB | ~266 MB | ~715 MB | ~950 MB |
 | **温启动 UI 首帧 / 文档上屏** | **98 ms / 141 ms** | 1,500 ~ 2,500 ms | 450 ~ 600 ms | 1,800 ~ 3,000 ms | 1,800 ~ 3,500 ms |
