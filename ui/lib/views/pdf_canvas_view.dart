@@ -2369,7 +2369,12 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
                 final docY = offset?.dy;
                 if (docY != null) orderedDocYs.add(docY);
                 if (pageNum != null || docY != null) {
-                  destMap[n.title.trim()] = (pageNumber: pageNum, docY: docY);
+                  final trimmedTitle = n.title.trim();
+                  destMap[trimmedTitle] = (pageNumber: pageNum, docY: docY);
+                  final cleanedTitle = ReaderController.cleanHeadingTitle(trimmedTitle);
+                  if (cleanedTitle != trimmedTitle) {
+                    destMap[cleanedTitle] = (pageNumber: pageNum, docY: docY);
+                  }
                 }
                 if (n.children.isNotEmpty) extractNodes(n.children);
               }

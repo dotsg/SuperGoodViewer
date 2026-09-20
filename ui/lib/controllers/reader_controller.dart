@@ -1517,6 +1517,48 @@ graph LR
     compileDocument();
   }
 
+  static String cleanHeadingTitle(String raw) {
+    var title = raw.trim();
+    // 1. Strip leading and trailing ATX heading markers: e.g. "### Heading ##" -> "Heading"
+    title = title.replaceFirst(RegExp(r'^#+\s*'), '');
+    title = title.replaceAll(RegExp(r'\s+#+\s*$'), '');
+
+    // 2. Resolve markdown links: e.g. "[Link text](url)" or "[Link text][ref]" -> "Link text"
+    title = title.replaceAllMapped(
+      RegExp(r'\[([^\]]+)\](?:\([^)]*\)|\[[^\]]*\])'),
+      (m) => m[1] ?? '',
+    );
+
+    // 3. Resolve inline code: e.g. "`code`" -> "code"
+    title = title.replaceAllMapped(
+      RegExp(r'`([^`]+)`'),
+      (m) => m[1] ?? '',
+    );
+
+    // 4. Resolve bold, italic, strikethrough markers
+    title = title.replaceAllMapped(
+      RegExp(r'(\*\*|__)(.*?)\1'),
+      (m) => m[2] ?? '',
+    );
+    title = title.replaceAllMapped(
+      RegExp(r'~~(.*?)~~'),
+      (m) => m[1] ?? '',
+    );
+    title = title.replaceAllMapped(
+      RegExp(r'(?<!\w)([*_])([^*_]+)\1(?!\w)'),
+      (m) => m[2] ?? '',
+    );
+
+    // 5. Unescape markdown backslash escapes (CommonMark §2.4):
+    // e.g. "\." -> ".", "\-" -> "-", "\*" -> "*", etc.
+    title = title.replaceAllMapped(
+      RegExp(r"""\\([!"#$%&'()*+,-./:;<=>?@[\\\]^_`{|}~])"""),
+      (m) => m[1] ?? '',
+    );
+
+    return title.trim();
+  }
+
   void _extractOutline(String markdown) {
     final items = <OutlineItem>[];
     final lines = markdown.split('\n');
@@ -1536,8 +1578,9 @@ graph LR
         final match = RegExp(r'^(#{1,6})\s+(.+)$').firstMatch(trimmed);
         if (match != null) {
           final level = match.group(1)!.length;
-          final title = match.group(2)!.trim();
-          if (title == '目录' || title.toLowerCase() == 'table of contents') {
+          final rawTitle = match.group(2)!.trim();
+          final title = cleanHeadingTitle(rawTitle);
+          if (title.isEmpty || title == '目录' || title.toLowerCase() == 'table of contents') {
             continue;
           }
           final slug = _slugify(title);

@@ -350,5 +350,57 @@ void main() {
       controller.updateScrollRatio(0.30, offset: 1300.0);
       expect(controller.activeOutlineIndex, 1);
     });
+
+    test('cleanHeadingTitle cleans markdown formatting and unescapes backslashes', () {
+      expect(
+        ReaderController.cleanHeadingTitle(r'问题2\.1\. ：销售操作重复割裂'),
+        '问题2.1. ：销售操作重复割裂',
+      );
+      expect(
+        ReaderController.cleanHeadingTitle(r'问题2\.2\. ：数据流向逻辑倒挂'),
+        '问题2.2. ：数据流向逻辑倒挂',
+      );
+      expect(
+        ReaderController.cleanHeadingTitle('### Heading with trailing hashes ###'),
+        'Heading with trailing hashes',
+      );
+      expect(
+        ReaderController.cleanHeadingTitle('Heading with [A Link](https://example.com) and `inline_code()`'),
+        'Heading with A Link and inline_code()',
+      );
+      expect(
+        ReaderController.cleanHeadingTitle('Heading with **bold** and *italic* and ~~strike~~'),
+        'Heading with bold and italic and strike',
+      );
+      expect(
+        ReaderController.cleanHeadingTitle(
+          r"""Special \! \@ \# \$ \% \^ \& \* \( \) \- \_ \+ \= \[ \] \{ \} \| \\ \: \; \" \' \< \> \, \. \? \/ symbols""",
+        ),
+        r"""Special ! @ # $ % ^ & * ( ) - _ + = [ ] { } | \ : ; " ' < > , . ? / symbols""",
+      );
+    });
+
+    test('openFile extracts clean outline items without markdown escapes or hashes', () async {
+      final mdDoc = File(p.join(tempTestDir.path, 'escaped_headings.md'));
+      mdDoc.writeAsStringSync('''
+# Document Title
+## 问题2\\.1\\. ：销售操作重复割裂
+Content 1
+## 问题2\\.2\\. ：数据流向逻辑倒挂
+Content 2
+### [Feature `v1.0`](https://example.com) ###
+Content 3
+''');
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+      await controller.openFile(mdDoc.path, preservePosition: false);
+
+      expect(controller.outlineItems.length, 4);
+      expect(controller.outlineItems[0].title, 'Document Title');
+      expect(controller.outlineItems[1].title, '问题2.1. ：销售操作重复割裂');
+      expect(controller.outlineItems[2].title, '问题2.2. ：数据流向逻辑倒挂');
+      expect(controller.outlineItems[3].title, 'Feature v1.0');
+    });
   });
 }
