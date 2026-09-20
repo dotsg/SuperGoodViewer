@@ -39,7 +39,8 @@ $swWin = [System.Diagnostics.Stopwatch]::StartNew()
 # Build Rust core (use --lib --bin sgv-cli)
 Write-Host "  -> Building Rust sogood_core & sgv-cli (Release)..."
 Set-Location "$root\core"
-cargo build --release --lib --bin sgv-cli
+cargo build --release --lib
+cargo build --release -p sgv-cli
 if ($LASTEXITCODE -ne 0) { throw "Cargo build failed" }
 
 # Build Flutter Desktop Windows
@@ -81,7 +82,7 @@ set -e
 cd "$wslRoot"
 export PATH="/usr/local/bin:/opt/flutter/bin:`$PATH"
 echo "  -> [WSL] Building Rust sogood_core & sgv-cli..."
-cd core && cargo build --release --lib --bin sgv-cli
+cd core && cargo build --release --lib && cargo build --release -p sgv-cli
 echo "  -> [WSL] Resolving Linux pub packages..."
 cd ../ui && flutter pub get
 echo "  -> [WSL] Building Flutter Linux..."

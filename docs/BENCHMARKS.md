@@ -41,8 +41,7 @@
 4. **单点采样。** 旧数据是 N 次循环的平均值，没有分位数，异常值被平均掉。
    本轮每项单独计时，报告 min / p50 / p95。
 
-同时修正的还有：包体积（94 MB → 实测 153 MB）、常驻内存（旧文档 158 MB → 复测 207 MB，
-加入 memo 缓存回收后 127 MB，见第 6 节）、
+同时修正的还有：包体积（旧文档 94 MB → 复测 153 MB，CLI 瘦身后 107 MB，见第 4 节）、常驻内存（旧文档 158 MB → 复测约 200 MB，见第 6 节）、
 以及"文档就绪耗时"——旧文档把 Flutter trace 里的 `timeToFirstFrameRasterized`
 当作"文档渲染上屏"，实际上那时文档尚未加载。本轮为此在 `onViewerReady`
 后补了真实探针 `StartupMetrics.markFirstDocument()`。
@@ -138,24 +137,28 @@
 
 本机 `make build`（arm64）产物，`du -sm` 实测：
 
-| 组成                          |  体积 | 说明                                                       |
-| ----------------------------- | ----: | ---------------------------------------------------------- |
-| `Resources/bin/sgv-cli`       | 47 MB | 命令行工具，静态包含同一套 Typst 引擎与字体（与 dylib 重复） |
-| `Frameworks/libsogood_core.dylib` | 45 MB | Rust 排版核心：Typst 0.15.1 + 17 款字体 + MiTeX + Mermaid |
-| `Frameworks/FlutterMacOS.framework` | 30 MB | Flutter 桌面运行库（x86_64 + arm64 胖二进制）        |
-| `Frameworks/App.framework`    | 18 MB | Dart AOT 业务代码                                          |
-| `Frameworks/PDFium.framework` | 12 MB | Google PDFium 矢量渲染引擎                                 |
-| 图标、签名、其他资源          |  ~2 MB | Assets.car、icns、_CodeSignature                          |
-| **合计**                      | **153 MB** | arm64 本机构建                                        |
+| 组成                          | CLI 瘦身前 |       现在 | 说明                                                       |
+| ----------------------------- | ---------: | ---------: | ---------------------------------------------------------- |
+| `Frameworks/libsogood_core.dylib` |      45 MB | **45 MB** | Rust 排版核心：Typst 0.15.1 + 17 款字体 + MiTeX + Mermaid |
+| `Frameworks/FlutterMacOS.framework` |    30 MB | **30 MB** | Flutter 桌面运行库（x86_64 + arm64 胖二进制）        |
+| `Frameworks/App.framework`    |      18 MB | **18 MB** | Dart AOT 业务代码                                          |
+| `Frameworks/PDFium.framework` |      12 MB | **12 MB** | Google PDFium 矢量渲染引擎                                 |
+| `Resources/bin/sgv-cli`       |      47 MB | **0.5 MB** | 命令行工具                                                 |
+| 图标、签名、其他资源          |      ~2 MB |    **~2 MB** | Assets.car、icns、_CodeSignature                        |
+| **合计**                      |     153 MB | **107 MB** | arm64 本机构建                                          |
+
+`sgv-cli` 原先把整套 Typst 引擎和 17 款字体静态链进自己，于是同一份引擎在
+bundle 里存了两遍。现在它改为在运行时加载应用自己那份
+`libsogood_core.dylib`（与 Dart 侧同一个 C ABI、同一套查找顺序），
+自身只剩参数解析、导出计划与文件 I/O，**46 MB 重复消失**。
 
 其他口径：
 
-- **通用（arm64 + x86_64）发行版**，即 `/Applications/SuperGoodViewer.app`：**248 MB**
-- **DMG 下载体积（压缩后）**：**50 MB**
+- **通用（arm64 + x86_64）发行版**：瘦身前 **248 MB**（`/Applications` 实测）。
+  通用版里这份重复是双份的，本轮未重新打包通用版与 DMG，等下次发行构建复测。
+- **DMG 下载体积（压缩后）**：瘦身前 **50 MB**，同样未复测。
 
-> 旧文档的 94 MB 已不成立。主要增量来自：随包附带的 `sgv-cli`（47 MB，
-> 与动态库重复打包了一整套引擎和字体）、Flutter framework 的胖二进制，
-> 以及核心库自身的增长。**体积优化空间明确在 `sgv-cli` 的重复打包上。**
+> 旧文档的 94 MB 已不成立，即使去掉重复的 CLI 也还有 107 MB。
 
 同目录下第三方软件实测（`du -sm /Applications/*.app`，同一台机器）：
 
@@ -164,7 +167,7 @@
 | Visual Studio Code | 933 MB |
 | Obsidian           | 482 MB |
 | MarkText           | 368 MB |
-| SuperGoodViewer    | 248 MB（通用版）/ 153 MB（arm64）|
+| SuperGoodViewer    | 107 MB（arm64，CLI 瘦身后）|
 | Typora             |  46 MB（外挂系统 WebKit）|
 
 ---
@@ -200,28 +203,34 @@ trace 口径来自 Flutter engine 自带的 `build/start_up_info.json`，
 
 ## 6. 内存与进程
 
-Release 构建，命令行传入 `test.md` 启动，静置 40 秒后采样（`ps` / `footprint`），
-各两次取值：
+Release 构建，命令行传入 `test.md` 启动，静置 45 秒后采样（`ps` / `footprint`）。
+下表是同一个 bundle、只替换 `libsogood_core.dylib` 的受控 A/B，两种构建交替各跑三轮
+（n = 3），用来验证 memo 缓存回收对应用常驻内存的影响：
 
-| 指标                       | 加 memo 回收前 |         现在 |
-| -------------------------- | -------------: | -----------: |
-| `phys_footprint` 常驻      |   207 ~ 209 MB | **127 ~ 128 MB** |
-| `phys_footprint_peak` 峰值 |   638 ~ 676 MB |   **522 MB** |
-| `ps` RSS                   |         227 MB |   **183 ~ 188 MB**（含字体 mmap 的常驻文件页）|
-| 进程数                     |            1 个 |      **1 个** |
+| 指标                       | 不回收 memo 缓存 | 回收 memo 缓存 |
+| -------------------------- | ---------------: | -------------: |
+| `phys_footprint` 常驻      |   199 ~ 202 MB   | **199 ~ 200 MB** |
+| `phys_footprint_peak` 峰值 |   622 ~ 643 MB   | **625 ~ 641 MB** |
+| `ps` RSS                   |   199 ~ 203 MB   | **200 ~ 201 MB** |
+| 进程数                     |            1 个  |         **1 个** |
 
 说明：
 
+- **打开单篇文档的应用常驻内存不受 memo 回收影响，两者都是约 200 MB。**
+  原因很直接：一次启动只发生有限几次编译，缓存还没来得及堆积。回收解决的是
+  **长会话线性增长**，不是启动后的稳态占用。
+- **回收在长会话里的收益是实测过的。** 在同一进程里连续编译**内容各不相同**的
+  20 KB 文档：不回收时 RSS 每次涨约 2.4 MB 且不回落（1 次 384 MB → 30 次 458 MB）；
+  加上 `evict(5)` 后曲线走平（连续 15 次仅 +0.2 MB，同条件下不回收是 +40.5 MB）。
+  对应真实场景是热重载编辑（每次保存一编译）和连着打开多篇文档。代价为零——
+  同文档重渲染 p50 8.73 → 8.61 ms、改动后重编译 p50 11.02 → 10.89 ms，均在噪声内。
+  回归测试见 `test_memo_cache_does_not_grow_across_distinct_documents`。
 - 字体经 `memmap2` 内存映射，属干净的文件背景页，内存压力下可回收；
-  这部分会计入 RSS 但可被内核换出，因此 RSS 高于 `phys_footprint` 属正常。
-- **右列的降幅来自 Typst memo 缓存回收。** Typst 通过 `comemo` 做全局记忆化，
-  这个缓存不会自己收缩，而之前代码里一次 `evict` 都没有（Typst CLI 是每次编译后
-  `evict(5)`）。隔离测量：在同一进程里连续编译**内容各不相同**的 20 KB 文档，
-  RSS 每次涨约 2.4 MB 且不回落（1 次 384 MB → 30 次 458 MB）；加上 `evict(5)`
-  后曲线走平（连续 15 次仅 +0.2 MB）。代价为零——同文档重渲染 p50 8.73 → 8.61 ms、
-  改动后重编译 p50 11.02 → 10.89 ms，均在噪声内。回归测试见
-  `test_memo_cache_does_not_grow_across_distinct_documents`。
-- 峰值 522 MB 仍远高于常驻，出现在首次编译期间，属于单次编译的瞬时峰值，与缓存累积无关。
+  这部分会计入 RSS 但可被内核换出。
+- 峰值约 630 MB 远高于常驻，出现在首次编译期间，是单次编译的瞬时峰值，与缓存累积无关；
+  A/B 两侧的峰值差落在轮次间波动范围内。
+- **一处已修正的结论**：本仓库一度记载"加入 memo 回收后常驻从 207 MB 降到 127 MB"。
+  那个 127 MB 是单次读数，受窗口尺寸与恢复的文档影响，受控 A/B 下复现不出来，已作废。
 - 旧文档的 158 MB / 597 MB 峰值是更早一个构建、且加载的是内置示例文档时的读数，
   与当前版本不可比。
 
@@ -244,8 +253,8 @@ VS Code 的启动、排版、内存数据来自上一版文档，属于**估计�
 | --------------- | --------------------------------------------- | ------------------ | ---------------- | ------------------ | ----------------- |
 | 底层架构        | Rust + Flutter (Impeller Metal)               | Electron           | Cocoa + WKWebView| Electron           | Electron          |
 | 进程数          | **1**                                         | 4                  | 2                | 5                  | 8+                |
-| 安装体积        | **153 MB (arm64) / 248 MB (通用)**            | 482 MB             | 46 MB            | 368 MB             | 933 MB            |
-| 常驻内存        | **127 MB**（峰值 522 MB）                     | ~627 MB            | ~266 MB          | ~715 MB            | ~950 MB           |
+| 安装体积        | **107 MB (arm64)**                            | 482 MB             | 46 MB            | 368 MB             | 933 MB            |
+| 常驻内存        | **200 MB**（峰值约 630 MB）                   | ~627 MB            | ~266 MB          | ~715 MB            | ~950 MB           |
 | 22 KB 文档首次排版 | **95.0 ms**（含 Mermaid 冷渲染）           | 350 ~ 450 ms       | 300 ~ 400 ms     | 450 ~ 600 ms       | 500 ~ 700 ms      |
 | 同文档重新渲染  | **8.7 ms**                                    | —                  | —                | —                  | —                 |
 | 100 KB 书籍首次排版 | **296 ms**                                | 750 ~ 1,000 ms     | 600 ~ 800 ms     | 1,000 ~ 1,500 ms   | 1,200 ~ 2,000 ms  |

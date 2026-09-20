@@ -4,10 +4,15 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
-use sogood_core::compile_markdown_to_pdf_result;
-use sogood_core::compiler::engine::RenderOptions;
+mod core_lib;
+
+use core_lib::CoreEngine;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+fn json_string(value: &str) -> serde_json::Value {
+    serde_json::Value::String(value.to_string())
+}
 
 fn print_help() {
     println!(
@@ -150,6 +155,14 @@ fn parse_cli_args(args: &[String]) -> Result<CliConfig, String> {
             }
             "-v" | "--version" => {
                 println!("sgv-cli {}", VERSION);
+                match CoreEngine::load() {
+                    Ok(engine) => println!(
+                        "engine  {} ({})",
+                        engine.version().unwrap_or_else(|| "unknown".to_string()),
+                        engine.path().display()
+                    ),
+                    Err(e) => println!("engine  not loaded: {e}"),
+                }
                 exit(0);
             }
             "-o" | "--output" => {
@@ -436,17 +449,33 @@ fn main() {
     let chosen_format = config.format.unwrap_or_else(|| "a4".to_string());
     let is_fluid = chosen_format == "fluid";
 
-    let options = RenderOptions {
-        mode: if is_fluid {
-            "fluid".to_string()
-        } else {
-            "paged".to_string()
-        },
-        theme: config.theme.unwrap_or_else(|| "light".to_string()),
-        font_size: config.font_size.unwrap_or(10.5),
-        page_format: Some(chosen_format),
-        image_cache_dir: config.image_cache_dir.clone(),
-        ..Default::default()
+    // The engine deserializes this into its own `RenderOptions`, where every
+    // field has a default, so only what the user actually asked for is sent.
+    let mut options = serde_json::Map::new();
+    options.insert(
+        "mode".to_string(),
+        json_string(if is_fluid { "fluid" } else { "paged" }),
+    );
+    options.insert(
+        "theme".to_string(),
+        json_string(&config.theme.clone().unwrap_or_else(|| "light".to_string())),
+    );
+    options.insert(
+        "font_size".to_string(),
+        serde_json::Value::from(config.font_size.unwrap_or(10.5)),
+    );
+    options.insert("page_format".to_string(), json_string(&chosen_format));
+    if let Some(dir) = &config.image_cache_dir {
+        options.insert("image_cache_dir".to_string(), json_string(dir));
+    }
+    let options_json = serde_json::Value::Object(options).to_string();
+
+    let engine = match CoreEngine::load() {
+        Ok(engine) => engine,
+        Err(e) => {
+            eprintln!("sgv-cli: error: {e}");
+            exit(1);
+        }
     };
 
     let total = tasks.len();
@@ -491,7 +520,7 @@ fn main() {
             );
         }
 
-        match compile_markdown_to_pdf_result(&content, &title, &task.doc_dir, &options) {
+        match engine.compile_markdown(&content, &title, &task.doc_dir, &options_json) {
             Ok(result) => {
                 if result.degraded_equation_count > 0 {
                     eprintln!(

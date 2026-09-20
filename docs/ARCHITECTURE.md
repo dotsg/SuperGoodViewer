@@ -59,7 +59,7 @@ pub struct SogoodBuffer {
 Scanning and parsing system fonts on every keypress or reload can take 300ms–800ms. SuperGoodViewer uses a thread-safe `OnceLock<GlobalFontStore>`:
 - Embedded Typst fonts (New Computer Modern, DejaVu, Latin Modern Math, etc.) and primary system fonts (PingFang SC, Microsoft YaHei, Inter, Segoe UI) are indexed **once** at initial launch.
 - **TTC (TrueType Collection) In-Memory Deduplication**: TTC font files containing multiple faces (such as macOS `PingFang.ttc` 74.6MB with 6 faces) are read only once and deduplicated via an in-memory `PathBuf -> Arc<Bytes>` cache, so 141 matched faces read only 48 distinct files instead of re-allocating per face.
-- **Memory-mapped font files**: those 48 files are mapped with `memmap2` rather than read onto the heap, so font bytes are clean file-backed pages — only pages actually touched during shaping become resident, and the kernel can evict them under pressure. Measured in isolation, loading 158 fonts costs **11 MB** of `phys_footprint` versus **548 MB** with `fs::read`. Whole-app resident footprint dropped from ~695 MB to **~127 MB** (measured 2026-09-20 with `test.md` loaded, after font mmap plus Typst memo-cache eviction). See [BENCHMARKS.md](BENCHMARKS.md) for the measured attribution.
+- **Memory-mapped font files**: those 48 files are mapped with `memmap2` rather than read onto the heap, so font bytes are clean file-backed pages — only pages actually touched during shaping become resident, and the kernel can evict them under pressure. Measured in isolation, loading 158 fonts costs **11 MB** of `phys_footprint` versus **548 MB** with `fs::read`. Whole-app resident footprint dropped from ~695 MB to **~200 MB** (measured 2026-09-20 with `test.md` loaded). See [BENCHMARKS.md](BENCHMARKS.md) for the measured attribution.
 - Subsequent compilations reference the cached `LazyHash<FontBook>`. Re-rendering an already-compiled document (theme switch, font-size change) costs **0.5 ms ~ 20 ms** depending on document size; a document opened for the first time in a fresh process costs **~1 ms (short note) to ~296 ms (100 KB book)**. See [BENCHMARKS.md](BENCHMARKS.md) for the cold/warm split.
 
 See [BENCHMARKS.md](BENCHMARKS.md) for detailed performance metrics and comparison with Obsidian, Typora, MarkText, and VS Code.
@@ -118,6 +118,15 @@ To avoid opening multiple instances when clicking markdown files or executing CL
 SuperGoodViewer ships with unified `sgv` CLI tooling across platforms:
 - **macOS**: Generates a launcher shell script and establishes a symlink in `/usr/local/bin/sgv` via AppleScript privilege escalation if required.
 - **Windows**: Deploys lightweight wrappers `sgv.cmd` and `sgv.ps1` to `%LOCALAPPDATA%\Microsoft\WindowsApps`. Because this directory is part of the default user `PATH` in modern Windows, installation requires zero UAC elevation and is immediately active in CMD, PowerShell, and Windows Terminal.
+
+The headless exporter behind those wrappers, `sgv-cli` (crate `core/cli`), does argument
+parsing, export planning and file I/O only — it loads the very `libsogood_core` the app
+loads, through the same C ABI and the same executable-relative search order, rather than
+linking the engine statically. Static linking put a second copy of Typst and the 17 embedded
+fonts into every bundle: **46 MB of duplication, now 0.5 MB** (see
+[BENCHMARKS.md](BENCHMARKS.md) §4). `SGV_CORE_LIB` overrides the engine path and is
+authoritative — if it is set and cannot be loaded, the CLI fails instead of silently falling
+back to a different engine.
 
 ### 5.4 Dual-Architecture Support (x64 & ARM64)
 SuperGoodViewer targets both primary architectures on Windows:
