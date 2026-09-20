@@ -950,4 +950,82 @@ Second index.
              growing - is the Typst memo cache still being evicted?"
         );
     }
+
+    /// Pins how many full layout passes each shape of fluid document costs today.
+    ///
+    /// A layout pass is the expensive unit of work in the pipeline (~143 ms for a
+    /// 100 KB book on an M4 Max; the natural-height, 14,000pt and dynamic-height
+    /// passes all cost the same). Slicing a document taller than the PDF page limit
+    /// inherently needs a second pass — the slice height cannot be known without
+    /// laying the document out once — and a third when the dynamic-height candidate
+    /// has to be compared against the capped one.
+    ///
+    /// This test does not claim the current counts are optimal. It exists so that
+    /// any change to the slicing strategy has to state, in this file, what it did to
+    /// the number of passes.
+    #[test]
+    fn test_fluid_slicing_layout_pass_counts() {
+        use crate::compiler::engine::{layout_passes, reset_layout_passes};
+
+        let options = RenderOptions {
+            mode: "fluid".to_string(),
+            viewport_width: 850.0,
+            ..Default::default()
+        };
+
+        // A short document fits one page: one pass, no slicing machinery at all.
+        reset_layout_passes();
+        compile_markdown_to_pdf("# Short\n\nOne paragraph.\n", "Short", ".", &options)
+            .expect("short compile failed");
+        assert_eq!(
+            layout_passes(),
+            1,
+            "a document that fits one page must cost exactly one layout pass"
+        );
+
+        // Taller than 14,000pt, content flows evenly: natural pass + candidate B.
+        let mut tall = String::new();
+        for i in 0..740 {
+            tall.push_str(&format!("Line {i}\n\n"));
+        }
+        reset_layout_passes();
+        compile_markdown_to_pdf(&tall, "Tall", ".", &options).expect("tall compile failed");
+        assert_eq!(
+            layout_passes(),
+            2,
+            "a sliced document costs the natural-height pass plus one candidate"
+        );
+
+        // Tall unbreakable blocks make the dynamic candidate spill, so the capped
+        // candidate has to be laid out as well and wins (see
+        // test_fluid_tall_blocks_candidate_comparison for the selection itself).
+        let mut blocks = String::new();
+        for i in 0..25 {
+            blocks.push_str(&format!(
+                "### Section {i}\n\nParagraph text {i}.\n\n<img src=\"dummy.png\" height=\"1300pt\" />\n\n"
+            ));
+        }
+        reset_layout_passes();
+        compile_markdown_to_pdf(&blocks, "Tall Blocks", ".", &options)
+            .expect("tall blocks compile failed");
+        assert_eq!(
+            layout_passes(),
+            3,
+            "when both slice candidates must be compared, the cost is three passes"
+        );
+
+        // The escape hatch must never pay for a candidate.
+        let disabled = RenderOptions {
+            disable_fluid_slice: Some(true),
+            ..options.clone()
+        };
+        reset_layout_passes();
+        compile_markdown_to_pdf(&tall, "Tall Disabled", ".", &disabled)
+            .expect("disabled compile failed");
+        assert_eq!(
+            layout_passes(),
+            1,
+            "disable_fluid_slice must skip the candidate passes entirely"
+        );
+    }
 }

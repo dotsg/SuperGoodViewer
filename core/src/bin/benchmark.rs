@@ -24,7 +24,9 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use sogood_core::compile_markdown_to_pdf;
-use sogood_core::compiler::engine::{compile_typst_to_pdf_with_options, RenderOptions};
+use sogood_core::compiler::engine::{
+    compile_typst_to_pdf_with_options, layout_passes, reset_layout_passes, RenderOptions,
+};
 use sogood_core::parser::markdown::convert_markdown_to_typst;
 use sogood_core::parser::math::transpile_latex_math;
 use sogood_core::parser::mermaid::{clear_cache as clear_mermaid_cache, render_mermaid};
@@ -105,6 +107,14 @@ struct DocResult {
     label: String,
     input_bytes: usize,
     pdf_bytes: usize,
+    /// Full Typst layout passes one cold compilation costs. Fluid documents taller
+    /// than the PDF page limit pay one pass per slice candidate on top of the
+    /// natural-height pass, which is the single largest avoidable-looking cost in
+    /// the pipeline -- tracked here so it cannot grow unnoticed.
+    layout_passes: usize,
+    /// Cold p50 with slicing switched off, for documents that slice. The gap
+    /// against `e2e_cold` is what the extra candidate pass actually costs.
+    no_slice_cold: Option<Stats>,
     parse: Stats,
     typst: Stats,
     e2e_cold: Stats,
@@ -251,12 +261,12 @@ fn main() {
     }
 
     println!(
-        "  {:<20} {:>7} {:>8} | {:>20} | {:>12} | {:>20} | {:>17} | {:>8}",
-        "document", "input", "PDF", "cold (min/p50/p95)", "edit p50/p95", "warm (min/p50/p95)", "cold stages p50", "paged p50"
+        "  {:<20} {:>7} {:>8} | {:>20} | {:>12} | {:>20} | {:>17} | {:>8} | {:>6} {:>12}",
+        "document", "input", "PDF", "cold (min/p50/p95)", "edit p50/p95", "warm (min/p50/p95)", "cold stages p50", "paged p50", "passes", "slice cost"
     );
     for r in &results {
         println!(
-            "  {:<20} {:>6.1}K {:>7.1}K | {:>5.2} {:>5.2} {:>5.2} ms | {:>4.2} {:>4.2} ms | {:>5.2} {:>5.2} {:>5.2} ms | md {:>5.2} + ts {:>5.2} | {:>5.2} ms",
+            "  {:<20} {:>6.1}K {:>7.1}K | {:>5.2} {:>5.2} {:>5.2} ms | {:>4.2} {:>4.2} ms | {:>5.2} {:>5.2} {:>5.2} ms | md {:>5.2} + ts {:>5.2} | {:>5.2} ms | {:>6} {:>12}",
             r.label,
             r.input_bytes as f64 / 1024.0,
             r.pdf_bytes as f64 / 1024.0,
@@ -271,6 +281,11 @@ fn main() {
             r.parse.p50,
             r.typst.p50,
             r.paged_cold.p50,
+            r.layout_passes,
+            match &r.no_slice_cold {
+                Some(no_slice) => format!("+{:.0} ms", r.e2e_cold.p50 - no_slice.p50),
+                None => "-".to_string(),
+            },
         );
     }
     println!();
@@ -320,9 +335,11 @@ fn benchmark_document(label: &str, markdown: &str) -> DocResult {
     let paged = paged_options();
 
     drop_all_caches();
+    reset_layout_passes();
     let pdf_bytes = compile_markdown_to_pdf(markdown, "BenchDoc", ".", &fluid)
         .expect("fluid compile failed")
         .len();
+    let passes = layout_passes();
 
     // Stage A: Markdown -> Typst source (includes Mermaid rendering and LaTeX transpilation).
     let parse = measure(3, COLD_SAMPLES, drop_all_caches, || {
@@ -373,10 +390,24 @@ fn benchmark_document(label: &str, markdown: &str) -> DocResult {
         );
     });
 
+    // Only meaningful where slicing actually runs; a single-pass document would
+    // just measure the same work twice.
+    let no_slice_cold = (passes > 1).then(|| {
+        let no_slice = RenderOptions { disable_fluid_slice: Some(true), ..fluid_options() };
+        measure(3, COLD_SAMPLES, drop_all_caches, || {
+            std::hint::black_box(
+                compile_markdown_to_pdf(markdown, "BenchDoc", ".", &no_slice)
+                    .expect("no-slice compile failed"),
+            );
+        })
+    });
+
     DocResult {
         label: label.to_string(),
         input_bytes: markdown.len(),
         pdf_bytes,
+        layout_passes: passes,
+        no_slice_cold,
         parse,
         typst,
         e2e_cold,
@@ -409,7 +440,7 @@ fn build_json(
     s.push_str("  },\n  \"documents\": [\n");
     for (i, d) in docs.iter().enumerate() {
         s.push_str(&format!(
-            "    {{\"label\":\"{}\",\"input_bytes\":{},\"pdf_bytes\":{},\"parse\":{},\"typst\":{},\"e2e_cold\":{},\"e2e_edit\":{},\"e2e_warm\":{},\"paged_cold\":{}}}{}\n",
+            "    {{\"label\":\"{}\",\"input_bytes\":{},\"pdf_bytes\":{},\"parse\":{},\"typst\":{},\"e2e_cold\":{},\"e2e_edit\":{},\"e2e_warm\":{},\"paged_cold\":{},\"layout_passes\":{},\"no_slice_cold\":{}}}{}\n",
             d.label,
             d.input_bytes,
             d.pdf_bytes,
@@ -419,6 +450,11 @@ fn build_json(
             d.e2e_edit.json(),
             d.e2e_warm.json(),
             d.paged_cold.json(),
+            d.layout_passes,
+            match &d.no_slice_cold {
+                Some(stats) => stats.json(),
+                None => "null".to_string(),
+            },
             if i + 1 == docs.len() { "" } else { "," }
         ));
     }

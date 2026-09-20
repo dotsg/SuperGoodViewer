@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use typst::foundations::Bytes;
@@ -342,6 +343,33 @@ fn degrade_failing_equations(
     Some(new_source)
 }
 
+thread_local! {
+    /// Number of Typst layout passes run on this thread since the last reset.
+    ///
+    /// One user-visible compilation is not necessarily one layout pass: a fluid
+    /// document taller than the PDF page limit is laid out again for each slice
+    /// candidate, and an equation that fails to compile costs a degradation retry.
+    /// Each pass is a full layout of the whole document (~143 ms for a 100 KB book
+    /// on an M4 Max), so this counter is what keeps that cost from growing unnoticed
+    /// — see the pass-count assertions in the crate tests and `make bench`.
+    static LAYOUT_PASSES: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Layout passes counted on this thread since [`reset_layout_passes`].
+pub fn layout_passes() -> usize {
+    LAYOUT_PASSES.with(Cell::get)
+}
+
+/// Starts a fresh count on this thread. Counting is thread-local, so tests and
+/// benchmarks measure only their own compilations.
+pub fn reset_layout_passes() {
+    LAYOUT_PASSES.with(|c| c.set(0));
+}
+
+fn count_layout_pass() {
+    LAYOUT_PASSES.with(|c| c.set(c.get() + 1));
+}
+
 pub(crate) fn compile_typst_to_document(
     typst_source: &str,
     doc_dir: impl AsRef<Path>,
@@ -370,6 +398,7 @@ pub(crate) fn compile_typst_to_document_with_raw_equations(
 
     for _ in 0..=max_degrade_passes {
         let world = MemoryWorld::new_with_cache_dir(&current_source, doc_dir.as_ref(), virtual_files_arc.clone(), image_cache_dir.clone());
+        count_layout_pass();
         let warned = typst::compile::<typst_layout::PagedDocument>(&world);
         match warned.output {
             Ok(doc) => {
@@ -396,6 +425,7 @@ pub(crate) fn compile_typst_to_document_with_raw_equations(
     }
 
     let world = MemoryWorld::new_with_cache_dir(&current_source, doc_dir.as_ref(), virtual_files_arc, image_cache_dir);
+    count_layout_pass();
     let warned = typst::compile::<typst_layout::PagedDocument>(&world);
     match warned.output {
         Ok(doc) => {
