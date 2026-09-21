@@ -706,9 +706,20 @@ class ReaderController extends ChangeNotifier {
     });
   }
 
+  final Stopwatch _persistThrottleClock = Stopwatch();
+
   void _persistDebounced() {
+    if (_persistDebounceTimer?.isActive == true &&
+        _persistThrottleClock.isRunning &&
+        _persistThrottleClock.elapsedMilliseconds < 120) {
+      return;
+    }
+    _persistThrottleClock
+      ..reset()
+      ..start();
     _persistDebounceTimer?.cancel();
     _persistDebounceTimer = Timer(const Duration(milliseconds: 600), () {
+      _persistThrottleClock.stop();
       _persistPreferences();
     });
   }
@@ -1714,6 +1725,7 @@ graph LR
     shortcutService.removeListener(notifyListeners);
     _reloadingSafetyTimer?.cancel();
     _persistDebounceTimer?.cancel();
+    _persistThrottleClock.stop();
     _persistPreferences();
     _viewportDebounceTimer?.cancel();
     _debounceTimer?.cancel();

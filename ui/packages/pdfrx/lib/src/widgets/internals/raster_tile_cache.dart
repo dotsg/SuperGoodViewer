@@ -102,6 +102,7 @@ class RasterTileCache {
   final Future<Image?> Function(RasterTileJob job) render;
   final void Function() onChanged;
   final _images = <RasterTileKey, Image>{};
+  final _pageIndex = <int, Set<RasterTileKey>>{};
   final _wanted = <RasterTileKey, RasterTileRegion>{};
   final _protected = <RasterTileKey>{};
   final _failures = <RasterTileKey, int>{};
@@ -113,6 +114,18 @@ class RasterTileCache {
 
   int get imageCount => _images.length;
   bool contains(RasterTileKey key) => _images.containsKey(key);
+
+  void _addKeyToPageIndex(RasterTileKey key) {
+    (_pageIndex[key.page] ??= {}).add(key);
+  }
+
+  void _removeKeyFromPageIndex(RasterTileKey key) {
+    final set = _pageIndex[key.page];
+    if (set != null) {
+      set.remove(key);
+      if (set.isEmpty) _pageIndex.remove(key.page);
+    }
+  }
 
   void update(List<RasterTileRegion> ordered, Set<RasterTileKey> visible, int budget) {
     if (_disposed) return;
@@ -137,23 +150,43 @@ class RasterTileCache {
   }
 
   void draw(Canvas canvas, int page, Rect pageRect, Rect target, double scale, FilterQuality quality) {
+    final pageKeys = _pageIndex[page];
+    if (pageKeys == null || pageKeys.isEmpty) return;
+
+    final entries = <({RasterTileRegion region, Image image})>[];
+    var hasMultipleScales = false;
+    double? firstScale;
+
+    for (final key in pageKeys) {
+      if (key.pageRect != pageRect) continue;
+      final region = RasterTileRegion(key);
+      if (!region.rect.overlaps(target)) continue;
+      final image = _images[key];
+      if (image == null) continue;
+      if (firstScale == null) {
+        firstScale = key.scale;
+      } else if (!hasMultipleScales && key.scale != firstScale) {
+        hasMultipleScales = true;
+      }
+      entries.add((region: region, image: image));
+    }
+
+    if (entries.isEmpty) return;
+
     // Retain lower-resolution tiles during zoom until replacements arrive.
-    final entries =
-        _images.entries
-            .where(
-              (e) => e.key.page == page && e.key.pageRect == pageRect && RasterTileRegion(e.key).rect.overlaps(target),
-            )
-            .toList()
-          ..sort((a, b) => a.key.scale.compareTo(b.key.scale));
+    if (hasMultipleScales) {
+      entries.sort((a, b) => a.region.key.scale.compareTo(b.region.key.scale));
+    }
+
     canvas.save();
     canvas.clipRect(pageRect.intersect(target));
     for (final entry in entries) {
-      final region = RasterTileRegion(entry.key);
+      final region = entry.region;
       canvas.save();
       canvas.clipRect(region.coreRect);
       canvas.drawImageRect(
-        entry.value,
-        Rect.fromLTWH(0, 0, entry.value.width.toDouble(), entry.value.height.toDouble()),
+        entry.image,
+        Rect.fromLTWH(0, 0, entry.image.width.toDouble(), entry.image.height.toDouble()),
         region.rect,
         Paint()..filterQuality = quality,
       );
@@ -182,6 +215,7 @@ class RasterTileCache {
         for (final key in _images.keys.toList()) {
           if (_wanted.containsKey(key) || _protected.contains(key)) continue;
           final old = _images.remove(key)!;
+          _removeKeyFromPageIndex(key);
           bytes -= old.width * old.height * 4;
           old.dispose();
           if (bytes + cost <= _budget) break;
@@ -204,6 +238,7 @@ class RasterTileCache {
         }
         bytes += image.width * image.height * 4;
         _images[next.key] = image;
+        _addKeyToPageIndex(next.key);
         image = null;
         _failures.remove(next.key);
         _trim();
@@ -229,6 +264,7 @@ class RasterTileCache {
     for (final key in _images.keys.toList()) {
       if (_protected.contains(key)) continue;
       final image = _images.remove(key)!;
+      _removeKeyFromPageIndex(key);
       bytes -= image.width * image.height * 4;
       image.dispose();
       if (bytes <= _budget) break;
@@ -239,10 +275,15 @@ class RasterTileCache {
     if (_running?.region.key.page == page) _running?.cancel();
     _wanted.removeWhere((key, _) => key.page == page);
     _failures.removeWhere((key, _) => key.page == page);
-    for (final key in _images.keys.where((key) => key.page == page).toList()) {
-      final image = _images.remove(key)!;
-      bytes -= image.width * image.height * 4;
-      image.dispose();
+    final keys = _pageIndex.remove(page);
+    if (keys != null) {
+      for (final key in keys) {
+        final image = _images.remove(key);
+        if (image != null) {
+          bytes -= image.width * image.height * 4;
+          image.dispose();
+        }
+      }
     }
   }
 
@@ -255,6 +296,7 @@ class RasterTileCache {
       image.dispose();
     }
     _images.clear();
+    _pageIndex.clear();
     bytes = 0;
   }
 

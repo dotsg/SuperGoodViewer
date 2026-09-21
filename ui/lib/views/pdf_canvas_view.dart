@@ -733,9 +733,10 @@ class SuperGoodScrollInteractionDelegate implements PdfViewerScrollInteractionDe
     final newMatrix = currentMatrix.clone();
     newMatrix.setTranslation(vec.Vector3(translation.dx, translation.dy, 0.0));
 
-    controller.value = controller.makeMatrixInSafeRange(newMatrix, forceClamp: true);
+    final clampedMatrix = controller.makeMatrixInSafeRange(newMatrix, forceClamp: true);
+    controller.setValueWithoutNormalization(clampedMatrix);
 
-    final actualTransVec = controller.value.getTranslation();
+    final actualTransVec = clampedMatrix.getTranslation();
     final actualTrans = Offset(actualTransVec.x, actualTransVec.y);
 
     if (_panTarget != null) {

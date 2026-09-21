@@ -20,6 +20,7 @@ import '../utils/edge_insets_extensions.dart';
 import '../utils/platform.dart';
 import 'interactive_viewer.dart' as iv;
 import 'internals/partial_rendering.dart';
+import 'internals/page_text_cache.dart';
 import 'internals/raster_tile_cache.dart';
 import 'internals/pdf_error_widget.dart';
 import 'internals/pdf_viewer_key_handler.dart';
@@ -250,6 +251,8 @@ class _PdfViewerState extends State<PdfViewer>
 
   PdfDocument? _document;
   PdfPageLayout? _layout;
+  bool _pageLayoutDirty = true;
+  double? _layoutZoom;
   Size? _viewSize;
   late PdfViewerLayoutMetrics _layoutMetrics;
   int? _pageNumber;
@@ -287,7 +290,7 @@ class _PdfViewerState extends State<PdfViewer>
   final _updateStream = BehaviorSubject<Matrix4>();
 
   /// page-number keyed cache of extracted text
-  final _textCache = <int, PdfPageText?>{};
+  final _textCache = PageTextCache();
   Timer? _textSelectionChangedDebounceTimer;
   final double _hitTestMargin = 3.0;
 
@@ -361,6 +364,10 @@ class _PdfViewerState extends State<PdfViewer>
   @override
   void didUpdateWidget(covariant PdfViewer oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // Custom layout callbacks may capture state from their parent, even when
+    // the callback identity is unchanged. Re-evaluate on parent updates, but
+    // reuse page geometry during the viewer's own scrolling/raster rebuilds.
+    _pageLayoutDirty = true;
     _widgetUpdated(oldWidget);
     if (widget.params.interactionDelegateProvider != oldWidget.params.interactionDelegateProvider) {
       _updateInteractionDelegate();
@@ -610,6 +617,7 @@ class _PdfViewerState extends State<PdfViewer>
     _lastRasterCoverage = null;
     _magnifierImageCache.releaseAllImages();
     _canvasLinkPainter.resetAll();
+    _textCache.clear();
     _txController.removeListener(_onMatrixChanged);
     _controller?._attach(null);
     _txController.dispose();
@@ -620,6 +628,7 @@ class _PdfViewerState extends State<PdfViewer>
   void _onSemanticsEnabledChanged() => _invalidate();
 
   void _onMatrixChanged() {
+    if (_layoutZoom != _currentZoom) _pageLayoutDirty = true;
     _lastRasterCoverage = null;
     if (_initialized && _viewSize != null) {
       final top = _visibleRect.top;
@@ -658,6 +667,7 @@ class _PdfViewerState extends State<PdfViewer>
 
   void _onDocumentEvent(PdfDocumentEvent event) {
     if (event is PdfDocumentPageStatusChangedEvent) {
+      _pageLayoutDirty = true;
       // FIXME: We can handle the event more efficiently by only updating the affected pages.
       for (final change in event.changes.entries) {
         _tileCache.invalidatePage(change.key);
@@ -665,7 +675,7 @@ class _PdfViewerState extends State<PdfViewer>
         _imageCache.makeCacheImageForPageDirty(change.key, page: change.value.page);
         _magnifierImageCache.makeCacheImageForPageDirty(change.key, page: change.value.page);
         _canvasLinkPainter.releaseLinksForPage(change.key);
-        _textCache.remove(change.key);
+        _textCache.invalidatePage(change.key);
       }
       // Only drop the selection if one of the changed pages is actually part of it;
       // otherwise incremental loading of unrelated pages would keep clearing it.
@@ -945,6 +955,7 @@ class _PdfViewerState extends State<PdfViewer>
     final oldVisibleRect = _initialized ? _visibleRect : Rect.zero;
     final oldSize = _viewSize;
     final isViewSizeChanged = oldSize != viewSize;
+    if (isViewSizeChanged) _pageLayoutDirty = true;
     _viewSize = viewSize;
     final isLayoutChanged = _relayoutPages();
 
@@ -1398,7 +1409,10 @@ class _PdfViewerState extends State<PdfViewer>
       _layout = null;
       return false;
     }
+    if (!_pageLayoutDirty && _layout != null && _layout!.pageLayouts.length == _document!.pages.length) return false;
     final newLayout = (widget.params.layoutPages ?? _layoutPages)(_document!.pages, widget.params);
+    _pageLayoutDirty = false;
+    _layoutZoom = _currentZoom;
     if (_layout == newLayout) {
       return false;
     }
@@ -1492,6 +1506,10 @@ class _PdfViewerState extends State<PdfViewer>
   }
 
   List<Widget> _buildPageOverlayWidgets(BuildContext context) {
+    if (widget.params.pageOverlaysBuilder == null &&
+        (widget.params.linkHandlerParams != null || widget.params.linkWidgetBuilder == null)) {
+      return const [];
+    }
     final renderBox = context.findRenderObject();
     if (renderBox is! RenderBox) return [];
 
@@ -2056,48 +2074,28 @@ class _PdfViewerState extends State<PdfViewer>
     if (document == null || pageNumber > document.pages.length) return null;
     final page = document.pages[pageNumber - 1];
     if (!page.isLoaded) return null;
-    if (_textCache.containsKey(pageNumber)) return _textCache[pageNumber];
+    final cached = _textCache.get(pageNumber, touch: true);
+    if (cached != null) return cached;
     if (onTextLoaded == null && invalidate) {
       onTextLoaded = _invalidate;
     }
-    _loadTextAsync(pageNumber, onTextLoaded: onTextLoaded);
+    unawaited(_loadTextAsync(pageNumber, onTextLoaded: onTextLoaded).catchError((_) => null));
     return null;
   }
 
-  Future<PdfPageText?> _loadTextAsync(int pageNumber, {void Function()? onTextLoaded}) async {
+  Future<PdfPageText?> _loadTextAsync(int pageNumber, {void Function()? onTextLoaded, bool isPriority = true}) async {
     final document = _document;
-    if (document == null || pageNumber > document.pages.length) return null;
+    if (!mounted || document == null || pageNumber < 1 || pageNumber > document.pages.length) return null;
     final page = document.pages[pageNumber - 1];
     if (!page.isLoaded) return null;
-    if (_textCache.containsKey(pageNumber)) return _textCache[pageNumber]!;
-    return await synchronized(() async {
-      if (_textCache.containsKey(pageNumber)) return _textCache[pageNumber]!;
-      // The document may be unloaded or replaced while this closure waits in
-      // the synchronized queue (e.g. the tab/page was closed or the widget
-      // switched documents); bail out instead of crashing on _document!.
-      final document = _document;
-      if (document == null || !mounted || pageNumber > document.pages.length) return null;
-      final page = document.pages[pageNumber - 1];
-      if (!page.isLoaded) return null;
-      // Paint asks for this for every measured page in the cache extent. On a
-      // scanned document it parses the whole content stream -- the same bytes
-      // and the same worker isolate the render needs -- so trace what it costs.
-      final sw = Pdfrx.debugLazyLoading ? (Stopwatch()..start()) : null;
-      final bytesAtStart = Pdfrx.debugBytesFetched;
-      final text = await page.loadStructuredText();
-      if (sw != null) {
-        final fetched = Pdfrx.debugBytesFetched - bytesAtStart;
-        pdfrxLazyLog(
-          '#$_viewerInstanceId TEXT p$pageNumber loaded ${text.fragments.length} fragment(s) '
-          'in ${sw.elapsedMilliseconds}ms  '
-          '${fetched > 0 ? 'NETWORK ${(fetched / 1024).toStringAsFixed(0)}KB' : 'cache hit'}',
-        );
-      }
-      _textCache[pageNumber] = text;
-      if (onTextLoaded != null) {
-        onTextLoaded();
-      }
-      return text;
+    // Retain the document until native extraction finishes, including requests
+    // shared with search. Replacement/disposal clears the cache's request tokens.
+    return widget.documentRef.resolveListenable().useDocument<PdfPageText?>((retained) {
+      if (!mounted || !identical(retained, document) || !identical(_document, document)) return null;
+      // The page can be replaced while useDocument awaits loading. Select the
+      // current instance after that await rather than caching the old geometry.
+      if (pageNumber > retained.pages.length) return null;
+      return _textCache.load(retained.pages[pageNumber - 1], onLoaded: onTextLoaded, isPriority: isPriority);
     });
   }
 
@@ -2113,11 +2111,8 @@ class _PdfViewerState extends State<PdfViewer>
         invalidate: false,
       ); // the routine may be called multiple times, we can ignore the chance
       if (text == null) continue;
-      for (final f in text.fragments) {
-        final rect = f.bounds.toRectInDocument(page: page, pageRect: pageRect).inflate(_hitTestMargin);
-        if (rect.contains(position)) {
-          return true;
-        }
+      if (_textCache.hitTest(page: page, pageRect: pageRect, position: position, margin: _hitTestMargin)) {
+        return true;
       }
     }
     return false;
@@ -4733,6 +4728,14 @@ class PdfViewerController extends ValueListenable<Matrix4> {
   Matrix4 makeMatrixInSafeRange(Matrix4 newValue, {bool forceClamp = false}) =>
       _state._makeMatrixInSafeRange(newValue, forceClamp: forceClamp);
 
+  /// Directly sets the transformation matrix without performing another round of normalization.
+  ///
+  /// CAUTION: The caller must have already clamped the matrix to a safe range
+  /// (e.g. via [makeMatrixInSafeRange]). Supplying an out-of-range matrix may
+  /// move the viewer outside document boundaries.
+  void setValueWithoutNormalization(Matrix4 newValue) =>
+      _state._txController.setValueWithoutNormalization(newValue);
+
   double getNextZoom({bool loop = true}) => _state._findNextZoomStop(currentZoom, zoomUp: true, loop: loop);
 
   double getPreviousZoom({bool loop = true}) => _state._findNextZoomStop(currentZoom, zoomUp: false, loop: loop);
@@ -5051,7 +5054,17 @@ class PdfViewerController extends ValueListenable<Matrix4> {
   /// Invalidates the current Widget display state.
   ///
   /// Almost identical to `setState` but can be called outside the state.
-  void invalidate() => _state._invalidate();
+  void invalidate() {
+    // Explicit invalidation also supports custom layout callbacks whose
+    // captured inputs were changed without rebuilding the parent widget.
+    _state._pageLayoutDirty = true;
+    _state._invalidate();
+  }
+
+  /// Loads structured text shared with selection and other searches in this viewer.
+  /// Returns null when the page is unavailable or invalidated while loading.
+  Future<PdfPageText?> loadPageText(int pageNumber, {bool isPriority = false}) async =>
+      __state?._loadTextAsync(pageNumber, isPriority: isPriority);
 
   /// The text selection delegate.
   PdfTextSelectionDelegate get textSelectionDelegate => _state;
@@ -5636,8 +5649,12 @@ class _CanvasLinkPainter {
       return;
     }
 
+    final color = _state.widget.params.linkHandlerParams?.linkColor ?? Colors.blue.withAlpha(50);
+    // Transparent links still load and handle hover/taps, but need no highlight
+    // draw commands. Keep custom painters above this fast path.
+    if (color.a == 0) return;
     final paint = Paint()
-      ..color = _state.widget.params.linkHandlerParams?.linkColor ?? Colors.blue.withAlpha(50)
+      ..color = color
       ..style = PaintingStyle.fill;
     for (final link in links) {
       for (final rect in link.rects) {
