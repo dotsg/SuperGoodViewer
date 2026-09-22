@@ -27,4 +27,4 @@ ui/packages/**/pubspec.lock
 # Packaging artifacts
 *.dmg
 dist/
-
+build/

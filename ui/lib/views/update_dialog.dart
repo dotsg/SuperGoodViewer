@@ -145,6 +145,14 @@ class _UpdateDialogState extends State<UpdateDialog> {
       await UpdateService.instance.installAndRestart(
         downloadedFilePath: _downloadedFilePath!,
       );
+    } on IncompatibleArchitectureException catch (e) {
+      if (mounted) {
+        setState(() {
+          _isInstalling = false;
+          _state = _UpdateState.error;
+          _errorMessage = '${e.message}\n请前往 GitHub Releases 页面手动下载匹配当前硬件架构的安装包。';
+        });
+      }
     } catch (e) {
       if (mounted) {
         setState(() {

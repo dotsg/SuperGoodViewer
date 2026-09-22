@@ -124,10 +124,11 @@ make test
 - **macOS (App Bundle & DMG)**:
   ```bash
   make build          # 生成 ui/build/macos/Build/Products/Release/SuperGoodViewer.app
-  make dmg            # 生成 Universal 通用安装镜像 dist/SuperGoodViewer-macos.dmg
+  make dmg            # 生成独立架构安装镜像 dist/SuperGoodViewer-macos-arm64.dmg 与 dist/SuperGoodViewer-macos-x64.dmg
   # 亦可单独构建指定架构镜像：
   make dmg-arm64      # 生成 dist/SuperGoodViewer-macos-arm64.dmg (Apple Silicon M 系列)
   make dmg-x64        # 生成 dist/SuperGoodViewer-macos-x64.dmg (Intel 处理器)
+  make dmg-universal  # 生成 Universal 通用安装镜像 dist/SuperGoodViewer-macos.dmg
   ```
 - **Windows x64 便携包 (Intel / AMD 架构及通用)**:
   ```bash
@@ -219,6 +220,16 @@ cat draft.md | sgv export - -o draft.pdf
 ---
 
 ## 📝 更新日志 (Changelog)
+
+### v1.0.9 (2026-09)
+- **macOS Apple Silicon 与 Intel 独立安装包切分 (#11)**：
+  - 将 macOS DMG 安装包切分为 `arm64`（Apple Silicon M 系列）与 `x64`（Intel 芯片）双独立发行版本，安装包体积由 76MB 大幅缩减至 38~42MB（缩减约 45%~50%）；
+  - `UpdateService` 增加宿主真实硬件架构与 Rosetta 2 运行态探测，原地自动更新提供架构精准匹配与替换前二进制架构安全校验；
+  - 增强 `scripts/package-macos-dmg.sh` 脚本，引入必需组件表驱动架构验证与临时目录清理保障；
+  - `Makefile` 支持按宿主架构智能分流 `make dmg-arm64` / `make dmg-x64` / `make dmg` 构建依赖，加速本地开发打包体验。
+- **性能与排版渲染优化**：
+  - 优化长文档滚动渲染性能与排版布局复用机制；
+  - 完善 Typst Comemo 缓存清理策略与表格分页跨页重复表头支持。
 
 ### v1.0.8 (2026-09)
 - **无头命令行导出出版级 PDF (Headless CLI PDF Export)**：

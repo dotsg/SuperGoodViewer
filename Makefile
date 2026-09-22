@@ -4,7 +4,7 @@ else
   FLUTTER ?= flutter
 endif
 
-.PHONY: all build build-universal build-core build-core-universal build-app build-windows build-windows-arm64 build-linux test test-core test-app test-release-local bench bench-json benchmark clean run-macos run-windows run-linux dmg dmg-arm64 dmg-x64 package-windows package-windows-arm64 package-linux
+.PHONY: all build build-universal build-core build-core-universal build-app build-windows build-windows-arm64 build-linux test test-core test-app test-release-local bench bench-json benchmark clean run-macos run-windows run-linux dmg dmg-arm64 dmg-x64 dmg-universal package-windows package-windows-arm64 package-linux
 
 all: build test
 
@@ -172,16 +172,37 @@ package-windows-arm64: build-windows-arm64
 	@powershell -Command "New-Item -ItemType Directory -Force -Path dist; Compress-Archive -Force -Path 'ui/build/windows_arm64/runner/Release/*' -DestinationPath 'dist/SuperGoodViewer-windows-arm64.zip'"
 	@echo "==> Package created: dist/SuperGoodViewer-windows-arm64.zip"
 
-dmg: build-universal
-	@echo "==> Packaging Universal macOS DMG..."
-	@./scripts/package-macos-dmg.sh universal dist
+ifneq ($(OS),Windows_NT)
+  UNAME_M := $(shell uname -m)
+  ifeq ($(UNAME_M),arm64)
+    DMG_ARM64_DEP := build
+    DMG_X64_DEP := build-universal
+  else ifeq ($(UNAME_M),x86_64)
+    DMG_ARM64_DEP := build-universal
+    DMG_X64_DEP := build
+  else
+    DMG_ARM64_DEP := build-universal
+    DMG_X64_DEP := build-universal
+  endif
+else
+  DMG_ARM64_DEP := build-universal
+  DMG_X64_DEP := build-universal
+endif
 
-dmg-arm64: build
+dmg: build-universal
+	@echo "==> Packaging macOS DMGs (arm64 & x64)..."
+	@./scripts/package-macos-dmg.sh all dist
+
+dmg-arm64: $(DMG_ARM64_DEP)
 	@echo "==> Packaging Apple Silicon (arm64) macOS DMG..."
 	@./scripts/package-macos-dmg.sh arm64 dist
 
-dmg-x64: build-universal
+dmg-x64: $(DMG_X64_DEP)
 	@echo "==> Packaging Intel (x64) macOS DMG..."
 	@./scripts/package-macos-dmg.sh x64 dist
+
+dmg-universal: build-universal
+	@echo "==> Packaging Universal macOS DMG..."
+	@./scripts/package-macos-dmg.sh universal dist
 
 
