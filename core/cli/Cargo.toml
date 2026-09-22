@@ -1,6 +1,6 @@
 [package]
 name = "sgv-cli"
-version = "1.0.8"
+version = "1.0.9"
 edition = "2024"
 
 # A deliberately thin front end: this binary does argument parsing, export

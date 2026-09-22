@@ -21,7 +21,7 @@ class IncompatibleArchitectureException implements Exception {
 class UpdateService {
   static const String repoOwner = 'dotsg';
   static const String repoName = 'supergoodviewer';
-  static const String defaultAppVersion = '1.0.8';
+  static const String defaultAppVersion = '1.0.9';
 
   static const String prefAutoCheck = 'autoCheckUpdates';
   static const String prefLastCheckTime = 'lastUpdateCheckTime';

@@ -11,7 +11,7 @@
 | 操作系统 | macOS 27.0 (Build 26A428)                                       |
 | Rust     | rustc 1.98.1，release profile（`opt-level = 3`, `lto = "thin"`) |
 | Flutter  | 3.47.3 stable / Dart 3.13.3，Impeller (Metal)                   |
-| 被测版本 | SuperGoodViewer v1.0.8 (arm64 本机构建)                         |
+| 被测版本 | SuperGoodViewer v1.0.9 (arm64 本机构建)                         |
 
 > 测量期间机器有其他常规进程在跑（未做单用户模式隔离），因此尾部分位数
 > (p95) 会比理想环境略高。每项指标都给出 min / p50 / p95 而不是单一数字。
