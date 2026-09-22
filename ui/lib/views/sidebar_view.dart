@@ -86,13 +86,25 @@ class _SidebarViewState extends State<SidebarView> {
   }
 
   Future<void> _pickAndOpenFile(BuildContext context) async {
-    final file = await FilePicker.pickFile(
-      type: FileType.custom,
-      allowedExtensions: ['md', 'markdown', 'txt', 'pdf'],
-    );
+    try {
+      final file = await FilePicker.pickFile(
+        type: FileType.custom,
+        allowedExtensions: ['md', 'markdown', 'txt', 'pdf'],
+      );
 
-    if (file != null && file.path != null) {
-      await widget.controller.openFile(file.path!);
+      if (file != null && file.path != null) {
+        await widget.controller.openFile(file.path!);
+      }
+    } catch (e) {
+      debugPrint('[SidebarView] FilePicker.pickFile failed: $e');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(widget.controller.strings.openFileFailed('$e')),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
   }
 

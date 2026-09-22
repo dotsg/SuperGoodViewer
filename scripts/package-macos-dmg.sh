@@ -92,6 +92,8 @@ package_universal() {
   # Re-signing
   echo "  -> Re-signing app bundle (ad-hoc)..."
   codesign --force --deep --sign - "$staging_dir/SuperGoodViewer.app"
+  # --deep drops the entitlements Xcode applied, so re-apply them to the top-level bundle.
+  codesign --force --sign - --entitlements "$ROOT_DIR/ui/macos/Runner/Release.entitlements" "$staging_dir/SuperGoodViewer.app"
   codesign --verify --deep --strict "$staging_dir/SuperGoodViewer.app"
   echo "     Codesign validation passed."
 
@@ -198,6 +200,8 @@ package_arch() {
   # Re-signing
   echo "  -> Re-signing app bundle (ad-hoc)..."
   codesign --force --deep --sign - "$staging_dir/SuperGoodViewer.app"
+  # --deep drops the entitlements Xcode applied, so re-apply them to the top-level bundle.
+  codesign --force --sign - --entitlements "$ROOT_DIR/ui/macos/Runner/Release.entitlements" "$staging_dir/SuperGoodViewer.app"
   codesign --verify --deep --strict "$staging_dir/SuperGoodViewer.app"
   echo "     Codesign validation passed."
 

@@ -109,6 +109,8 @@ jobs:
           chmod +x "$APP/Contents/Resources/bin/sgv-cli"
           # Re-sign app bundle after injecting dylib and CLI script so Gatekeeper doesn't reject modified code
           codesign --force --deep --sign - "$APP"
+          # --deep drops the entitlements Xcode applied, so re-apply them to the top-level bundle.
+          codesign --force --sign - --entitlements ui/macos/Runner/Release.entitlements "$APP"
 
       - name: Create macOS DMG Packages (Apple Silicon arm64 & Intel x64)
         run: |

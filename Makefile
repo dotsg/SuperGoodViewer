@@ -20,7 +20,9 @@ build: build-core build-app
 	@chmod +x ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv
 	@chmod +x ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv-cli
 	@echo "==> Re-signing macOS App Bundle..."
+# --deep drops the entitlements Xcode applied, so re-apply them to the top-level bundle.
 	@codesign --force --deep --sign - ui/build/macos/Build/Products/Release/SuperGoodViewer.app
+	@codesign --force --sign - --entitlements ui/macos/Runner/Release.entitlements ui/build/macos/Build/Products/Release/SuperGoodViewer.app
 	@echo "==> Build complete! Output: ui/build/macos/Build/Products/Release/SuperGoodViewer.app"
 
 # Full universal (arm64 + x86_64) binaries for macOS release distribution
@@ -35,7 +37,9 @@ build-universal: build-core-universal build-app
 	@chmod +x ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv
 	@chmod +x ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv-cli
 	@echo "==> Re-signing macOS App Bundle..."
+# --deep drops the entitlements Xcode applied, so re-apply them to the top-level bundle.
 	@codesign --force --deep --sign - ui/build/macos/Build/Products/Release/SuperGoodViewer.app
+	@codesign --force --sign - --entitlements ui/macos/Runner/Release.entitlements ui/build/macos/Build/Products/Release/SuperGoodViewer.app
 	@echo "==> Universal build complete! Output: ui/build/macos/Build/Products/Release/SuperGoodViewer.app"
 
 # Host-architecture only -- fast path for local development (run-macos, tests).

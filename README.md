@@ -103,6 +103,8 @@ Markdown Document (.md)
 - **C++ 编译器**:
   - macOS: Xcode Command Line Tools
   - Windows: Visual Studio 2022 C++ 生成工具（若需编译原生 ARM64，需额外勾选 *MSVC v143 ARM64/ARM64EC* 工具集与 `rustup target add aarch64-pc-windows-msvc`）
+  - Linux: `build-essential` 与 GTK 3 开发库（`libgtk-3-dev`）
+- **Linux 运行时依赖**: 文件选择对话框经由 XDG Desktop Portal (`org.freedesktop.portal.FileChooser`) 调用，需确保系统已安装并运行 `xdg-desktop-portal` 及对应桌面后端（`xdg-desktop-portal-gtk` 或 `xdg-desktop-portal-kde`）；缺失时“打开文件”与“导出 PDF”将报错，但拖拽文件到窗口仍可正常使用。
 
 ### 2. 运行自动化测试套件
 ```bash
@@ -118,6 +120,10 @@ make test
 - **Windows**:
   ```bash
   make run-windows
+  ```
+- **Linux**:
+  ```bash
+  make run-linux
   ```
 
 ### 4. 编译发布与打包
@@ -137,6 +143,10 @@ make test
 - **Windows ARM64 原生便携包 (高通骁龙 X Elite / Surface 等 WoA 设备)**:
   ```bash
   make package-windows-arm64 # 生成 dist/SuperGoodViewer-windows-arm64.zip
+  ```
+- **Linux x64 便携包**:
+  ```bash
+  make package-linux         # 生成 dist/SuperGoodViewer-linux-x64.tar.gz
   ```
 
 ---
