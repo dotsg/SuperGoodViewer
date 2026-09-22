@@ -338,17 +338,14 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
   Future<void> _pickAndOpenFile() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final file = await FilePicker.pickFile(
         type: FileType.custom,
         allowedExtensions: ['md', 'markdown', 'txt', 'pdf'],
         dialogTitle: widget.controller.strings.openDocument,
       );
 
-      if (result != null && result.files.isNotEmpty) {
-        final path = result.files.single.path;
-        if (path != null) {
-          await widget.controller.openFile(path);
-        }
+      if (file != null && file.path != null) {
+        await widget.controller.openFile(file.path!);
       }
     } catch (e) {
       if (mounted) {
@@ -494,23 +491,39 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   Future<void> _handleExportPdf() async {
+    final bytesToExport = await widget.controller.getPdfBytesForExport();
+    if (bytesToExport == null || bytesToExport.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(widget.controller.strings.exportPdfFailed),
+            duration: const Duration(seconds: 3),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
     final title = widget.controller.documentTitle.replaceAll(' ', '_');
     final defaultFileName = '$title.pdf';
 
-    final savePath = await FilePicker.platform.saveFile(
+    final saveUri = await FilePicker.saveFile(
       dialogTitle: widget.controller.strings.exportPdfDialogTitle,
       fileName: defaultFileName,
+      bytes: bytesToExport,
       type: FileType.custom,
       allowedExtensions: ['pdf'],
+      mimeType: 'application/pdf',
     );
 
-    if (savePath != null) {
-      final success = await widget.controller.exportPdf(savePath);
+    if (saveUri != null) {
+      final savePath = saveUri.isScheme('file') ? saveUri.toFilePath() : saveUri.path;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              success ? widget.controller.strings.exportPdfSuccess(savePath) : widget.controller.strings.exportPdfFailed,
+              widget.controller.strings.exportPdfSuccess(savePath),
             ),
             duration: const Duration(seconds: 3),
             behavior: SnackBarBehavior.floating,

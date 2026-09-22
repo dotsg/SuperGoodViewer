@@ -147,6 +147,19 @@ void main() {
 
       controller.dispose();
     });
+
+    test('getPdfBytesForExport returns valid PDF bytes matching exportPdf', () async {
+      final controller = ReaderController(autoRestorePreferences: false);
+      await waitCompile(controller);
+
+      final bytes = await controller.getPdfBytesForExport();
+      expect(bytes, isNotNull);
+      expect(bytes!.isNotEmpty, isTrue);
+      expect(bytes[0], 0x25); // '%PDF'
+      expect(listEquals(bytes, controller.currentPdfBytes), isTrue);
+
+      controller.dispose();
+    });
   });
 
   group('PDF Export Round-Trip Determinism (In-Memory Buffer vs Exported File)', () {

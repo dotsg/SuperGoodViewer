@@ -6,7 +6,7 @@ import FlutterMacOS
 import Foundation
 
 import desktop_drop
-import file_picker
+import file_picker_darwin
 import pdfium_flutter
 import url_launcher_macos
 

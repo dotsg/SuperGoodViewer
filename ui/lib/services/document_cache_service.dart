@@ -237,6 +237,46 @@ class DocumentCacheService {
         // explorer.exe frequently exits with code 1 upon successfully spawning the Explorer window
         return res.exitCode == 0 || res.exitCode == 1;
       } else if (Platform.isLinux) {
+        final uri = Uri.file(dir.path).toString();
+        // 1. Try D-Bus standard FileManager1 interface (ShowFolders) via dbus-send
+        // Used by Nautilus, Dolphin, Thunar, Yazi (FileManager1), and modern Wayland setups
+        try {
+          final dbusRes = await Process.run('dbus-send', [
+            '--session',
+            '--dest=org.freedesktop.FileManager1',
+            '--type=method_call',
+            '/org/freedesktop/FileManager1',
+            'org.freedesktop.FileManager1.ShowFolders',
+            'array:string:$uri',
+            'string:',
+          ]);
+          if (dbusRes.exitCode == 0) return true;
+        } catch (_) {}
+
+        // 2. Try gdbus as fallback for environments where dbus-send is missing
+        try {
+          final gdbusRes = await Process.run('gdbus', [
+            'call',
+            '--session',
+            '--dest',
+            'org.freedesktop.FileManager1',
+            '--object-path',
+            '/org/freedesktop/FileManager1',
+            '--method',
+            'org.freedesktop.FileManager1.ShowFolders',
+            '["$uri"]',
+            '',
+          ]);
+          if (gdbusRes.exitCode == 0) return true;
+        } catch (_) {}
+
+        // 3. Try gio open (which integrates with GLib/GVFS and desktop portals)
+        try {
+          final gioRes = await Process.run('gio', ['open', dir.path]);
+          if (gioRes.exitCode == 0) return true;
+        } catch (_) {}
+
+        // 4. Fallback to standard xdg-open
         final res = await Process.run('xdg-open', [dir.path]);
         return res.exitCode == 0;
       }

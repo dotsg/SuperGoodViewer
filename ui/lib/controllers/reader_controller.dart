@@ -1365,62 +1365,71 @@ class ReaderController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<bool> exportPdf(String destinationPath) async {
-    if (_currentPdfBytes == null) return false;
+  /// Prepares and returns the PDF bytes for export (e.g. publication-grade light mode PDF).
+  Future<Uint8List?> getPdfBytesForExport() async {
+    if (_currentPdfBytes == null) return null;
     try {
-      Uint8List? bytesToExport;
-
       if (isPdfDocument || _renderOptions.theme == 'light') {
         // Direct PDF or light mode: use current in-memory PDF immediately (0ms fast path)
-        bytesToExport = _currentPdfBytes;
-      } else {
-        // When viewing in dark mode, strictly export publication-grade light mode document
-        final exportOptions = _renderOptions.copyWith(theme: 'light');
+        return _currentPdfBytes;
+      }
 
-        if (_currentFilePath != null) {
-          final cached = DocumentCacheService.getCachedPdf(_currentFilePath!, exportOptions);
-          if (cached != null && cached.isNotEmpty) {
-            bytesToExport = cached;
-          }
-        }
+      // When viewing in dark mode, strictly export publication-grade light mode document
+      final exportOptions = _renderOptions.copyWith(theme: 'light');
 
-        if (bytesToExport == null) {
-          if (!NativeEngine.instance.isAvailable) {
-            _errorMessage = NativeEngine.instance.initError ?? 'Native library not loaded';
-            notifyListeners();
-            return false;
-          }
-
-          final docDir = _currentFilePath != null
-              ? p.dirname(_currentFilePath!)
-              : Directory.current.path;
-
-          final exportResult = await NativeEngine.instance.compileMarkdownResultAsync(
-            _currentMarkdown,
-            title: _documentTitle,
-            docDir: docDir,
-            options: exportOptions,
-          );
-          bytesToExport = exportResult.pdfBytes;
-
-          if (exportResult.degradedEquationCount > 0) {
-            debugPrint(
-              '[ReaderController] exportPdf: WARNING: ${exportResult.degradedEquationCount} degraded equation(s) in export',
-            );
-          }
-
-          if (bytesToExport != null && bytesToExport.isNotEmpty && _currentFilePath != null) {
-            unawaited(DocumentCacheService.saveCachedPdf(_currentFilePath!, exportOptions, bytesToExport));
-          }
+      if (_currentFilePath != null) {
+        final cached = DocumentCacheService.getCachedPdf(_currentFilePath!, exportOptions);
+        if (cached != null && cached.isNotEmpty) {
+          return cached;
         }
       }
 
-      if (bytesToExport == null || bytesToExport.isEmpty) {
+      if (!NativeEngine.instance.isAvailable) {
+        _errorMessage = NativeEngine.instance.initError ?? 'Native library not loaded';
+        notifyListeners();
+        return null;
+      }
+
+      final docDir = _currentFilePath != null
+          ? p.dirname(_currentFilePath!)
+          : Directory.current.path;
+
+      final exportResult = await NativeEngine.instance.compileMarkdownResultAsync(
+        _currentMarkdown,
+        title: _documentTitle,
+        docDir: docDir,
+        options: exportOptions,
+      );
+      final bytes = exportResult.pdfBytes;
+
+      if (exportResult.degradedEquationCount > 0) {
+        debugPrint(
+          '[ReaderController] exportPdf: WARNING: ${exportResult.degradedEquationCount} degraded equation(s) in export',
+        );
+      }
+
+      if (bytes != null && bytes.isNotEmpty && _currentFilePath != null) {
+        unawaited(DocumentCacheService.saveCachedPdf(_currentFilePath!, exportOptions, bytes));
+      }
+
+      if (bytes == null || bytes.isEmpty) {
         _errorMessage = 'Export failed: Unable to generate light-mode PDF';
         notifyListeners();
-        return false;
+        return null;
       }
 
+      return bytes;
+    } catch (e) {
+      _errorMessage = 'Export failed: $e';
+      notifyListeners();
+      return null;
+    }
+  }
+
+  Future<bool> exportPdf(String destinationPath) async {
+    final bytesToExport = await getPdfBytesForExport();
+    if (bytesToExport == null || bytesToExport.isEmpty) return false;
+    try {
       final file = File(destinationPath);
       await file.writeAsBytes(bytesToExport);
       return true;

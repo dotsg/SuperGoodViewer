@@ -138,6 +138,11 @@ void main() {
       expect(DocumentCacheService.formatBytes(15 * 1024 * 1024), '15.0 MB');
       expect(DocumentCacheService.formatBytes(3 * 1024 * 1024 * 1024), '3.00 GB');
     });
+
+    test('openCacheDirectory creates cache directory if not existing', () async {
+      await DocumentCacheService.openCacheDirectory();
+      expect(tempDir.existsSync(), isTrue);
+    });
   });
 
   group('PreferencesService Synchronous Loading Tests', () {
