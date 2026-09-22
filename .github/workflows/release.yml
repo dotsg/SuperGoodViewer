@@ -173,7 +173,10 @@ jobs:
         shell: bash
         run: |
           cd core
-          cargo build --release
+          # The workspace root package is sogood_core, so a bare `cargo build`
+          # skips the sgv-cli member entirely.
+          cargo build --release --lib
+          cargo build --release -p sgv-cli --bin sgv-cli
 
       - name: Build Flutter Windows App (Release)
         shell: bash
@@ -258,7 +261,10 @@ jobs:
         shell: bash
         run: |
           cd core
-          cargo build --release --target aarch64-pc-windows-msvc
+          # The workspace root package is sogood_core, so a bare `cargo build`
+          # skips the sgv-cli member entirely.
+          cargo build --release --lib --target aarch64-pc-windows-msvc
+          cargo build --release -p sgv-cli --bin sgv-cli --target aarch64-pc-windows-msvc
 
       - name: Download Windows ARM64 Engine & PDFium Artifacts
         shell: pwsh
@@ -370,7 +376,10 @@ jobs:
       - name: Build Rust sogood_core & sgv-cli (Release)
         run: |
           cd core
-          cargo build --release
+          # The workspace root package is sogood_core, so a bare `cargo build`
+          # skips the sgv-cli member entirely.
+          cargo build --release --lib
+          cargo build --release -p sgv-cli --bin sgv-cli
 
       - name: Build Flutter Desktop Linux App (Release)
         run: |
