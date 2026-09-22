@@ -67,8 +67,12 @@ jobs:
         # arm64-only dylib makes dlopen fail on Intel Macs with "Invalid arguments".
         run: |
           cd core
-          cargo build --release --lib --bin sgv-cli --target aarch64-apple-darwin
-          cargo build --release --lib --bin sgv-cli --target x86_64-apple-darwin
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            # `--bin` alone only looks inside the workspace's default-run package
+            # (sogood_core), so the CLI needs its own `-p sgv-cli` invocation.
+            cargo build --release --lib --target "$target"
+            cargo build --release -p sgv-cli --bin sgv-cli --target "$target"
+          done
           mkdir -p target/universal/release
           lipo -create \
             target/aarch64-apple-darwin/release/libsogood_core.dylib \
