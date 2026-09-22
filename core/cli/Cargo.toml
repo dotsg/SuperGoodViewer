@@ -1,0 +1,17 @@
+[package]
+name = "sgv-cli"
+version = "1.0.9"
+edition = "2024"
+
+# A deliberately thin front end: this binary does argument parsing, export
+# planning and file I/O, then hands the actual typesetting to the shared
+# `sogood_core` engine that ships next to it. Linking the engine statically
+# instead would put a second copy of Typst and all 17 embedded fonts into every
+# bundle -- 46 MB of duplication alongside the dylib the app already loads.
+[[bin]]
+name = "sgv-cli"
+path = "src/main.rs"
+
+[dependencies]
+libloading = "0.8"
+serde_json = "1.0"

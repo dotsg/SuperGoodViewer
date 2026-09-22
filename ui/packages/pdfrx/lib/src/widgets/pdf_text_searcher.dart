@@ -32,7 +32,6 @@ class PdfTextSearcher extends Listenable {
   int? _searchingPageNumber;
   int? _totalPageCount;
   bool _isSearching = false;
-  final _cachedText = <int, PdfPageText>{};
   StreamSubscription<PdfDocumentEvent>? _documentEventSubscription;
 
   /// The current match index in [matches] if available.
@@ -114,7 +113,6 @@ class PdfTextSearcher extends Listenable {
   void dispose() {
     _documentEventSubscription?.cancel();
     _listeners.clear();
-    _cachedText.clear();
     _resetTextSearch(notify: false);
   }
 
@@ -189,7 +187,6 @@ class PdfTextSearcher extends Listenable {
 
   void _restartSearch() {
     _resetTextSearch(clearSearchCondition: false);
-    _cachedText.clear();
     if (_lastSearchCondition != null) {
       startTextSearch(
         _lastSearchCondition!.pattern,
@@ -200,13 +197,7 @@ class PdfTextSearcher extends Listenable {
   }
 
   /// Just a helper function to load the text of a page.
-  Future<PdfPageText?> loadText({required int pageNumber}) async {
-    final cached = _cachedText[pageNumber];
-    if (cached != null) return cached;
-    return await controller?.useDocument((document) async {
-      return _cachedText[pageNumber] ??= await document.pages[pageNumber - 1].loadStructuredText();
-    });
-  }
+  Future<PdfPageText?> loadText({required int pageNumber}) async => controller?.loadPageText(pageNumber);
 
   /// Go to the previous match.
   Future<int> goToPrevMatch() async {

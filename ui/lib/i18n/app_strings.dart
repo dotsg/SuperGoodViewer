@@ -152,6 +152,8 @@ abstract class AppStrings {
   String get cacheSection;
   String get localDiskCache;
   String get cacheDesc;
+  String get openCacheDirectory;
+  String get openCacheDirectoryFailed;
   String get clearCache;
   String get loadingCacheStats;
   String get noCacheFiles;

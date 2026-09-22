@@ -733,9 +733,10 @@ class SuperGoodScrollInteractionDelegate implements PdfViewerScrollInteractionDe
     final newMatrix = currentMatrix.clone();
     newMatrix.setTranslation(vec.Vector3(translation.dx, translation.dy, 0.0));
 
-    controller.value = controller.makeMatrixInSafeRange(newMatrix, forceClamp: true);
+    final clampedMatrix = controller.makeMatrixInSafeRange(newMatrix, forceClamp: true);
+    controller.setValueWithoutNormalization(clampedMatrix);
 
-    final actualTransVec = controller.value.getTranslation();
+    final actualTransVec = clampedMatrix.getTranslation();
     final actualTrans = Offset(actualTransVec.x, actualTransVec.y);
 
     if (_panTarget != null) {
@@ -2369,7 +2370,12 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
                 final docY = offset?.dy;
                 if (docY != null) orderedDocYs.add(docY);
                 if (pageNum != null || docY != null) {
-                  destMap[n.title.trim()] = (pageNumber: pageNum, docY: docY);
+                  final trimmedTitle = n.title.trim();
+                  destMap[trimmedTitle] = (pageNumber: pageNum, docY: docY);
+                  final cleanedTitle = ReaderController.cleanHeadingTitle(trimmedTitle);
+                  if (cleanedTitle != trimmedTitle) {
+                    destMap[cleanedTitle] = (pageNumber: pageNum, docY: docY);
+                  }
                 }
                 if (n.children.isNotEmpty) extractNodes(n.children);
               }

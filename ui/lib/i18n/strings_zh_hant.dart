@@ -298,6 +298,10 @@ class ZhHantStrings extends ZhHansStrings {
   @override
   String get cacheDesc => '本機編譯的向量文件快取，有效加速二次開啟並降低 CPU 佔用';
   @override
+  String get openCacheDirectory => '開啟目錄';
+  @override
+  String get openCacheDirectoryFailed => '開啟快取目錄失敗';
+  @override
   String get clearCache => '清理快取';
   @override
   String get loadingCacheStats => '正在讀取快取統計...';

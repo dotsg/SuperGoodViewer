@@ -18,6 +18,9 @@ class DocumentCacheService {
     _cachedDir = dir;
   }
 
+  @visibleForTesting
+  static Future<bool> Function(String path)? directoryLauncherForTesting;
+
   static Directory _getCacheDir() {
     if (_customCacheDirForTesting != null) return _customCacheDirForTesting!;
     if (_cachedDir != null) return _cachedDir!;
@@ -222,12 +225,15 @@ class DocumentCacheService {
     }
   }
 
-  /// Opens the cache directory in the system file manager (Finder on macOS / Explorer on Windows).
+  /// Opens the cache directory in the system file manager (Finder on macOS / Explorer on Windows / FileManager1/gio/xdg-open on Linux).
   static Future<bool> openCacheDirectory() async {
     try {
       final dir = _getCacheDir();
       if (!await dir.exists()) {
         await dir.create(recursive: true);
+      }
+      if (directoryLauncherForTesting != null) {
+        return await directoryLauncherForTesting!(dir.path);
       }
       if (Platform.isMacOS) {
         final res = await Process.run('open', [dir.path]);
@@ -237,8 +243,66 @@ class DocumentCacheService {
         // explorer.exe frequently exits with code 1 upon successfully spawning the Explorer window
         return res.exitCode == 0 || res.exitCode == 1;
       } else if (Platform.isLinux) {
+        final uri = Uri.file(dir.path).toString();
+        // Escape commas because dbus-send array parser splits on comma.
+        final escapedUri = uri.replaceAll(',', '%2C');
+
+        // 1. Try gdbus first: reliable synchronous exit code and robust GVariant parsing
+        // Supported on environments with glib (standard on Flutter Linux GTK3 embedder)
+        try {
+          final gdbusRes = await Process.run('gdbus', [
+            'call',
+            '--session',
+            '--dest',
+            'org.freedesktop.FileManager1',
+            '--object-path',
+            '/org/freedesktop/FileManager1',
+            '--method',
+            'org.freedesktop.FileManager1.ShowFolders',
+            '["$escapedUri"]',
+            '""',
+            '--timeout',
+            '5',
+          ]);
+          if (gdbusRes.exitCode == 0) return true;
+          debugPrint('[DocumentCacheService] gdbus ShowFolders exit code: ${gdbusRes.exitCode}, stderr: ${gdbusRes.stderr}');
+        } catch (e) {
+          debugPrint('[DocumentCacheService] gdbus ShowFolders error: $e');
+        }
+
+        // 2. Try dbus-send with --print-reply (mandatory for exit code validation and blocking response)
+        try {
+          final dbusRes = await Process.run('dbus-send', [
+            '--session',
+            '--print-reply',
+            '--reply-timeout=5000',
+            '--dest=org.freedesktop.FileManager1',
+            '--type=method_call',
+            '/org/freedesktop/FileManager1',
+            'org.freedesktop.FileManager1.ShowFolders',
+            'array:string:$escapedUri',
+            'string:',
+          ]);
+          if (dbusRes.exitCode == 0) return true;
+          debugPrint('[DocumentCacheService] dbus-send ShowFolders exit code: ${dbusRes.exitCode}, stderr: ${dbusRes.stderr}');
+        } catch (e) {
+          debugPrint('[DocumentCacheService] dbus-send ShowFolders error: $e');
+        }
+
+        // 3. Try gio open (integrates with GLib/GVFS)
+        try {
+          final gioRes = await Process.run('gio', ['open', dir.path]);
+          if (gioRes.exitCode == 0) return true;
+          debugPrint('[DocumentCacheService] gio open exit code: ${gioRes.exitCode}, stderr: ${gioRes.stderr}');
+        } catch (e) {
+          debugPrint('[DocumentCacheService] gio open error: $e');
+        }
+
+        // 4. Fallback to standard xdg-open
         final res = await Process.run('xdg-open', [dir.path]);
-        return res.exitCode == 0;
+        if (res.exitCode == 0) return true;
+        debugPrint('[DocumentCacheService] xdg-open exit code: ${res.exitCode}, stderr: ${res.stderr}');
+        return false;
       }
     } catch (e) {
       debugPrint('[DocumentCacheService] openCacheDirectory error: $e');

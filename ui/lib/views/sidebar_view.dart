@@ -86,13 +86,13 @@ class _SidebarViewState extends State<SidebarView> {
   }
 
   Future<void> _pickAndOpenFile(BuildContext context) async {
-    final result = await FilePicker.platform.pickFiles(
+    final file = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: ['md', 'markdown', 'txt', 'pdf'],
     );
 
-    if (result != null && result.files.single.path != null) {
-      await widget.controller.openFile(result.files.single.path!);
+    if (file != null && file.path != null) {
+      await widget.controller.openFile(file.path!);
     }
   }
 

@@ -36,6 +36,13 @@ class RasterTestDocument extends PdfDocument {
     );
   }
 
+  void replacePage(PdfPage page) {
+    _pages[page.pageNumber - 1] = page;
+    _events.add(PdfDocumentPageStatusChangedEvent(this, changes: {
+      page.pageNumber: PdfPageStatusChange.modified(page: page),
+    }));
+  }
+
   @override
   Stream<PdfDocumentEvent> get events async* {
     for (final event in replayedEvents) {

@@ -6,7 +6,7 @@
 </div>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Release: v1.0.8](https://img.shields.io/badge/Release-v1.0.8-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
+[![Release: v1.0.9](https://img.shields.io/badge/Release-v1.0.9-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
 [![CI Status](https://img.shields.io/badge/CI-Passing-brightgreen.svg)]()
 [![Platform: macOS | Windows | Linux](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)]()
 
@@ -16,7 +16,7 @@
 
 ## ✨ 核心特性
 
-- 🎯 **专注只读，极致性能**：剥离富文本编辑器的一切冗余复杂度，纯 Rust 内存流水线。22KB 综合文档首次打开 **95ms**、100KB 书籍 **296ms**；切主题、改字号等重新渲染仅 **0.5 ~ 20ms**；温启动 **~98ms** 出 UI 首帧、**~141ms** 文档上屏。
+- 🎯 **专注只读，极致性能**：剥离富文本编辑器的一切冗余复杂度，纯 Rust 内存流水线。22KB 综合文档首次打开 **94ms**、100KB 书籍 **292ms**；切主题、改字号等重新渲染仅 **0.5 ~ 20ms**；温启动 **~98ms** 出 UI 首帧、**~141ms** 文档上屏。
 - 📐 **出版级数学公式**：集成 `mitex` LaTeX $\to$ Typst 原生公式转换引擎，公式转译吞吐量 **135,000 ~ 270,000 式/秒**，全面支持复杂微积分、矩阵与多行对齐方程。
 - 📊 **离线纯矢量 Mermaid 渲染**：基于纯 Rust 实现的 `mermaid-rs-renderer`，直接生成矢量路径，无 Chromium / Node.js 外部开销；单张流程图冷渲染约 **23ms**，并带 SHA-256 内容缓存，同一张图重复出现时不再渲染（查表约 0.8µs）。
 - 🖥 **多元版式与母版系统 (Multi-Layout System)**：
@@ -60,12 +60,12 @@
 | 测试维度 | SuperGoodViewer (本品) | Obsidian | Typora | MarkText | VS Code |
 | --- | :---: | :---: | :---: | :---: | :---: |
 | **底层引擎** | **Rust + Metal Impeller** | Electron (Chromium) | Cocoa + WKWebView | Electron (Chromium) | Electron (Chromium) |
-| **应用体积** | **153 MB** (arm64) / **248 MB** (通用版) | 482 MB | 46 MB (依附系统WebKit) | 368 MB | 933 MB |
+| **应用体积** | **107 MB** (arm64) / **154 MB** (通用版) | 482 MB | 46 MB (依附系统WebKit) | 368 MB | 933 MB |
 | **操作系统进程** | **1 个原生进程** | 4 个独立进程 | 2 个独立进程 | 5 个独立进程 | 8+ 个独立进程 |
-| **常驻内存** | **207 MB** (峰值 638 MB) | ~627 MB | ~266 MB | ~715 MB | ~950 MB |
+| **常驻内存** | **200 MB** (峰值约 630 MB) | ~627 MB | ~266 MB | ~715 MB | ~950 MB |
 | **温启动 UI 首帧 / 文档上屏** | **98 ms / 141 ms** | 1,500 ~ 2,500 ms | 450 ~ 600 ms | 1,800 ~ 3,000 ms | 1,800 ~ 3,500 ms |
-| **22KB 综合文档首次排版** | **95.0 ms**（重渲染 8.7 ms） | 350 ~ 450 ms | 300 ~ 400 ms | 450 ~ 600 ms | 500 ~ 700 ms |
-| **100KB 书籍首次排版** | **296.0 ms**（重渲染 20.0 ms） | 750 ~ 1,000 ms | 600 ~ 800 ms | 1,000 ~ 1,500 ms | 1,200 ~ 2,000 ms |
+| **22KB 综合文档首次排版** | **93.7 ms**（重渲染 9.0 ms） | 350 ~ 450 ms | 300 ~ 400 ms | 450 ~ 600 ms | 500 ~ 700 ms |
+| **100KB 书籍首次排版** | **291.9 ms**（重渲染 19.6 ms） | 750 ~ 1,000 ms | 600 ~ 800 ms | 1,000 ~ 1,500 ms | 1,200 ~ 2,000 ms |
 | **20KB PRD（6 张 Mermaid）首次排版** | **182 ms**（重渲染 4.4 ms） | 350 ~ 450 ms | 300 ~ 400 ms | 450 ~ 600 ms | 500 ~ 700 ms |
 | **无损 PDF 导出** | **单次文件写入**（渲染结果本身即 PDF） | 2,000 ~ 5,000 ms | 1,500 ~ 3,500 ms | 3,000 ~ 6,000 ms | 3,000 ~ 8,000 ms |
 
@@ -124,10 +124,11 @@ make test
 - **macOS (App Bundle & DMG)**:
   ```bash
   make build          # 生成 ui/build/macos/Build/Products/Release/SuperGoodViewer.app
-  make dmg            # 生成 Universal 通用安装镜像 dist/SuperGoodViewer-macos.dmg
+  make dmg            # 生成独立架构安装镜像 dist/SuperGoodViewer-macos-arm64.dmg 与 dist/SuperGoodViewer-macos-x64.dmg
   # 亦可单独构建指定架构镜像：
   make dmg-arm64      # 生成 dist/SuperGoodViewer-macos-arm64.dmg (Apple Silicon M 系列)
   make dmg-x64        # 生成 dist/SuperGoodViewer-macos-x64.dmg (Intel 处理器)
+  make dmg-universal  # 生成 Universal 通用安装镜像 dist/SuperGoodViewer-macos.dmg
   ```
 - **Windows x64 便携包 (Intel / AMD 架构及通用)**:
   ```bash
@@ -219,6 +220,32 @@ cat draft.md | sgv export - -o draft.pdf
 ---
 
 ## 📝 更新日志 (Changelog)
+
+### v1.0.9 (2026-09)
+- **macOS Apple Silicon 与 Intel 独立安装包切分与安全更新 (#11)**：
+  - 将 macOS DMG 安装包切分为 `arm64`（Apple Silicon M 系列）与 `x64`（Intel 芯片）双独立发行版本，安装包体积由 76MB 大幅缩减至 38~42MB（缩减约 45%~50%）；
+  - `UpdateService` 增加宿主真实硬件架构与 Rosetta 2 运行态探测（通过 `sysctl hw.optional.arm64`），原地自动更新提供架构精准匹配与替换前二进制架构安全校验，防止误装不兼容架构；
+  - 增强 `scripts/package-macos-dmg.sh` 脚本，引入必需组件表驱动架构验证与临时目录清理保障；
+  - `Makefile` 支持按宿主架构智能分流 `make dmg-arm64` / `make dmg-x64` / `make dmg` 构建依赖，加速本地开发打包体验。
+- **长文档平滑滚动与极速渲染性能 (Viewer Smooth Scrolling & High Performance)**：
+  - 超长页面结构化文本提取移至后台 Isolate（阈值 >= 8192 字符），主线程事件循环耗时由 39ms 降至 12ms，消除大文档滚动卡顿；
+  - 引入 `TextFragmentIndex` 基于二分查找区间扫描，消除鼠标悬停与命中测试时的 $O(N)$ 冗余遍历；
+  - 重构 `PageTextCache`，统一阅读态与全文检索的文本缓存，支持优先级调度队列、并发合并与 LRU 容量上限；
+  - 纯平移滚动帧复用已有页面布局（`_pageLayoutDirty`），消除每帧重复的重排耗时；平移期间绕过 `InteractiveViewer` 矩阵规格化；
+  - `RasterTileCache` 增加二级页面索引，每帧瓦片检索耗时由 $O(N)$ 降至 $O(K)$；
+  - 使用单调时钟节流阅读器控制器状态持久化，避免 120Hz 高刷滚动频繁重置定时器。
+- **Linux 跨桌面环境文件定位与异常加固 (#15)**：
+  - 加固 Linux 环境下“在文件管理器中显示”链路，全面适配 XDG Desktop Portal (`org.freedesktop.portal.OpenURI.OpenDirectory`) 与 D-Bus `FileManager1.ShowItems`；
+  - 优先使用 `gdbus` 携带超时与可靠退出码，回退至 `dbus-send`（添加 `--print-reply`、超时控制与 URI 逗号转义），最后兜底至 `xdg-open` 目录，解决沙盒与各类桌面文件定位难题；
+  - 导出 PDF 增加平台层异常捕获与友好 SnackBar / 错误提示，防止平台通道偶发异常导致界面静默无响应。
+- **Markdown 解析鲁棒性与排版保真度**：
+  - **表格分页跨页表头重复**：Markdown 表格表头采用 Typst 原生 `table.header(...)` 包装，跨页长表格自动在每页顶部重复表头与底部分割线；
+  - **图片路径 URL 编码与格式对齐**：支持本地图片路径字节级百分号编码（如 `%20` 空格、`%E4%B8%89` 中文路径）自动解码；严格对齐 Typst 0.15 图像格式规范（扩展支持 Windows JPEG `.jfif`、`.jpe` 与 `.apng`），非图片或不支持格式（.bmp, .tiff, .avif, .ico 等）优雅降级为占位徽标，杜绝引擎 panic 崩溃；缺失本地图片提供格式感知占位图；
+  - **嵌套列表与大纲目录修复**：修复紧凑嵌套列表首项粘连与有序/无序列表标记嵌套换行；大纲目录自动清洗 Markdown 格式与转义反斜杠。
+- **核心引擎内存治理与 CLI 极致轻量化**：
+  - 引入 `evict_memo_cache()` 策略（保留 5 代），顶层编译完成后自动回收 Typst Comemo 缓存，杜绝长时间多文档阅读会话中的内存线性增长（15 次连续编译内存增长由 +40.5MB 压至 +0.2MB）；
+  - `sgv-cli` 独立二进制改为动态链接 `sogood_core`，独立体积从 47MB 骤降至 481KB，消除通用分发包中 46MB 的重复 Typst 引擎与内嵌字体；
+  - 引入 Fluid 切片布局 passes 计数探针与基准测试断言。
 
 ### v1.0.8 (2026-09)
 - **无头命令行导出出版级 PDF (Headless CLI PDF Export)**：

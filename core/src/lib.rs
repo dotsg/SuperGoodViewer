@@ -4,8 +4,8 @@ pub mod parser;
 
 use std::path::{Path, PathBuf};
 use compiler::engine::{
-    compile_typst_to_document_with_raw_equations, export_document_to_pdf, CompileError, RenderOptions,
-    FLUID_CAPPED_PAGE_HEIGHT_PT,
+    compile_typst_to_document_with_raw_equations, evict_memo_cache, export_document_to_pdf, CompileError,
+    RenderOptions, FLUID_CAPPED_PAGE_HEIGHT_PT,
 };
 use parser::markdown::convert_markdown_to_typst;
 use typst::layout::{Frame, FrameItem, Point};
@@ -91,7 +91,25 @@ pub struct MarkdownCompilationResult {
 }
 
 /// High-level function: Compiles Markdown directly into a PDF byte stream with compilation metadata.
+///
+/// Every exit path releases stale Typst memo entries through [`evict_memo_cache`],
+/// so a long-running process (hot reload, many documents) does not accumulate
+/// layout caches for content it will never compile again.
 pub fn compile_markdown_to_pdf_result(
+    markdown: &str,
+    title: &str,
+    doc_dir: impl AsRef<Path>,
+    options: &RenderOptions,
+) -> Result<MarkdownCompilationResult, CompileError> {
+    let result = compile_markdown_to_pdf_result_uncached(markdown, title, doc_dir, options);
+    evict_memo_cache();
+    result
+}
+
+/// The compilation itself. Runs one or more internal Typst compilations (fluid
+/// slice candidates share memo entries), so eviction belongs to the caller above
+/// rather than anywhere in here.
+fn compile_markdown_to_pdf_result_uncached(
     markdown: &str,
     title: &str,
     doc_dir: impl AsRef<Path>,
@@ -861,5 +879,295 @@ Second index.
         );
         assert!(pdf.starts_with(b"%PDF-"));
     }
-}
 
+    /// Guards the memo-cache eviction in [`compile_markdown_to_pdf_result`].
+    ///
+    /// Typst's `comemo` cache is process-global and never shrinks by itself, so
+    /// compiling a stream of *different* documents used to grow resident memory
+    /// by roughly 2.4 MB per compilation and never give it back. With eviction in
+    /// place the curve plateaus instead. Measured on an M4 Max: the second batch
+    /// below adds 0.2 MB with eviction and 40.5 MB without, so the 20 MB limit has
+    /// room for allocator noise while still catching a regression.
+    #[cfg(unix)]
+    #[test]
+    fn test_memo_cache_does_not_grow_across_distinct_documents() {
+        fn rss_mb() -> f64 {
+            let pid = std::process::id().to_string();
+            let out = std::process::Command::new("ps")
+                .args(["-o", "rss=", "-p", &pid])
+                .output()
+                .expect("ps failed");
+            String::from_utf8_lossy(&out.stdout).trim().parse::<f64>().unwrap_or(0.0) / 1024.0
+        }
+
+        // Compile two equal batches of distinct documents and compare how much
+        // resident memory each batch adds. The steady-state working set (the
+        // generations eviction deliberately retains) is already paid for by the
+        // first batch, so a healthy build adds almost nothing in the second one,
+        // while an unevicted cache keeps climbing at the same rate.
+        const BATCH: usize = 15;
+        const MAX_SECOND_BATCH_GROWTH_MB: f64 = 20.0;
+
+        let section = concat!(
+            "## Memo cache growth probe\n\n",
+            "Consider the equation $E = m c^2$ and the table below.\n\n",
+            "| Metric | Node A | Node B |\n",
+            "| :--- | :--- | :--- |\n",
+            "| Throughput | 12,000 rps | 14,500 rps |\n\n",
+            "```rust\n",
+            "fn quorum(n: usize) -> usize { n / 2 + 1 }\n",
+            "```\n\n",
+        );
+        // The entries that accumulate are layout results, so document size matters:
+        // a 200-byte note barely moves resident memory, while a ~20 KB document
+        // (a realistic chapter or spec) makes the growth unmistakable.
+        let base: String = section.repeat(60);
+        let options = RenderOptions::default();
+
+        let compile_batch = |batch: usize, offset: usize| {
+            for i in 0..batch {
+                let doc = format!(
+                    "{base}\n\nRevision {}: unique content forces a real compilation.\n",
+                    offset + i
+                );
+                compile_markdown_to_pdf(&doc, "probe", ".", &options).expect("compile failed");
+            }
+        };
+
+        // Warm-up: fonts and the shared library are one-off costs, not what this
+        // test is about.
+        compile_batch(3, 0);
+
+        compile_batch(BATCH, 100);
+        let after_first_batch = rss_mb();
+        compile_batch(BATCH, 200);
+        let growth = rss_mb() - after_first_batch;
+
+        assert!(
+            growth < MAX_SECOND_BATCH_GROWTH_MB,
+            "resident memory grew another {growth:.1} MB over {BATCH} further distinct \
+             compilations (limit {MAX_SECOND_BATCH_GROWTH_MB} MB), so the cache is still \
+             growing - is the Typst memo cache still being evicted?"
+        );
+    }
+
+    /// Pins how many full layout passes each shape of fluid document costs today.
+    ///
+    /// A layout pass is the expensive unit of work in the pipeline (~143 ms for a
+    /// 100 KB book on an M4 Max; the natural-height, 14,000pt and dynamic-height
+    /// passes all cost the same). Slicing a document taller than the PDF page limit
+    /// inherently needs a second pass — the slice height cannot be known without
+    /// laying the document out once — and a third when the dynamic-height candidate
+    /// has to be compared against the capped one.
+    ///
+    /// This test does not claim the current counts are optimal. It exists so that
+    /// any change to the slicing strategy has to state, in this file, what it did to
+    /// the number of passes.
+    #[test]
+    fn test_fluid_slicing_layout_pass_counts() {
+        use crate::compiler::engine::{layout_passes, reset_layout_passes};
+
+        let options = RenderOptions {
+            mode: "fluid".to_string(),
+            viewport_width: 850.0,
+            ..Default::default()
+        };
+
+        // A short document fits one page: one pass, no slicing machinery at all.
+        reset_layout_passes();
+        compile_markdown_to_pdf("# Short\n\nOne paragraph.\n", "Short", ".", &options)
+            .expect("short compile failed");
+        assert_eq!(
+            layout_passes(),
+            1,
+            "a document that fits one page must cost exactly one layout pass"
+        );
+
+        // Taller than 14,000pt, content flows evenly: natural pass + candidate B.
+        let mut tall = String::new();
+        for i in 0..740 {
+            tall.push_str(&format!("Line {i}\n\n"));
+        }
+        reset_layout_passes();
+        compile_markdown_to_pdf(&tall, "Tall", ".", &options).expect("tall compile failed");
+        assert_eq!(
+            layout_passes(),
+            2,
+            "a sliced document costs the natural-height pass plus one candidate"
+        );
+
+        // Tall unbreakable blocks make the dynamic candidate spill, so the capped
+        // candidate has to be laid out as well and wins (see
+        // test_fluid_tall_blocks_candidate_comparison for the selection itself).
+        let mut blocks = String::new();
+        for i in 0..25 {
+            blocks.push_str(&format!(
+                "### Section {i}\n\nParagraph text {i}.\n\n<img src=\"dummy.png\" height=\"1300pt\" />\n\n"
+            ));
+        }
+        reset_layout_passes();
+        compile_markdown_to_pdf(&blocks, "Tall Blocks", ".", &options)
+            .expect("tall blocks compile failed");
+        assert_eq!(
+            layout_passes(),
+            3,
+            "when both slice candidates must be compared, the cost is three passes"
+        );
+
+        // The escape hatch must never pay for a candidate.
+        let disabled = RenderOptions {
+            disable_fluid_slice: Some(true),
+            ..options.clone()
+        };
+        reset_layout_passes();
+        compile_markdown_to_pdf(&tall, "Tall Disabled", ".", &disabled)
+            .expect("disabled compile failed");
+        assert_eq!(
+            layout_passes(),
+            1,
+            "disable_fluid_slice must skip the candidate passes entirely"
+        );
+    }
+
+    struct TempDirGuard(std::path::PathBuf);
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn test_percent_encoded_local_images_compilation() {
+        let temp_dir = std::env::temp_dir().join(format!("sgv_img_test_{}", std::process::id()));
+        let _guard = TempDirGuard(temp_dir.clone());
+        let img_dir = temp_dir.join("Images attachments");
+        std::fs::create_dir_all(&img_dir).unwrap();
+
+        // 2x2 test red PNG (73 bytes) with dimensions (2, 2)
+        const TEST_2X2_PNG: &[u8] = &[
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+            0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02,
+            0x08, 0x02, 0x00, 0x00, 0x00, 0xfd, 0xd4, 0x9a, 0x73, 0x00, 0x00, 0x00,
+            0x10, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
+            0x44, 0x0c, 0x10, 0x0a, 0x00, 0x1f, 0xee, 0x03, 0xfd, 0x8b, 0x5f, 0x14,
+            0xd4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60,
+            0x82,
+        ];
+        std::fs::write(img_dir.join("image 2.png"), TEST_2X2_PNG).unwrap();
+
+        let md = "![image](Images%20attachments/image%202.png)";
+        let opts = RenderOptions {
+            mode: "fluid".to_string(),
+            ..Default::default()
+        };
+
+        // 1. Verify via Typst document frame inspection that the image dimensions are (2, 2)
+        // (rather than the 1x1 fallback for unresolvable images).
+        let parsed = crate::parser::markdown::convert_markdown_to_typst(md, "Image Test", &opts);
+        let world = crate::compiler::world::MemoryWorld::new(&parsed.typst_source, &temp_dir, parsed.virtual_files);
+        let doc = typst::compile::<typst_layout::PagedDocument>(&world).output.expect("Typst compile must succeed");
+
+        fn find_image_sizes(frame: &typst::layout::Frame, sizes: &mut Vec<(u32, u32)>) {
+            for (_, item) in frame.items() {
+                match item {
+                    typst::layout::FrameItem::Group(group) => find_image_sizes(&group.frame, sizes),
+                    typst::layout::FrameItem::Image(img, _, _) => {
+                        sizes.push((img.width() as u32, img.height() as u32));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut image_sizes = Vec::new();
+        find_image_sizes(&doc.pages()[0].frame, &mut image_sizes);
+        assert_eq!(
+            image_sizes,
+            vec![(2, 2)],
+            "The image must be resolved with its actual 2x2 dimensions, not broken image placeholder!"
+        );
+
+        // 2. Also contrast against an unresolvable image to prove fallback produces (64, 48)
+        let parsed_missing = crate::parser::markdown::convert_markdown_to_typst("![image](Images%20attachments/nonexistent.png)", "Missing", &opts);
+        let world_missing = crate::compiler::world::MemoryWorld::new(&parsed_missing.typst_source, &temp_dir, parsed_missing.virtual_files);
+        let doc_missing = typst::compile::<typst_layout::PagedDocument>(&world_missing).output.expect("Typst compile missing");
+        let mut missing_sizes = Vec::new();
+        find_image_sizes(&doc_missing.pages()[0].frame, &mut missing_sizes);
+        assert_eq!(
+            missing_sizes,
+            vec![(64, 48)],
+            "Unresolvable PNG image must fall back to 64x48 broken image placeholder"
+        );
+
+        // 3. Verify end-to-end PDF compilation produces valid PDF for normal image
+        let pdf = compile_markdown_to_pdf(md, "Image Test", &temp_dir, &opts)
+            .expect("Compilation should succeed");
+        assert!(pdf.starts_with(b"%PDF-"));
+
+        // 4. Verify escaping paths (../secret.png, ..%2Fsecret.png) never cause fatal compilation failure
+        let md_escape_dot = "![secret](../secret.png)";
+        let pdf_escape_dot = compile_markdown_to_pdf(md_escape_dot, "Escape Dot Test", &temp_dir, &opts)
+            .expect("Escaping path '../' must gracefully fall back to badge and compile to PDF");
+        assert!(pdf_escape_dot.starts_with(b"%PDF-"));
+
+        let md_escape_percent = "![secret](..%2Fsecret.png)";
+        let pdf_escape_percent = compile_markdown_to_pdf(md_escape_percent, "Escape Percent Test", &temp_dir, &opts)
+            .expect("Encoded escaping path '..%2F' must gracefully fall back to badge and compile to PDF");
+        assert!(pdf_escape_percent.starts_with(b"%PDF-"));
+
+        let md_nope = "![nope](nope.png)";
+        let pdf_nope = compile_markdown_to_pdf(md_nope, "Nope Test", &temp_dir, &opts)
+            .expect("Nonexistent path within doc_dir must fall back to broken image placeholder");
+        assert!(pdf_nope.starts_with(b"%PDF-"));
+
+        // 5. Verify format-aware fallback for missing .jpg, .svg, .webp, .gif, .jfif, .jpe, and .apng files
+        for ext in &["jpg", "svg", "webp", "gif", "jfif", "jpe", "apng"] {
+            let md = format!("![missing {ext}](missing.{ext})");
+            let pdf = compile_markdown_to_pdf(&md, &format!("Missing {ext}"), &temp_dir, &opts)
+                .unwrap_or_else(|e| panic!("Missing .{ext} must fall back without crashing: {e:?}"));
+            assert!(pdf.starts_with(b"%PDF-"));
+        }
+
+        // 6. Verify unsupported image formats (bmp, tiff, avif, ico, heic) degrade to placeholder
+        // badges at parse time rather than emitting #image(...) and fatally crashing Typst, even
+        // when such files exist on disk.
+        std::fs::write(temp_dir.join("real.bmp"), b"BM dummy bmp bytes").unwrap();
+        std::fs::write(temp_dir.join("real.tiff"), b"II*\0 dummy tiff bytes").unwrap();
+
+        for ext in &["bmp", "tiff", "avif", "ico", "heic", "unknown"] {
+            let md = format!("![test {ext}](real.{ext})");
+            let pdf = compile_markdown_to_pdf(&md, &format!("Test {ext}"), &temp_dir, &opts)
+                .unwrap_or_else(|e| panic!("Unsupported .{ext} must degrade to placeholder badge without crashing: {e:?}"));
+            assert!(pdf.starts_with(b"%PDF-"));
+        }
+
+        // 7. Verify absolute path and non-image paths fall back to placeholder badges without crashing
+        let md_abs = "![abs](/Users/x/pic.png)";
+        let pdf_abs = compile_markdown_to_pdf(md_abs, "Absolute Path", &temp_dir, &opts)
+            .expect("Absolute path must fall back to placeholder badge and compile successfully");
+        assert!(pdf_abs.starts_with(b"%PDF-"));
+
+        let md_non_image = "![data](report.csv)\n\n![notes](notes.txt)";
+        let pdf_non_image = compile_markdown_to_pdf(md_non_image, "Non-image Files", &temp_dir, &opts)
+            .expect("Non-image files must fall back to placeholder badges and compile successfully");
+        assert!(pdf_non_image.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn test_table_header_repeats_on_page_break() {
+        let mut md = String::from("# Multi-page Table\n\n| Col A | Col B | Col C |\n|---|---|---|\n");
+        for i in 1..=80 {
+            md.push_str(&format!("| Val A{} | Val B{} | Val C{} |\n", i, i, i));
+        }
+        let temp_dir = std::env::temp_dir().join(format!("sgv_table_test_{}", std::process::id()));
+        let _guard = TempDirGuard(temp_dir.clone());
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let opts = RenderOptions::default();
+        let res = compile_markdown_to_pdf_result(&md, "Table Test", &temp_dir, &opts)
+            .expect("Multi-page table should compile successfully");
+        assert!(res.pdf_bytes.starts_with(b"%PDF-"));
+
+        // Verify that Typst source contains table.header
+        let parsed = crate::parser::markdown::convert_markdown_to_typst(&md, "Table Test", &opts);
+        assert!(parsed.typst_source.contains("table.header("));
+    }
+}

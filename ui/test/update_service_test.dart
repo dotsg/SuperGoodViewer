@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:sogoodviewer/controllers/reader_controller.dart';
 import 'package:sogoodviewer/models/update_info.dart';
 import 'package:sogoodviewer/services/preferences_service.dart';
@@ -141,6 +142,29 @@ void main() {
       );
       expect(intelAsset.name, 'SuperGoodViewer-v1.0.9-macos-x64.dmg');
 
+      // Intel Mac should also resolve x86_64 asset variant
+      final x86Assets = [
+        {
+          'name': 'SuperGoodViewer-v1.0.9-macos-x86_64.dmg',
+          'browser_download_url': 'https://example.com/SuperGoodViewer-v1.0.9-macos-x86_64.dmg',
+          'size': 40000000,
+        },
+      ];
+      final intelX86Asset = UpdateService.resolvePlatformAsset(
+        x86Assets,
+        targetIsMacOS: true,
+        targetIsArm64: false,
+      );
+      expect(intelX86Asset.name, 'SuperGoodViewer-v1.0.9-macos-x86_64.dmg');
+
+      // Apple Silicon Mac can fallback to x86_64 when only Intel is available (via Rosetta 2)
+      final armOnX64Only = UpdateService.resolvePlatformAsset(
+        x86Assets,
+        targetIsMacOS: true,
+        targetIsArm64: true,
+      );
+      expect(armOnX64Only.name, 'SuperGoodViewer-v1.0.9-macos-x86_64.dmg');
+
       // Universal package should resolve for both architectures
       final universalAssets = [
         {
@@ -177,6 +201,60 @@ void main() {
         targetIsArm64: false,
       );
       expect(intelWithArmOnly.name, isNull);
+    });
+
+    test('readMachOArchitectures parses thin and fat Mach-O headers accurately', () {
+      final tempDir = Directory.systemTemp.createTempSync('macho_test_');
+      try {
+        // Thin arm64 (MH_MAGIC_64 little endian: 0xfeedfacf, CPU_TYPE_ARM64: 0x0100000c)
+        final arm64File = File(p.join(tempDir.path, 'thin_arm64'));
+        arm64File.writeAsBytesSync([
+          0xcf, 0xfa, 0xed, 0xfe, // magic
+          0x0c, 0x00, 0x00, 0x01, // cputype arm64
+        ]);
+        expect(UpdateService.readMachOArchitectures(arm64File), {'arm64'});
+
+        // Thin x86_64 (MH_MAGIC_64 little endian: 0xfeedfacf, CPU_TYPE_X86_64: 0x01000007)
+        final x64File = File(p.join(tempDir.path, 'thin_x64'));
+        x64File.writeAsBytesSync([
+          0xcf, 0xfa, 0xed, 0xfe, // magic
+          0x07, 0x00, 0x00, 0x01, // cputype x86_64
+        ]);
+        expect(UpdateService.readMachOArchitectures(x64File), {'x86_64'});
+
+        // Fat binary (FAT_MAGIC big endian: 0xcafebabe, 2 slices: x86_64 and arm64)
+        final fatFile = File(p.join(tempDir.path, 'fat_universal'));
+        final fatBytes = <int>[
+          0xca, 0xfe, 0xba, 0xbe, // FAT_MAGIC
+          0x00, 0x00, 0x00, 0x02, // nfat_arch = 2
+          // slice 1: x86_64 (20 bytes)
+          0x01, 0x00, 0x00, 0x07, // cputype
+          0x00, 0x00, 0x00, 0x03, // cpusubtype
+          0x00, 0x00, 0x10, 0x00, // offset
+          0x00, 0x00, 0x40, 0x00, // size
+          0x00, 0x00, 0x00, 0x0e, // align
+          // slice 2: arm64 (20 bytes)
+          0x01, 0x00, 0x00, 0x0c, // cputype
+          0x00, 0x00, 0x00, 0x00, // cpusubtype
+          0x00, 0x00, 0x50, 0x00, // offset
+          0x00, 0x00, 0x40, 0x00, // size
+          0x00, 0x00, 0x00, 0x0e, // align
+        ];
+        fatFile.writeAsBytesSync(fatBytes);
+        expect(UpdateService.readMachOArchitectures(fatFile), {'x86_64', 'arm64'});
+
+        // Non-existent or invalid file returns empty set
+        final invalidFile = File(p.join(tempDir.path, 'invalid'));
+        invalidFile.writeAsBytesSync([0x00, 0x01, 0x02]);
+        expect(UpdateService.readMachOArchitectures(invalidFile), isEmpty);
+        expect(UpdateService.readMachOArchitectures(File('nonexistent')), isEmpty);
+
+        // IncompatibleArchitectureException message
+        const ex = IncompatibleArchitectureException('Test error');
+        expect(ex.toString(), contains('IncompatibleArchitectureException: Test error'));
+      } finally {
+        tempDir.deleteSync(recursive: true);
+      }
     });
 
     test('ignoreVersion saves preference correctly', () async {

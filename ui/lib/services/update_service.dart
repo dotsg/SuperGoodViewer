@@ -8,12 +8,20 @@ import 'package:path/path.dart' as p;
 import '../models/update_info.dart';
 import 'preferences_service.dart';
 
+class IncompatibleArchitectureException implements Exception {
+  final String message;
+  const IncompatibleArchitectureException(this.message);
+
+  @override
+  String toString() => 'IncompatibleArchitectureException: $message';
+}
+
 /// Service responsible for checking, downloading, and applying updates
 /// from GitHub Releases across macOS, Windows, and Linux.
 class UpdateService {
   static const String repoOwner = 'dotsg';
   static const String repoName = 'supergoodviewer';
-  static const String defaultAppVersion = '1.0.8';
+  static const String defaultAppVersion = '1.0.9';
 
   static const String prefAutoCheck = 'autoCheckUpdates';
   static const String prefLastCheckTime = 'lastUpdateCheckTime';
@@ -47,6 +55,88 @@ class UpdateService {
     return 0;
   }
 
+  static bool? _cachedIsMacArm;
+
+  /// Detects whether the current macOS host hardware is Apple Silicon (arm64).
+  /// Properly detects hardware even when the process runs under Rosetta 2 emulation.
+  static bool _detectMacOSArm() {
+    if (_cachedIsMacArm != null) return _cachedIsMacArm!;
+    if (Platform.version.toLowerCase().contains('arm64') || Platform.version.toLowerCase().contains('aarch64')) {
+      return _cachedIsMacArm = true;
+    }
+    if (Platform.isMacOS) {
+      try {
+        final sysctlBin = File('/usr/sbin/sysctl').existsSync() ? '/usr/sbin/sysctl' : 'sysctl';
+        final res = Process.runSync(sysctlBin, ['-n', 'hw.optional.arm64']);
+        if (res.exitCode == 0 && (res.stdout as String).trim() == '1') {
+          return _cachedIsMacArm = true;
+        }
+      } catch (_) {}
+    }
+    return _cachedIsMacArm = false;
+  }
+
+  /// Parses the Mach-O header of a binary file without external tools like lipo.
+  /// Returns a set of architectures contained within the binary (e.g. {'arm64'}, {'x86_64'}).
+  /// Note: Architectures are normalized by CPU_TYPE (e.g., arm64e/arm64.x are normalized to 'arm64').
+  static Set<String> readMachOArchitectures(File file) {
+    if (!file.existsSync()) return {};
+    RandomAccessFile? raf;
+    try {
+      raf = file.openSync(mode: FileMode.read);
+      if (raf.lengthSync() < 8) return {};
+
+      final header = raf.readSync(8);
+      if (header.length < 8) return {};
+
+      final b0 = header[0], b1 = header[1], b2 = header[2], b3 = header[3];
+      final magicLE = (b3 << 24) | (b2 << 16) | (b1 << 8) | b0;
+      final magicBE = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+
+      final archs = <String>{};
+
+      // 64-bit Mach-O (MH_MAGIC_64: 0xFEEDFACF, MH_CIGAM_64: 0xCFFAEDFE)
+      if (magicBE == 0xFEEDFACF || magicLE == 0xFEEDFACF) {
+        final isLittleEndian = (magicLE == 0xFEEDFACF);
+        final cputype = isLittleEndian
+            ? (header[7] << 24) | (header[6] << 16) | (header[5] << 8) | header[4]
+            : (header[4] << 24) | (header[5] << 16) | (header[6] << 8) | header[7];
+        if (cputype == 0x0100000C) archs.add('arm64');
+        if (cputype == 0x01000007) archs.add('x86_64');
+        return archs;
+      }
+
+      // Universal / Fat binary (FAT_MAGIC: 0xCAFEBABE, FAT_CIGAM: 0xBEBAFECA)
+      if (magicBE == 0xCAFEBABE || magicLE == 0xCAFEBABE) {
+        final isLittleEndian = (magicLE == 0xCAFEBABE);
+        final nfat = isLittleEndian
+            ? (header[7] << 24) | (header[6] << 16) | (header[5] << 8) | header[4]
+            : (header[4] << 24) | (header[5] << 16) | (header[6] << 8) | header[7];
+
+        final maxFatEntries = math.min(nfat, 16);
+        final fatEntriesBytes = raf.readSync(maxFatEntries * 20);
+        for (int i = 0; i < maxFatEntries; i++) {
+          final offset = i * 20;
+          if (offset + 4 > fatEntriesBytes.length) break;
+          final cputype = isLittleEndian
+              ? (fatEntriesBytes[offset + 3] << 24) | (fatEntriesBytes[offset + 2] << 16) | (fatEntriesBytes[offset + 1] << 8) | fatEntriesBytes[offset]
+              : (fatEntriesBytes[offset] << 24) | (fatEntriesBytes[offset + 1] << 16) | (fatEntriesBytes[offset + 2] << 8) | fatEntriesBytes[offset + 3];
+          if (cputype == 0x0100000C) archs.add('arm64');
+          if (cputype == 0x01000007) archs.add('x86_64');
+        }
+        return archs;
+      }
+
+      return archs;
+    } catch (_) {
+      return {};
+    } finally {
+      try {
+        raf?.closeSync();
+      } catch (_) {}
+    }
+  }
+
   /// Resolves the optimal download asset for the current operating system and architecture.
   static ({String? url, String? name, int? size}) resolvePlatformAsset(
     List<dynamic> assets, {
@@ -67,7 +157,7 @@ class UpdateService {
     Map<String, dynamic>? candidate;
 
     if (isMac) {
-      final isMacArm = targetIsArm64 ?? (Platform.version.toLowerCase().contains('arm64') || Platform.version.toLowerCase().contains('aarch64'));
+      final isMacArm = targetIsArm64 ?? _detectMacOSArm();
       Map<String, dynamic>? exactArchCandidate;
       Map<String, dynamic>? universalCandidate;
 
@@ -125,7 +215,7 @@ class UpdateService {
         if (asset is! Map<String, dynamic>) continue;
         final name = (asset['name'] as String? ?? '').toLowerCase();
         if (isMac && name.endsWith('.dmg')) {
-          final isMacArm = targetIsArm64 ?? (Platform.version.toLowerCase().contains('arm64') || Platform.version.toLowerCase().contains('aarch64'));
+          final isMacArm = targetIsArm64 ?? _detectMacOSArm();
           final isArmAsset = name.contains('arm64') || name.contains('aarch64');
           // On Intel Mac, never fallback to an incompatible ARM-only package
           if (isMacArm || !isArmAsset) {
@@ -1509,6 +1599,25 @@ exit 0
       final cpResult = await Process.run('cp', ['-R', sourceApp.path, stagedAppPath]);
       if (cpResult.exitCode != 0) {
         throw Exception('Failed to stage update files: ${cpResult.stderr}');
+      }
+
+      // 3.1 Validate executable architecture against current host CPU using native Mach-O header parsing
+      final stagedBinary = File(p.join(stagedAppPath, 'Contents', 'MacOS', 'SuperGoodViewer'));
+      if (!stagedBinary.existsSync()) {
+        throw const IncompatibleArchitectureException('更新包主执行文件不存在，安装包可能损坏');
+      }
+      final archs = readMachOArchitectures(stagedBinary);
+      if (archs.isEmpty) {
+        throw const IncompatibleArchitectureException('无法解析更新包主执行文件架构，安装包可能已损坏');
+      }
+      final isHostArm = _detectMacOSArm();
+      final isCompatible = isHostArm
+          ? (archs.contains('arm64') || archs.contains('x86_64'))
+          : archs.contains('x86_64');
+      if (!isCompatible) {
+        throw IncompatibleArchitectureException(
+          '下载的安装包架构 ($archs) 与当前硬件 (${isHostArm ? "Apple Silicon" : "Intel Mac"}) 不兼容',
+        );
       }
 
       // 4. Detach DMG and cleanup mount point

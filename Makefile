@@ -4,7 +4,7 @@ else
   FLUTTER ?= flutter
 endif
 
-.PHONY: all build build-universal build-core build-core-universal build-app build-windows build-windows-arm64 build-linux test test-core test-app test-release-local bench bench-json benchmark clean run-macos run-windows run-linux dmg dmg-arm64 dmg-x64 package-windows package-windows-arm64 package-linux
+.PHONY: all build build-universal build-core build-core-universal build-app build-windows build-windows-arm64 build-linux test test-core test-app test-release-local bench bench-json benchmark clean run-macos run-windows run-linux dmg dmg-arm64 dmg-x64 dmg-universal package-windows package-windows-arm64 package-linux
 
 all: build test
 
@@ -41,7 +41,8 @@ build-universal: build-core-universal build-app
 # Host-architecture only -- fast path for local development (run-macos, tests).
 build-core:
 	@echo "==> Building Rust sogood_core & sgv-cli (release, host arch)..."
-	@cd core && cargo build --release --lib --bin sgv-cli
+	@cd core && cargo build --release --lib
+	@cd core && cargo build --release -p sgv-cli
 
 # Universal (arm64 + x86_64) binaries. Flutter emits a universal Runner/engine for
 # release macOS builds, so an arm64-only dylib makes dlopen fail on Intel Macs
@@ -49,8 +50,10 @@ build-core:
 build-core-universal:
 	@echo "==> Building Rust sogood_core & sgv-cli (release, arm64 + x86_64)..."
 	@rustup target add aarch64-apple-darwin x86_64-apple-darwin
-	@cd core && cargo build --release --lib --bin sgv-cli --target aarch64-apple-darwin
-	@cd core && cargo build --release --lib --bin sgv-cli --target x86_64-apple-darwin
+	@cd core && cargo build --release --lib --target aarch64-apple-darwin
+	@cd core && cargo build --release -p sgv-cli --target aarch64-apple-darwin
+	@cd core && cargo build --release --lib --target x86_64-apple-darwin
+	@cd core && cargo build --release -p sgv-cli --target x86_64-apple-darwin
 	@echo "==> Merging into universal binaries with lipo..."
 	@mkdir -p core/target/universal/release
 	@lipo -create \
@@ -74,7 +77,8 @@ test: test-core build-core test-app
 
 test-core:
 	@echo "==> Running Rust core unit & integration tests..."
-	@cd core && cargo test --lib --bin sgv-cli -- --nocapture
+	@cd core && cargo test --lib -- --nocapture
+	@cd core && cargo test -p sgv-cli -- --nocapture
 
 test-app:
 	@echo "==> Running Flutter static analysis and tests..."
@@ -150,7 +154,8 @@ package-windows: build-windows
 
 build-windows-arm64:
 	@echo "==> Building Rust sogood_core & sgv-cli for aarch64-pc-windows-msvc..."
-	@cd core && cargo build --release --lib --bin sgv-cli --target aarch64-pc-windows-msvc
+	@cd core && cargo build --release --lib --target aarch64-pc-windows-msvc
+	@cd core && cargo build --release -p sgv-cli --target aarch64-pc-windows-msvc
 	@echo "==> Configuring and building Flutter Windows ARM64 target..."
 	@cd ui && $(FLUTTER) build windows --config-only
 	@cmake -S ui/windows -B ui/build/windows_arm64 -A ARM64 -DFLUTTER_TARGET_PLATFORM=windows-arm64 -DCMAKE_DISABLE_FIND_PACKAGE_JNI=TRUE
@@ -167,16 +172,37 @@ package-windows-arm64: build-windows-arm64
 	@powershell -Command "New-Item -ItemType Directory -Force -Path dist; Compress-Archive -Force -Path 'ui/build/windows_arm64/runner/Release/*' -DestinationPath 'dist/SuperGoodViewer-windows-arm64.zip'"
 	@echo "==> Package created: dist/SuperGoodViewer-windows-arm64.zip"
 
-dmg: build-universal
-	@echo "==> Packaging Universal macOS DMG..."
-	@./scripts/package-macos-dmg.sh universal dist
+ifneq ($(OS),Windows_NT)
+  UNAME_M := $(shell uname -m)
+  ifeq ($(UNAME_M),arm64)
+    DMG_ARM64_DEP := build
+    DMG_X64_DEP := build-universal
+  else ifeq ($(UNAME_M),x86_64)
+    DMG_ARM64_DEP := build-universal
+    DMG_X64_DEP := build
+  else
+    DMG_ARM64_DEP := build-universal
+    DMG_X64_DEP := build-universal
+  endif
+else
+  DMG_ARM64_DEP := build-universal
+  DMG_X64_DEP := build-universal
+endif
 
-dmg-arm64: build
+dmg: build-universal
+	@echo "==> Packaging macOS DMGs (arm64 & x64)..."
+	@./scripts/package-macos-dmg.sh all dist
+
+dmg-arm64: $(DMG_ARM64_DEP)
 	@echo "==> Packaging Apple Silicon (arm64) macOS DMG..."
 	@./scripts/package-macos-dmg.sh arm64 dist
 
-dmg-x64: build-universal
+dmg-x64: $(DMG_X64_DEP)
 	@echo "==> Packaging Intel (x64) macOS DMG..."
 	@./scripts/package-macos-dmg.sh x64 dist
+
+dmg-universal: build-universal
+	@echo "==> Packaging Universal macOS DMG..."
+	@./scripts/package-macos-dmg.sh universal dist
 
 

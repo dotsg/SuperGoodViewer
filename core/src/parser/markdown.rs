@@ -203,23 +203,108 @@ pub(crate) fn escape_typst_string(s: &str) -> String {
     out
 }
 
-fn decode_percent(s: &str) -> String {
-    let mut bytes = Vec::new();
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            if let (Some(h1), Some(h2)) = (chars.next(), chars.next()) {
-                if let Ok(b) = u8::from_str_radix(&format!("{}{}", h1, h2), 16) {
-                    bytes.push(b);
-                    continue;
-                }
+#[inline]
+fn from_hex_digit(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+pub fn decode_percent(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h1), Some(h2)) = (from_hex_digit(bytes[i + 1]), from_hex_digit(bytes[i + 2])) {
+                out.push((h1 << 4) | h2);
+                i += 3;
+                continue;
             }
         }
-        let mut buf = [0; 4];
-        bytes.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+        out.push(bytes[i]);
+        i += 1;
     }
-    String::from_utf8(bytes).unwrap_or_else(|_| s.to_string())
+    String::from_utf8(out).unwrap_or_else(|_| s.to_string())
 }
+
+/// Normalizes a local image path in Markdown or HTML `<img>` tags by percent-decoding it
+/// and normalizing backslashes (`\`) to forward slashes (`/`).
+///
+/// Note: Local image paths are strictly sandboxed and resolved relative to `doc_dir`
+/// (or virtual memory files). Percent-encoded sequences such as spaces (`%20`),
+/// Chinese characters (e.g. `%E4%B8%89...`), and special symbols (`%23`) are
+/// safely decoded to their UTF-8 filesystem representations. Backslashes are normalized
+/// to forward slashes so Windows-style relative paths conform to Typst's virtual path format.
+pub fn normalize_local_image_path(raw: &str) -> String {
+    decode_percent(raw.trim()).replace('\\', "/")
+}
+
+const SUPPORTED_IMAGE_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "jfif", "jpe", "gif", "webp", "apng", "svg", "svgz",
+];
+
+/// Checks whether a local image path is valid within the Typst project root (`doc_dir`).
+///
+/// Returns `false` if the path attempts to escape the root (e.g. `../secret.png`,
+/// `a/../../secret.png`), is an absolute path (`/Users/...`, `C:/...`), contains Windows
+/// drive prefixes (`C:...`), has an unsupported non-image extension (e.g. `.csv`, `.json`, `.txt`),
+/// or is otherwise an invalid virtual path that would cause Typst compilation to abort.
+pub fn is_local_image_path_valid(path: &str) -> bool {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let normalized = trimmed.replace('\\', "/");
+    // Explicitly reject absolute paths starting with '/' so they fall back to placeholder badges
+    // rather than attempting to resolve against the project root.
+    if normalized.starts_with('/') {
+        return false;
+    }
+    let bytes = normalized.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return false;
+    }
+    let p = Path::new(&normalized);
+    for comp in p.components() {
+        if matches!(comp, std::path::Component::Prefix(_)) {
+            return false;
+        }
+    }
+    if typst_syntax::VirtualPath::new(&normalized).is_err() {
+        return false;
+    }
+    // Filter out non-image extensions (e.g. .csv, .json, .txt, .pdf) so they fall back
+    // to placeholder badges rather than attempting an invalid #image(...) call.
+    if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+        let ext_lower = ext.to_ascii_lowercase();
+        if !SUPPORTED_IMAGE_EXTENSIONS.contains(&ext_lower.as_str()) {
+            return false;
+        }
+    }
+    true
+}
+
+fn log_escaping_image_path(path: &str) {
+    static REPORTED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    let set = REPORTED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+    if let Ok(mut guard) = set.lock() {
+        if guard.len() >= 1024 {
+            guard.clear();
+        }
+        if guard.insert(path.to_string()) {
+            eprintln!(
+                "[Parser] Warning: local image path {:?} escapes project root (doc_dir) or is invalid, falling back to placeholder badge",
+                path
+            );
+        }
+    }
+}
+
 
 fn slugify_heading(text: &str) -> (String, Vec<String>) {
     // 1. Primary GFM slug: lowercase ASCII, dots/punctuation stripped, spaces/underscores to dashes
@@ -429,17 +514,26 @@ fn render_html_image(
 
     let is_url = src.starts_with("http://") || src.starts_with("https://");
     let resolved_src = if is_url {
-        if let Some(cached_filename) = find_cached_image_file(custom_cache, &src) {
-            cached_filename
+        find_cached_image_file(custom_cache, &src)
+    } else {
+        let normalized = normalize_local_image_path(&src);
+        if is_local_image_path_valid(&normalized) {
+            Some(normalized)
         } else {
+            log_escaping_image_path(&src);
+            None
+        }
+    };
+
+    let resolved_src = match resolved_src {
+        Some(s) => s,
+        None => {
             let escaped_alt = escape_typst_text(&alt);
             let escaped_src = escape_typst_string(&src);
             return format!(
                 "#link(\"{escaped_src}\")[#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 5pt, y: 2.5pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🖼️ {escaped_alt}]]]"
             );
         }
-    } else {
-        src
     };
 
     let mut args = Vec::new();
@@ -574,7 +668,6 @@ impl<'a> HtmlTranspiler<'a> {
                 self.center_depth > 0,
                 self.is_dark,
                 self.badge_bg,
-
                 self.badge_stroke,
                 self.badge_fg,
                 self.custom_cache,
@@ -1403,7 +1496,7 @@ pub fn convert_markdown_to_typst(
     let mut code_block_lang = String::new();
     let mut code_block_content = String::new();
     let mut in_table_head = false;
-    let mut list_depth: usize = 0;
+    let mut list_stack: Vec<Option<u64>> = Vec::new();
     let mut link_stack: Vec<bool> = Vec::new();
     let mut current_image: Option<(String, String)> = None;
     let mut image_paragraph: Option<ImageParagraph> = None;
@@ -1411,7 +1504,14 @@ pub fn convert_markdown_to_typst(
     let mut registered_slugs: HashSet<String> = HashSet::new();
     let mut referenced_anchors: HashSet<String> = HashSet::new();
     let custom_cache = options.image_cache_dir.as_deref().map(Path::new);
-    let mut html_transpiler = HtmlTranspiler::new(is_dark, is_fluid, badge_bg, badge_stroke, badge_fg, custom_cache);
+    let mut html_transpiler = HtmlTranspiler::new(
+        is_dark,
+        is_fluid,
+        badge_bg,
+        badge_stroke,
+        badge_fg,
+        custom_cache,
+    );
     let mut raw_equations: Vec<String> = Vec::new();
 
     for event in parser {
@@ -1509,16 +1609,27 @@ pub fn convert_markdown_to_typst(
                     };
                 }
                 Tag::List(first_number) => {
-                    list_depth += 1;
+                    if !out.ends_with('\n') {
+                        out.push('\n');
+                    }
                     if let Some(start) = first_number {
                         if start > 1 {
                             out.push_str(&format!("#set enum(start: {})\n", start));
                         }
                     }
+                    list_stack.push(first_number);
                 }
                 Tag::Item => {
-                    let indent = "  ".repeat(list_depth.saturating_sub(1));
-                    out.push_str(&format!("{}- ", indent));
+                    if !out.ends_with('\n') {
+                        out.push('\n');
+                    }
+                    let depth = list_stack.len().saturating_sub(1);
+                    let indent = "  ".repeat(depth);
+                    let marker = match list_stack.last() {
+                        Some(Some(_)) => "+ ",
+                        _ => "- ",
+                    };
+                    out.push_str(&format!("{}{}", indent, marker));
                 }
                 Tag::Emphasis => out.push_str("#emph["),
                 Tag::Strong => out.push_str("#strong["),
@@ -1566,6 +1677,7 @@ pub fn convert_markdown_to_typst(
 
                 Tag::TableHead => {
                     in_table_head = true;
+                    out.push_str("  table.header(\n");
                 }
                 Tag::TableRow => {}
                 Tag::TableCell => {
@@ -1633,11 +1745,25 @@ pub fn convert_markdown_to_typst(
                     }
                 }
                 TagEnd::List(_) => {
-                    list_depth = list_depth.saturating_sub(1);
-                    out.push('\n');
+                    let was_custom_start = if let Some(Some(start)) = list_stack.pop() {
+                        start > 1
+                    } else {
+                        false
+                    };
+                    if was_custom_start {
+                        out.push_str("#set enum(start: 1)\n");
+                    }
+                    if !out.ends_with('\n') {
+                        out.push('\n');
+                    }
+                    if list_stack.is_empty() && !out.ends_with("\n\n") {
+                        out.push('\n');
+                    }
                 }
                 TagEnd::Item => {
-                    out.push('\n');
+                    if !out.ends_with('\n') {
+                        out.push('\n');
+                    }
                 }
                 TagEnd::Emphasis => out.push_str("]/**/"),
                 TagEnd::Strong => out.push_str("]/**/"),
@@ -1661,7 +1787,13 @@ pub fn convert_markdown_to_typst(
                         let resolved_image = if is_url {
                             find_cached_image_file(custom_cache, &url)
                         } else {
-                            Some(url.clone())
+                            let normalized = normalize_local_image_path(&url);
+                            if is_local_image_path_valid(&normalized) {
+                                Some(normalized)
+                            } else {
+                                log_escaping_image_path(&url);
+                                None
+                            }
                         };
 
                         if let Some(target_path) = resolved_image {
@@ -1696,6 +1828,7 @@ pub fn convert_markdown_to_typst(
                 }
                 TagEnd::TableHead => {
                     in_table_head = false;
+                    out.push_str("  ),\n");
                 }
                 TagEnd::TableRow => {}
                 TagEnd::TableCell => {
@@ -1955,6 +2088,7 @@ LPC window from (10000_0000h + 64K*LPCMWMRS) to (FFFF_FFFFh + 64K*(LPCMWMRS + 1)
 | a  | b  | c  | d      |
 "#;
         let parsed = convert_markdown_to_typst(md, "HW", &RenderOptions::default());
+        assert!(parsed.typst_source.contains("table.header("));
         assert!(parsed.typst_source.contains("#emph["));
         assert!(parsed.typst_source.contains("#strong["));
         assert!(
@@ -2630,5 +2764,112 @@ size: 16:9
         let marp_override_parsed = convert_markdown_to_typst(marp_md, "Marp as A4", &override_opts);
         assert!(marp_override_parsed.typst_source.contains("width: 595.28pt"));
         assert!(!marp_override_parsed.typst_source.contains("width: 960pt"));
+    }
+
+    #[test]
+    fn test_nested_and_ordered_lists() {
+        let md = r#"- 第一阶段：先治制度与主数据（1~2 周，零技术开发）
+  - 统一定义 Project ID 编码规范：如 `[客户代码]-[供应商代码]-[产品名]-[序号]`，销售必须持 ID 向供应商报备开户。
+  - 引入财务初级闭环：销售提报收款必须附带银行到账流水号或让财务在多维表格上勾选“已实收到账”，堵住风控漏洞。
+- 第二阶段：梳理底座模型（开发规范期）
+  - 建立标准的三方产品字典、供应商账目对应关系。
+  - 统一 Excel 结算模板字段，消除各销售混乱的私表。
+- 第三阶段：正式系统化（先轻量后系统）
+  - 若自研账单系统，先做“项目主表 + 导入核验 + 财务核销认领”三个最小可用闭环（MVP），验证跑通后再把提成自动计算接入，切忌一上来做大而全的“空壳上传”。
+"#;
+        let opts = RenderOptions::default();
+        let parsed = convert_markdown_to_typst(md, "Test", &opts);
+
+        // Verify that sub-items are properly on their own lines with indentation and bullet marker
+        assert!(parsed.typst_source.contains("- 第一阶段：先治制度与主数据（1\\~2 周，零技术开发）\n  - 统一定义"));
+        assert!(parsed.typst_source.contains("向供应商报备开户。\n  - 引入财务初级闭环"));
+        assert!(parsed.typst_source.contains("- 第二阶段：梳理底座模型（开发规范期）\n  - 建立标准的三方"));
+        assert!(parsed.typst_source.contains("对应关系。\n  - 统一 Excel"));
+        assert!(parsed.typst_source.contains("- 第三阶段：正式系统化（先轻量后系统）\n  - 若自研账单系统"));
+
+        // Verify PDF compilation succeeds
+        let res = crate::compile_markdown_to_pdf(md, "Test", ".", &opts);
+        assert!(res.is_ok());
+
+        // Verify ordered list produces `+ ` markers instead of `- `
+        let ordered_md = "1. Item one\n2. Item two\n   1. Nested one\n   2. Nested two\n";
+        let ordered_parsed = convert_markdown_to_typst(ordered_md, "Ordered", &opts);
+        assert!(ordered_parsed.typst_source.contains("+ Item one\n+ Item two\n  + Nested one\n  + Nested two"));
+    }
+
+    #[test]
+    fn test_decode_percent_and_normalize_local_image_path() {
+        assert_eq!(decode_percent(""), "");
+        assert_eq!(decode_percent("normal_text.png"), "normal_text.png");
+        assert_eq!(decode_percent("image%202.png"), "image 2.png");
+        assert_eq!(decode_percent("Images_attachments/image%202.png"), "Images_attachments/image 2.png");
+        assert_eq!(decode_percent("%E4%B8%89%E6%96%B9.png"), "三方.png");
+        assert_eq!(decode_percent("100%"), "100%");
+        assert_eq!(decode_percent("%2"), "%2");
+        assert_eq!(decode_percent("%ZZ"), "%ZZ");
+        assert_eq!(decode_percent("%2G"), "%2G");
+
+        assert_eq!(
+            normalize_local_image_path("Images_attachments/image%202.png"),
+            "Images_attachments/image 2.png"
+        );
+        assert_eq!(
+            normalize_local_image_path("Images_attachments/%E4%B8%89%E6%96%B9%E6%B5%81%E8%BD%AC%E5%9B%BE.png"),
+            "Images_attachments/三方流转图.png"
+        );
+        // Relative path preserves '#' in filename
+        assert_eq!(
+            normalize_local_image_path("Images_attachments/图 #1.png"),
+            "Images_attachments/图 #1.png"
+        );
+        assert_eq!(
+            normalize_local_image_path("Images_attachments/image%20%231.png"),
+            "Images_attachments/image #1.png"
+        );
+
+        // Verify Markdown and HTML parsing decodes percent-encoded local image paths into Typst image calls
+        let opts = RenderOptions::default();
+        let md = "![image](Images_attachments/image%202.png)\n\n<img src=\"Images_attachments/image%205.png\" alt=\"image 5\" />";
+        let parsed = convert_markdown_to_typst(md, "Image Test", &opts);
+        assert!(parsed.typst_source.contains("#image(\"Images_attachments/image 2.png\")"));
+        assert!(parsed.typst_source.contains("#image(\"Images_attachments/image 5.png\")"));
+
+        // Verify path validity checking
+        assert!(is_local_image_path_valid("image.png"));
+        assert!(is_local_image_path_valid("Images_attachments/image 2.png"));
+        assert!(is_local_image_path_valid("sub/folder/pic.png"));
+        assert!(is_local_image_path_valid("sub/../pic.png"));
+        assert!(is_local_image_path_valid("photo.jfif"));
+        assert!(is_local_image_path_valid("pic.jpe"));
+        assert!(is_local_image_path_valid("anim.apng"));
+
+        // Paths that escape the root, are absolute, have OS drive prefixes, or are unsupported image/data formats must be invalid
+        assert!(!is_local_image_path_valid(""));
+        assert!(!is_local_image_path_valid("../secret.png"));
+        assert!(!is_local_image_path_valid("a/../../secret.png"));
+        assert!(!is_local_image_path_valid("/Users/x/pic.png"));
+        assert!(!is_local_image_path_valid("/pic.png"));
+        assert!(!is_local_image_path_valid("C:/secret.png"));
+        assert!(!is_local_image_path_valid("c:\\secret.png"));
+        assert!(!is_local_image_path_valid("real.bmp"));
+        assert!(!is_local_image_path_valid("real.tiff"));
+        assert!(!is_local_image_path_valid("pic.avif"));
+        assert!(!is_local_image_path_valid("icon.ico"));
+        assert!(!is_local_image_path_valid("photo.heic"));
+        assert!(!is_local_image_path_valid("data.csv"));
+        assert!(!is_local_image_path_valid("notes.txt"));
+        assert!(!is_local_image_path_valid("document.pdf"));
+        assert!(!is_local_image_path_valid("archive.zip"));
+
+        // Verify Markdown and HTML parsing with escaping, absolute, or non-image paths fall back to placeholder badges
+        let md_escape = "![secret](..%2Fsecret.png)\n\n<img src=\"../secret.png\" alt=\"secret2\" />\n\n![abs](/Users/x/pic.png)\n\n<img src=\"/Users/x/pic2.png\" alt=\"abs2\" />\n\n![data](report.csv)\n\n<img src=\"notes.txt\" alt=\"notes\" />";
+        let parsed_escape = convert_markdown_to_typst(md_escape, "Escape Test", &opts);
+        assert!(!parsed_escape.typst_source.contains("#image"));
+        assert!(parsed_escape.typst_source.contains("secret"));
+        assert!(parsed_escape.typst_source.contains("secret2"));
+        assert!(parsed_escape.typst_source.contains("abs"));
+        assert!(parsed_escape.typst_source.contains("abs2"));
+        assert!(parsed_escape.typst_source.contains("data"));
+        assert!(parsed_escape.typst_source.contains("notes"));
     }
 }

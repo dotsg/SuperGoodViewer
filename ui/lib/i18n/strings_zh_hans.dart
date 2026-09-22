@@ -306,6 +306,10 @@ class ZhHansStrings implements AppStrings {
   @override
   String get cacheDesc => '本地编译的矢量文档缓存，有效加速二次打开并降低 CPU 占用';
   @override
+  String get openCacheDirectory => '打开目录';
+  @override
+  String get openCacheDirectoryFailed => '打开缓存目录失败';
+  @override
   String get clearCache => '清理缓存';
   @override
   String get loadingCacheStats => '正在读取缓存统计...';

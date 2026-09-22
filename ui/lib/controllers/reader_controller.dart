@@ -706,9 +706,20 @@ class ReaderController extends ChangeNotifier {
     });
   }
 
+  final Stopwatch _persistThrottleClock = Stopwatch();
+
   void _persistDebounced() {
+    if (_persistDebounceTimer?.isActive == true &&
+        _persistThrottleClock.isRunning &&
+        _persistThrottleClock.elapsedMilliseconds < 120) {
+      return;
+    }
+    _persistThrottleClock
+      ..reset()
+      ..start();
     _persistDebounceTimer?.cancel();
     _persistDebounceTimer = Timer(const Duration(milliseconds: 600), () {
+      _persistThrottleClock.stop();
       _persistPreferences();
     });
   }
@@ -1354,62 +1365,76 @@ class ReaderController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<bool> exportPdf(String destinationPath) async {
-    if (_currentPdfBytes == null) return false;
+  /// Prepares and returns the PDF bytes for export (e.g. publication-grade light mode PDF).
+  Future<Uint8List?> getPdfBytesForExport() async {
+    if (_currentPdfBytes == null) return null;
     try {
-      Uint8List? bytesToExport;
-
       if (isPdfDocument || _renderOptions.theme == 'light') {
         // Direct PDF or light mode: use current in-memory PDF immediately (0ms fast path)
-        bytesToExport = _currentPdfBytes;
-      } else {
-        // When viewing in dark mode, strictly export publication-grade light mode document
-        final exportOptions = _renderOptions.copyWith(theme: 'light');
+        return _currentPdfBytes;
+      }
 
-        if (_currentFilePath != null) {
-          final cached = DocumentCacheService.getCachedPdf(_currentFilePath!, exportOptions);
-          if (cached != null && cached.isNotEmpty) {
-            bytesToExport = cached;
-          }
-        }
+      // When viewing in dark mode, strictly export publication-grade light mode document
+      final exportOptions = _renderOptions.copyWith(theme: 'light');
 
-        if (bytesToExport == null) {
-          if (!NativeEngine.instance.isAvailable) {
-            _errorMessage = NativeEngine.instance.initError ?? 'Native library not loaded';
-            notifyListeners();
-            return false;
-          }
-
-          final docDir = _currentFilePath != null
-              ? p.dirname(_currentFilePath!)
-              : Directory.current.path;
-
-          final exportResult = await NativeEngine.instance.compileMarkdownResultAsync(
-            _currentMarkdown,
-            title: _documentTitle,
-            docDir: docDir,
-            options: exportOptions,
-          );
-          bytesToExport = exportResult.pdfBytes;
-
-          if (exportResult.degradedEquationCount > 0) {
-            debugPrint(
-              '[ReaderController] exportPdf: WARNING: ${exportResult.degradedEquationCount} degraded equation(s) in export',
-            );
-          }
-
-          if (bytesToExport != null && bytesToExport.isNotEmpty && _currentFilePath != null) {
-            unawaited(DocumentCacheService.saveCachedPdf(_currentFilePath!, exportOptions, bytesToExport));
-          }
+      if (_currentFilePath != null) {
+        final cached = DocumentCacheService.getCachedPdf(_currentFilePath!, exportOptions);
+        if (cached != null && cached.isNotEmpty) {
+          return cached;
         }
       }
 
-      if (bytesToExport == null || bytesToExport.isEmpty) {
+      if (!NativeEngine.instance.isAvailable) {
+        _errorMessage = NativeEngine.instance.initError ?? 'Native library not loaded';
+        notifyListeners();
+        return null;
+      }
+
+      final docDir = _currentFilePath != null
+          ? p.dirname(_currentFilePath!)
+          : Directory.current.path;
+
+      final exportResult = await NativeEngine.instance.compileMarkdownResultAsync(
+        _currentMarkdown,
+        title: _documentTitle,
+        docDir: docDir,
+        options: exportOptions,
+      );
+      final bytes = exportResult.pdfBytes;
+
+      if (exportResult.degradedEquationCount > 0) {
+        debugPrint(
+          '[ReaderController] exportPdf: WARNING: ${exportResult.degradedEquationCount} degraded equation(s) in export',
+        );
+      }
+
+      if (bytes != null && bytes.isNotEmpty && _currentFilePath != null) {
+        unawaited(DocumentCacheService.saveCachedPdf(_currentFilePath!, exportOptions, bytes));
+      }
+
+      if (bytes == null || bytes.isEmpty) {
         _errorMessage = 'Export failed: Unable to generate light-mode PDF';
         notifyListeners();
-        return false;
+        return null;
       }
 
+      return bytes;
+    } catch (e) {
+      _errorMessage = 'Export failed: $e';
+      notifyListeners();
+      return null;
+    }
+  }
+
+  /// Direct file export helper.
+  ///
+  /// In the UI layer, [getPdfBytesForExport] combined with [FilePicker.saveFile]
+  /// is used instead to delegate file writing directly to native platform file savers.
+  @visibleForTesting
+  Future<bool> exportPdf(String destinationPath) async {
+    final bytesToExport = await getPdfBytesForExport();
+    if (bytesToExport == null || bytesToExport.isEmpty) return false;
+    try {
       final file = File(destinationPath);
       await file.writeAsBytes(bytesToExport);
       return true;
@@ -1517,6 +1542,48 @@ graph LR
     compileDocument();
   }
 
+  static String cleanHeadingTitle(String raw) {
+    var title = raw.trim();
+    // 1. Strip leading and trailing ATX heading markers: e.g. "### Heading ##" -> "Heading"
+    title = title.replaceFirst(RegExp(r'^#+\s*'), '');
+    title = title.replaceAll(RegExp(r'\s+#+\s*$'), '');
+
+    // 2. Resolve markdown links: e.g. "[Link text](url)" or "[Link text][ref]" -> "Link text"
+    title = title.replaceAllMapped(
+      RegExp(r'\[([^\]]+)\](?:\([^)]*\)|\[[^\]]*\])'),
+      (m) => m[1] ?? '',
+    );
+
+    // 3. Resolve inline code: e.g. "`code`" -> "code"
+    title = title.replaceAllMapped(
+      RegExp(r'`([^`]+)`'),
+      (m) => m[1] ?? '',
+    );
+
+    // 4. Resolve bold, italic, strikethrough markers
+    title = title.replaceAllMapped(
+      RegExp(r'(\*\*|__)(.*?)\1'),
+      (m) => m[2] ?? '',
+    );
+    title = title.replaceAllMapped(
+      RegExp(r'~~(.*?)~~'),
+      (m) => m[1] ?? '',
+    );
+    title = title.replaceAllMapped(
+      RegExp(r'(?<!\w)([*_])([^*_]+)\1(?!\w)'),
+      (m) => m[2] ?? '',
+    );
+
+    // 5. Unescape markdown backslash escapes (CommonMark §2.4):
+    // e.g. "\." -> ".", "\-" -> "-", "\*" -> "*", etc.
+    title = title.replaceAllMapped(
+      RegExp(r"""\\([!"#$%&'()*+,-./:;<=>?@[\\\]^_`{|}~])"""),
+      (m) => m[1] ?? '',
+    );
+
+    return title.trim();
+  }
+
   void _extractOutline(String markdown) {
     final items = <OutlineItem>[];
     final lines = markdown.split('\n');
@@ -1536,8 +1603,9 @@ graph LR
         final match = RegExp(r'^(#{1,6})\s+(.+)$').firstMatch(trimmed);
         if (match != null) {
           final level = match.group(1)!.length;
-          final title = match.group(2)!.trim();
-          if (title == '目录' || title.toLowerCase() == 'table of contents') {
+          final rawTitle = match.group(2)!.trim();
+          final title = cleanHeadingTitle(rawTitle);
+          if (title.isEmpty || title == '目录' || title.toLowerCase() == 'table of contents') {
             continue;
           }
           final slug = _slugify(title);
@@ -1671,6 +1739,7 @@ graph LR
     shortcutService.removeListener(notifyListeners);
     _reloadingSafetyTimer?.cancel();
     _persistDebounceTimer?.cancel();
+    _persistThrottleClock.stop();
     _persistPreferences();
     _viewportDebounceTimer?.cancel();
     _debounceTimer?.cancel();
