@@ -1426,6 +1426,11 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
+  /// Direct file export helper.
+  ///
+  /// In the UI layer, [getPdfBytesForExport] combined with [FilePicker.saveFile]
+  /// is used instead to delegate file writing directly to native platform file savers.
+  @visibleForTesting
   Future<bool> exportPdf(String destinationPath) async {
     final bytesToExport = await getPdfBytesForExport();
     if (bytesToExport == null || bytesToExport.isEmpty) return false;

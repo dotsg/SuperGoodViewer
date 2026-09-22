@@ -1407,8 +1407,19 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                   OutlinedButton.icon(
                     icon: const Icon(Icons.folder_open_outlined, size: 15),
-                    label: const Text('打开目录', style: TextStyle(fontSize: 12)),
-                    onPressed: () => DocumentCacheService.openCacheDirectory(),
+                    label: Text(strings.openCacheDirectory, style: const TextStyle(fontSize: 12)),
+                    onPressed: () async {
+                      final ok = await DocumentCacheService.openCacheDirectory();
+                      if (!ok && mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(strings.openCacheDirectoryFailed),
+                            duration: const Duration(seconds: 3),
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      }
+                    },
                     style: OutlinedButton.styleFrom(
                       visualDensity: VisualDensity.compact,
                     ),

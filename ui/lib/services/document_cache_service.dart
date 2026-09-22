@@ -18,6 +18,9 @@ class DocumentCacheService {
     _cachedDir = dir;
   }
 
+  @visibleForTesting
+  static Future<bool> Function(String path)? directoryLauncherForTesting;
+
   static Directory _getCacheDir() {
     if (_customCacheDirForTesting != null) return _customCacheDirForTesting!;
     if (_cachedDir != null) return _cachedDir!;
@@ -222,12 +225,15 @@ class DocumentCacheService {
     }
   }
 
-  /// Opens the cache directory in the system file manager (Finder on macOS / Explorer on Windows).
+  /// Opens the cache directory in the system file manager (Finder on macOS / Explorer on Windows / FileManager1/gio/xdg-open on Linux).
   static Future<bool> openCacheDirectory() async {
     try {
       final dir = _getCacheDir();
       if (!await dir.exists()) {
         await dir.create(recursive: true);
+      }
+      if (directoryLauncherForTesting != null) {
+        return await directoryLauncherForTesting!(dir.path);
       }
       if (Platform.isMacOS) {
         final res = await Process.run('open', [dir.path]);
@@ -238,22 +244,11 @@ class DocumentCacheService {
         return res.exitCode == 0 || res.exitCode == 1;
       } else if (Platform.isLinux) {
         final uri = Uri.file(dir.path).toString();
-        // 1. Try D-Bus standard FileManager1 interface (ShowFolders) via dbus-send
-        // Used by Nautilus, Dolphin, Thunar, Yazi (FileManager1), and modern Wayland setups
-        try {
-          final dbusRes = await Process.run('dbus-send', [
-            '--session',
-            '--dest=org.freedesktop.FileManager1',
-            '--type=method_call',
-            '/org/freedesktop/FileManager1',
-            'org.freedesktop.FileManager1.ShowFolders',
-            'array:string:$uri',
-            'string:',
-          ]);
-          if (dbusRes.exitCode == 0) return true;
-        } catch (_) {}
+        // Escape commas because dbus-send array parser splits on comma.
+        final escapedUri = uri.replaceAll(',', '%2C');
 
-        // 2. Try gdbus as fallback for environments where dbus-send is missing
+        // 1. Try gdbus first: reliable synchronous exit code and robust GVariant parsing
+        // Supported on environments with glib (standard on Flutter Linux GTK3 embedder)
         try {
           final gdbusRes = await Process.run('gdbus', [
             'call',
@@ -264,21 +259,50 @@ class DocumentCacheService {
             '/org/freedesktop/FileManager1',
             '--method',
             'org.freedesktop.FileManager1.ShowFolders',
-            '["$uri"]',
-            '',
+            '["$escapedUri"]',
+            '""',
+            '--timeout',
+            '5',
           ]);
           if (gdbusRes.exitCode == 0) return true;
-        } catch (_) {}
+          debugPrint('[DocumentCacheService] gdbus ShowFolders exit code: ${gdbusRes.exitCode}, stderr: ${gdbusRes.stderr}');
+        } catch (e) {
+          debugPrint('[DocumentCacheService] gdbus ShowFolders error: $e');
+        }
 
-        // 3. Try gio open (which integrates with GLib/GVFS and desktop portals)
+        // 2. Try dbus-send with --print-reply (mandatory for exit code validation and blocking response)
+        try {
+          final dbusRes = await Process.run('dbus-send', [
+            '--session',
+            '--print-reply',
+            '--reply-timeout=5000',
+            '--dest=org.freedesktop.FileManager1',
+            '--type=method_call',
+            '/org/freedesktop/FileManager1',
+            'org.freedesktop.FileManager1.ShowFolders',
+            'array:string:$escapedUri',
+            'string:',
+          ]);
+          if (dbusRes.exitCode == 0) return true;
+          debugPrint('[DocumentCacheService] dbus-send ShowFolders exit code: ${dbusRes.exitCode}, stderr: ${dbusRes.stderr}');
+        } catch (e) {
+          debugPrint('[DocumentCacheService] dbus-send ShowFolders error: $e');
+        }
+
+        // 3. Try gio open (integrates with GLib/GVFS)
         try {
           final gioRes = await Process.run('gio', ['open', dir.path]);
           if (gioRes.exitCode == 0) return true;
-        } catch (_) {}
+          debugPrint('[DocumentCacheService] gio open exit code: ${gioRes.exitCode}, stderr: ${gioRes.stderr}');
+        } catch (e) {
+          debugPrint('[DocumentCacheService] gio open error: $e');
+        }
 
         // 4. Fallback to standard xdg-open
         final res = await Process.run('xdg-open', [dir.path]);
-        return res.exitCode == 0;
+        if (res.exitCode == 0) return true;
+        debugPrint('[DocumentCacheService] xdg-open exit code: ${res.exitCode}, stderr: ${res.stderr}');
+        return false;
       }
     } catch (e) {
       debugPrint('[DocumentCacheService] openCacheDirectory error: $e');

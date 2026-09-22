@@ -508,14 +508,27 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     final title = widget.controller.documentTitle.replaceAll(' ', '_');
     final defaultFileName = '$title.pdf';
 
-    final saveUri = await FilePicker.saveFile(
-      dialogTitle: widget.controller.strings.exportPdfDialogTitle,
-      fileName: defaultFileName,
-      bytes: bytesToExport,
-      type: FileType.custom,
-      allowedExtensions: ['pdf'],
-      mimeType: 'application/pdf',
-    );
+    Uri? saveUri;
+    try {
+      saveUri = await FilePicker.saveFile(
+        dialogTitle: widget.controller.strings.exportPdfDialogTitle,
+        fileName: defaultFileName,
+        bytes: bytesToExport,
+        mimeType: 'application/pdf',
+      );
+    } catch (e) {
+      debugPrint('[WorkspaceView] FilePicker.saveFile failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(widget.controller.strings.exportPdfFailed),
+            duration: const Duration(seconds: 3),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
 
     if (saveUri != null) {
       final savePath = saveUri.isScheme('file') ? saveUri.toFilePath() : saveUri.path;

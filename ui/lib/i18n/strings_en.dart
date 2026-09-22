@@ -314,6 +314,10 @@ class EnStrings implements AppStrings {
   String get cacheDesc =>
       'Local vector cache speeds up reopening documents and lowers CPU usage';
   @override
+  String get openCacheDirectory => 'Open Folder';
+  @override
+  String get openCacheDirectoryFailed => 'Failed to open cache directory';
+  @override
   String get clearCache => 'Clear Cache';
   @override
   String get loadingCacheStats => 'Loading cache stats...';

@@ -148,7 +148,7 @@ void main() {
       controller.dispose();
     });
 
-    test('getPdfBytesForExport returns valid PDF bytes matching exportPdf', () async {
+    test('getPdfBytesForExport returns valid PDF bytes matching exportPdf in light mode', () async {
       final controller = ReaderController(autoRestorePreferences: false);
       await waitCompile(controller);
 
@@ -159,6 +159,24 @@ void main() {
       expect(listEquals(bytes, controller.currentPdfBytes), isTrue);
 
       controller.dispose();
+    });
+
+    test('getPdfBytesForExport exports light PDF bytes even when viewing in dark mode', () async {
+      final lightController = ReaderController(autoRestorePreferences: false);
+      await waitCompile(lightController);
+      final lightBytes = lightController.currentPdfBytes!;
+
+      final darkController = ReaderController(autoRestorePreferences: false);
+      darkController.toggleTheme();
+      await waitCompile(darkController);
+
+      final exportedBytes = await darkController.getPdfBytesForExport();
+      expect(exportedBytes, isNotNull);
+      expect(listEquals(exportedBytes, darkController.currentPdfBytes), isFalse);
+      expect(listEquals(exportedBytes, lightBytes), isTrue);
+
+      lightController.dispose();
+      darkController.dispose();
     });
   });
 
