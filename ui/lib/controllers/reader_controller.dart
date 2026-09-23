@@ -925,7 +925,35 @@ class ReaderController extends ChangeNotifier {
   }
 
   Future<void> openFile(String filePath, {bool preservePosition = false}) async {
+    if (_isAlreadyShowing(filePath)) {
+      debugPrint('[ReaderController] openFile: $filePath is already open and unchanged, skipping');
+      return;
+    }
     _openFileInternal(filePath, preservePosition: preservePosition);
+  }
+
+  /// True when [filePath] names the document already loaded, with unchanged bytes.
+  ///
+  /// macOS delivers a launch file twice: once in argv and again as an `openFiles`
+  /// Apple Event, where the path is standardized (`/tmp/...` for argv's
+  /// `/private/tmp/...`). Reopening it would discard the compile already in
+  /// flight and start another one for the same content.
+  bool _isAlreadyShowing(String filePath) {
+    final current = _currentFilePath;
+    if (current == null) return false;
+    try {
+      if (File(filePath).resolveSymbolicLinksSync() != File(current).resolveSymbolicLinksSync()) {
+        return false;
+      }
+      final bytes = File(filePath).readAsBytesSync();
+      if (_isRawPdf) {
+        final pdf = _currentPdfBytes;
+        return pdf != null && listEquals(pdf, bytes);
+      }
+      return _currentMarkdown.isNotEmpty && utf8.decode(bytes, allowMalformed: true) == _currentMarkdown;
+    } catch (_) {
+      return false;
+    }
   }
 
   void clearRecentFiles() {
