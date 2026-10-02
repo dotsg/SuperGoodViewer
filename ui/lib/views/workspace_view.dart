@@ -130,6 +130,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       _syncMenuTitles();
     });
     widget.controller.addListener(_onControllerChanged);
+    FocusManager.instance.addListener(_reclaimLostFocus);
     final enableIntegration = widget.enableSystemIntegration ?? WorkspaceView.defaultEnableSystemIntegration;
     if (enableIntegration) {
       NativeCliService.channel.setMethodCallHandler(_handleNativeMethodCall);
@@ -182,6 +183,27 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   bool? _lastSyncedDark;
+
+  final FocusNode _workspaceFocusNode = FocusNode(debugLabel: 'workspace');
+  bool _focusCheckScheduled = false;
+
+  /// The PDF viewer takes focus on clicks, and its focus node goes away when
+  /// a document is swapped in (tab switch, theme or layout change, reload).
+  /// Focus then falls back to an enclosing scope outside the workspace and
+  /// every keyboard shortcut stops working until the user clicks the page.
+  /// Take it back in that case; focus in a dialog is left alone.
+  void _reclaimLostFocus() {
+    if (_focusCheckScheduled) return;
+    _focusCheckScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusCheckScheduled = false;
+      if (!mounted || _workspaceFocusNode.hasFocus) return;
+      final focus = FocusManager.instance.primaryFocus;
+      if (focus == null || _workspaceFocusNode.ancestors.contains(focus)) {
+        _workspaceFocusNode.requestFocus();
+      }
+    });
+  }
   String? _lastSyncedMenuLanguage;
 
   void _syncMenuTitles() {
@@ -267,6 +289,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
   @override
   void dispose() {
+    FocusManager.instance.removeListener(_reclaimLostFocus);
+    _workspaceFocusNode.dispose();
     _windowChannel.setMethodCallHandler(null);
     final enableIntegration = widget.enableSystemIntegration ?? WorkspaceView.defaultEnableSystemIntegration;
     if (enableIntegration) {
@@ -936,6 +960,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
           _handleDroppedFiles(detail.files);
         },
         child: Focus(
+          focusNode: _workspaceFocusNode,
           autofocus: true,
           child: Scaffold(
             body: Stack(

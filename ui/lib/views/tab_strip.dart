@@ -1,5 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 import '../controllers/reader_controller.dart';
 
 /// Browser-style tabs for the open documents, shown in the title bar once
@@ -22,6 +23,28 @@ class DocumentTabStrip extends StatelessWidget {
     required this.maxWidth,
   });
 
+  /// Tab labels: the document title, plus as many parent folder names as it
+  /// takes to tell apart documents that share a title (two README.md files
+  /// show as "README · project-one" and "README · project-two").
+  static List<String> labelsFor(List<DocumentSession> sessions) {
+    final labels = [for (final s in sessions) s.title];
+    for (var depth = 1; depth <= 3; depth++) {
+      final counts = <String, int>{};
+      for (final label in labels) {
+        counts[label] = (counts[label] ?? 0) + 1;
+      }
+      if (counts.values.every((c) => c == 1)) break;
+      for (var i = 0; i < sessions.length; i++) {
+        final path = sessions[i].filePath;
+        if (path == null || counts[labels[i]] == 1) continue;
+        final folders = p.split(p.dirname(path));
+        final suffix = folders.sublist((folders.length - depth).clamp(0, folders.length)).join('/');
+        labels[i] = '${sessions[i].title} · $suffix';
+      }
+    }
+    return labels;
+  }
+
   static double widthFor(int tabCount, double available) {
     if (tabCount == 0) return 0;
     return (available / tabCount).clamp(minTabWidth, maxTabWidth);
@@ -32,6 +55,7 @@ class DocumentTabStrip extends StatelessWidget {
     final sessions = controller.sessions;
     final active = controller.activeSessionIndex;
     final tabWidth = widthFor(sessions.length, maxWidth);
+    final labels = labelsFor(sessions);
     final closeLabel = controller.shortcutService.getShortcutLabel('closeTab');
 
     return SingleChildScrollView(
@@ -43,6 +67,7 @@ class DocumentTabStrip extends StatelessWidget {
             _DocumentTab(
               key: ValueKey(sessions[i].id),
               session: sessions[i],
+              label: labels[i],
               width: tabWidth,
               isActive: i == active,
               isDark: isDark,
@@ -58,6 +83,7 @@ class DocumentTabStrip extends StatelessWidget {
 
 class _DocumentTab extends StatefulWidget {
   final DocumentSession session;
+  final String label;
   final double width;
   final bool isActive;
   final bool isDark;
@@ -68,6 +94,7 @@ class _DocumentTab extends StatefulWidget {
   const _DocumentTab({
     super.key,
     required this.session,
+    required this.label,
     required this.width,
     required this.isActive,
     required this.isDark,
@@ -142,7 +169,7 @@ class _DocumentTabState extends State<_DocumentTab> {
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
-                          session.title,
+                          widget.label,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(

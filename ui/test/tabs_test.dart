@@ -299,6 +299,23 @@ void main() {
     });
   });
 
+  test('tab labels add parent folders only to tell same-named documents apart', () {
+    DocumentSession doc(String path) => DocumentSession()
+      ..filePath = path
+      ..title = p.basenameWithoutExtension(path);
+
+    expect(DocumentTabStrip.labelsFor([doc('/w/alpha.md'), doc('/w/beta.md')]), ['alpha', 'beta']);
+    expect(
+      DocumentTabStrip.labelsFor([doc('/w/one/README.md'), doc('/w/two/README.md'), doc('/w/notes.md')]),
+      ['README · one', 'README · two', 'notes'],
+    );
+    expect(
+      DocumentTabStrip.labelsFor([doc('/a/docs/README.md'), doc('/b/docs/README.md')]),
+      ['README · a/docs', 'README · b/docs'],
+      reason: 'identical parent folders reach one level further up',
+    );
+  });
+
   test('Ctrl+Tab and Ctrl+PageDown/PageUp are bound on every platform', () {
     for (final mac in [true, false]) {
       ShortcutService.debugIsMacLayout = mac;
