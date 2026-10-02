@@ -7,6 +7,24 @@ import 'package:sogoodviewer/controllers/reader_controller.dart';
 import 'package:sogoodviewer/models/render_options.dart';
 import 'package:sogoodviewer/services/document_cache_service.dart';
 import 'package:sogoodviewer/views/settings_dialog.dart';
+import 'package:url_launcher_platform_interface/link.dart';
+import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
+
+class _RecordingUrlLauncher extends UrlLauncherPlatform {
+  final List<String> launched = [];
+
+  @override
+  LinkDelegate? get linkDelegate => null;
+
+  @override
+  Future<bool> canLaunch(String url) async => true;
+
+  @override
+  Future<bool> launchUrl(String url, LaunchOptions options) async {
+    launched.add(url);
+    return true;
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -244,6 +262,33 @@ void main() {
       await tester.pumpAndSettle();
       expect(controller.themePreference, ThemePreference.system);
       expect(controller.renderOptions.theme, 'light');
+    });
+
+    testWidgets('About tab opens the project homepage', (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final originalLauncher = UrlLauncherPlatform.instance;
+      final launcher = _RecordingUrlLauncher();
+      UrlLauncherPlatform.instance = launcher;
+      addTearDown(() => UrlLauncherPlatform.instance = originalLauncher);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SettingsDialog(controller: controller, initialTab: SettingsTab.about),
+        ),
+      );
+
+      expect(find.byTooltip('打开项目主页'), findsOneWidget);
+      await tester.tap(find.text('github.com/dotsg/SuperGoodViewer'));
+      await tester.pumpAndSettle();
+
+      expect(launcher.launched, ['https://github.com/dotsg/SuperGoodViewer']);
     });
 
     testWidgets('General tab displays compiled cache info and clears cache on button press', (tester) async {

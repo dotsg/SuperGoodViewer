@@ -758,6 +758,8 @@ class ZhHantStrings extends ZhHansStrings {
 
   // --- Settings Dialog - About Tab (cont.) ---
   @override
+  String get openProjectHomepage => '開啟專案首頁';
+  @override
   String get aboutEngineSection => '核心排版渲染引擎';
   @override
   String get aboutTypstDesc => '毫秒級編譯核心，完整支援進階數學公式、表格與程式碼區塊';

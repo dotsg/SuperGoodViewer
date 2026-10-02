@@ -335,6 +335,7 @@ abstract class AppStrings {
   String get resetShortcutToDefault;
 
   // --- Settings Dialog - About Tab (cont.) ---
+  String get openProjectHomepage;
   String get aboutEngineSection;
   String get aboutTypstDesc;
   String get aboutPdfiumTitle;

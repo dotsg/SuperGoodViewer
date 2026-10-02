@@ -733,6 +733,8 @@ class ZhHansStrings implements AppStrings {
 
   // --- Settings Dialog - About Tab (cont.) ---
   @override
+  String get openProjectHomepage => '打开项目主页';
+  @override
   String get aboutEngineSection => '核心排版渲染引擎';
   @override
   String get aboutTypstDesc => '毫秒级编译内核，完美支持高级数学公式、表格与代码块';

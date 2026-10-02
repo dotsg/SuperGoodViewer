@@ -779,6 +779,8 @@ class EnStrings implements AppStrings {
 
   // --- Settings Dialog - About Tab (cont.) ---
   @override
+  String get openProjectHomepage => 'Open Project Homepage';
+  @override
   String get aboutEngineSection => 'Core Rendering Engine';
   @override
   String get aboutTypstDesc => 'Millisecond-level compiler core with full support for advanced math, tables and code blocks';

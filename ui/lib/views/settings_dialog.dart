@@ -40,6 +40,7 @@ void showSettingsDialog(
 
 class SettingsDialog extends StatefulWidget {
   static const String appVersion = '1.0.9';
+  static const String projectHomepage = 'https://github.com/dotsg/SuperGoodViewer';
 
   final ReaderController controller;
   final SettingsTab initialTab;
@@ -345,8 +346,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
     );
   }
 
-  Future<void> _openMapleGitHub() async {
-    final uri = Uri.parse('https://github.com/subframe7536/maple-font/releases');
+  Future<void> _openMapleGitHub() => _openUrl('https://github.com/subframe7536/maple-font/releases');
+
+  Future<void> _openUrl(String url) async {
+    final uri = Uri.parse(url);
     try {
       if (await canLaunchUrl(uri)) {
         await launchUrl(uri);
@@ -2847,6 +2850,32 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       ),
                     ),
                 ],
+              ),
+              const SizedBox(height: 6),
+              Tooltip(
+                message: s.openProjectHomepage,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(4),
+                  onTap: () => _openUrl(SettingsDialog.projectHomepage),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.open_in_new_rounded, size: 13, color: theme.colorScheme.primary),
+                        const SizedBox(width: 4),
+                        Text(
+                          SettingsDialog.projectHomepage.replaceFirst('https://', ''),
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: theme.colorScheme.primary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
               if (_updateStatusMessage != null) ...[
                 const SizedBox(height: 6),
