@@ -278,6 +278,8 @@ class EnStrings implements AppStrings {
 
   // --- Settings Dialog - General Tab ---
   @override
+  String get languageSection => 'Language';
+  @override
   String get displayLanguage => 'Display Language';
   @override
   String get displayLanguageDesc => 'Select the display language for SuperGoodViewer';
@@ -289,6 +291,8 @@ class EnStrings implements AppStrings {
   String get langZhHant => '繁體中文 (Traditional Chinese)';
   @override
   String get langEn => 'English';
+  @override
+  String get appearanceSection => 'Appearance';
   @override
   String get themeMode => 'Appearance Theme';
   @override

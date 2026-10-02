@@ -272,23 +272,27 @@ class ZhHantStrings extends ZhHansStrings {
 
   // --- Settings Dialog - General Tab ---
   @override
+  String get languageSection => '語言';
+  @override
   String get displayLanguage => '介面語言';
   @override
   String get displayLanguageDesc => '選擇超好讀介面的顯示語言，即刻生效';
+  @override
+  String get appearanceSection => '外觀';
   @override
   String get themeMode => '外觀風格';
   @override
   String get themeModeDesc => '跟隨系統時，會隨作業系統的淺色 / 深色外觀自動切換';
   @override
-  String get themeSystem => '跟隨系統 (System)';
+  String get themeSystem => '跟隨系統';
   @override
-  String get themeLight => '明亮模式 (Light)';
+  String get themeLight => '明亮模式';
   @override
-  String get themeDark => '暗黑模式 (Dark)';
+  String get themeDark => '暗黑模式';
   @override
   String get autoReloadSection => '檔案自動重載';
   @override
-  String get autoReload => '檔案變動自動熱重載 (Auto Reload)';
+  String get autoReload => '檔案變動自動熱重載';
   @override
   String get autoReloadDesc => '本機檔案內容變更儲存後，無需手動重新整理即時重新渲染並保持目前閱讀進度';
   @override
@@ -320,15 +324,15 @@ class ZhHantStrings extends ZhHansStrings {
   @override
   String get layoutMode => '預設閱讀版式';
   @override
-  String get layoutModeFluid => '自適應長捲軸 (Fluid)';
+  String get layoutModeFluid => '自適應長捲軸';
   @override
-  String get layoutModeA4Portrait => 'A4 縱向分頁 (Portrait)';
+  String get layoutModeA4Portrait => 'A4 縱向分頁';
   @override
-  String get layoutModeA4Landscape => 'A4 橫向分頁 (Landscape)';
+  String get layoutModeA4Landscape => 'A4 橫向分頁';
   @override
-  String get layoutModeSlide169 => '16:9 寬螢幕投影片 (Slide)';
+  String get layoutModeSlide169 => '16:9 寬螢幕投影片';
   @override
-  String get layoutModeSlide43 => '4:3 傳統投影片 (Slide)';
+  String get layoutModeSlide43 => '4:3 傳統投影片';
   @override
   String get twoPageSpread => '雙頁對開檢視 (A4 / 投影片)';
   @override
@@ -368,17 +372,17 @@ class ZhHantStrings extends ZhHansStrings {
   @override
   String get slotNone => '無 (清除插槽)';
   @override
-  String get slotTitle => '文件標題 (Title)';
+  String get slotTitle => '文件標題';
   @override
-  String get slotPageNumber => '目前頁碼 (Page Number)';
+  String get slotPageNumber => '目前頁碼';
   @override
-  String get slotTotalPages => '總頁数 (Total Pages)';
+  String get slotTotalPages => '總頁數';
   @override
-  String get slotPageOfTotal => '第 X 頁 / 共 Y 頁 (Page of Total)';
+  String get slotPageOfTotal => '第 X 頁 / 共 Y 頁';
   @override
-  String get slotDate => '目前日期 (Date)';
+  String get slotDate => '目前日期';
   @override
-  String get slotTime => '目前時間 (Time)';
+  String get slotTime => '目前時間';
   @override
   String get showHeaderRule => '頁首底端分隔線';
   @override
@@ -453,7 +457,7 @@ class ZhHantStrings extends ZhHansStrings {
       case 'toggleMode':
         return '切換版式 / 檢視模式';
       case 'togglePresentation':
-        return '全螢幕單頁示範 (PPT)';
+        return '全螢幕單頁示範';
       case 'toggleTheme':
         return '切換明亮 / 暗黑模式';
       case 'toggleTwoPage':

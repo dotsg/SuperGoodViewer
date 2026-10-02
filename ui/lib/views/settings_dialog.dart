@@ -810,7 +810,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         }),
 
         const SizedBox(height: 18),
-        _buildSectionHeader('${widget.controller.strings.headerFooterSection} (Header & Footer)'),
+        _buildSectionHeader(widget.controller.strings.headerFooterSection),
         const SizedBox(height: 6),
         Text(
           '支持三插槽定制。可用占位宏：{title} (标题)、{page} (当前页)、{total} (总页数)、{date} (日期)。在流式模式下页眉页脚自动隐藏。',
@@ -945,7 +945,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ),
 
         const SizedBox(height: 20),
-        _buildSectionHeader('${widget.controller.strings.marpCompatibility} (Marp Directives)'),
+        _buildSectionHeader(widget.controller.strings.marpCompatibility),
         const SizedBox(height: 6),
         SwitchListTile(
           value: _marpEnabled,
@@ -1069,7 +1069,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // 1. Language Selector
-        _buildSectionHeader('${strings.displayLanguage} (Display Language)'),
+        _buildSectionHeader(strings.languageSection),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -1137,7 +1137,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         const SizedBox(height: 18),
 
         // Appearance Theme Selector
-        _buildSectionHeader('${strings.themeMode} (Appearance)'),
+        _buildSectionHeader(strings.appearanceSection),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.all(14),
@@ -1214,7 +1214,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         const SizedBox(height: 18),
 
         // 2. Sidebar Placement Selector
-        _buildSectionHeader('${strings.sidebarPositionSection} (Sidebar Placement)'),
+        _buildSectionHeader(strings.sidebarPositionSection),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.all(14),
@@ -1292,7 +1292,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         const SizedBox(height: 18),
 
         // Auto Reload Switch
-        _buildSectionHeader('${strings.autoReloadSection} (Hot Reload)'),
+        _buildSectionHeader(strings.autoReloadSection),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -1336,7 +1336,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         const SizedBox(height: 18),
 
         // Session & History
-        _buildSectionHeader('${strings.sessionSection} (Session & History)'),
+        _buildSectionHeader(strings.sessionSection),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -1441,7 +1441,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         const SizedBox(height: 18),
 
         // Compiled Document Cache Section
-        _buildSectionHeader('${strings.cacheSection} (Compiled Cache)'),
+        _buildSectionHeader(strings.cacheSection),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -2699,7 +2699,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ),
         const SizedBox(height: 18),
 
-        _buildSectionHeader('${s.cliUsageExamples} (Terminal Usage)'),
+        _buildSectionHeader(s.cliUsageExamples),
         const SizedBox(height: 8),
 
         _buildCliCodeSnippet(s.cliExampleCurrentDir, 'sgv README.md', isDark),

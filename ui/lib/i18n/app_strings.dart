@@ -135,12 +135,14 @@ abstract class AppStrings {
   String get tabAboutTitle;
 
   // --- Settings Dialog - General Tab ---
+  String get languageSection;
   String get displayLanguage;
   String get displayLanguageDesc;
   String get langSystem;
   String get langZhHans;
   String get langZhHant;
   String get langEn;
+  String get appearanceSection;
   String get themeMode;
   String get themeModeDesc;
   String get themeSystem;

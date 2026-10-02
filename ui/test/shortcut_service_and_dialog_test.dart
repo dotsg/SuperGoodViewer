@@ -224,7 +224,7 @@ void main() {
 
       // Primary actions are present
       expect(find.text('切换版式 / 视图模式'), findsOneWidget);
-      expect(find.text('全屏单页演示 (PPT)'), findsOneWidget);
+      expect(find.text('全屏单页演示'), findsOneWidget);
       expect(find.text('查找文档内容'), findsOneWidget);
       expect(find.text('导出为出版级 PDF'), findsOneWidget);
 

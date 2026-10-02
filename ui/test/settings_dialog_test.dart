@@ -70,13 +70,12 @@ void main() {
 
       // Verify General tab content (toolbar duplicate options removed)
       expect(find.text('常规与阅读偏好'), findsOneWidget);
-      expect(find.text('侧边栏布局 (Sidebar Placement)'), findsOneWidget);
-      expect(find.text('文件修改自动热重载 (Auto Reload)'), findsOneWidget);
-      expect(find.text('会话与历史记录 (Session & History)'), findsOneWidget);
+      expect(find.text('侧边栏布局'), findsOneWidget);
+      expect(find.text('文件修改自动热重载'), findsOneWidget);
+      expect(find.text('会话与历史记录'), findsOneWidget);
       expect(find.text('最近打开文档记录'), findsOneWidget);
       expect(find.text('启动恢复上次会话'), findsOneWidget);
       expect(find.text('默认排版模式 (Default View Mode)'), findsNothing);
-      expect(find.text('阅读外观主题 (Appearance Theme)'), findsNothing);
       expect(find.text('A4 页面展示偏好 (Spread Layout)'), findsNothing);
 
       // Switch to Typography tab
@@ -232,15 +231,16 @@ void main() {
         ),
       );
 
-      expect(find.text('外观主题 (Appearance)'), findsOneWidget);
+      expect(find.text('外观'), findsOneWidget);
+      expect(find.text('外观主题'), findsOneWidget);
       expect(controller.themePreference, ThemePreference.system);
 
-      await tester.tap(find.text('暗黑模式 (Dark)'));
+      await tester.tap(find.text('暗黑模式'));
       await tester.pumpAndSettle();
       expect(controller.themePreference, ThemePreference.dark);
       expect(controller.renderOptions.theme, 'dark');
 
-      await tester.tap(find.text('跟随系统 (System)'));
+      await tester.tap(find.text('跟随系统'));
       await tester.pumpAndSettle();
       expect(controller.themePreference, ThemePreference.system);
       expect(controller.renderOptions.theme, 'light');
@@ -274,7 +274,7 @@ void main() {
       await tester.pump();
 
       // Verify cache section elements
-      expect(find.text('预编译 PDF 缓存 (Compiled Cache)'), findsOneWidget);
+      expect(find.text('预编译 PDF 缓存'), findsOneWidget);
       expect(find.text('本地磁盘缓存'), findsOneWidget);
       expect(find.textContaining('已缓存 1 个文档'), findsOneWidget);
       expect(find.text('打开目录'), findsOneWidget);

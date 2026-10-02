@@ -37,7 +37,7 @@ class ShortcutService extends ChangeNotifier {
     ),
     AppShortcutAction(
       id: 'togglePresentation',
-      name: '全屏单页演示 (PPT)',
+      name: '全屏单页演示',
       category: '视图模式',
       description: '进入或退出全屏单页幻灯片演示模式，方便演讲展示',
       defaultKey: LogicalKeyboardKey.keyP,

@@ -272,11 +272,13 @@ class ZhHansStrings implements AppStrings {
 
   // --- Settings Dialog - General Tab ---
   @override
+  String get languageSection => '语言';
+  @override
   String get displayLanguage => '界面语言';
   @override
   String get displayLanguageDesc => '选择超好读界面的显示语言，即刻生效';
   @override
-  String get langSystem => '跟随系统 (System Default)';
+  String get langSystem => '跟随系统';
   @override
   String get langZhHans => '简体中文';
   @override
@@ -284,19 +286,21 @@ class ZhHansStrings implements AppStrings {
   @override
   String get langEn => 'English';
   @override
+  String get appearanceSection => '外观';
+  @override
   String get themeMode => '外观主题';
   @override
   String get themeModeDesc => '跟随系统时，会随操作系统的浅色 / 深色外观自动切换';
   @override
-  String get themeSystem => '跟随系统 (System)';
+  String get themeSystem => '跟随系统';
   @override
-  String get themeLight => '明亮模式 (Light)';
+  String get themeLight => '明亮模式';
   @override
-  String get themeDark => '暗黑模式 (Dark)';
+  String get themeDark => '暗黑模式';
   @override
   String get autoReloadSection => '文档自动重载';
   @override
-  String get autoReload => '文件修改自动热重载 (Auto Reload)';
+  String get autoReload => '文件修改自动热重载';
   @override
   String get autoReloadDesc => '本地文件内容变更保存后，无需手动刷新即时重新渲染并保持当前阅读进度';
   @override
@@ -328,15 +332,15 @@ class ZhHansStrings implements AppStrings {
   @override
   String get layoutMode => '默认阅读版式';
   @override
-  String get layoutModeFluid => '自适应长卷轴 (Fluid)';
+  String get layoutModeFluid => '自适应长卷轴';
   @override
-  String get layoutModeA4Portrait => 'A4 纵向分页 (Portrait)';
+  String get layoutModeA4Portrait => 'A4 纵向分页';
   @override
-  String get layoutModeA4Landscape => 'A4 横向分页 (Landscape)';
+  String get layoutModeA4Landscape => 'A4 横向分页';
   @override
-  String get layoutModeSlide169 => '16:9 宽屏幻灯片 (Slide)';
+  String get layoutModeSlide169 => '16:9 宽屏幻灯片';
   @override
-  String get layoutModeSlide43 => '4:3 传统幻灯片 (Slide)';
+  String get layoutModeSlide43 => '4:3 传统幻灯片';
   @override
   String get twoPageSpread => '双页对开浏览 (A4 / 幻灯片)';
   @override
@@ -376,17 +380,17 @@ class ZhHansStrings implements AppStrings {
   @override
   String get slotNone => '无 (清空插槽)';
   @override
-  String get slotTitle => '文档标题 (Title)';
+  String get slotTitle => '文档标题';
   @override
-  String get slotPageNumber => '当前页码 (Page Number)';
+  String get slotPageNumber => '当前页码';
   @override
-  String get slotTotalPages => '总页数 (Total Pages)';
+  String get slotTotalPages => '总页数';
   @override
-  String get slotPageOfTotal => '第 X 页 / 共 Y 页 (Page of Total)';
+  String get slotPageOfTotal => '第 X 页 / 共 Y 页';
   @override
-  String get slotDate => '当前日期 (Date)';
+  String get slotDate => '当前日期';
   @override
-  String get slotTime => '当前时间 (Time)';
+  String get slotTime => '当前时间';
   @override
   String get showHeaderRule => '页眉底端分割线';
   @override
@@ -450,7 +454,7 @@ class ZhHansStrings implements AppStrings {
       case 'toggleMode':
         return '切换版式 / 视图模式';
       case 'togglePresentation':
-        return '全屏单页演示 (PPT)';
+        return '全屏单页演示';
       case 'toggleTheme':
         return '切换明亮 / 暗黑模式';
       case 'toggleTwoPage':
