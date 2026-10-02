@@ -11,6 +11,7 @@ import 'package:path/path.dart' as p;
 import '../controllers/reader_controller.dart';
 import '../i18n/app_strings.dart';
 import '../models/render_options.dart';
+import '../services/shortcut_service.dart';
 import '../services/cli_ipc_service.dart';
 import '../services/native_cli_service.dart';
 import 'pdf_canvas_view.dart';
@@ -1656,6 +1657,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 autoFitMode: controller.autoFitMode,
                 isDark: isDark,
                 strings: controller.strings,
+                shortcuts: controller.shortcutService,
                 onZoomSelected: (zoom) {
                   if (zoom == -1.0) {
                     _handleFitWidth();
@@ -1936,14 +1938,19 @@ class _ZoomDropdownBadge extends StatelessWidget {
   final bool isDark;
   final ValueChanged<double> onZoomSelected;
   final AppStrings strings;
+  final ShortcutService shortcuts;
 
   const _ZoomDropdownBadge({
     required this.currentZoom,
     required this.autoFitMode,
     required this.isDark,
     required this.strings,
+    required this.shortcuts,
     required this.onZoomSelected,
   });
+
+  Widget _shortcutHint(String label) =>
+      Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey));
 
   @override
   Widget build(BuildContext context) {
@@ -1979,7 +1986,7 @@ class _ZoomDropdownBadge extends StatelessWidget {
               if (autoFitMode == AutoFitMode.fitWidth)
                 Icon(Icons.check_rounded, size: 14, color: theme.colorScheme.primary)
               else
-                const Text('Cmd+9', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                _shortcutHint(shortcuts.getShortcutLabel('fitWidth')),
             ],
           ),
         ),
@@ -2005,7 +2012,7 @@ class _ZoomDropdownBadge extends StatelessWidget {
               if (autoFitMode == AutoFitMode.fitPage)
                 Icon(Icons.check_rounded, size: 14, color: theme.colorScheme.primary)
               else
-                const Text('Cmd+1', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                _shortcutHint(shortcuts.getShortcutLabel('fitPage')),
             ],
           ),
         ),
@@ -2017,14 +2024,15 @@ class _ZoomDropdownBadge extends StatelessWidget {
               const SizedBox(width: 8),
               Text(strings.fullScreenImmersive, style: const TextStyle(fontSize: 12.5)),
               const Spacer(),
-              const Text('Cmd+Ctrl+F', style: TextStyle(fontSize: 11, color: Colors.grey)),
+              // Matches the fixed bindings registered in the workspace shortcuts.
+              _shortcutHint(ShortcutService.isMacLayout ? 'Cmd+Ctrl+F' : 'F11'),
             ],
           ),
         ),
         const PopupMenuDivider(),
         _buildZoomItem(0.50, '50%'),
         _buildZoomItem(0.75, '75%'),
-        _buildZoomItem(1.00, strings.originalSize, shortcut: 'Cmd+0'),
+        _buildZoomItem(1.00, strings.originalSize, shortcut: shortcuts.getShortcutLabel('resetZoom')),
         _buildZoomItem(1.25, '125%'),
         _buildZoomItem(1.50, '150%'),
         _buildZoomItem(2.00, '200%'),

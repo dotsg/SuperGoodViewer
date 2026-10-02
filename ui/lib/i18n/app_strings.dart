@@ -376,4 +376,7 @@ abstract class AppStrings {
   String get desktopEntryRemoved;
   String desktopEntryFailed(String error);
   String get desktopEntryGenericName;
+
+  // --- Settings Dialog - Shortcuts Tab (unassigned) ---
+  String get shortcutUnassigned;
 }

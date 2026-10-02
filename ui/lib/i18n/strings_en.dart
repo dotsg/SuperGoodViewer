@@ -852,4 +852,8 @@ class EnStrings implements AppStrings {
   String desktopEntryFailed(String error) => 'Failed: $error';
   @override
   String get desktopEntryGenericName => 'Markdown Viewer';
+
+  // --- Settings Dialog - Shortcuts Tab (unassigned) ---
+  @override
+  String get shortcutUnassigned => 'Not set';
 }

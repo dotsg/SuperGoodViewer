@@ -2664,7 +2664,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     ),
                     const SizedBox(width: 5),
                     Text(
-                      isListening ? strings.pressNewShortcut : shortcutLabel,
+                      isListening
+                          ? strings.pressNewShortcut
+                          : (shortcutLabel.isEmpty ? strings.shortcutUnassigned : shortcutLabel),
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,

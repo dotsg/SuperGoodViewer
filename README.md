@@ -211,13 +211,15 @@ cat draft.md | sgv export - -o draft.pdf
 | `Cmd + Shift + G` / `Shift + Enter` | `Shift + F3` / `Shift + Enter` | 跳转到上一个搜索匹配项 |
 | `Cmd + P` | `Ctrl + P` | **导出出版级无损明亮 PDF（无需重新排版，仅一次文件写入）** |
 | `Cmd + D` | `Ctrl + D` | 切换单页纵向 / 双页对开书籍阅读 |
-| `Cmd + T` | `Ctrl + T` | 切换浅色 (Light) / 暗黑 (Dark) 主题 |
+| `Cmd + Shift + L` | `Ctrl + Shift + L` | 切换浅色 / 暗黑主题（设置中可选“跟随系统”） |
 | `Cmd + B` | `Ctrl + B` | 展开 / 折叠左侧目录与管理侧边栏 |
 | `Cmd + \` | `Ctrl + \` | 显示 / 隐藏底部浮动工具栏 (Zen 模式) |
 | `Cmd + ,` | `Ctrl + ,` | 打开偏好设置面板（版式/页眉页脚/字体/CLI） |
 | `Cmd + Ctrl + F` | `F11` | 进入 / 退出操作系统全屏模式 |
 | `Cmd + +` / `-` | `Ctrl + +` / `-` | 放大 / 缩小阅读视口渲染比例 (100% ~ 300%) |
-| `Cmd + 0` | `Ctrl + 0` | 恢复 100% 原始视口缩放比例 |
+| `Cmd + 0` | `Ctrl + 1` | 恢复 100% 原始视口缩放比例 |
+| `Cmd + 9` | `Ctrl + 0` | 适应整页（macOS 同“预览”，Windows / Linux 同 SumatraPDF 与 Acrobat） |
+| `Cmd + 8` | `Ctrl + 2` | 适应窗口宽度 |
 
 ### 📽 全屏演示模式专有控制键 (Presentation HUD)
 

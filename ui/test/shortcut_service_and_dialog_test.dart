@@ -59,9 +59,75 @@ void main() {
       expect(service.getKey('openFile'), LogicalKeyboardKey.keyO);
       expect(service.getKey('toggleSidebar'), LogicalKeyboardKey.keyB);
       expect(service.getKey('compileDocument'), LogicalKeyboardKey.keyR);
-      expect(service.getKey('toggleTheme'), LogicalKeyboardKey.keyT);
+      expect(service.getKey('toggleTheme'), LogicalKeyboardKey.keyL);
+      expect(service.getShortcutLabel('toggleTheme'), endsWith('Shift+L'));
       expect(service.getKey('toggleTwoPage'), LogicalKeyboardKey.keyD);
       expect(service.getKey('keyboardShortcuts'), LogicalKeyboardKey.comma);
+    });
+
+    group('zoom defaults follow each platform', () {
+      tearDown(() => ShortcutService.debugIsMacLayout = null);
+
+      test('macOS follows Preview', () {
+        ShortcutService.debugIsMacLayout = true;
+        final service = ShortcutService();
+        expect(service.getShortcutLabel('resetZoom'), 'Cmd+0');
+        expect(service.getShortcutLabel('fitPage'), 'Cmd+9');
+        expect(service.getShortcutLabel('fitWidth'), 'Cmd+8');
+        expect(service.getShortcutLabel('toggleTheme'), 'Cmd+Shift+L');
+      });
+
+      test('Windows and Linux follow SumatraPDF and Acrobat', () {
+        ShortcutService.debugIsMacLayout = false;
+        final service = ShortcutService();
+        expect(service.getShortcutLabel('fitPage'), 'Ctrl+0');
+        expect(service.getShortcutLabel('resetZoom'), 'Ctrl+1');
+        expect(service.getShortcutLabel('fitWidth'), 'Ctrl+2');
+        expect(service.getShortcutLabel('toggleTheme'), 'Ctrl+Shift+L');
+      });
+
+      test('a persisted platform default is not stored as a customization', () {
+        ShortcutService.debugIsMacLayout = false;
+        final service = ShortcutService()..loadFromMap({'fitWidth': '2'}, notify: false);
+        expect(service.isCustomized('fitWidth'), isFalse);
+      });
+    });
+
+    test('a user binding wins over a default that moved onto the same key', () {
+      ShortcutService.debugIsMacLayout = false;
+      addTearDown(() => ShortcutService.debugIsMacLayout = null);
+      // Saved before Ctrl+2 became the fit-width default.
+      final service = ShortcutService()..loadFromMap({'compileDocument': '2'}, notify: false);
+
+      expect(service.isShadowed('fitWidth'), isTrue);
+      expect(service.getShortcutLabel('fitWidth'), isEmpty);
+      expect(service.findConflict('openFile', LogicalKeyboardKey.digit2), '刷新 / 重新编译');
+
+      var compiled = 0;
+      var fitted = 0;
+      void noop() {}
+      final bindings = service.buildBindings(
+        onToggleMode: noop, onExportPdf: noop, onOpenFile: noop, onToggleSidebar: noop,
+        onCompileDocument: () => compiled++, onToggleTheme: noop, onToggleTwoPage: noop,
+        onZoomIn: noop, onZoomOut: noop, onResetZoom: noop, onFitWidth: () => fitted++,
+        onFitPage: noop, onToggleToolbar: noop, onFontSettings: noop,
+      );
+      final ctrl2 = bindings.entries.where((e) {
+        final activator = e.key;
+        return activator is SingleActivator &&
+            activator.trigger == LogicalKeyboardKey.digit2 &&
+            activator.control &&
+            !activator.shift;
+      }).toList();
+      expect(ctrl2, hasLength(1));
+      ctrl2.single.value();
+      expect(compiled, 1);
+      expect(fitted, 0);
+
+      // Moving the custom binding away frees the default again.
+      service.resetKey('compileDocument');
+      expect(service.isShadowed('fitWidth'), isFalse);
+      expect(service.getShortcutLabel('fitWidth'), 'Ctrl+2');
     });
 
     test('rebinding, customization detection and reset work properly', () {

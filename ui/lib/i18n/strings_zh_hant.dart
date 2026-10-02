@@ -831,4 +831,8 @@ class ZhHantStrings extends ZhHansStrings {
   String desktopEntryFailed(String error) => '操作失敗：$error';
   @override
   String get desktopEntryGenericName => 'Markdown 閱讀器';
+
+  // --- Settings Dialog - Shortcuts Tab (unassigned) ---
+  @override
+  String get shortcutUnassigned => '未設定';
 }

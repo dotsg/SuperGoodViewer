@@ -806,4 +806,8 @@ class ZhHansStrings implements AppStrings {
   String desktopEntryFailed(String error) => '操作失败：$error';
   @override
   String get desktopEntryGenericName => 'Markdown 阅读器';
+
+  // --- Settings Dialog - Shortcuts Tab (unassigned) ---
+  @override
+  String get shortcutUnassigned => '未设置';
 }
