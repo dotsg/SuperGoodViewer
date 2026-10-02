@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
-import 'dart:ui' show Locale;
+import 'dart:ui' show Brightness, Locale, PlatformDispatcher;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -138,11 +138,14 @@ class ReaderController extends ChangeNotifier {
   bool renderOptionsChanged = false;
 
   String _language = 'zhHans';
+  String _themePreference = ThemePreference.system;
+  Brightness _platformBrightness = PlatformDispatcher.instance.platformBrightness;
 
   // Getters
   String get language => _language;
   Locale? get currentLocale => AppLanguage.fromCode(_language).locale;
   AppStrings get strings => AppI18n.resolve(_language);
+  String get themePreference => _themePreference;
 
   void setLanguage(String lang) {
     if (_language != lang) {
@@ -491,6 +494,7 @@ class ReaderController extends ChangeNotifier {
     if (defaultLanguage != null) {
       _language = defaultLanguage;
     }
+    _renderOptions = _renderOptions.copyWith(theme: _resolveTheme());
     unawaited(refreshFontReport());
     _setSampleDocumentContent();
     if (initialFilePath != null && initialFilePath.isNotEmpty && File(initialFilePath).existsSync()) {
@@ -510,6 +514,7 @@ class ReaderController extends ChangeNotifier {
       final prefs = PreferencesService.loadSync();
       final savedLanguage = prefs['language'] as String?;
       final savedTheme = prefs['theme'] as String?;
+      final rawThemeMode = prefs['themeMode'] as String?;
       final savedMode = prefs['mode'] as String?;
       final savedTwoPage = prefs['isTwoPage'] as bool?;
       final savedSidebarOpen = prefs['isSidebarOpen'] as bool?;
@@ -546,7 +551,16 @@ class ReaderController extends ChangeNotifier {
         _recentFiles.addAll(recent);
       }
 
+      // Preferences written before the "follow system" option only carry the
+      // resolved theme; treat that as an explicit choice so nothing flips.
+      if (rawThemeMode != null && ThemePreference.all.contains(rawThemeMode)) {
+        _themePreference = rawThemeMode;
+      } else if (savedTheme == ThemePreference.light || savedTheme == ThemePreference.dark) {
+        _themePreference = savedTheme!;
+      }
+
       if (savedTheme != null ||
+          rawThemeMode != null ||
           savedMode != null ||
           savedFontSize != null ||
           savedBodyFont != null ||
@@ -564,7 +578,7 @@ class ReaderController extends ChangeNotifier {
           savedSkipFirstPage != null ||
           savedMarpEnabled != null) {
         _renderOptions = _renderOptions.copyWith(
-          theme: savedTheme ?? _renderOptions.theme,
+          theme: _resolveTheme(),
           mode: savedMode ?? _renderOptions.mode,
           pageFormat: savedPageFormat ?? _renderOptions.pageFormat,
           fontSize: savedFontSize ?? _renderOptions.fontSize,
@@ -676,6 +690,7 @@ class ReaderController extends ChangeNotifier {
       'lastOpenedFile': _currentFilePath,
       'recentFiles': List<String>.from(_recentFiles),
       'theme': _renderOptions.theme,
+      'themeMode': _themePreference,
       'mode': _renderOptions.mode,
       'pageFormat': _renderOptions.effectivePageFormat,
       'lastPagedFormat': _lastPagedFormat,
@@ -1278,9 +1293,40 @@ class ReaderController extends ChangeNotifier {
     compileDocument();
   }
 
+  String _resolveTheme() {
+    if (_themePreference != ThemePreference.system) return _themePreference;
+    return _platformBrightness == Brightness.dark ? 'dark' : 'light';
+  }
+
+  /// Flips the visible theme. This is an explicit choice, so it leaves
+  /// "follow system" mode; the settings dialog switches it back on.
   void toggleTheme() {
+    _themePreference = _renderOptions.isDark ? ThemePreference.light : ThemePreference.dark;
+    _applyTheme(_themePreference);
+  }
+
+  void setThemePreference(String preference) {
+    if (!ThemePreference.all.contains(preference) || preference == _themePreference) return;
+    _themePreference = preference;
+    _applyTheme(_resolveTheme());
+  }
+
+  /// Called by the app shell whenever the OS light/dark appearance changes.
+  void updatePlatformBrightness(Brightness brightness) {
+    if (_platformBrightness == brightness) return;
+    _platformBrightness = brightness;
+    if (_themePreference == ThemePreference.system) {
+      _applyTheme(_resolveTheme());
+    }
+  }
+
+  void _applyTheme(String nextTheme) {
+    if (nextTheme == _renderOptions.theme) {
+      _persistDebounced();
+      notifyListeners();
+      return;
+    }
     if (isPdfDocument) {
-      final nextTheme = _renderOptions.theme == 'light' ? 'dark' : 'light';
       _renderOptions = _renderOptions.copyWith(theme: nextTheme);
       _persistDebounced();
       notifyListeners();
@@ -1288,7 +1334,6 @@ class ReaderController extends ChangeNotifier {
     }
     renderOptionsChanged = true;
     startReloading();
-    final nextTheme = _renderOptions.theme == 'light' ? 'dark' : 'light';
     _renderOptions = _renderOptions.copyWith(theme: nextTheme);
     _persistDebounced();
     notifyListeners();
@@ -1297,7 +1342,7 @@ class ReaderController extends ChangeNotifier {
       if (cached != null && cached.isNotEmpty) {
         _currentPdfBytes = cached;
         _errorMessage = null;
-        debugPrint('[ReaderController] Theme toggle cache hit: instant PDF loaded');
+        debugPrint('[ReaderController] Theme change cache hit: instant PDF loaded');
         notifyListeners();
         return;
       }

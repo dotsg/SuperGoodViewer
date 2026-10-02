@@ -119,6 +119,54 @@ void main() {
       expect(controller.renderOptions.theme, 'light');
     });
 
+    test('follows system brightness by default', () {
+      final controller = ReaderController();
+      expect(controller.themePreference, ThemePreference.system);
+
+      controller.updatePlatformBrightness(Brightness.dark);
+      expect(controller.renderOptions.theme, 'dark');
+      controller.updatePlatformBrightness(Brightness.light);
+      expect(controller.renderOptions.theme, 'light');
+    });
+
+    test('explicit theme ignores system brightness changes', () {
+      final controller = ReaderController();
+      controller.setThemePreference(ThemePreference.light);
+      controller.updatePlatformBrightness(Brightness.dark);
+      expect(controller.renderOptions.theme, 'light');
+
+      controller.setThemePreference(ThemePreference.system);
+      expect(controller.renderOptions.theme, 'dark');
+    });
+
+    test('toggleTheme leaves follow-system mode with the opposite theme', () {
+      final controller = ReaderController();
+      controller.updatePlatformBrightness(Brightness.dark);
+      controller.toggleTheme();
+      expect(controller.themePreference, ThemePreference.light);
+      expect(controller.renderOptions.theme, 'light');
+
+      controller.updatePlatformBrightness(Brightness.light);
+      controller.updatePlatformBrightness(Brightness.dark);
+      expect(controller.renderOptions.theme, 'light');
+    });
+
+    test('legacy preferences without themeMode keep their explicit theme', () {
+      File(p.join(tempTestDir.path, 'preferences.json')).writeAsStringSync('{"theme":"dark"}');
+      final controller = ReaderController();
+      expect(controller.themePreference, ThemePreference.dark);
+      expect(controller.renderOptions.theme, 'dark');
+    });
+
+    test('restores a saved follow-system preference', () {
+      File(p.join(tempTestDir.path, 'preferences.json'))
+          .writeAsStringSync('{"theme":"dark","themeMode":"system"}');
+      final controller = ReaderController();
+      expect(controller.themePreference, ThemePreference.system);
+      // The test platform reports light, so the stale saved "dark" is not used.
+      expect(controller.renderOptions.theme, 'light');
+    });
+
     test('updates scroll ratio correctly within [0.0, 1.0]', () {
       final controller = ReaderController();
       controller.updateScrollRatio(0.45);

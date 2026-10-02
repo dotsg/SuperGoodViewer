@@ -300,6 +300,17 @@ static void window_channel_method_call_cb(FlMethodChannel* channel,
     g_autoptr(FlMethodResponse) response =
         FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
     fl_method_call_respond(method_call, response, nullptr);
+  } else if (g_strcmp0(method, "setDarkTitleBar") == 0) {
+    // GTK3 themes such as Adwaita ship a dark variant for the header bar and
+    // GTK dialogs; a theme that is dark by name cannot be forced back to light.
+    if (fl_value_get_type(args) == FL_VALUE_TYPE_BOOL) {
+      g_object_set(gtk_settings_get_default(),
+                   "gtk-application-prefer-dark-theme",
+                   fl_value_get_bool(args), nullptr);
+    }
+    g_autoptr(FlMethodResponse) response =
+        FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
+    fl_method_call_respond(method_call, response, nullptr);
   } else {
     g_autoptr(FlMethodResponse) response =
         FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());

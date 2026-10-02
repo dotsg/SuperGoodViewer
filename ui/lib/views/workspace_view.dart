@@ -122,6 +122,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _updateTrafficLights();
       _syncWindowTitle();
+      _syncWindowTheme();
     });
     widget.controller.addListener(_onControllerChanged);
     final enableIntegration = widget.enableSystemIntegration ?? WorkspaceView.defaultEnableSystemIntegration;
@@ -172,6 +173,19 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       try {
         _windowChannel.invokeMethod('setWindowTitle', fullTitle);
       } catch (_) {}
+    }
+  }
+
+  bool? _lastSyncedDark;
+
+  /// Native Windows / GTK title bars only track the system theme on their own,
+  /// so pin them to the app theme (which may be an explicit light/dark choice).
+  void _syncWindowTheme() {
+    if (!Platform.isWindows && !Platform.isLinux) return;
+    final isDark = widget.controller.renderOptions.isDark;
+    if (_lastSyncedDark != isDark) {
+      _lastSyncedDark = isDark;
+      _windowChannel.invokeMethod('setDarkTitleBar', isDark).catchError((_) {});
     }
   }
 
@@ -230,6 +244,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       }
     }
     _syncWindowTitle();
+    _syncWindowTheme();
     _updateTrafficLights();
   }
 

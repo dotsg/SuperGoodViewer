@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sogoodviewer/controllers/reader_controller.dart';
+import 'package:sogoodviewer/models/render_options.dart';
 import 'package:sogoodviewer/services/document_cache_service.dart';
 import 'package:sogoodviewer/views/settings_dialog.dart';
 
@@ -211,6 +212,38 @@ void main() {
       await tester.pumpAndSettle();
       expect(controller.renderOptions.fontSize, 10.5);
       expect(find.textContaining('10.5 pt'), findsWidgets);
+    });
+
+    testWidgets('General tab appearance selector switches theme preference', (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SettingsDialog(
+            controller: controller,
+            initialTab: SettingsTab.general,
+          ),
+        ),
+      );
+
+      expect(find.text('外观主题 (Appearance)'), findsOneWidget);
+      expect(controller.themePreference, ThemePreference.system);
+
+      await tester.tap(find.text('暗黑模式 (Dark)'));
+      await tester.pumpAndSettle();
+      expect(controller.themePreference, ThemePreference.dark);
+      expect(controller.renderOptions.theme, 'dark');
+
+      await tester.tap(find.text('跟随系统 (System)'));
+      await tester.pumpAndSettle();
+      expect(controller.themePreference, ThemePreference.system);
+      expect(controller.renderOptions.theme, 'light');
     });
 
     testWidgets('General tab displays compiled cache info and clears cache on button press', (tester) async {

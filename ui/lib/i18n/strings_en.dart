@@ -292,6 +292,10 @@ class EnStrings implements AppStrings {
   @override
   String get themeMode => 'Appearance Theme';
   @override
+  String get themeModeDesc => 'Follow System switches automatically with the OS light / dark appearance';
+  @override
+  String get themeSystem => 'Follow System';
+  @override
   String get themeLight => 'Light Mode';
   @override
   String get themeDark => 'Dark Mode';

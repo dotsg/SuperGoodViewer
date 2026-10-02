@@ -278,6 +278,10 @@ class ZhHantStrings extends ZhHansStrings {
   @override
   String get themeMode => '外觀風格';
   @override
+  String get themeModeDesc => '跟隨系統時，會隨作業系統的淺色 / 深色外觀自動切換';
+  @override
+  String get themeSystem => '跟隨系統 (System)';
+  @override
   String get themeLight => '明亮模式 (Light)';
   @override
   String get themeDark => '暗黑模式 (Dark)';

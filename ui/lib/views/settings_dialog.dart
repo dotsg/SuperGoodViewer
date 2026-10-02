@@ -1136,6 +1136,83 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ),
         const SizedBox(height: 18),
 
+        // Appearance Theme Selector
+        _buildSectionHeader('${strings.themeMode} (Appearance)'),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF9F9F9),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.contrast_rounded, size: 22, color: theme.colorScheme.primary),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          strings.themeMode,
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          strings.themeModeDesc,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<String>(
+                  segments: [
+                    ButtonSegment<String>(
+                      value: ThemePreference.system,
+                      icon: const Icon(Icons.brightness_auto_outlined, size: 15),
+                      label: Text(strings.themeSystem, style: const TextStyle(fontSize: 12)),
+                    ),
+                    ButtonSegment<String>(
+                      value: ThemePreference.light,
+                      icon: const Icon(Icons.light_mode_outlined, size: 15),
+                      label: Text(strings.themeLight, style: const TextStyle(fontSize: 12)),
+                    ),
+                    ButtonSegment<String>(
+                      value: ThemePreference.dark,
+                      icon: const Icon(Icons.dark_mode_outlined, size: 15),
+                      label: Text(strings.themeDark, style: const TextStyle(fontSize: 12)),
+                    ),
+                  ],
+                  selected: {controller.themePreference},
+                  onSelectionChanged: (newSelection) {
+                    controller.setThemePreference(newSelection.first);
+                    setState(() {});
+                  },
+                  style: const ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+
         // 2. Sidebar Placement Selector
         _buildSectionHeader('${strings.sidebarPositionSection} (Sidebar Placement)'),
         const SizedBox(height: 6),

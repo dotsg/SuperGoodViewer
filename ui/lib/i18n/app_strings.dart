@@ -142,6 +142,8 @@ abstract class AppStrings {
   String get langZhHant;
   String get langEn;
   String get themeMode;
+  String get themeModeDesc;
+  String get themeSystem;
   String get themeLight;
   String get themeDark;
   String get autoReloadSection;

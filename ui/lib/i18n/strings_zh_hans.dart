@@ -286,6 +286,10 @@ class ZhHansStrings implements AppStrings {
   @override
   String get themeMode => '外观主题';
   @override
+  String get themeModeDesc => '跟随系统时，会随操作系统的浅色 / 深色外观自动切换';
+  @override
+  String get themeSystem => '跟随系统 (System)';
+  @override
   String get themeLight => '明亮模式 (Light)';
   @override
   String get themeDark => '暗黑模式 (Dark)';

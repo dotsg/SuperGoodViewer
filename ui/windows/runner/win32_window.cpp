@@ -272,7 +272,21 @@ void Win32Window::OnDestroy() {
   // No-op; provided for subclasses.
 }
 
+void Win32Window::SetDarkMode(bool dark) {
+  dark_mode_ = dark;
+  if (window_handle_) {
+    UpdateTheme(window_handle_);
+  }
+}
+
 void Win32Window::UpdateTheme(HWND const window) {
+  if (dark_mode_.has_value()) {
+    BOOL enable_dark_mode = *dark_mode_;
+    DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                          &enable_dark_mode, sizeof(enable_dark_mode));
+    return;
+  }
+
   DWORD light_mode;
   DWORD light_mode_size = sizeof(light_mode);
   LSTATUS result = RegGetValue(HKEY_CURRENT_USER, kGetPreferredBrightnessRegKey,

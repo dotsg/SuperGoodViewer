@@ -35,6 +35,16 @@ class PageFormat {
   }
 }
 
+/// User-facing appearance preference. [RenderOptions.theme] always holds the
+/// resolved "light" / "dark" value; [system] resolves it from the OS brightness.
+class ThemePreference {
+  static const String system = 'system';
+  static const String light = 'light';
+  static const String dark = 'dark';
+
+  static const List<String> all = [system, light, dark];
+}
+
 /// Represents rendering configuration for SuperGoodViewer.
 class RenderOptions {
   final String mode; // "fluid" (continuous auto-height) or "paged" (paginated)

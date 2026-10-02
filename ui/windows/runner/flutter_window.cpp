@@ -88,6 +88,12 @@ void FlutterWindow::SetupMethodChannels() {
             ::SetWindowTextW(this->GetHandle(), wide_title.c_str());
           }
           result->Success();
+        } else if (call.method_name() == "setDarkTitleBar") {
+          const auto* dark = std::get_if<bool>(call.arguments());
+          if (dark) {
+            this->SetDarkMode(*dark);
+          }
+          result->Success();
         } else {
           result->NotImplemented();
         }
