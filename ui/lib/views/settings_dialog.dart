@@ -1411,6 +1411,68 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ),
         const SizedBox(height: 18),
 
+        // Open behavior: new tab or replace the current document
+        _buildSectionHeader(strings.openBehaviorTitle),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF9F9F9),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.tab_rounded, size: 22, color: theme.colorScheme.primary),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      strings.openBehaviorDesc,
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<bool>(
+                  segments: [
+                    ButtonSegment<bool>(
+                      value: true,
+                      icon: const Icon(Icons.add_box_outlined, size: 15),
+                      label: Text(strings.openInNewTab, style: const TextStyle(fontSize: 12)),
+                    ),
+                    ButtonSegment<bool>(
+                      value: false,
+                      icon: const Icon(Icons.swap_horiz_rounded, size: 15),
+                      label: Text(strings.openReplaceCurrent, style: const TextStyle(fontSize: 12)),
+                    ),
+                  ],
+                  selected: {controller.openInNewTab},
+                  onSelectionChanged: (newSelection) {
+                    controller.setOpenInNewTab(newSelection.first);
+                    setState(() {});
+                  },
+                  style: const ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+
         // Auto Reload Switch
         _buildSectionHeader(strings.autoReloadSection),
         const SizedBox(height: 6),

@@ -409,6 +409,8 @@ class EnStrings implements AppStrings {
   @override
   String shortcutCategoryName(String category) {
     switch (category) {
+      case '标签页':
+        return 'Tabs';
       case '视图模式':
         return 'View & Layout';
       case '文档文件':
@@ -424,6 +426,16 @@ class EnStrings implements AppStrings {
   @override
   String shortcutActionName(String id, String defaultName) {
     switch (id) {
+      case 'openFileInNewTab':
+        return 'Open File in New Tab';
+      case 'closeTab':
+        return 'Close Tab';
+      case 'reopenClosedTab':
+        return 'Reopen Closed Tab';
+      case 'nextTab':
+        return 'Next Tab';
+      case 'previousTab':
+        return 'Previous Tab';
       case 'preferences':
         return 'Preferences';
       case 'fontSettings':
@@ -469,6 +481,16 @@ class EnStrings implements AppStrings {
   @override
   String shortcutActionDesc(String id, String defaultDesc) {
     switch (id) {
+      case 'openFileInNewTab':
+        return 'Pick a file and always open it in a new tab';
+      case 'closeTab':
+        return 'Close the current tab; closing the last one returns to the welcome document';
+      case 'reopenClosedTab':
+        return 'Reopen recently closed tabs, most recent first';
+      case 'nextTab':
+        return 'Switch to the tab on the right (also Ctrl+Tab, Ctrl+PageDown)';
+      case 'previousTab':
+        return 'Switch to the tab on the left (also Ctrl+Shift+Tab, Ctrl+PageUp)';
       case 'preferences':
         return 'Open Settings (general, typography, shortcuts, CLI)';
       case 'fontSettings':
@@ -856,4 +878,16 @@ class EnStrings implements AppStrings {
   // --- Settings Dialog - Shortcuts Tab (unassigned) ---
   @override
   String get shortcutUnassigned => 'Not set';
+
+  // --- Tabs ---
+  @override
+  String closeTabTooltip(String shortcut) => 'Close Tab ($shortcut)';
+  @override
+  String get openBehaviorTitle => 'When Opening a File';
+  @override
+  String get openBehaviorDesc => 'Files opened from the file manager, the command line or Open either get a new tab or replace the current document';
+  @override
+  String get openInNewTab => 'New Tab';
+  @override
+  String get openReplaceCurrent => 'Replace Current';
 }

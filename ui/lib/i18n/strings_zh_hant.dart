@@ -397,6 +397,8 @@ class ZhHantStrings extends ZhHansStrings {
   @override
   String shortcutCategoryName(String category) {
     switch (category) {
+      case '标签页':
+        return '分頁';
       case '视图模式':
         return '檢視模式';
       case '文档文件':
@@ -412,6 +414,16 @@ class ZhHantStrings extends ZhHansStrings {
   @override
   String shortcutActionName(String id, String defaultName) {
     switch (id) {
+      case 'openFileInNewTab':
+        return '在新分頁中開啟檔案';
+      case 'closeTab':
+        return '關閉分頁';
+      case 'reopenClosedTab':
+        return '重新開啟已關閉的分頁';
+      case 'nextTab':
+        return '下一個分頁';
+      case 'previousTab':
+        return '上一個分頁';
       case 'preferences':
         return '偏好設定';
       case 'fontSettings':
@@ -457,6 +469,16 @@ class ZhHantStrings extends ZhHansStrings {
   @override
   String shortcutActionDesc(String id, String defaultDesc) {
     switch (id) {
+      case 'openFileInNewTab':
+        return '選擇一個檔案並一律在新分頁中開啟，不取代目前文件';
+      case 'closeTab':
+        return '關閉目前分頁，關閉最後一個時回到歡迎文件';
+      case 'reopenClosedTab':
+        return '依關閉順序倒序恢復最近關閉的分頁';
+      case 'nextTab':
+        return '切換到右側的分頁（亦支援 Ctrl+Tab、Ctrl+PageDown）';
+      case 'previousTab':
+        return '切換到左側的分頁（亦支援 Ctrl+Shift+Tab、Ctrl+PageUp）';
       case 'preferences':
         return '開啟全域偏好設定面板（一般、字型、快捷鍵、CLI）';
       case 'fontSettings':
@@ -835,4 +857,16 @@ class ZhHantStrings extends ZhHansStrings {
   // --- Settings Dialog - Shortcuts Tab (unassigned) ---
   @override
   String get shortcutUnassigned => '未設定';
+
+  // --- Tabs ---
+  @override
+  String closeTabTooltip(String shortcut) => '關閉分頁 ($shortcut)';
+  @override
+  String get openBehaviorTitle => '開啟檔案時';
+  @override
+  String get openBehaviorDesc => '從 Finder、命令列或「開啟」選單開啟的檔案，在新分頁中開啟或取代目前文件';
+  @override
+  String get openInNewTab => '新分頁';
+  @override
+  String get openReplaceCurrent => '取代目前文件';
 }

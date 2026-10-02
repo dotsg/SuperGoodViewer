@@ -379,4 +379,11 @@ abstract class AppStrings {
 
   // --- Settings Dialog - Shortcuts Tab (unassigned) ---
   String get shortcutUnassigned;
+
+  // --- Tabs ---
+  String closeTabTooltip(String shortcut);
+  String get openBehaviorTitle;
+  String get openBehaviorDesc;
+  String get openInNewTab;
+  String get openReplaceCurrent;
 }

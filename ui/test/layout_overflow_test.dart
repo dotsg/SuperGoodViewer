@@ -126,6 +126,27 @@ void main() {
     await expectNoOverflow(tester, 'Workspace', (c) => WorkspaceView(controller: c));
   });
 
+  testWidgets('Workspace with several tabs fits in every language', (tester) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final docs = Directory.systemTemp.createTempSync('sgv_overflow_tabs_');
+    addTearDown(() => docs.deleteSync(recursive: true));
+    final paths = [
+      for (final name in ['a-rather-long-design-document-name', '第二份文档的标题也相当长', 'notes'])
+        (File(p.join(docs.path, '$name.md'))..writeAsStringSync('# $name')).path,
+    ];
+    await expectNoOverflow(
+      tester,
+      'Workspace with tabs',
+      (c) => WorkspaceView(controller: c),
+      setup: (c) {
+        for (final path in paths) {
+          c.openFile(path);
+        }
+      },
+    );
+  });
+
   testWidgets('Workspace with sidebar fits in every language', (tester) async {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);

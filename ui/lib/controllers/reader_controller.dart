@@ -30,7 +30,16 @@ enum AutoFitMode {
 class ReaderController extends ChangeNotifier {
   /// The document on screen. Async work captures the session it started for
   /// (see [DocumentSession]) instead of reading this field again later.
-  final DocumentSession _doc = DocumentSession();
+  DocumentSession _doc = DocumentSession();
+
+  /// Open documents in tab order; always contains [_doc].
+  late final List<DocumentSession> _sessions = [_doc];
+
+  /// Paths of recently closed tabs, newest last, for "Reopen Closed Tab".
+  final List<String> _closedTabPaths = [];
+  static const int _maxClosedTabs = 10;
+
+  bool _openInNewTab = true;
   RenderOptions _renderOptions = RenderOptions(
     mode: 'fluid',
     theme: 'light',
@@ -76,6 +85,142 @@ class ReaderController extends ChangeNotifier {
   AppStrings get strings => AppI18n.resolve(_language);
   String get themePreference => _themePreference;
 
+  List<DocumentSession> get sessions => List.unmodifiable(_sessions);
+  DocumentSession get activeSession => _doc;
+  int get activeSessionIndex => _sessions.indexOf(_doc);
+  bool get openInNewTab => _openInNewTab;
+  bool get canReopenClosedTab => _closedTabPaths.isNotEmpty;
+
+  void setOpenInNewTab(bool value) {
+    if (_openInNewTab == value) return;
+    _openInNewTab = value;
+    _persistDebounced();
+    notifyListeners();
+  }
+
+  void activateSession(int index) {
+    if (index < 0 || index >= _sessions.length) return;
+    _activate(_sessions[index]);
+  }
+
+  void activateNextSession() => _activateRelative(1);
+
+  void activatePreviousSession() => _activateRelative(-1);
+
+  void _activateRelative(int step) {
+    if (_sessions.length < 2) return;
+    final next = (activeSessionIndex + step) % _sessions.length;
+    _activate(_sessions[next]);
+  }
+
+  /// Shows [doc], restoring its reading position. A restored tab is read on
+  /// first view, and one rendered before app-wide options changed (theme,
+  /// fonts, default layout) is refreshed from the cache or recompiled.
+  void _activate(DocumentSession doc) {
+    if (identical(doc, _doc)) return;
+    _doc = doc;
+    activeOutlineNotifier.value = doc.activeOutlineIndex;
+    _viewportDebounceTimer?.cancel();
+    if (!doc.isLoaded && doc.filePath != null) {
+      _openFileInternal(doc.filePath!);
+      _persistDebounced();
+      return;
+    }
+    renderOptionsChanged = false;
+    _startReloading(doc);
+    _persistDebounced();
+    notifyListeners();
+    if (_needsRerender(doc)) {
+      final options = _optionsFor(doc);
+      final cached = doc.filePath != null ? DocumentCacheService.getCachedPdf(doc.filePath!, options) : null;
+      if (cached != null && cached.isNotEmpty) {
+        doc.pdfBytes = cached;
+        doc.renderedWith = options;
+        notifyListeners();
+      } else {
+        renderOptionsChanged = true;
+        _compile(doc);
+      }
+    }
+  }
+
+  bool _needsRerender(DocumentSession doc) {
+    if (_isPdf(doc) || doc.markdown.isEmpty) return false;
+    final rendered = doc.renderedWith;
+    if (rendered == null) return doc.pdfBytes == null;
+    final current = _optionsFor(doc);
+    // Fluid width only matters past the same 40pt threshold setViewportWidth uses.
+    return rendered.copyWith(viewportWidth: current.viewportWidth) != current ||
+        (current.isFluid && (rendered.viewportWidth - current.viewportWidth).abs() > 40);
+  }
+
+  void closeSession(int index) {
+    if (index < 0 || index >= _sessions.length) return;
+    final doc = _sessions[index];
+    final path = doc.filePath;
+    if (path != null) {
+      _closedTabPaths.remove(path);
+      _closedTabPaths.add(path);
+      if (_closedTabPaths.length > _maxClosedTabs) _closedTabPaths.removeAt(0);
+    }
+    doc.dispose();
+
+    if (_sessions.length == 1) {
+      // Closing the last tab goes back to the welcome document.
+      final welcome = DocumentSession();
+      _sessions[0] = welcome;
+      _doc = welcome;
+      activeOutlineNotifier.value = -1;
+      _setSampleDocumentContent();
+      _persistDebounced();
+      notifyListeners();
+      compileDocument();
+      return;
+    }
+
+    final wasActive = identical(doc, _doc);
+    _sessions.removeAt(index);
+    if (wasActive) {
+      _activate(_sessions[index.clamp(0, _sessions.length - 1)]);
+    } else {
+      _persistDebounced();
+      notifyListeners();
+    }
+  }
+
+  void closeActiveSession() => closeSession(activeSessionIndex);
+
+  Future<void> reopenClosedSession() async {
+    while (_closedTabPaths.isNotEmpty) {
+      final path = _closedTabPaths.removeLast();
+      if (File(path).existsSync()) {
+        await openFile(path, newTab: true);
+        return;
+      }
+    }
+  }
+
+  bool _isOpen(DocumentSession doc) => _sessions.any((s) => identical(s, doc));
+
+  /// The open session showing [filePath], comparing resolved paths so
+  /// `/tmp/x` and `/private/tmp/x` (macOS) match.
+  DocumentSession? _sessionFor(String filePath) {
+    String resolve(String path) {
+      try {
+        return File(path).resolveSymbolicLinksSync();
+      } catch (_) {
+        return p.normalize(path);
+      }
+    }
+
+    final target = resolve(filePath);
+    for (final doc in _sessions) {
+      final path = doc.filePath;
+      if (path != null && resolve(path) == target) return doc;
+    }
+    return null;
+  }
+
   void setLanguage(String lang) {
     if (_language != lang) {
       _language = lang;
@@ -87,7 +232,18 @@ class ReaderController extends ChangeNotifier {
   String get currentMarkdown => _doc.markdown;
   String get documentTitle => _doc.title;
   Uint8List? get currentPdfBytes => _doc.pdfBytes;
-  RenderOptions get renderOptions => _renderOptions;
+  /// Options for the document on screen: the app-wide settings plus that
+  /// document's own page format, if it has one.
+  RenderOptions get renderOptions => _optionsFor(_doc);
+
+  RenderOptions _optionsFor(DocumentSession doc) {
+    final format = doc.pageFormat;
+    if (format == null) return _renderOptions;
+    return _renderOptions.copyWith(
+      pageFormat: format,
+      mode: format == PageFormat.fluid ? 'fluid' : 'paged',
+    );
+  }
   bool get isCompiling => _doc.isCompiling;
   int get compileGeneration => _doc.compileGeneration;
   String? get errorMessage => _doc.errorMessage;
@@ -118,7 +274,7 @@ class ReaderController extends ChangeNotifier {
       doc.isRawPdf || (doc.filePath?.toLowerCase().endsWith('.pdf') ?? false);
 
   /// Native PDFs always use paged navigation, regardless of the saved Markdown layout preference.
-  bool get isFluidLayout => _renderOptions.isFluid && !isPdfDocument;
+  bool get isFluidLayout => renderOptions.isFluid && !isPdfDocument;
 
   /// Top scroll deadband threshold (in points). Offsets <= this value are treated as top of document.
   static const double topScrollThreshold = 20.0;
@@ -568,6 +724,10 @@ class ReaderController extends ChangeNotifier {
           }
         }
       }
+      final savedOpenInNewTab = prefs['openFilesInNewTab'] as bool?;
+      if (savedOpenInNewTab != null) {
+        _openInNewTab = savedOpenInNewTab;
+      }
       final savedShortcuts = prefs['shortcuts'] as Map<String, dynamic>?;
       if (savedShortcuts != null) {
         shortcutService.loadFromMap(savedShortcuts, notify: false);
@@ -604,6 +764,7 @@ class ReaderController extends ChangeNotifier {
           _doc.scrollOffset = savedOffset;
           _doc.pageNumber = savedPage;
           _doc.zoom = savedZoom;
+          _restoreBackgroundTabs(prefs['openTabs'], activePath: lastFile);
           _openFileInternal(lastFile, preservePosition: true);
           return;
         }
@@ -615,11 +776,36 @@ class ReaderController extends ChangeNotifier {
     compileDocument();
   }
 
+  /// Recreates the other tabs of the last session around the active one.
+  /// They stay unloaded until shown (see [DocumentSession.isLoaded]).
+  void _restoreBackgroundTabs(Object? savedTabs, {required String activePath}) {
+    if (savedTabs is! List) return;
+    final paths = savedTabs.whereType<String>().toList();
+    final activeIndex = paths.indexOf(activePath);
+    if (activeIndex == -1) return;
+    final restored = <DocumentSession>[];
+    for (var i = 0; i < paths.length; i++) {
+      if (i == activeIndex) {
+        restored.add(_doc);
+      } else if (File(paths[i]).existsSync()) {
+        restored.add(DocumentSession()
+          ..filePath = paths[i]
+          ..title = p.basenameWithoutExtension(paths[i])
+          ..isLoaded = false);
+      }
+    }
+    _sessions
+      ..clear()
+      ..addAll(restored);
+  }
+
   void _persistPreferences() {
     _updateCurrentFileHistory();
     PreferencesService.save({
       'language': _language,
       'lastOpenedFile': _doc.filePath,
+      'openTabs': [for (final doc in _sessions) if (doc.filePath != null) doc.filePath],
+      'openFilesInNewTab': _openInNewTab,
       'recentFiles': List<String>.from(_recentFiles),
       'theme': _renderOptions.theme,
       'themeMode': _themePreference,
@@ -732,6 +918,11 @@ class ReaderController extends ChangeNotifier {
   }
 
   void _openFileInternal(String filePath, {bool preservePosition = false}) {
+    if (_doc.filePath != filePath) {
+      _doc.pageFormat = null;
+      _doc.renderedWith = null;
+    }
+    _doc.isLoaded = true;
     final file = File(filePath);
     if (!file.existsSync()) {
       _doc.watcherSubscription?.cancel();
@@ -809,12 +1000,11 @@ class ReaderController extends ChangeNotifier {
       _doc.markdown = content;
       _extractOutline(_doc);
 
+      // Front matter (e.g. `marp: true`) sets this document's format only;
+      // it no longer changes the default for documents opened afterwards.
       final frontmatterFormat = _detectFrontmatterPageFormat(content);
       if (frontmatterFormat != null) {
-        _renderOptions = _renderOptions.copyWith(
-          pageFormat: frontmatterFormat,
-          mode: frontmatterFormat == PageFormat.fluid ? 'fluid' : 'paged',
-        );
+        _doc.pageFormat = frontmatterFormat;
         if (frontmatterFormat != PageFormat.fluid) {
           _lastPagedFormat = frontmatterFormat;
         }
@@ -851,9 +1041,11 @@ class ReaderController extends ChangeNotifier {
       _triggerRemoteImageDownloads(_doc);
 
       // Check fast disk cache for pre-compiled PDF!
-      final cachedPdf = DocumentCacheService.getCachedPdf(filePath, _renderOptions);
+      final options = _optionsFor(_doc);
+      final cachedPdf = DocumentCacheService.getCachedPdf(filePath, options);
       if (cachedPdf != null && cachedPdf.isNotEmpty) {
         _doc.pdfBytes = cachedPdf;
+        _doc.renderedWith = options;
         _doc.errorMessage = null;
         _doc.degradedEquationCount = 0;
         _doc.degradedEquations = const [];
@@ -875,7 +1067,20 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
-  Future<void> openFile(String filePath, {bool preservePosition = false}) async {
+  /// Opens [filePath]. A file that is already open just gets its tab shown;
+  /// otherwise it opens in a new tab when [newTab] (default: the
+  /// "open in new tab" setting) is true, or replaces the current document.
+  /// The welcome document is always replaced rather than kept as a tab.
+  Future<void> openFile(String filePath, {bool preservePosition = false, bool? newTab}) async {
+    final existing = _sessionFor(filePath);
+    if (existing != null) {
+      _activate(existing);
+    } else if ((newTab ?? _openInNewTab) && _doc.filePath != null) {
+      final doc = DocumentSession();
+      _sessions.insert(activeSessionIndex + 1, doc);
+      _doc = doc;
+      activeOutlineNotifier.value = -1;
+    }
     if (_isAlreadyShowing(filePath)) {
       debugPrint('[ReaderController] openFile: $filePath is already open and unchanged, skipping');
       return;
@@ -965,6 +1170,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   Future<void> _triggerExternalFileReload(DocumentSession doc) async {
+    if (!_isOpen(doc)) return;
     if (doc.filePath != null) {
       final file = File(doc.filePath!);
       if (await file.exists()) {
@@ -1035,7 +1241,7 @@ class ReaderController extends ChangeNotifier {
     RemoteImageService.instance.fetchImagesInMarkdown(
       markdownToScan,
       onBatchReady: () {
-        if (_isDisposed) return;
+        if (_isDisposed || !_isOpen(doc)) return;
         if (doc.markdown != markdownToScan) return;
         debugPrint('[ReaderController] Remote images batch downloaded, triggering progressive re-render');
         _startReloading(doc);
@@ -1075,17 +1281,19 @@ class ReaderController extends ChangeNotifier {
           ? p.dirname(doc.filePath!)
           : Directory.current.path;
 
+      final options = _optionsFor(doc);
       final result = await NativeEngine.instance.compileMarkdownResultAsync(
         doc.markdown,
         title: doc.title,
         docDir: docDir,
-        options: _renderOptions,
+        options: options,
       );
 
       if (generation == doc.compileGeneration && !_isPdf(doc)) {
         if (result.isSuccess) {
           final pdfBytes = result.pdfBytes!;
           doc.pdfBytes = pdfBytes;
+          doc.renderedWith = options;
           doc.errorMessage = null;
           doc.degradedEquationCount = result.degradedEquationCount;
           doc.degradedEquations = result.degradedEquations;
@@ -1097,7 +1305,7 @@ class ReaderController extends ChangeNotifier {
           }
           debugPrint('[ReaderController] compileDocument: SUCCESS gen $generation (${pdfBytes.length} bytes)');
           if (doc.filePath != null) {
-            unawaited(DocumentCacheService.saveCachedPdf(doc.filePath!, _renderOptions, pdfBytes));
+            unawaited(DocumentCacheService.saveCachedPdf(doc.filePath!, options, pdfBytes));
           }
         } else {
           doc.degradedEquationCount = 0;
@@ -1129,9 +1337,12 @@ class ReaderController extends ChangeNotifier {
     if (format != PageFormat.fluid) {
       _lastPagedFormat = format;
     }
-    if (_renderOptions.effectivePageFormat == format) return;
+    if (renderOptions.effectivePageFormat == format) return;
     renderOptionsChanged = true;
     startReloading();
+    // The choice applies to this document and becomes the default for
+    // documents without a format of their own.
+    _doc.pageFormat = format;
     final nextMode = format == PageFormat.fluid ? 'fluid' : 'paged';
     _renderOptions = _renderOptions.copyWith(
       mode: nextMode,
@@ -1140,9 +1351,11 @@ class ReaderController extends ChangeNotifier {
     _persistDebounced();
     notifyListeners();
     if (_doc.filePath != null) {
-      final cached = DocumentCacheService.getCachedPdf(_doc.filePath!, _renderOptions);
+      final options = _optionsFor(_doc);
+      final cached = DocumentCacheService.getCachedPdf(_doc.filePath!, options);
       if (cached != null && cached.isNotEmpty) {
         _doc.pdfBytes = cached;
+        _doc.renderedWith = options;
         _doc.errorMessage = null;
         debugPrint('[ReaderController] PageFormat change cache hit: instant PDF loaded');
         notifyListeners();
@@ -1154,7 +1367,7 @@ class ReaderController extends ChangeNotifier {
 
   void cyclePageFormat() {
     if (isPdfDocument) return;
-    final current = _renderOptions.effectivePageFormat;
+    final current = renderOptions.effectivePageFormat;
     final formats = PageFormat.all;
     final idx = formats.indexOf(current);
     final nextIdx = (idx == -1 || idx == formats.length - 1) ? 0 : idx + 1;
@@ -1163,7 +1376,7 @@ class ReaderController extends ChangeNotifier {
 
   void toggleMode() {
     if (isPdfDocument) return;
-    if (_renderOptions.isFluid) {
+    if (renderOptions.isFluid) {
       setPageFormat(_lastPagedFormat);
     } else {
       setPageFormat(PageFormat.fluid);
@@ -1176,8 +1389,8 @@ class ReaderController extends ChangeNotifier {
     if (_isPresentationMode != value) {
       _isPresentationMode = value;
       if (value) {
-        if (!isPdfDocument && _renderOptions.isFluid) {
-          _formatBeforePresentation = _renderOptions.effectivePageFormat;
+        if (!isPdfDocument && renderOptions.isFluid) {
+          _formatBeforePresentation = renderOptions.effectivePageFormat;
           final savedLastPaged = _lastPagedFormat;
           setPageFormat(PageFormat.slide16x9);
           _lastPagedFormat = savedLastPaged;
@@ -1276,9 +1489,11 @@ class ReaderController extends ChangeNotifier {
     _persistDebounced();
     notifyListeners();
     if (_doc.filePath != null) {
-      final cached = DocumentCacheService.getCachedPdf(_doc.filePath!, _renderOptions);
+      final options = _optionsFor(_doc);
+      final cached = DocumentCacheService.getCachedPdf(_doc.filePath!, options);
       if (cached != null && cached.isNotEmpty) {
         _doc.pdfBytes = cached;
+        _doc.renderedWith = options;
         _doc.errorMessage = null;
         debugPrint('[ReaderController] Theme change cache hit: instant PDF loaded');
         notifyListeners();
@@ -1296,7 +1511,7 @@ class ReaderController extends ChangeNotifier {
       _viewportDebounceTimer = Timer(const Duration(milliseconds: 300), () {
         renderOptionsChanged = true;
         _renderOptions = _renderOptions.copyWith(viewportWidth: width);
-        if (_renderOptions.isFluid) {
+        if (renderOptions.isFluid) {
           startReloading();
           compileDocument();
         }
@@ -1381,13 +1596,14 @@ class ReaderController extends ChangeNotifier {
     final doc = _doc;
     if (doc.pdfBytes == null) return null;
     try {
-      if (_isPdf(doc) || _renderOptions.theme == 'light') {
+      final options = _optionsFor(doc);
+      if (_isPdf(doc) || options.theme == 'light') {
         // Direct PDF or light mode: use current in-memory PDF immediately (0ms fast path)
         return doc.pdfBytes;
       }
 
       // When viewing in dark mode, strictly export publication-grade light mode document
-      final exportOptions = _renderOptions.copyWith(theme: 'light');
+      final exportOptions = options.copyWith(theme: 'light');
 
       if (doc.filePath != null) {
         final cached = DocumentCacheService.getCachedPdf(doc.filePath!, exportOptions);
@@ -1752,7 +1968,9 @@ graph LR
     _persistThrottleClock.stop();
     _persistPreferences();
     _viewportDebounceTimer?.cancel();
-    _doc.dispose();
+    for (final doc in _sessions) {
+      doc.dispose();
+    }
     super.dispose();
   }
 }

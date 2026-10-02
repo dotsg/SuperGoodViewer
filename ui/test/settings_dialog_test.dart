@@ -195,6 +195,8 @@ void main() {
       final initialReload = controller.autoReload;
       final reloadSwitch = find.byType(Switch);
       expect(reloadSwitch, findsOneWidget);
+      await tester.ensureVisible(reloadSwitch);
+      await tester.pumpAndSettle();
       await tester.tap(reloadSwitch);
       await tester.pumpAndSettle();
 

@@ -145,6 +145,40 @@ void main() {
       expect(controller.currentMarkdown, contains('Drag and Drop Success'));
     });
 
+    testWidgets('Dropping several files opens each in its own tab', (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final first = File(p.join(tempDir.path, 'first_drop.md'))..writeAsStringSync('# First');
+      final second = File(p.join(tempDir.path, 'second_drop.md'))..writeAsStringSync('# Second');
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(MaterialApp(home: WorkspaceView(controller: controller)));
+      await tester.pump();
+
+      final dropTarget = tester.widget<DropTarget>(find.byType(DropTarget));
+      await tester.runAsync(() async {
+        dropTarget.onDragDone?.call(
+          DropDoneDetails(
+            files: [DropItemFile(first.path), DropItemFile(second.path)],
+            localPosition: Offset.zero,
+            globalPosition: Offset.zero,
+          ),
+        );
+        for (int i = 0; i < 50; i++) {
+          if (controller.sessions.length == 2) break;
+          await Future.delayed(const Duration(milliseconds: 50));
+        }
+      });
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(controller.sessions.map((s) => s.filePath), [first.path, second.path]);
+      expect(controller.currentFilePath, second.path);
+    });
+
     testWidgets('Dropping a directory opens README.md inside it', (tester) async {
       tester.view.physicalSize = const Size(1200, 800);
       tester.view.devicePixelRatio = 1.0;

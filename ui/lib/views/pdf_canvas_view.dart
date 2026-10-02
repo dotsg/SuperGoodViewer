@@ -802,6 +802,10 @@ class SuperGoodScrollInteractionDelegate implements PdfViewerScrollInteractionDe
 class PdfCanvasView extends StatefulWidget {
   final Uint8List? pdfBytes;
   final String documentTitle;
+
+  /// Identity of the open document (its tab). Changing it reloads the viewer
+  /// instead of double-buffering, even when the title is the same.
+  final int documentId;
   final RenderOptions renderOptions;
   final bool isTwoPage;
   final ReaderController controller;
@@ -821,6 +825,7 @@ class PdfCanvasView extends StatefulWidget {
     this.topInset = 0.0,
     required this.pdfBytes,
     required this.documentTitle,
+    this.documentId = 0,
     required this.renderOptions,
     required this.isTwoPage,
     required this.controller,
@@ -1079,7 +1084,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final optionsChanged = widget.renderOptions != oldWidget.renderOptions ||
         pageFormatChanged ||
         widget.isTwoPage != oldWidget.isTwoPage ||
-        widget.documentTitle != oldWidget.documentTitle;
+        widget.documentTitle != oldWidget.documentTitle ||
+        widget.documentId != oldWidget.documentId;
     if (optionsChanged) {
       widget.controller.renderOptionsChanged = true;
     }
@@ -1087,7 +1093,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     if (widget.renderOptions.mode != oldWidget.renderOptions.mode ||
         pageFormatChanged ||
         widget.isTwoPage != oldWidget.isTwoPage ||
-        widget.documentTitle != oldWidget.documentTitle) {
+        widget.documentTitle != oldWidget.documentTitle ||
+        widget.documentId != oldWidget.documentId) {
       _modeOrDocChanged = true;
     }
 

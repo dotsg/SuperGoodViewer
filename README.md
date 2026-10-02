@@ -203,6 +203,11 @@ cat draft.md | sgv export - -o draft.pdf
 | macOS 快捷键 | Windows / Linux 快捷键 | 功能描述 |
 | :--- | :--- | :--- |
 | `Cmd + O` | `Ctrl + O` | 打开本地 Markdown 或 PDF 文件 |
+| `Cmd + T` | `Ctrl + T` | 在新标签页中打开文件（设置中可选默认打开方式：新标签页 / 替换当前文档） |
+| `Cmd + W` | `Ctrl + W` | 关闭当前标签页 |
+| `Cmd + Shift + T` | `Ctrl + Shift + T` | 重新打开最近关闭的标签页 |
+| `Cmd + Shift + ]` / `[`、`Ctrl + Tab` / `Ctrl + Shift + Tab` | `Ctrl + Tab` / `Ctrl + Shift + Tab`、`Ctrl + PageDown` / `PageUp` | 切换到下一个 / 上一个标签页 |
+| — | `Alt + 1…8` / `Alt + 9` | 跳到第 N 个 / 最后一个标签页（同 SumatraPDF） |
 | `Cmd + R` | `Ctrl + R` | 立即重新编译与排版当前文档 |
 | `Cmd + M` | `Ctrl + M` | **切换版式**（流式 / A4纵向 / A4横向 / 16:9 / 4:3） |
 | **`F5`** / `Cmd + Shift + P` / `Cmd + Enter` | **`F5`** / `Ctrl + Shift + P` / `Ctrl + Enter` | **全屏单页演示模式 (PPT)** 进入与退出 |

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import '../models/render_options.dart';
 
 class OutlineItem {
   final String title;
@@ -63,7 +64,25 @@ class OutlineItem {
 /// so they keep a reference to the session they started for and write their
 /// results there, even if a different document is on screen by then.
 class DocumentSession {
+  static int _nextId = 0;
+
+  /// Stable identity, so two tabs that share a title (two README.md files)
+  /// still count as different documents.
+  final int id = _nextId++;
+
   String? filePath;
+
+  /// False for tabs restored from the last session until first shown: their
+  /// files are read and compiled on demand.
+  bool isLoaded = true;
+
+  /// Page format chosen for this document (front matter or the layout
+  /// toggle). Null follows the app-wide default.
+  String? pageFormat;
+
+  /// Options the current [pdfBytes] were rendered with, to tell whether a tab
+  /// shown again needs a recompile after app-wide settings changed.
+  RenderOptions? renderedWith;
   String markdown = '';
   String title = 'Welcome';
   Uint8List? pdfBytes;

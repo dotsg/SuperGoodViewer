@@ -810,4 +810,16 @@ class ZhHansStrings implements AppStrings {
   // --- Settings Dialog - Shortcuts Tab (unassigned) ---
   @override
   String get shortcutUnassigned => '未设置';
+
+  // --- Tabs ---
+  @override
+  String closeTabTooltip(String shortcut) => '关闭标签页 ($shortcut)';
+  @override
+  String get openBehaviorTitle => '打开文件时';
+  @override
+  String get openBehaviorDesc => '从访达、命令行或“打开”菜单打开的文件，在新标签页中打开或替换当前文档';
+  @override
+  String get openInNewTab => '新标签页';
+  @override
+  String get openReplaceCurrent => '替换当前文档';
 }

@@ -113,6 +113,46 @@ class ShortcutService extends ChangeNotifier {
       defaultKey: LogicalKeyboardKey.keyR,
     ),
 
+    // 标签页: browser conventions, which SumatraPDF shares
+    AppShortcutAction(
+      id: 'openFileInNewTab',
+      name: '在新标签页中打开文件',
+      category: '标签页',
+      description: '选择一个文件并始终在新标签页中打开，不替换当前文档',
+      defaultKey: LogicalKeyboardKey.keyT,
+    ),
+    AppShortcutAction(
+      id: 'closeTab',
+      name: '关闭标签页',
+      category: '标签页',
+      description: '关闭当前标签页，关闭最后一个时回到欢迎文档',
+      defaultKey: LogicalKeyboardKey.keyW,
+    ),
+    AppShortcutAction(
+      id: 'reopenClosedTab',
+      name: '重新打开关闭的标签页',
+      category: '标签页',
+      description: '按关闭顺序倒序恢复最近关闭的标签页',
+      defaultKey: LogicalKeyboardKey.keyT,
+      hasShift: true,
+    ),
+    AppShortcutAction(
+      id: 'nextTab',
+      name: '下一个标签页',
+      category: '标签页',
+      description: '切换到右侧的标签页（亦支持 Ctrl+Tab、Ctrl+PageDown）',
+      defaultKey: LogicalKeyboardKey.bracketRight,
+      hasShift: true,
+    ),
+    AppShortcutAction(
+      id: 'previousTab',
+      name: '上一个标签页',
+      category: '标签页',
+      description: '切换到左侧的标签页（亦支持 Ctrl+Shift+Tab、Ctrl+PageUp）',
+      defaultKey: LogicalKeyboardKey.bracketLeft,
+      hasShift: true,
+    ),
+
     // 缩放与自适应: Windows / Linux follow SumatraPDF and Acrobat (Ctrl+0 fit
     // page, Ctrl+1 actual size, Ctrl+2 fit width); macOS follows Preview
     // (Cmd+0 actual size, Cmd+9 zoom to fit) with fit width next to it.
@@ -404,6 +444,21 @@ class ShortcutService extends ChangeNotifier {
     }
   }
 
+  static const List<LogicalKeyboardKey> _tabDigits = [
+    LogicalKeyboardKey.digit1, LogicalKeyboardKey.digit2, LogicalKeyboardKey.digit3,
+    LogicalKeyboardKey.digit4, LogicalKeyboardKey.digit5, LogicalKeyboardKey.digit6,
+    LogicalKeyboardKey.digit7, LogicalKeyboardKey.digit8, LogicalKeyboardKey.digit9,
+  ];
+
+  /// Alt+1..8 activates that tab and Alt+9 the last one (Windows / Linux).
+  Map<ShortcutActivator, VoidCallback> buildTabNumberBindings(void Function(int number) onTabNumber) {
+    if (isMacLayout) return const {};
+    return {
+      for (var i = 0; i < _tabDigits.length; i++)
+        SingleActivator(_tabDigits[i], alt: true): () => onTabNumber(i + 1),
+    };
+  }
+
   /// Build CallbackShortcuts bindings map based on active configuration.
   Map<ShortcutActivator, VoidCallback> buildBindings({
     required VoidCallback onToggleMode,
@@ -424,6 +479,11 @@ class ShortcutService extends ChangeNotifier {
     VoidCallback? onFindInDocument,
     VoidCallback? onPreferences,
     VoidCallback? onKeyboardShortcuts,
+    VoidCallback? onOpenFileInNewTab,
+    VoidCallback? onCloseTab,
+    VoidCallback? onReopenClosedTab,
+    VoidCallback? onNextTab,
+    VoidCallback? onPreviousTab,
   }) {
     final Map<ShortcutActivator, VoidCallback> map = {};
 
@@ -459,6 +519,23 @@ class ShortcutService extends ChangeNotifier {
     addAction('fontSettings', onFontSettings);
     addAction('preferences', onPreferences ?? onKeyboardShortcuts);
     addAction('keyboardShortcuts', onKeyboardShortcuts ?? onPreferences);
+    addAction('openFileInNewTab', onOpenFileInNewTab);
+    addAction('closeTab', onCloseTab);
+    addAction('reopenClosedTab', onReopenClosedTab);
+    addAction('nextTab', onNextTab);
+    addAction('previousTab', onPreviousTab);
+
+    // Fixed tab aliases, not rebindable: Ctrl+Tab and Ctrl+PageDown/PageUp use
+    // the Control key on every platform, and Alt+1..9 (Windows / Linux, as in
+    // SumatraPDF and Firefox) jumps to a tab, 9 being the last one.
+    if (onNextTab != null) {
+      map[const SingleActivator(LogicalKeyboardKey.tab, control: true)] = onNextTab;
+      map[const SingleActivator(LogicalKeyboardKey.pageDown, control: true)] = onNextTab;
+    }
+    if (onPreviousTab != null) {
+      map[const SingleActivator(LogicalKeyboardKey.tab, control: true, shift: true)] = onPreviousTab;
+      map[const SingleActivator(LogicalKeyboardKey.pageUp, control: true)] = onPreviousTab;
+    }
 
     return map;
   }
