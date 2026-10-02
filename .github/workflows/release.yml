@@ -396,6 +396,9 @@ jobs:
           test -f "$BUNDLE/lib/libsogood_core.so" || { echo "::error::$BUNDLE/lib/libsogood_core.so missing"; exit 1; }
           test -f "$BUNDLE/bin/sgv" || { echo "::error::$BUNDLE/bin/sgv missing"; exit 1; }
           test -x "$BUNDLE/bin/sgv" || { echo "::error::$BUNDLE/bin/sgv is not executable"; exit 1; }
+          for size in 256 512; do
+            test -f "$BUNDLE/data/icons/app_icon_$size.png" || { echo "::error::$BUNDLE/data/icons/app_icon_$size.png missing"; exit 1; }
+          done
           cp core/target/release/sgv-cli "$BUNDLE/bin/sgv-cli"
           chmod +x "$BUNDLE/bin/sgv-cli"
           test -f "$BUNDLE/bin/sgv-cli" || { echo "::error::$BUNDLE/bin/sgv-cli missing"; exit 1; }

@@ -828,4 +828,28 @@ class EnStrings implements AppStrings {
   // --- macOS Menu Bar ---
   @override
   String get cliMenuInstall => 'Install sgv Command Line Tool…';
+
+  // --- Settings Dialog - Linux Desktop Integration ---
+  @override
+  String get desktopIntegrationSection => 'Desktop Integration';
+  @override
+  String get desktopEntryTitle => 'Add to Applications Menu';
+  @override
+  String get desktopEntryDesc => 'Show SuperGoodViewer in the applications menu and in “Open With” for Markdown and PDF files';
+  @override
+  String get desktopEntryOutdated => 'The menu entry points to another copy or an older version';
+  @override
+  String get desktopEntryAdd => 'Add';
+  @override
+  String get desktopEntryUpdate => 'Update';
+  @override
+  String get desktopEntryRemove => 'Remove';
+  @override
+  String get desktopEntryAdded => 'Added to the applications menu';
+  @override
+  String get desktopEntryRemoved => 'Removed from the applications menu';
+  @override
+  String desktopEntryFailed(String error) => 'Failed: $error';
+  @override
+  String get desktopEntryGenericName => 'Markdown Viewer';
 }

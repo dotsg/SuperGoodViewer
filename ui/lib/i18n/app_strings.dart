@@ -363,4 +363,17 @@ abstract class AppStrings {
 
   // --- macOS Menu Bar ---
   String get cliMenuInstall;
+
+  // --- Settings Dialog - Linux Desktop Integration ---
+  String get desktopIntegrationSection;
+  String get desktopEntryTitle;
+  String get desktopEntryDesc;
+  String get desktopEntryOutdated;
+  String get desktopEntryAdd;
+  String get desktopEntryUpdate;
+  String get desktopEntryRemove;
+  String get desktopEntryAdded;
+  String get desktopEntryRemoved;
+  String desktopEntryFailed(String error);
+  String get desktopEntryGenericName;
 }

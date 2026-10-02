@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sogoodviewer/controllers/reader_controller.dart';
 import 'package:sogoodviewer/i18n/locales.dart';
+import 'package:sogoodviewer/services/linux_desktop_integration.dart';
 import 'package:sogoodviewer/views/settings_dialog.dart';
 import 'package:sogoodviewer/views/workspace_view.dart';
 
@@ -37,6 +38,20 @@ void main() {
 
     await load('Roboto', ['Roboto-Regular.ttf', 'Roboto-Medium.ttf', 'Roboto-Bold.ttf']);
     await load('MaterialIcons', ['MaterialIcons-Regular.otf']);
+
+    // Show the Linux-only desktop integration card on every host, in its
+    // widest state (an outdated entry: warning text plus two buttons).
+    final dataHome = Directory.systemTemp.createTempSync('sgv_overflow_').path;
+    File(p.join(dataHome, 'applications', '${LinuxDesktopIntegration.appId}.desktop'))
+      ..createSync(recursive: true)
+      ..writeAsStringSync('[Desktop Entry]\n');
+    LinuxDesktopIntegration.isSupported = true;
+    LinuxDesktopIntegration.instance = LinuxDesktopIntegration(dataHome: dataHome, bundleDir: dataHome);
+  });
+
+  tearDownAll(() {
+    LinuxDesktopIntegration.isSupported = Platform.isLinux;
+    LinuxDesktopIntegration.instance = LinuxDesktopIntegration();
   });
 
   Future<void> expectNoOverflow(

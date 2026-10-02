@@ -782,4 +782,28 @@ class ZhHansStrings implements AppStrings {
   // --- macOS Menu Bar ---
   @override
   String get cliMenuInstall => '安装 sgv 命令行工具…';
+
+  // --- Settings Dialog - Linux Desktop Integration ---
+  @override
+  String get desktopIntegrationSection => '桌面集成';
+  @override
+  String get desktopEntryTitle => '添加到应用菜单';
+  @override
+  String get desktopEntryDesc => '在应用菜单中显示超好读，并可在文件管理器的“打开方式”中用它打开 Markdown 与 PDF';
+  @override
+  String get desktopEntryOutdated => '菜单项指向其他位置或旧版本，建议更新';
+  @override
+  String get desktopEntryAdd => '添加';
+  @override
+  String get desktopEntryUpdate => '更新';
+  @override
+  String get desktopEntryRemove => '移除';
+  @override
+  String get desktopEntryAdded => '已添加到应用菜单';
+  @override
+  String get desktopEntryRemoved => '已从应用菜单移除';
+  @override
+  String desktopEntryFailed(String error) => '操作失败：$error';
+  @override
+  String get desktopEntryGenericName => 'Markdown 阅读器';
 }

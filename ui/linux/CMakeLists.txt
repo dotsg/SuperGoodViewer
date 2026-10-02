@@ -114,6 +114,12 @@ if(EXISTS "${SOGOOD_CORE_LIB}")
     COMPONENT Runtime)
 endif()
 
+# App icons, copied into the user's icon theme by the "Add to Applications
+# Menu" setting (lib/services/linux_desktop_integration.dart).
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/runner/resources/icons"
+  DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
+  COMPONENT Runtime)
+
 # Bundle sgv CLI script and sgv-cli binary
 set(SGV_CLI_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../bin/sgv")
 if(EXISTS "${SGV_CLI_SCRIPT}")

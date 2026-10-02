@@ -148,6 +148,7 @@ make test
   ```bash
   make package-linux         # 生成 dist/SuperGoodViewer-linux-x64.tar.gz
   ```
+  解压后运行 `supergoodviewer`，在 偏好设置 → 常规 → 桌面集成 中点击“添加”，即可写入应用菜单项与图标（位于 `~/.local/share`，无需 root），并在文件管理器的“打开方式”中用它打开 Markdown 与 PDF。
 
 ---
 

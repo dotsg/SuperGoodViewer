@@ -807,4 +807,28 @@ class ZhHantStrings extends ZhHansStrings {
   // --- macOS Menu Bar ---
   @override
   String get cliMenuInstall => '安裝 sgv 命令列工具…';
+
+  // --- Settings Dialog - Linux Desktop Integration ---
+  @override
+  String get desktopIntegrationSection => '桌面整合';
+  @override
+  String get desktopEntryTitle => '加入應用程式選單';
+  @override
+  String get desktopEntryDesc => '在應用程式選單中顯示超好讀，並可在檔案管理員的「開啟方式」中用它開啟 Markdown 與 PDF';
+  @override
+  String get desktopEntryOutdated => '選單項目指向其他位置或舊版本，建議更新';
+  @override
+  String get desktopEntryAdd => '加入';
+  @override
+  String get desktopEntryUpdate => '更新';
+  @override
+  String get desktopEntryRemove => '移除';
+  @override
+  String get desktopEntryAdded => '已加入應用程式選單';
+  @override
+  String get desktopEntryRemoved => '已從應用程式選單移除';
+  @override
+  String desktopEntryFailed(String error) => '操作失敗：$error';
+  @override
+  String get desktopEntryGenericName => 'Markdown 閱讀器';
 }

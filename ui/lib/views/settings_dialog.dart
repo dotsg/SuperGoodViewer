@@ -6,6 +6,7 @@ import '../controllers/reader_controller.dart';
 import '../i18n/locales.dart';
 import '../models/render_options.dart';
 import '../services/document_cache_service.dart';
+import '../services/linux_desktop_integration.dart';
 import '../services/native_cli_service.dart';
 import '../services/shortcut_service.dart';
 import '../services/update_service.dart';
@@ -63,6 +64,39 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late String? _selectedCodeFont;
   late double _selectedFontSize;
   bool _isScanningFonts = false;
+
+  // Linux desktop integration state
+  DesktopEntryStatus _desktopEntryStatus = DesktopEntryStatus.notInstalled;
+  bool _isUpdatingDesktopEntry = false;
+
+  Future<void> _changeDesktopEntry({required bool install}) async {
+    final s = widget.controller.strings;
+    final integration = LinuxDesktopIntegration.instance;
+    setState(() => _isUpdatingDesktopEntry = true);
+    String message;
+    try {
+      if (install) {
+        await integration.install();
+      } else {
+        await integration.uninstall();
+      }
+      message = install ? s.desktopEntryAdded : s.desktopEntryRemoved;
+    } catch (e) {
+      message = s.desktopEntryFailed('$e');
+    }
+    if (!mounted) return;
+    setState(() {
+      _isUpdatingDesktopEntry = false;
+      _desktopEntryStatus = integration.status();
+    });
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
 
   // Layout & Header/Footer state
   late String _selectedPageFormat;
@@ -208,6 +242,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
   void initState() {
     super.initState();
     _currentTab = widget.initialTab;
+    if (LinuxDesktopIntegration.isSupported) {
+      _desktopEntryStatus = LinuxDesktopIntegration.instance.status();
+    }
     final opts = widget.controller.renderOptions;
     _selectedBodyFont = opts.bodyFont;
     _selectedCodeFont = opts.codeFont;
@@ -690,6 +727,86 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 
   // ==================== LAYOUT TAB ====================
+  Widget _buildDesktopEntryCard(ThemeData theme, bool isDark) {
+    final s = widget.controller.strings;
+    final status = _desktopEntryStatus;
+    final buttonStyle = OutlinedButton.styleFrom(
+      visualDensity: VisualDensity.compact,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+    );
+    final busy = _isUpdatingDesktopEntry;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF9F9F9),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.apps_rounded, size: 22, color: theme.colorScheme.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  s.desktopEntryTitle,
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  status == DesktopEntryStatus.outdated ? s.desktopEntryOutdated : s.desktopEntryDesc,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: status == DesktopEntryStatus.outdated
+                        ? (isDark ? const Color(0xFFFBBF24) : const Color(0xFFB45309))
+                        : (isDark ? const Color(0xFF888888) : const Color(0xFF666666)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          if (status == DesktopEntryStatus.notInstalled)
+            FilledButton(
+              onPressed: busy ? null : () => _changeDesktopEntry(install: true),
+              style: FilledButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              ),
+              child: Text(s.desktopEntryAdd, style: const TextStyle(fontSize: 11.5)),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              alignment: WrapAlignment.end,
+              children: [
+                if (status == DesktopEntryStatus.outdated)
+                  FilledButton(
+                    onPressed: busy ? null : () => _changeDesktopEntry(install: true),
+                    style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    ),
+                    child: Text(s.desktopEntryUpdate, style: const TextStyle(fontSize: 11.5)),
+                  ),
+                OutlinedButton(
+                  onPressed: busy ? null : () => _changeDesktopEntry(install: false),
+                  style: buttonStyle,
+                  child: Text(s.desktopEntryRemove, style: const TextStyle(fontSize: 11.5)),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildLayoutTab(ThemeData theme, bool isDark) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1337,6 +1454,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
           ),
         ),
         const SizedBox(height: 18),
+
+        if (LinuxDesktopIntegration.isSupported) ...[
+          _buildSectionHeader(strings.desktopIntegrationSection),
+          const SizedBox(height: 6),
+          _buildDesktopEntryCard(theme, isDark),
+          const SizedBox(height: 18),
+        ],
 
         // Session & History
         _buildSectionHeader(strings.sessionSection),
