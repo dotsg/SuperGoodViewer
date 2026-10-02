@@ -39,6 +39,23 @@ static void first_frame_cb(MyApplication* self, FlView* view) {
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
 }
 
+// Gives the window an icon even when no desktop entry is installed (X11 window
+// managers and taskbars read it from the window). The file ships in the bundle
+// via linux/CMakeLists.txt.
+static void set_window_icon_from_bundle(GtkWindow* window) {
+  g_autofree gchar* exe_path = g_file_read_link("/proc/self/exe", nullptr);
+  if (exe_path == nullptr) {
+    return;
+  }
+  g_autofree gchar* exe_dir = g_path_get_dirname(exe_path);
+  g_autofree gchar* icon_path =
+      g_build_filename(exe_dir, "data", "icons", "app_icon_256.png", nullptr);
+  g_autoptr(GError) error = nullptr;
+  if (!gtk_window_set_icon_from_file(window, icon_path, &error)) {
+    g_debug("Window icon not set from %s: %s", icon_path, error->message);
+  }
+}
+
 static gchar* get_linux_cli_target_script() {
   gchar* exe_path = g_file_read_link("/proc/self/exe", nullptr);
   if (exe_path != nullptr) {
@@ -383,6 +400,7 @@ static void my_application_activate(GApplication* application) {
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
   self->window = window;
+  set_window_icon_from_bundle(window);
 
   gboolean use_header_bar = TRUE;
 #ifdef GDK_WINDOWING_X11
