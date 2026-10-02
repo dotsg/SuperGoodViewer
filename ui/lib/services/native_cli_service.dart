@@ -166,7 +166,6 @@ class NativeCliService {
       return const CliOperationResult(
         isSuccess: false,
         messageCode: 'platform_not_supported',
-        message: '当前平台暂不支持一键安装 CLI 命令',
       );
     }
     try {
@@ -197,13 +196,13 @@ class NativeCliService {
             isSuccess: false,
             isCancelled: true,
             messageCode: messageCode ?? 'user_cancelled',
-            message: message ?? '已取消授权',
+            message: message,
           );
         } else {
           return CliOperationResult(
             isSuccess: false,
             messageCode: messageCode,
-            message: message ?? '安装失败',
+            message: message,
           );
         }
       }
@@ -216,7 +215,6 @@ class NativeCliService {
     return const CliOperationResult(
       isSuccess: false,
       messageCode: 'unknown_error',
-      message: '未知错误',
     );
   }
 
@@ -226,7 +224,6 @@ class NativeCliService {
       return const CliOperationResult(
         isSuccess: false,
         messageCode: 'platform_not_supported',
-        message: '当前平台暂不支持',
       );
     }
     try {
@@ -247,13 +244,13 @@ class NativeCliService {
             isSuccess: false,
             isCancelled: true,
             messageCode: messageCode ?? 'user_cancelled',
-            message: message ?? '已取消授权',
+            message: message,
           );
         } else {
           return CliOperationResult(
             isSuccess: false,
             messageCode: messageCode,
-            message: message ?? '卸载失败',
+            message: message,
           );
         }
       }
@@ -266,8 +263,15 @@ class NativeCliService {
     return const CliOperationResult(
       isSuccess: false,
       messageCode: 'unknown_error',
-      message: '未知错误',
     );
+  }
+
+  /// Pushes localized titles for the native macOS menu items the app adds.
+  static Future<void> setMenuTitles(AppStrings s) async {
+    if (!Platform.isMacOS) return;
+    try {
+      await channel.invokeMethod('setMenuTitles', {'installCli': s.cliMenuInstall});
+    } catch (_) {}
   }
 
   /// Queries the initial file passed to the app via macOS openFiles on cold launch

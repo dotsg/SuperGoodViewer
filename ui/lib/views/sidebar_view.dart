@@ -687,7 +687,7 @@ class _SidebarViewState extends State<SidebarView> {
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
-                            controller.renderOptions.isFluid ? '流式视窗' : 'A4 出版',
+                            controller.strings.layoutModeShortName(controller.renderOptions.effectivePageFormat),
                             style: TextStyle(
                               fontSize: 10,
                               fontWeight: FontWeight.bold,

@@ -586,8 +586,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 350));
 
       expect(find.text('字体排版与中英文等宽对齐'), findsOneWidget);
-      expect(find.text('正文排版字体 (Body Typography)'), findsOneWidget);
-      expect(find.text('排版基础字号 (Base Typesetting Font Size)'), findsOneWidget);
+      expect(find.text('正文排版字体'), findsOneWidget);
+      expect(find.text('排版基础字号'), findsOneWidget);
       expect(find.text('恢复默认 (10.5 pt)'), findsOneWidget);
       expect(find.text('恢复默认字体'), findsOneWidget);
 

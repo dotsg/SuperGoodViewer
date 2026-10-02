@@ -10,10 +10,6 @@ class ZhHansStrings implements AppStrings {
   @override
   String get appSubtitle => '基于 Typst 高性能排版引擎的新一代 Markdown & PDF 阅读与演示器';
   @override
-  String get welcomeTitle => '欢迎使用超好读';
-  @override
-  String get confirm => '确认';
-  @override
   String get cancel => '取消';
   @override
   String get close => '关闭';
@@ -85,15 +81,9 @@ class ZhHansStrings implements AppStrings {
   @override
   String resetZoomTooltip(String shortcut) => '实际大小 100% ($shortcut)';
   @override
-  String get fitWidthTooltip => '满窗口宽度';
-  @override
-  String get fitPageTooltip => '满屏整页';
-  @override
   String get pageNavTooltip => '点击跳转页面';
   @override
   String settingsTooltip(String shortcut) => '偏好设置 ($shortcut)';
-  @override
-  String reloadTooltip(String shortcut) => '重新编译 / 刷新 ($shortcut)';
   @override
   String get compiling => '排版中...';
   @override
@@ -120,8 +110,6 @@ class ZhHansStrings implements AppStrings {
   String targetDocNotExist(String file) => '目标文档不存在: $file';
   @override
   String get statusReady => '就绪';
-  @override
-  String get statusCompiling => '排版中...';
   @override
   String get loadSampleDoc => '载入体验';
   @override
@@ -155,8 +143,6 @@ class ZhHansStrings implements AppStrings {
   String get hudSinglePage => '单页纵向浏览';
   @override
   String get hudTwoPageA4 => 'A4 双页对开浏览';
-  @override
-  String hudZoom(int percent) => '缩放: $percent%';
 
   // --- Drag & Drop ---
   @override
@@ -237,10 +223,6 @@ class ZhHansStrings implements AppStrings {
   String get presentationNext => '下一页 (→ / Space)';
   @override
   String get exitPresentation => '退出放映 (Esc)';
-  @override
-  String get presentationSearch => '文档内查找 (Cmd+F / Ctrl+F)';
-  @override
-  String presentationSlideCount(int current, int total) => '$current / $total';
 
   // --- Settings Dialog - Common ---
   @override
@@ -277,14 +259,6 @@ class ZhHansStrings implements AppStrings {
   String get displayLanguage => '界面语言';
   @override
   String get displayLanguageDesc => '选择超好读界面的显示语言，即刻生效';
-  @override
-  String get langSystem => '跟随系统';
-  @override
-  String get langZhHans => '简体中文';
-  @override
-  String get langZhHant => '繁體中文';
-  @override
-  String get langEn => 'English';
   @override
   String get appearanceSection => '外观';
   @override
@@ -330,8 +304,6 @@ class ZhHansStrings implements AppStrings {
 
   // --- Settings Dialog - Layout Tab ---
   @override
-  String get layoutMode => '默认阅读版式';
-  @override
   String get layoutModeFluid => '自适应长卷轴';
   @override
   String get layoutModeA4Portrait => 'A4 纵向分页';
@@ -341,8 +313,6 @@ class ZhHansStrings implements AppStrings {
   String get layoutModeSlide169 => '16:9 宽屏幻灯片';
   @override
   String get layoutModeSlide43 => '4:3 传统幻灯片';
-  @override
-  String get twoPageSpread => '双页对开浏览 (A4 / 幻灯片)';
   @override
   String get twoPageSpreadDesc => '在分页视图中左右并排展示两页，呈现书籍与画册级对开阅读体验';
   @override
@@ -378,20 +348,6 @@ class ZhHansStrings implements AppStrings {
   @override
   String get footerRight => '页脚右侧';
   @override
-  String get slotNone => '无 (清空插槽)';
-  @override
-  String get slotTitle => '文档标题';
-  @override
-  String get slotPageNumber => '当前页码';
-  @override
-  String get slotTotalPages => '总页数';
-  @override
-  String get slotPageOfTotal => '第 X 页 / 共 Y 页';
-  @override
-  String get slotDate => '当前日期';
-  @override
-  String get slotTime => '当前时间';
-  @override
   String get showHeaderRule => '页眉底端分割线';
   @override
   String get showFooterRule => '页脚顶端分割线';
@@ -417,17 +373,9 @@ class ZhHansStrings implements AppStrings {
   @override
   String get fontSize => '正文字号大小';
   @override
-  String fontSizePt(String pt) => '$pt pt';
-  @override
   String get bodyFont => '正文文本字体';
   @override
   String get codeFont => '等宽代码字体';
-  @override
-  String get fontDefault => '系统默认 / Typst 内置';
-  @override
-  String get embeddedFonts => '内置出版字体';
-  @override
-  String get systemFonts => '已安装系统字体';
   @override
   String get saveAndApplyTypography => '保存并刷新文档';
   @override
@@ -634,14 +582,6 @@ class ZhHansStrings implements AppStrings {
   // --- Settings Dialog - About Tab ---
   @override
   String aboutVersion(String ver) => '版本 $ver';
-  @override
-  String get aboutEngine => '排版引擎: Typst 0.13 高性能原生内核';
-  @override
-  String get aboutFramework => '界面框架: Flutter Desktop (macOS / Windows / Linux)';
-  @override
-  String get aboutGithub => 'GitHub 开源项目';
-  @override
-  String get aboutLicense => '开源协议: Apache 2.0';
 
   // --- Auto Update ---
   @override
@@ -670,4 +610,174 @@ class ZhHansStrings implements AppStrings {
   String get updateFailed => '检查或下载更新失败';
   @override
   String get installingUpdate => '正在准备更新并重启...';
+
+  // --- Settings Dialog - General Tab (cont.) ---
+  @override
+  String get restoreSession => '启动恢复上次会话';
+  @override
+  String get restoreSessionDesc => '重新启动应用时自动还原上次浏览文档与阅读进度';
+  @override
+  String get enabledBadge => '已启用';
+
+  // --- Settings Dialog - Layout Tab (cont.) ---
+  @override
+  String get pageFormatSection => '页面排版版式';
+  @override
+  String get pageFormatDesc => '设置文档默认排版形态。演示请选择 16:9 / 4:3 幻灯片，出版阅读请选择 A4 或自适应流式。';
+  @override
+  String get pageFormatFluidDesc => '锁定黄金阅读行宽，高度自适应，连续无缝卷轴滚动，适合技术文档与长文';
+  @override
+  String get pageFormatA4PortraitDesc => '标准 A4 出版纵向 (595.28 × 841.89 pt)，带页眉页脚与孤行控制，适合出版打印';
+  @override
+  String get pageFormatA4LandscapeDesc => '标准 A4 出版横向 (841.89 × 595.28 pt)，适合架构图与横向宽表排版';
+  @override
+  String get pageFormatSlide169Desc => '16:9 现代宽屏幻灯片 (960 × 540 pt)，大字号，适合高保真演示';
+  @override
+  String get pageFormatSlide43Desc => '4:3 经典传统幻灯片 (960 × 720 pt)，适合传统投影仪演示与学术报告';
+  @override
+  String get headerFooterDesc => '支持三插槽定制。可用占位宏：{title} (标题)、{page} (当前页)、{total} (总页数)、{date} (日期)。在流式模式下页眉页脚自动隐藏。';
+  @override
+  String get skipFirstPageDesc => '出版物与演示文稿的标题页惯例，第一页不打印页眉页脚';
+  @override
+  String get headerSlotsTitle => '页眉插槽';
+  @override
+  String get footerSlotsTitle => '页脚插槽';
+
+  // --- Settings Dialog - Typography Tab (cont.) ---
+  @override
+  String get mapleLinkCopied => '已复制 Maple Mono GitHub 链接到剪贴板';
+  @override
+  String get pdfTypographyInlineNotice => '当前正在阅读独立 PDF 文档，此处的排版设置将在阅读 Markdown 文档时生效。';
+  @override
+  String get fontOptionSystemRecommended => '系统出版推荐 (Inter + SF Pro + 苹方/微软雅黑)';
+  @override
+  String get fontOptionPingFang => '苹方 (PingFang SC)';
+  @override
+  String get fontOptionSongti => '宋体 (Songti SC)';
+  @override
+  String get fontOptionHiragino => '冬青黑体 (Hiragino Sans GB)';
+  @override
+  String get fontOptionYaHei => '微软雅黑 (Microsoft YaHei)';
+  @override
+  String get fontOptionSourceHanSans => '思源黑体 (Source Han Sans SC)';
+  @override
+  String get fontOptionInter => 'Inter (现代无衬线)';
+  @override
+  String get fontOptionMapleMono => 'Maple Mono (推荐：1:2 严格等宽对齐)';
+  @override
+  String get fontOptionMenlo => 'Menlo (macOS 系统默认等宽)';
+  @override
+  String get fontOptionMonaco => 'Monaco (macOS 经典等宽)';
+  @override
+  String get fontOptionCourierNew => 'Courier New (经典衬线等宽)';
+  @override
+  String fontOptionCustom(String name) => '$name (自定义)';
+  @override
+  String fontOptionInstalled(String name) => '$name (系统已安装)';
+  @override
+  String get bodyTypographyTitle => '正文排版字体';
+  @override
+  String get monoTypographyTitle => '代码与 ASCII 表格字体';
+  @override
+  String get baseFontSizeTitle => '排版基础字号';
+  @override
+  String get useRecommended => '恢复推荐';
+  @override
+  String get restoreDefault => '恢复默认';
+  @override
+  String restoreDefaultFontSize(String pt) => '恢复默认 ($pt pt)';
+  @override
+  String get decreaseFontSize => '缩小字号';
+  @override
+  String get increaseFontSize => '放大字号';
+  @override
+  String get restoreDefaultFonts => '恢复默认字体';
+  @override
+  String get mapleMonoReady => 'Maple Mono 就绪 (1:2 严格等宽)';
+  @override
+  String get cjkMonoDetected => '检测到 CJK 严格等宽字体';
+  @override
+  String get mapleMonoSuggested => '建议安装 Maple Mono 字体';
+  @override
+  String get cjkMonoActiveDesc => 'CJK 严格等宽已生效，ASCII 表格与代码中英文严格 1:2 对齐。';
+  @override
+  String get cjkMonoMissingDesc => '缺少 CJK 等宽字体，ASCII 表格或混排代码可能有微弱错位。';
+  @override
+  String get downloadFont => '下载字体';
+  @override
+  String get copyLink => '复制链接';
+  @override
+  String get detectingFonts => '检测中...';
+  @override
+  String get redetectFonts => '重新检测';
+  @override
+  String get mapleMonoDefault => 'Maple Mono (默认)';
+  @override
+  String get livePreviewBadge => '实时排版预览';
+  @override
+  String get livePreviewTitle => '排版实时渲染预览';
+  @override
+  String get previewSpecimenHeading => '现代出版级技术文档排版';
+  @override
+  String get previewSpecimenBody => 'SuperGoodViewer 专为高密度技术文档、工程规格说明书与论文设计。本段文字实时应用当前设置的正文字体与基础字号，展示精致的中西文混排字距、行高节奏与标点间隙。The quick brown fox jumps over the lazy dog.';
+  @override
+  String previewCodeFont(String name) => '代码字体渲染：$name';
+  @override
+  String get asciiAlignmentCheck => 'ASCII 表格全角/半角严格 1:2 等宽对齐校验';
+
+  // --- Settings Dialog - Shortcuts Tab (cont.) ---
+  @override
+  String get shortcutModified => '已修改';
+  @override
+  String get resetShortcutToDefault => '恢复此项默认';
+
+  // --- Settings Dialog - About Tab (cont.) ---
+  @override
+  String get aboutEngineSection => '核心排版渲染引擎';
+  @override
+  String get aboutTypstDesc => '毫秒级编译内核，完美支持高级数学公式、表格与代码块';
+  @override
+  String get aboutPdfiumTitle => 'PDFium 矢量渲染';
+  @override
+  String get aboutPdfiumDesc => '无损 120 FPS 丝滑视口平移与部分预渲染技术';
+  @override
+  String get aboutCjkTitle => 'CJK 1:2 等宽保障';
+  @override
+  String get aboutCjkDesc => '内置 CJK 等宽字体感知，杜绝 ASCII 表格与图表锯齿撕裂';
+  @override
+  String get loadSampleDocument => '载入精选排版样例';
+  @override
+  String get loadSampleDocumentDesc => '即刻体验包含复杂数学公式、Mermaid 图表、Callout 标注与代码高亮的演示文档';
+
+  // --- Presentation View (cont.) ---
+  @override
+  String get presentationNoContent => '未找到可供放映的文档内容';
+  @override
+  String presentationLoadFailed(String error) => '加载放映文档失败：$error';
+
+  // --- Auto Update (cont.) ---
+  @override
+  String updateCurrentVersion(String version) => '当前版本：v$version';
+  @override
+  String updateSize(String size) => '大小：$size';
+  @override
+  String get releaseNotesTitle => '更新内容与优化';
+  @override
+  String get releaseNotesFallback => '包含性能优化与稳定性提升。';
+  @override
+  String get updateReadyRestart => '更新包已就绪！重启软件后将瞬间生效。';
+  @override
+  String updateInstallError(String error) => '安装更新时出错：$error';
+  @override
+  String get updateMissingExecutable => '更新包主执行文件不存在，安装包可能损坏';
+  @override
+  String get updateUnreadableExecutable => '无法解析更新包主执行文件架构，安装包可能已损坏';
+  @override
+  String updateArchMismatch(String archs, String host) => '下载的安装包架构 ($archs) 与当前硬件 ($host) 不兼容';
+  @override
+  String get updateManualDownloadHint => '请前往 GitHub Releases 页面手动下载匹配当前硬件架构的安装包。';
+
+  // --- macOS Menu Bar ---
+  @override
+  String get cliMenuInstall => '安装 sgv 命令行工具…';
 }

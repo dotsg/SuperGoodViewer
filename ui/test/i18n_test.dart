@@ -6,7 +6,9 @@ import 'package:sogoodviewer/i18n/locales.dart';
 import 'package:sogoodviewer/i18n/strings_en.dart';
 import 'package:sogoodviewer/i18n/strings_zh_hans.dart';
 import 'package:sogoodviewer/i18n/strings_zh_hant.dart';
+import 'dart:io';
 import 'package:flutter/services.dart';
+import 'package:sogoodviewer/services/shortcut_service.dart';
 import 'package:sogoodviewer/views/settings_dialog.dart';
 import 'package:sogoodviewer/views/workspace_view.dart';
 
@@ -271,5 +273,91 @@ void main() {
       expect(windowTitles.last, '超好讀');
     });
   });
-}
 
+  group('Hardcoded string guards', () {
+    final cjk = RegExp(r'[一-鿿]');
+
+    test('UI code outside lib/i18n has no Chinese string literals', () {
+      // Each entry is a deliberate exception, see the comment at each site.
+      const allowedFiles = {
+        // Simplified defaults and category keys, translated per id by AppStrings.
+        'lib/services/shortcut_service.dart',
+      };
+      bool allowedLine(String line) =>
+          line.contains('│') || // CJK alignment specimen in the typography tab
+          line.contains("title == '目录'"); // outline parser skips TOC headings
+
+      final literal = RegExp(r"'((?:[^'\\]|\\.)*)'");
+      final offenders = <String>[];
+      for (final entity in Directory('lib').listSync(recursive: true)) {
+        final path = entity.path.replaceAll(r'\', '/');
+        if (entity is! File || !path.endsWith('.dart')) continue;
+        if (path.startsWith('lib/i18n/') || allowedFiles.contains(path)) continue;
+        final lines = entity.readAsLinesSync();
+        for (var i = 0; i < lines.length; i++) {
+          final line = lines[i];
+          if (line.trimLeft().startsWith('//') || line.contains('debugPrint(') || allowedLine(line)) continue;
+          for (final m in literal.allMatches(line)) {
+            if (cjk.hasMatch(m.group(1)!)) offenders.add('$path:${i + 1}: ${m.group(1)}');
+          }
+        }
+      }
+      expect(offenders, isEmpty, reason: 'Move these strings into AppStrings');
+    });
+
+    test('every shortcut action is translated in English and Traditional Chinese', () {
+      const en = EnStrings();
+      const hant = ZhHantStrings();
+      for (final action in ShortcutService.allActions) {
+        for (final text in [
+          en.shortcutActionName(action.id, action.name),
+          en.shortcutActionDesc(action.id, action.description),
+          en.shortcutCategoryName(action.category),
+        ]) {
+          expect(cjk.hasMatch(text), isFalse, reason: '${action.id}: "$text" is not English');
+        }
+        expect(hant.shortcutActionName(action.id, action.name), isNot(action.name),
+            reason: '${action.id} name falls back to Simplified Chinese');
+        expect(hant.shortcutActionDesc(action.id, action.description), isNot(action.description),
+            reason: '${action.id} description falls back to Simplified Chinese');
+      }
+    });
+
+    testWidgets('Settings dialog shows no Chinese text in English', (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      const appChannel = MethodChannel('com.sogoodviewer.app');
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(appChannel, (call) async {
+        if (call.method == 'checkCliStatus') {
+          return {'isInstalled': false, 'path': '/usr/local/bin/sgv', 'target': '', 'isCurrentApp': false};
+        }
+        return null;
+      });
+      addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(appChannel, null));
+
+      final controller = ReaderController(autoRestorePreferences: false, defaultLanguage: 'en');
+      addTearDown(controller.dispose);
+      const en = EnStrings();
+      // Intentionally CJK: the typography specimens and native language names.
+      bool allowed(String text) =>
+          text.contains('│') ||
+          text == en.previewSpecimenBody ||
+          AppLanguage.values.any((l) => l.nativeLabel == text);
+
+      for (final tab in SettingsTab.values) {
+        await tester.pumpWidget(MaterialApp(
+          home: SettingsDialog(controller: controller, initialTab: tab),
+        ));
+        await tester.pumpAndSettle();
+        final texts = <String>[
+          ...tester.widgetList<Text>(find.byType(Text)).map((t) => t.data ?? t.textSpan?.toPlainText() ?? ''),
+          ...tester.widgetList<Tooltip>(find.byType(Tooltip)).map((t) => t.message ?? ''),
+        ];
+        final chinese = texts.where((t) => cjk.hasMatch(t) && !allowed(t)).toList();
+        expect(chinese, isEmpty, reason: 'Untranslated text on the ${tab.name} tab');
+      }
+    });
+  });
+}

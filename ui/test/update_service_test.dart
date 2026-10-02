@@ -322,7 +322,7 @@ void main() {
       // Dialog content
       expect(find.text('发现新版本'), findsOneWidget);
       expect(find.text('v1.0.8'), findsOneWidget);
-      expect(find.textContaining('当前版本: v1.0.7'), findsOneWidget);
+      expect(find.textContaining('当前版本：v1.0.7'), findsOneWidget);
       expect(find.textContaining('50.0 MB'), findsOneWidget);
       expect(find.textContaining('优化大纲目录高亮跟随'), findsOneWidget);
 

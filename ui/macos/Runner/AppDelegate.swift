@@ -6,6 +6,36 @@ class AppDelegate: FlutterAppDelegate {
   static weak var shared: AppDelegate?
   var appChannel: FlutterMethodChannel?
   var pendingFileToOpen: String?
+  private var installCliMenuItem: NSMenuItem?
+
+  // Dart owns the UI language and pushes localized titles through
+  // "setMenuTitles"; until then the OS language picks the text.
+  private enum MenuLanguage { case zhHans, zhHant, en }
+
+  private static var systemMenuLanguage: MenuLanguage {
+    let preferred = Locale.preferredLanguages.first ?? ""
+    if preferred.hasPrefix("zh-Hant") || preferred.hasPrefix("zh-TW")
+      || preferred.hasPrefix("zh-HK") || preferred.hasPrefix("zh-MO") {
+      return .zhHant
+    }
+    return preferred.hasPrefix("zh") ? .zhHans : .en
+  }
+
+  private static var defaultInstallCliTitle: String {
+    switch systemMenuLanguage {
+    case .zhHans: return "安装 sgv 命令行工具…"
+    case .zhHant: return "安裝 sgv 命令列工具…"
+    case .en: return "Install sgv Command Line Tool…"
+    }
+  }
+
+  private static var windowLoadingMessage: String {
+    switch systemMenuLanguage {
+    case .zhHans: return "主窗口正在加载中，请稍后重试。"
+    case .zhHant: return "主視窗正在載入中，請稍後再試。"
+    case .en: return "The main window is still loading. Please try again shortly."
+    }
+  }
 
   override init() {
     super.init()
@@ -99,6 +129,12 @@ class AppDelegate: FlutterAppDelegate {
         self.installCli(result: result)
       case "uninstallCli":
         self.uninstallCli(result: result)
+      case "setMenuTitles":
+        if let titles = call.arguments as? [String: String],
+           let installTitle = titles["installCli"] {
+          self.installCliMenuItem?.title = installTitle
+        }
+        result(nil)
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -118,11 +154,12 @@ class AppDelegate: FlutterAppDelegate {
     }
 
     let installItem = NSMenuItem(
-      title: "安装 'sgv' 命令行工具...",
+      title: Self.defaultInstallCliTitle,
       action: #selector(menuInstallCliAction),
       keyEquivalent: ""
     )
     installItem.target = self
+    installCliMenuItem = installItem
 
     let insertIndex = min(1, appMenu.items.count)
     appMenu.insertItem(installItem, at: insertIndex)
@@ -134,8 +171,8 @@ class AppDelegate: FlutterAppDelegate {
       channel.invokeMethod("showCliDialog", arguments: nil)
     } else {
       let alert = NSAlert()
-      alert.messageText = "安装 'sgv' 命令行工具"
-      alert.informativeText = "主窗口正在加载中，请稍后重试。"
+      alert.messageText = installCliMenuItem?.title ?? Self.defaultInstallCliTitle
+      alert.informativeText = Self.windowLoadingMessage
       alert.runModal()
     }
   }

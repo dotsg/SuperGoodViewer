@@ -4,8 +4,6 @@ abstract class AppStrings {
   // --- General & App ---
   String get appTitle;
   String get appSubtitle;
-  String get welcomeTitle;
-  String get confirm;
   String get cancel;
   String get close;
   String get save;
@@ -41,11 +39,8 @@ abstract class AppStrings {
   String zoomInTooltip(String shortcut);
   String zoomOutTooltip(String shortcut);
   String resetZoomTooltip(String shortcut);
-  String get fitWidthTooltip;
-  String get fitPageTooltip;
   String get pageNavTooltip;
   String settingsTooltip(String shortcut);
-  String reloadTooltip(String shortcut);
   String get compiling;
   String get selectAll;
   String get previousPage;
@@ -59,7 +54,6 @@ abstract class AppStrings {
   String hideToolbarTooltip(String shortcut);
   String targetDocNotExist(String file);
   String get statusReady;
-  String get statusCompiling;
   String get loadSampleDoc;
   String get discardChanges;
   String get clearSlotTooltip;
@@ -72,7 +66,6 @@ abstract class AppStrings {
   String get hudTwoPage;
   String get hudSinglePage;
   String get hudTwoPageA4;
-  String hudZoom(int percent);
 
   // --- Drag & Drop ---
   String get dragDropTitle;
@@ -116,8 +109,6 @@ abstract class AppStrings {
   String get presentationPrev;
   String get presentationNext;
   String get exitPresentation;
-  String get presentationSearch;
-  String presentationSlideCount(int current, int total);
 
   // --- Settings Dialog - Common ---
   String get settingsTitle;
@@ -138,10 +129,6 @@ abstract class AppStrings {
   String get languageSection;
   String get displayLanguage;
   String get displayLanguageDesc;
-  String get langSystem;
-  String get langZhHans;
-  String get langZhHant;
-  String get langEn;
   String get appearanceSection;
   String get themeMode;
   String get themeModeDesc;
@@ -165,13 +152,11 @@ abstract class AppStrings {
   String currentCacheSize(int count, String size);
 
   // --- Settings Dialog - Layout Tab ---
-  String get layoutMode;
   String get layoutModeFluid;
   String get layoutModeA4Portrait;
   String get layoutModeA4Landscape;
   String get layoutModeSlide169;
   String get layoutModeSlide43;
-  String get twoPageSpread;
   String get twoPageSpreadDesc;
   String get marpCompatibility;
   String get marpCompatibilityDesc;
@@ -189,13 +174,6 @@ abstract class AppStrings {
   String get footerLeft;
   String get footerCenter;
   String get footerRight;
-  String get slotNone;
-  String get slotTitle;
-  String get slotPageNumber;
-  String get slotTotalPages;
-  String get slotPageOfTotal;
-  String get slotDate;
-  String get slotTime;
   String get showHeaderRule;
   String get showFooterRule;
   String get skipFirstPage;
@@ -209,12 +187,8 @@ abstract class AppStrings {
   // --- Settings Dialog - Typography Tab ---
   String get pdfTypographyNotice;
   String get fontSize;
-  String fontSizePt(String pt);
   String get bodyFont;
   String get codeFont;
-  String get fontDefault;
-  String get embeddedFonts;
-  String get systemFonts;
   String get saveAndApplyTypography;
   String get typographySavedSuccess;
   String get typographyHasChanges;
@@ -280,10 +254,6 @@ abstract class AppStrings {
 
   // --- Settings Dialog - About Tab ---
   String aboutVersion(String ver);
-  String get aboutEngine;
-  String get aboutFramework;
-  String get aboutGithub;
-  String get aboutLicense;
 
   // --- Auto Update ---
   String get checkForUpdates;
@@ -299,4 +269,97 @@ abstract class AppStrings {
   String get autoCheckUpdates;
   String get updateFailed;
   String get installingUpdate;
+
+  // --- Settings Dialog - General Tab (cont.) ---
+  String get restoreSession;
+  String get restoreSessionDesc;
+  String get enabledBadge;
+
+  // --- Settings Dialog - Layout Tab (cont.) ---
+  String get pageFormatSection;
+  String get pageFormatDesc;
+  String get pageFormatFluidDesc;
+  String get pageFormatA4PortraitDesc;
+  String get pageFormatA4LandscapeDesc;
+  String get pageFormatSlide169Desc;
+  String get pageFormatSlide43Desc;
+  String get headerFooterDesc;
+  String get skipFirstPageDesc;
+  String get headerSlotsTitle;
+  String get footerSlotsTitle;
+
+  // --- Settings Dialog - Typography Tab (cont.) ---
+  String get mapleLinkCopied;
+  String get pdfTypographyInlineNotice;
+  String get fontOptionSystemRecommended;
+  String get fontOptionPingFang;
+  String get fontOptionSongti;
+  String get fontOptionHiragino;
+  String get fontOptionYaHei;
+  String get fontOptionSourceHanSans;
+  String get fontOptionInter;
+  String get fontOptionMapleMono;
+  String get fontOptionMenlo;
+  String get fontOptionMonaco;
+  String get fontOptionCourierNew;
+  String fontOptionCustom(String name);
+  String fontOptionInstalled(String name);
+  String get bodyTypographyTitle;
+  String get monoTypographyTitle;
+  String get baseFontSizeTitle;
+  String get useRecommended;
+  String get restoreDefault;
+  String restoreDefaultFontSize(String pt);
+  String get decreaseFontSize;
+  String get increaseFontSize;
+  String get restoreDefaultFonts;
+  String get mapleMonoReady;
+  String get cjkMonoDetected;
+  String get mapleMonoSuggested;
+  String get cjkMonoActiveDesc;
+  String get cjkMonoMissingDesc;
+  String get downloadFont;
+  String get copyLink;
+  String get detectingFonts;
+  String get redetectFonts;
+  String get mapleMonoDefault;
+  String get livePreviewBadge;
+  String get livePreviewTitle;
+  String get previewSpecimenHeading;
+  String get previewSpecimenBody;
+  String previewCodeFont(String name);
+  String get asciiAlignmentCheck;
+
+  // --- Settings Dialog - Shortcuts Tab (cont.) ---
+  String get shortcutModified;
+  String get resetShortcutToDefault;
+
+  // --- Settings Dialog - About Tab (cont.) ---
+  String get aboutEngineSection;
+  String get aboutTypstDesc;
+  String get aboutPdfiumTitle;
+  String get aboutPdfiumDesc;
+  String get aboutCjkTitle;
+  String get aboutCjkDesc;
+  String get loadSampleDocument;
+  String get loadSampleDocumentDesc;
+
+  // --- Presentation View (cont.) ---
+  String get presentationNoContent;
+  String presentationLoadFailed(String error);
+
+  // --- Auto Update (cont.) ---
+  String updateCurrentVersion(String version);
+  String updateSize(String size);
+  String get releaseNotesTitle;
+  String get releaseNotesFallback;
+  String get updateReadyRestart;
+  String updateInstallError(String error);
+  String get updateMissingExecutable;
+  String get updateUnreadableExecutable;
+  String updateArchMismatch(String archs, String host);
+  String get updateManualDownloadHint;
+
+  // --- macOS Menu Bar ---
+  String get cliMenuInstall;
 }

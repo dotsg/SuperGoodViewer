@@ -83,14 +83,14 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('字体排版与中英文等宽对齐'), findsOneWidget);
-      expect(find.text('正文排版字体 (Body Typography)'), findsOneWidget);
-      expect(find.text('排版基础字号 (Base Typesetting Font Size)'), findsOneWidget);
+      expect(find.text('正文排版字体'), findsOneWidget);
+      expect(find.text('排版基础字号'), findsOneWidget);
       expect(find.text('恢复默认字体'), findsOneWidget);
 
       // Verify Live Typography Preview card is visible
-      expect(find.text('排版实时渲染预览 (Live Typography Preview)'), findsOneWidget);
-      expect(find.text('实时排版预览 (Live Preview)'), findsOneWidget);
-      expect(find.text('现代出版级技术文档排版 (Publisher-Grade Typography)'), findsOneWidget);
+      expect(find.text('排版实时渲染预览'), findsOneWidget);
+      expect(find.text('实时排版预览'), findsOneWidget);
+      expect(find.text('现代出版级技术文档排版'), findsOneWidget);
       expect(find.text('ASCII 表格全角/半角严格 1:2 等宽对齐校验'), findsOneWidget);
 
       // Switch to Shortcuts tab
@@ -112,7 +112,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('关于 SuperGoodViewer'), findsOneWidget);
-      expect(find.text('载入精选排版样例 (Sample Document)'), findsOneWidget);
+      expect(find.text('载入精选排版样例'), findsOneWidget);
       expect(find.text('载入体验'), findsOneWidget);
 
       // Close dialog
@@ -152,7 +152,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('字体排版与中英文等宽对齐'), findsOneWidget);
-      expect(find.text('正文排版字体 (Body Typography)'), findsOneWidget);
+      expect(find.text('正文排版字体'), findsOneWidget);
     });
 
     testWidgets('toggling auto reload and font size in SettingsDialog updates controller', (tester) async {

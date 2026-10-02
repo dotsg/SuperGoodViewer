@@ -123,6 +123,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       _updateTrafficLights();
       _syncWindowTitle();
       _syncWindowTheme();
+      _syncMenuTitles();
     });
     widget.controller.addListener(_onControllerChanged);
     final enableIntegration = widget.enableSystemIntegration ?? WorkspaceView.defaultEnableSystemIntegration;
@@ -177,6 +178,17 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   bool? _lastSyncedDark;
+  String? _lastSyncedMenuLanguage;
+
+  void _syncMenuTitles() {
+    final enableIntegration = widget.enableSystemIntegration ?? WorkspaceView.defaultEnableSystemIntegration;
+    if (!enableIntegration) return;
+    final language = widget.controller.language;
+    if (_lastSyncedMenuLanguage != language) {
+      _lastSyncedMenuLanguage = language;
+      NativeCliService.setMenuTitles(widget.controller.strings);
+    }
+  }
 
   /// Native Windows / GTK title bars only track the system theme on their own,
   /// so pin them to the app theme (which may be an explicit light/dark choice).
@@ -245,6 +257,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     }
     _syncWindowTitle();
     _syncWindowTheme();
+    _syncMenuTitles();
     _updateTrafficLights();
   }
 
@@ -1157,7 +1170,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                                     padding: const EdgeInsets.symmetric(horizontal: 10),
                                     visualDensity: VisualDensity.compact,
                                   ),
-                                  child: const Text('重试', style: TextStyle(fontSize: 12)),
+                                  child: Text(controller.strings.retry, style: const TextStyle(fontSize: 12)),
                                 ),
                               ],
                             ),

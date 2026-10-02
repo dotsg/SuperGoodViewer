@@ -5,12 +5,34 @@ import 'dart:isolate';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import '../i18n/app_strings.dart';
 import '../models/update_info.dart';
 import 'preferences_service.dart';
 
+enum ArchitectureIssue { missingExecutable, unreadableExecutable, mismatch }
+
 class IncompatibleArchitectureException implements Exception {
   final String message;
-  const IncompatibleArchitectureException(this.message);
+  final ArchitectureIssue issue;
+  final String archs;
+  final String host;
+  const IncompatibleArchitectureException(
+    this.message, {
+    this.issue = ArchitectureIssue.mismatch,
+    this.archs = '',
+    this.host = '',
+  });
+
+  String localizedMessage(AppStrings s) {
+    switch (issue) {
+      case ArchitectureIssue.missingExecutable:
+        return s.updateMissingExecutable;
+      case ArchitectureIssue.unreadableExecutable:
+        return s.updateUnreadableExecutable;
+      case ArchitectureIssue.mismatch:
+        return s.updateArchMismatch(archs, host);
+    }
+  }
 
   @override
   String toString() => 'IncompatibleArchitectureException: $message';
@@ -1604,19 +1626,28 @@ exit 0
       // 3.1 Validate executable architecture against current host CPU using native Mach-O header parsing
       final stagedBinary = File(p.join(stagedAppPath, 'Contents', 'MacOS', 'SuperGoodViewer'));
       if (!stagedBinary.existsSync()) {
-        throw const IncompatibleArchitectureException('更新包主执行文件不存在，安装包可能损坏');
+        throw const IncompatibleArchitectureException(
+          'Update package is missing its main executable',
+          issue: ArchitectureIssue.missingExecutable,
+        );
       }
       final archs = readMachOArchitectures(stagedBinary);
       if (archs.isEmpty) {
-        throw const IncompatibleArchitectureException('无法解析更新包主执行文件架构，安装包可能已损坏');
+        throw const IncompatibleArchitectureException(
+          'Cannot read the update executable architecture',
+          issue: ArchitectureIssue.unreadableExecutable,
+        );
       }
       final isHostArm = _detectMacOSArm();
       final isCompatible = isHostArm
           ? (archs.contains('arm64') || archs.contains('x86_64'))
           : archs.contains('x86_64');
       if (!isCompatible) {
+        final host = isHostArm ? 'Apple Silicon' : 'Intel Mac';
         throw IncompatibleArchitectureException(
-          '下载的安装包架构 ($archs) 与当前硬件 (${isHostArm ? "Apple Silicon" : "Intel Mac"}) 不兼容',
+          'Update architecture $archs is incompatible with $host',
+          archs: '$archs',
+          host: host,
         );
       }
 
