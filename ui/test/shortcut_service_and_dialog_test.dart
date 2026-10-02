@@ -6,7 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:sogoodviewer/controllers/reader_controller.dart';
 import 'package:sogoodviewer/services/preferences_service.dart';
 import 'package:sogoodviewer/services/shortcut_service.dart';
-import 'package:sogoodviewer/views/keyboard_shortcuts_dialog.dart';
+import 'package:sogoodviewer/views/settings_dialog.dart';
 
 void main() {
   late Directory tempTestDir;
@@ -190,8 +190,8 @@ void main() {
     });
   });
 
-  group('KeyboardShortcutsDialog Widget Tests', () {
-    testWidgets('renders all action categories and allows key rebinding', (tester) async {
+  group('Settings shortcuts tab Widget Tests', () {
+    testWidgets('renders all action categories and current key labels', (tester) async {
       tester.view.physicalSize = const Size(1200, 900);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -202,23 +202,11 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: Scaffold(
-            body: Builder(
-              builder: (ctx) => ElevatedButton(
-                onPressed: () => showKeyboardShortcutsDialog(ctx, controller),
-                child: const Text('Open Dialog'),
-              ),
-            ),
-          ),
+          home: SettingsDialog(controller: controller, initialTab: SettingsTab.shortcuts),
         ),
       );
 
-      // Open dialog
-      await tester.tap(find.text('Open Dialog'));
-      await tester.pumpAndSettle();
-
-      // Dialog title & top categories visible
-      expect(find.text('快捷键自定义设置'), findsOneWidget);
+      // Top categories visible
       expect(find.text('视图模式'), findsOneWidget);
       expect(find.text('文档文件'), findsOneWidget);
 
@@ -228,15 +216,10 @@ void main() {
       expect(find.text('查找文档内容'), findsOneWidget);
       expect(find.text('导出为出版级 PDF'), findsOneWidget);
 
-      // Initial keys: toggleMode is M, exportPdf is P
+      // Initial keys: toggleMode is M
       final modeShortcutLabel = controller.shortcutService.getShortcutLabel('toggleMode');
       expect(modeShortcutLabel, contains('M'));
       expect(find.text(modeShortcutLabel), findsWidgets);
-
-      // Close dialog
-      await tester.tap(find.byTooltip('关闭'));
-      await tester.pumpAndSettle();
-      expect(find.text('快捷键自定义设置'), findsNothing);
     });
 
     testWidgets('customizing a key displays modification chip and resets on button click', (tester) async {
@@ -253,7 +236,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: KeyboardShortcutsDialog(controller: controller),
+          home: SettingsDialog(controller: controller, initialTab: SettingsTab.shortcuts),
         ),
       );
 
