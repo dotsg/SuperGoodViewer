@@ -26,6 +26,11 @@ constexpr const wchar_t kGetPreferredBrightnessRegKey[] =
   L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
 constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme";
 
+// Smallest client area, in logical pixels. Layout is verified down to this
+// size (see test/layout_overflow_test.dart).
+constexpr int kMinClientWidth = 800;
+constexpr int kMinClientHeight = 600;
+
 // The number of Win32Window objects that currently exist.
 static int g_active_window_count = 0;
 
@@ -216,6 +221,21 @@ Win32Window::MessageHandler(HWND hwnd,
     case WM_DWMCOLORIZATIONCOLORCHANGED:
       UpdateTheme(hwnd);
       return 0;
+
+    case WM_GETMINMAXINFO: {
+      HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+      UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
+      double scale_factor = dpi / 96.0;
+      RECT frame = {0, 0, Scale(kMinClientWidth, scale_factor),
+                    Scale(kMinClientHeight, scale_factor)};
+      AdjustWindowRectExForDpi(
+          &frame, static_cast<DWORD>(GetWindowLongPtr(hwnd, GWL_STYLE)),
+          FALSE, static_cast<DWORD>(GetWindowLongPtr(hwnd, GWL_EXSTYLE)), dpi);
+      auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
+      info->ptMinTrackSize.x = frame.right - frame.left;
+      info->ptMinTrackSize.y = frame.bottom - frame.top;
+      return 0;
+    }
   }
 
   return DefWindowProc(window_handle_, message, wparam, lparam);

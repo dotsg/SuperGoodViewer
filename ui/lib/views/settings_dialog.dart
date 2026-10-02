@@ -991,7 +991,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
           color: hasChanges ? const Color(0xFFF59E0B) : const Color(0xFF10B981),
         ),
         const SizedBox(width: 6),
-        Flexible(
+        Expanded(
           child: Text(
             hasChanges ? s.layoutHasChanges : s.layoutUpToDate,
             overflow: TextOverflow.ellipsis,
@@ -1004,7 +1004,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
             ),
           ),
         ),
-        const Spacer(),
+        const SizedBox(width: 8),
         if (hasChanges) ...[
           OutlinedButton(
             onPressed: _revertLayout,
@@ -1931,7 +1931,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
             ),
           ),
           const SizedBox(height: 6),
-          Row(
+          Wrap(
             children: [
               TextButton.icon(
                 icon: const Icon(Icons.open_in_new_rounded, size: 12),
@@ -2031,7 +2031,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
           color: hasChanges ? const Color(0xFFF59E0B) : const Color(0xFF10B981),
         ),
         const SizedBox(width: 6),
-        Flexible(
+        Expanded(
           child: Text(
             hasChanges ? s.typographyHasChanges : s.typographyUpToDate,
             overflow: TextOverflow.ellipsis,
@@ -2044,7 +2044,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
             ),
           ),
         ),
-        const Spacer(),
+        const SizedBox(width: 8),
         if (hasChanges) ...[
           OutlinedButton(
             onPressed: _revertTypography,

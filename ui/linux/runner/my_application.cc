@@ -416,6 +416,8 @@ static void my_application_activate(GApplication* application) {
   gdk_rgba_parse(&background_color, "#000000");
   fl_view_set_background_color(view, &background_color);
   gtk_widget_show(GTK_WIDGET(view));
+  // Layout is verified down to 800x600 (see test/layout_overflow_test.dart).
+  gtk_widget_set_size_request(GTK_WIDGET(view), 800, 600);
   gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
 
   g_signal_connect_swapped(view, "first-frame", G_CALLBACK(first_frame_cb),
