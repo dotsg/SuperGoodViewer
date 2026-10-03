@@ -203,17 +203,17 @@ void main() {
       expect(intelWithArmOnly.name, isNull);
     });
 
-    test('resolvePlatformAsset differentiates Linux architectures (arm64, x64)', () {
+    test('resolvePlatformAsset differentiates Linux architectures (arm64, amd64, x64)', () {
       final linuxAssets = [
         {
-          'name': 'SuperGoodViewer-v1.1.0-linux-arm64.tar.gz',
-          'browser_download_url': 'https://example.com/SuperGoodViewer-v1.1.0-linux-arm64.tar.gz',
-          'size': 42000000,
+          'name': 'SuperGoodViewer-v1.1.1-linux-amd64.tar.gz',
+          'browser_download_url': 'https://example.com/SuperGoodViewer-v1.1.1-linux-amd64.tar.gz',
+          'size': 45000000,
         },
         {
-          'name': 'SuperGoodViewer-v1.1.0-linux-x64.tar.gz',
-          'browser_download_url': 'https://example.com/SuperGoodViewer-v1.1.0-linux-x64.tar.gz',
-          'size': 45000000,
+          'name': 'SuperGoodViewer-v1.1.1-linux-arm64.tar.gz',
+          'browser_download_url': 'https://example.com/SuperGoodViewer-v1.1.1-linux-arm64.tar.gz',
+          'size': 42000000,
         },
       ];
 
@@ -223,17 +223,22 @@ void main() {
         targetIsLinux: true,
         targetIsArm64: true,
       );
-      expect(armAsset.name, 'SuperGoodViewer-v1.1.0-linux-arm64.tar.gz');
-      expect(armAsset.url, 'https://example.com/SuperGoodViewer-v1.1.0-linux-arm64.tar.gz');
+      expect(armAsset.name, 'SuperGoodViewer-v1.1.1-linux-arm64.tar.gz');
+      expect(armAsset.url, 'https://example.com/SuperGoodViewer-v1.1.1-linux-arm64.tar.gz');
 
-      // Linux x64 host should resolve x64 asset
-      final x64Asset = UpdateService.resolvePlatformAsset(
+      // Linux x64 / amd64 host should resolve amd64 asset
+      final amd64Asset = UpdateService.resolvePlatformAsset(
         linuxAssets,
         targetIsLinux: true,
         targetIsArm64: false,
       );
-      expect(x64Asset.name, 'SuperGoodViewer-v1.1.0-linux-x64.tar.gz');
-      expect(x64Asset.url, 'https://example.com/SuperGoodViewer-v1.1.0-linux-x64.tar.gz');
+      expect(amd64Asset.name, 'SuperGoodViewer-v1.1.1-linux-amd64.tar.gz');
+      expect(amd64Asset.url, 'https://example.com/SuperGoodViewer-v1.1.1-linux-amd64.tar.gz');
+
+      // Verify legacy v1.0.6~v1.1.0 client logic selects linux-amd64 due to ASCII sorting:
+      final sortedAssetNames = linuxAssets.map((a) => a['name'] as String).toList()..sort();
+      expect(sortedAssetNames.first, 'SuperGoodViewer-v1.1.1-linux-amd64.tar.gz',
+          reason: 'amd64 must sort before arm64 so legacy client picks x86 binary');
     });
 
     test('readMachOArchitectures parses thin and fat Mach-O headers accurately', () {

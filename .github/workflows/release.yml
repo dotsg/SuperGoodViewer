@@ -332,10 +332,10 @@ jobs:
           if-no-files-found: error
 
   # =============================================================
-  # Linux Build & Package (x64 portable tar.gz)
+  # Linux AMD64 Build & Package (x86_64 portable tar.gz)
   # =============================================================
-  build-linux-x64:
-    name: Build Linux x64
+  build-linux-amd64:
+    name: Build Linux AMD64 (x86_64)
     runs-on: ubuntu-latest
 
     steps:
@@ -373,7 +373,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
-          key: linux-x64
+          key: linux-amd64
 
       - name: Build Rust sogood_core & sgv-cli (Release)
         run: |
@@ -404,12 +404,12 @@ jobs:
           test -f "$BUNDLE/bin/sgv-cli" || { echo "::error::$BUNDLE/bin/sgv-cli missing"; exit 1; }
           test -x "$BUNDLE/bin/sgv-cli" || { echo "::error::$BUNDLE/bin/sgv-cli is not executable"; exit 1; }
           mkdir -p dist
-          tar -czvf "dist/SuperGoodViewer-${{ env.RELEASE_VERSION }}-linux-x64.tar.gz" -C "$BUNDLE" .
+          tar -czvf "dist/SuperGoodViewer-${{ env.RELEASE_VERSION }}-linux-amd64.tar.gz" -C "$BUNDLE" .
 
-      - name: Upload Linux x64 Artifacts
+      - name: Upload Linux AMD64 Artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: linux-x64-binaries
+          name: linux-amd64-binaries
           path: dist/*
           if-no-files-found: error
 
@@ -499,7 +499,7 @@ jobs:
   # =============================================================
   publish-release:
     name: Publish GitHub Release
-    needs: [build-macos, build-windows-x64, build-windows-arm64, build-linux-x64, build-linux-arm64]
+    needs: [build-macos, build-windows-x64, build-windows-arm64, build-linux-amd64, build-linux-arm64]
     runs-on: ubuntu-latest
 
     steps:
@@ -553,7 +553,7 @@ jobs:
             - **首次运行提示**：如遇 Windows SmartScreen 提示拦截，点击「更多信息」并选择「仍要运行」。
 
             #### 🐧 Linux 用户
-            - **Intel / AMD 64位 Linux**：下载 `SuperGoodViewer-${{ env.RELEASE_VERSION }}-linux-x64.tar.gz`
+            - **Intel / AMD 64位 Linux (x86_64 / amd64)**：下载 `SuperGoodViewer-${{ env.RELEASE_VERSION }}-linux-amd64.tar.gz`
             - **ARM64 Linux（树莓派 4/5、飞腾/鲲鹏、ARM 服务器等）**：下载 `SuperGoodViewer-${{ env.RELEASE_VERSION }}-linux-arm64.tar.gz`（纯原生 ARM64 极致体验）
             - **系统要求**：Ubuntu 20.04+、Debian 11+、Fedora、Arch Linux 等主流 64 位发行版（需安装 GTK 3 环境）
             - **使用方式**：解压 tar.gz 归档至任意目录，运行 `./supergoodviewer` 即可直接启动（绿色免安装）；亦可将解压目录中的 `bin/sgv` 脚本软链接至 `~/.local/bin/sgv`，在终端随时以命令行唤起。

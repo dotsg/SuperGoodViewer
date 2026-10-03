@@ -96,16 +96,16 @@ cd "$wslRoot"
 test -f ui/build/linux/x64/release/bundle/supergoodviewer || { echo "Missing supergoodviewer binary"; exit 1; }
 test -f ui/build/linux/x64/release/bundle/bin/sgv-cli || { echo "Missing sgv-cli binary"; exit 1; }
 mkdir -p dist
-tar -czvf "dist/SuperGoodViewer-$Version-linux-x64.tar.gz" -C ui/build/linux/x64/release/bundle .
+tar -czvf "dist/SuperGoodViewer-$Version-linux-amd64.tar.gz" -C ui/build/linux/x64/release/bundle .
 "@
 
 wsl -e bash -c $wslCmd
 if ($LASTEXITCODE -ne 0) { throw "WSL Linux build failed" }
 
-$linuxTar = "$distDir\SuperGoodViewer-$Version-linux-x64.tar.gz"
+$linuxTar = "$distDir\SuperGoodViewer-$Version-linux-amd64.tar.gz"
 $swLinux.Stop()
 $linuxSize = (Get-Item $linuxTar).Length / 1MB
-Write-Host ("  ✓ Linux x64 Package Created: {0:N2} MB ({1}s)" -f $linuxSize, $swLinux.Elapsed.TotalSeconds.ToString("F1")) -ForegroundColor Green
+Write-Host ("  ✓ Linux AMD64 Package Created: {0:N2} MB ({1}s)" -f $linuxSize, $swLinux.Elapsed.TotalSeconds.ToString("F1")) -ForegroundColor Green
 
 # Restore Windows Flutter package config
 Write-Host "  -> Restoring Windows host package config..."
