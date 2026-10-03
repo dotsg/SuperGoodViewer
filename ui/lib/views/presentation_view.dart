@@ -56,7 +56,7 @@ class PresentationViewState extends State<PresentationView> {
     if (bytes == null || bytes.isEmpty) {
       setState(() {
         _isLoading = false;
-        _loadError = '未找到可供放映的文档内容';
+        _loadError = widget.controller.strings.presentationNoContent;
       });
       return;
     }
@@ -78,7 +78,7 @@ class PresentationViewState extends State<PresentationView> {
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _loadError = '加载放映文档失败: $e';
+          _loadError = widget.controller.strings.presentationLoadFailed('$e');
         });
       }
     }

@@ -118,6 +118,20 @@ package_universal() {
   echo ""
 }
 
+# Intel Macs render with Skia (Metal) instead of Impeller, which showed page
+# jitter on Intel GPUs (#17). Apple Silicon and universal builds keep Impeller.
+# Must run before re-signing: Info.plist is covered by the code signature.
+disable_impeller() {
+  local plist="$1/SuperGoodViewer.app/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Delete :FLTEnableImpeller" "$plist" 2>/dev/null || true
+  /usr/libexec/PlistBuddy -c "Add :FLTEnableImpeller bool false" "$plist"
+  if [ "$(/usr/libexec/PlistBuddy -c "Print :FLTEnableImpeller" "$plist")" != "false" ]; then
+    echo "::error::Failed to set FLTEnableImpeller=false in $plist"
+    exit 1
+  fi
+  echo "     Set FLTEnableImpeller=false (Skia rendering backend)"
+}
+
 package_arch() {
   local arch_name="$1"      # "arm64" or "x64"
   local target_arch=""       # "arm64" or "x86_64" for lipo
@@ -196,6 +210,11 @@ package_arch() {
     exit 1
   fi
   echo "     Verified: Contents/Resources/bin/sgv is present and executable"
+
+  if [ "$arch_name" = "x64" ]; then
+    echo "  -> Configuring Intel rendering backend..."
+    disable_impeller "$staging_dir"
+  fi
 
   # Re-signing
   echo "  -> Re-signing app bundle (ad-hoc)..."

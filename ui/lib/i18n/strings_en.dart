@@ -11,10 +11,6 @@ class EnStrings implements AppStrings {
   String get appSubtitle =>
       'Next-generation Markdown & PDF reader powered by Typst typesetting engine';
   @override
-  String get welcomeTitle => 'Welcome to SuperGoodViewer';
-  @override
-  String get confirm => 'Confirm';
-  @override
   String get cancel => 'Cancel';
   @override
   String get close => 'Close';
@@ -88,15 +84,9 @@ class EnStrings implements AppStrings {
   @override
   String resetZoomTooltip(String shortcut) => 'Actual Size 100% ($shortcut)';
   @override
-  String get fitWidthTooltip => 'Fit Width';
-  @override
-  String get fitPageTooltip => 'Fit Page';
-  @override
   String get pageNavTooltip => 'Click to Jump to Page';
   @override
   String settingsTooltip(String shortcut) => 'Preferences ($shortcut)';
-  @override
-  String reloadTooltip(String shortcut) => 'Recompile / Refresh ($shortcut)';
   @override
   String get compiling => 'Typesetting...';
   @override
@@ -123,8 +113,6 @@ class EnStrings implements AppStrings {
   String targetDocNotExist(String file) => 'Target document does not exist: $file';
   @override
   String get statusReady => 'Ready';
-  @override
-  String get statusCompiling => 'Typesetting...';
   @override
   String get loadSampleDoc => 'Load Sample';
   @override
@@ -158,8 +146,6 @@ class EnStrings implements AppStrings {
   String get hudSinglePage => 'Single Page View';
   @override
   String get hudTwoPageA4 => 'A4 Two-Page Spread';
-  @override
-  String hudZoom(int percent) => 'Zoom: $percent%';
 
   // --- Drag & Drop ---
   @override
@@ -243,10 +229,6 @@ class EnStrings implements AppStrings {
   String get presentationNext => 'Next Slide (→ / Space)';
   @override
   String get exitPresentation => 'Exit Presentation (Esc)';
-  @override
-  String get presentationSearch => 'Find in Presentation (Cmd+F / Ctrl+F)';
-  @override
-  String presentationSlideCount(int current, int total) => '$current / $total';
 
   // --- Settings Dialog - Common ---
   @override
@@ -278,19 +260,19 @@ class EnStrings implements AppStrings {
 
   // --- Settings Dialog - General Tab ---
   @override
+  String get languageSection => 'Language';
+  @override
   String get displayLanguage => 'Display Language';
   @override
   String get displayLanguageDesc => 'Select the display language for SuperGoodViewer';
   @override
-  String get langSystem => 'System Default';
-  @override
-  String get langZhHans => '简体中文 (Simplified Chinese)';
-  @override
-  String get langZhHant => '繁體中文 (Traditional Chinese)';
-  @override
-  String get langEn => 'English';
+  String get appearanceSection => 'Appearance';
   @override
   String get themeMode => 'Appearance Theme';
+  @override
+  String get themeModeDesc => 'Follow System switches automatically with the OS light / dark appearance';
+  @override
+  String get themeSystem => 'Follow System';
   @override
   String get themeLight => 'Light Mode';
   @override
@@ -330,8 +312,6 @@ class EnStrings implements AppStrings {
 
   // --- Settings Dialog - Layout Tab ---
   @override
-  String get layoutMode => 'Default Layout Mode';
-  @override
   String get layoutModeFluid => 'Continuous Scroll (Fluid)';
   @override
   String get layoutModeA4Portrait => 'A4 Portrait Paged (Print)';
@@ -341,8 +321,6 @@ class EnStrings implements AppStrings {
   String get layoutModeSlide169 => '16:9 Widescreen Slides';
   @override
   String get layoutModeSlide43 => '4:3 Standard Slides';
-  @override
-  String get twoPageSpread => 'Two-Page Spread (A4 / Slides)';
   @override
   String get twoPageSpreadDesc =>
       'Displays two facing pages side-by-side for a book-like reading experience';
@@ -380,20 +358,6 @@ class EnStrings implements AppStrings {
   @override
   String get footerRight => 'Footer Right';
   @override
-  String get slotNone => 'None (Clear Slot)';
-  @override
-  String get slotTitle => 'Document Title';
-  @override
-  String get slotPageNumber => 'Page Number';
-  @override
-  String get slotTotalPages => 'Total Pages';
-  @override
-  String get slotPageOfTotal => 'Page X of Y';
-  @override
-  String get slotDate => 'Current Date';
-  @override
-  String get slotTime => 'Current Time';
-  @override
   String get showHeaderRule => 'Header Dividing Line';
   @override
   String get showFooterRule => 'Footer Dividing Line';
@@ -419,17 +383,9 @@ class EnStrings implements AppStrings {
   @override
   String get fontSize => 'Body Font Size';
   @override
-  String fontSizePt(String pt) => '$pt pt';
-  @override
   String get bodyFont => 'Body Font Family';
   @override
   String get codeFont => 'Monospace Code Font';
-  @override
-  String get fontDefault => 'System Default / Typst Built-in';
-  @override
-  String get embeddedFonts => 'Built-in Publishing Fonts';
-  @override
-  String get systemFonts => 'Installed System Fonts';
   @override
   String get saveAndApplyTypography => 'Save & Refresh Document';
   @override
@@ -453,6 +409,8 @@ class EnStrings implements AppStrings {
   @override
   String shortcutCategoryName(String category) {
     switch (category) {
+      case '标签页':
+        return 'Tabs';
       case '视图模式':
         return 'View & Layout';
       case '文档文件':
@@ -468,10 +426,26 @@ class EnStrings implements AppStrings {
   @override
   String shortcutActionName(String id, String defaultName) {
     switch (id) {
+      case 'openFileInNewTab':
+        return 'Open File in New Tab';
+      case 'closeTab':
+        return 'Close Tab';
+      case 'reopenClosedTab':
+        return 'Reopen Closed Tab';
+      case 'nextTab':
+        return 'Next Tab';
+      case 'previousTab':
+        return 'Previous Tab';
+      case 'preferences':
+        return 'Preferences';
+      case 'fontSettings':
+        return 'Typography Settings';
+      case 'keyboardShortcuts':
+        return 'Keyboard Shortcuts';
       case 'toggleMode':
         return 'Switch Layout / View Mode';
       case 'togglePresentation':
-        return 'Full-Screen Presentation (PPT)';
+        return 'Full-Screen Presentation';
       case 'toggleTheme':
         return 'Toggle Light / Dark Mode';
       case 'toggleTwoPage':
@@ -507,6 +481,22 @@ class EnStrings implements AppStrings {
   @override
   String shortcutActionDesc(String id, String defaultDesc) {
     switch (id) {
+      case 'openFileInNewTab':
+        return 'Pick a file and always open it in a new tab';
+      case 'closeTab':
+        return 'Close the current tab; closing the last one returns to the welcome document';
+      case 'reopenClosedTab':
+        return 'Reopen recently closed tabs, most recent first';
+      case 'nextTab':
+        return 'Switch to the tab on the right (also Ctrl+Tab, Ctrl+PageDown)';
+      case 'previousTab':
+        return 'Switch to the tab on the left (also Ctrl+Shift+Tab, Ctrl+PageUp)';
+      case 'preferences':
+        return 'Open Settings (general, typography, shortcuts, CLI)';
+      case 'fontSettings':
+        return 'Open CJK typography and 1:2 monospace alignment settings';
+      case 'keyboardShortcuts':
+        return 'Open shortcut settings to rebind keys';
       case 'toggleMode':
         return 'Switch between Fluid Scroll, A4 Portrait/Landscape, and 16:9/4:3 Slides';
       case 'togglePresentation':
@@ -660,14 +650,6 @@ class EnStrings implements AppStrings {
   // --- Settings Dialog - About Tab ---
   @override
   String aboutVersion(String ver) => 'Version $ver';
-  @override
-  String get aboutEngine => 'Typesetting Engine: Typst 0.13 High-Performance Core';
-  @override
-  String get aboutFramework => 'UI Framework: Flutter Desktop (macOS / Windows / Linux)';
-  @override
-  String get aboutGithub => 'GitHub Open Source Project';
-  @override
-  String get aboutLicense => 'License: Apache 2.0';
 
   // --- Auto Update ---
   @override
@@ -696,4 +678,216 @@ class EnStrings implements AppStrings {
   String get updateFailed => 'Failed to check or download update';
   @override
   String get installingUpdate => 'Preparing update and restarting...';
+
+  // --- Settings Dialog - General Tab (cont.) ---
+  @override
+  String get restoreSession => 'Restore Last Session on Launch';
+  @override
+  String get restoreSessionDesc => 'Reopens the last document at your reading position when the app restarts';
+  @override
+  String get enabledBadge => 'Enabled';
+
+  // --- Settings Dialog - Layout Tab (cont.) ---
+  @override
+  String get pageFormatSection => 'Page Format';
+  @override
+  String get pageFormatDesc => 'Choose the default document layout: 16:9 / 4:3 slides for presenting, A4 or fluid for reading and print.';
+  @override
+  String get pageFormatFluidDesc => 'Comfortable fixed line width, auto height and seamless scrolling, ideal for technical docs and long reads';
+  @override
+  String get pageFormatA4PortraitDesc => 'Standard A4 portrait (595.28 × 841.89 pt) with header, footer and widow control, ready for print';
+  @override
+  String get pageFormatA4LandscapeDesc => 'Standard A4 landscape (841.89 × 595.28 pt) for architecture diagrams and wide tables';
+  @override
+  String get pageFormatSlide169Desc => '16:9 widescreen slides (960 × 540 pt) with large type for high-fidelity presentations';
+  @override
+  String get pageFormatSlide43Desc => '4:3 classic slides (960 × 720 pt) for traditional projectors and academic talks';
+  @override
+  String get headerFooterDesc => 'Three customizable slots each. Placeholders: {title}, {page} (current page), {total} (page count), {date}. Headers and footers are hidden in fluid mode.';
+  @override
+  String get skipFirstPageDesc => 'Follows the title-page convention of print and slides: no header or footer on page one';
+  @override
+  String get headerSlotsTitle => 'Header Slots';
+  @override
+  String get footerSlotsTitle => 'Footer Slots';
+
+  // --- Settings Dialog - Typography Tab (cont.) ---
+  @override
+  String get mapleLinkCopied => 'Copied the Maple Mono GitHub link to the clipboard';
+  @override
+  String get pdfTypographyInlineNotice => 'You are reading a standalone PDF; these typography settings apply when reading Markdown documents.';
+  @override
+  String get fontOptionSystemRecommended => 'System Recommended (Inter + SF Pro + PingFang / Microsoft YaHei)';
+  @override
+  String get fontOptionPingFang => 'PingFang SC';
+  @override
+  String get fontOptionSongti => 'Songti SC';
+  @override
+  String get fontOptionHiragino => 'Hiragino Sans GB';
+  @override
+  String get fontOptionYaHei => 'Microsoft YaHei';
+  @override
+  String get fontOptionSourceHanSans => 'Source Han Sans SC';
+  @override
+  String get fontOptionInter => 'Inter (modern sans-serif)';
+  @override
+  String get fontOptionMapleMono => 'Maple Mono (recommended: strict 1:2 alignment)';
+  @override
+  String get fontOptionMenlo => 'Menlo (macOS default monospace)';
+  @override
+  String get fontOptionMonaco => 'Monaco (classic macOS monospace)';
+  @override
+  String get fontOptionCourierNew => 'Courier New (classic serif monospace)';
+  @override
+  String fontOptionCustom(String name) => '$name (custom)';
+  @override
+  String fontOptionInstalled(String name) => '$name (installed)';
+  @override
+  String get bodyTypographyTitle => 'Body Typography';
+  @override
+  String get monoTypographyTitle => 'Code & ASCII Table Font';
+  @override
+  String get baseFontSizeTitle => 'Base Font Size';
+  @override
+  String get useRecommended => 'Use Recommended';
+  @override
+  String get restoreDefault => 'Reset';
+  @override
+  String restoreDefaultFontSize(String pt) => 'Reset ($pt pt)';
+  @override
+  String get decreaseFontSize => 'Decrease Font Size';
+  @override
+  String get increaseFontSize => 'Increase Font Size';
+  @override
+  String get restoreDefaultFonts => 'Reset Fonts';
+  @override
+  String get mapleMonoReady => 'Maple Mono ready (strict 1:2 monospace)';
+  @override
+  String get cjkMonoDetected => 'CJK strict monospace font detected';
+  @override
+  String get mapleMonoSuggested => 'Maple Mono recommended';
+  @override
+  String get cjkMonoActiveDesc => 'CJK strict monospace is active: CJK and Latin characters in ASCII tables and code align at exactly 1:2.';
+  @override
+  String get cjkMonoMissingDesc => 'No CJK monospace font found; ASCII tables and mixed-script code may misalign slightly.';
+  @override
+  String get downloadFont => 'Download Font';
+  @override
+  String get copyLink => 'Copy Link';
+  @override
+  String get detectingFonts => 'Detecting...';
+  @override
+  String get redetectFonts => 'Re-detect';
+  @override
+  String get mapleMonoDefault => 'Maple Mono (default)';
+  @override
+  String get livePreviewBadge => 'Live Preview';
+  @override
+  String get livePreviewTitle => 'Live Typography Preview';
+  @override
+  String get previewSpecimenHeading => 'Publisher-Grade Technical Typography';
+  @override
+  String get previewSpecimenBody => 'SuperGoodViewer is built for dense technical documents, engineering specs and papers. This paragraph uses your current body font and size to show CJK–Latin spacing and line rhythm: 超好读专为高密度技术文档设计，中西文混排间距一目了然。';
+  @override
+  String previewCodeFont(String name) => 'Code font: $name';
+  @override
+  String get asciiAlignmentCheck => 'ASCII table full-width / half-width 1:2 alignment check';
+
+  // --- Settings Dialog - Shortcuts Tab (cont.) ---
+  @override
+  String get shortcutModified => 'Modified';
+  @override
+  String get resetShortcutToDefault => 'Reset to Default';
+
+  // --- Settings Dialog - About Tab (cont.) ---
+  @override
+  String get openProjectHomepage => 'Open Project Homepage';
+  @override
+  String get aboutEngineSection => 'Core Rendering Engine';
+  @override
+  String get aboutTypstDesc => 'Millisecond-level compiler core with full support for advanced math, tables and code blocks';
+  @override
+  String get aboutPdfiumTitle => 'PDFium Vector Rendering';
+  @override
+  String get aboutPdfiumDesc => 'Lossless 120 FPS panning with partial pre-rendering';
+  @override
+  String get aboutCjkTitle => 'CJK 1:2 Monospace Alignment';
+  @override
+  String get aboutCjkDesc => 'Built-in CJK monospace font detection keeps ASCII tables and diagrams aligned';
+  @override
+  String get loadSampleDocument => 'Load Sample Document';
+  @override
+  String get loadSampleDocumentDesc => 'Try a demo with complex math, Mermaid diagrams, callouts and syntax highlighting';
+
+  // --- Presentation View (cont.) ---
+  @override
+  String get presentationNoContent => 'No document content to present';
+  @override
+  String presentationLoadFailed(String error) => 'Failed to load presentation: $error';
+
+  // --- Auto Update (cont.) ---
+  @override
+  String updateCurrentVersion(String version) => 'Current version: v$version';
+  @override
+  String updateSize(String size) => 'Size: $size';
+  @override
+  String get releaseNotesTitle => 'Release Notes';
+  @override
+  String get releaseNotesFallback => 'Includes performance and stability improvements.';
+  @override
+  String get updateReadyRestart => 'The update is ready and takes effect when you restart.';
+  @override
+  String updateInstallError(String error) => 'Failed to install the update: $error';
+  @override
+  String get updateMissingExecutable => 'The update is missing its main executable; the package may be corrupted';
+  @override
+  String get updateUnreadableExecutable => 'Could not read the architecture of the update executable; the package may be corrupted';
+  @override
+  String updateArchMismatch(String archs, String host) => 'The downloaded package ($archs) does not support this Mac ($host)';
+  @override
+  String get updateManualDownloadHint => 'Please download the installer for your hardware from the GitHub Releases page.';
+
+  // --- macOS Menu Bar ---
+  @override
+  String get cliMenuInstall => 'Install sgv Command Line Tool…';
+
+  // --- Settings Dialog - Linux Desktop Integration ---
+  @override
+  String get desktopIntegrationSection => 'Desktop Integration';
+  @override
+  String get desktopEntryTitle => 'Add to Applications Menu';
+  @override
+  String get desktopEntryDesc => 'Show SuperGoodViewer in the applications menu and in “Open With” for Markdown and PDF files';
+  @override
+  String get desktopEntryOutdated => 'The menu entry points to another copy or an older version';
+  @override
+  String get desktopEntryAdd => 'Add';
+  @override
+  String get desktopEntryUpdate => 'Update';
+  @override
+  String get desktopEntryRemove => 'Remove';
+  @override
+  String get desktopEntryAdded => 'Added to the applications menu';
+  @override
+  String get desktopEntryRemoved => 'Removed from the applications menu';
+  @override
+  String desktopEntryFailed(String error) => 'Failed: $error';
+  @override
+  String get desktopEntryGenericName => 'Markdown Viewer';
+
+  // --- Settings Dialog - Shortcuts Tab (unassigned) ---
+  @override
+  String get shortcutUnassigned => 'Not set';
+
+  // --- Tabs ---
+  @override
+  String closeTabTooltip(String shortcut) => 'Close Tab ($shortcut)';
+  @override
+  String get openBehaviorTitle => 'When Opening a File';
+  @override
+  String get openBehaviorDesc => 'Files opened from the file manager, the command line or Open either get a new tab or replace the current document';
+  @override
+  String get openInNewTab => 'New Tab';
+  @override
+  String get openReplaceCurrent => 'Replace Current';
 }

@@ -337,3 +337,4 @@ cat build/start_up_info.json
 
 原始逐项数据：[benchmark-results.json](benchmark-results.json)。
 渲染层图块/条带策略的独立基准见 [RASTER_GRID_BENCHMARK.md](RASTER_GRID_BENCHMARK.md)。
+与 markview 的对比（导出、打开、测试文件对内容缓存的影响）见 [MARKVIEW_COMPARISON.md](MARKVIEW_COMPARISON.md)。

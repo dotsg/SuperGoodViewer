@@ -9,7 +9,13 @@ class AppShortcutAction {
   final String name;
   final String category;
   final String description;
+
+  /// Default key on Windows and Linux.
   final LogicalKeyboardKey defaultKey;
+
+  /// Default key on macOS when it differs, e.g. zoom follows Preview there and
+  /// SumatraPDF / Acrobat elsewhere.
+  final LogicalKeyboardKey? macDefaultKey;
   final bool hasShift;
   final bool hasMetaOrControl;
 
@@ -19,9 +25,13 @@ class AppShortcutAction {
     required this.category,
     required this.description,
     required this.defaultKey,
+    this.macDefaultKey,
     this.hasShift = false,
     this.hasMetaOrControl = true,
   });
+
+  LogicalKeyboardKey get platformDefaultKey =>
+      ShortcutService.isMacLayout ? (macDefaultKey ?? defaultKey) : defaultKey;
 }
 
 /// Service managing customizable application keyboard shortcuts.
@@ -37,7 +47,7 @@ class ShortcutService extends ChangeNotifier {
     ),
     AppShortcutAction(
       id: 'togglePresentation',
-      name: '全屏单页演示 (PPT)',
+      name: '全屏单页演示',
       category: '视图模式',
       description: '进入或退出全屏单页幻灯片演示模式，方便演讲展示',
       defaultKey: LogicalKeyboardKey.keyP,
@@ -48,7 +58,8 @@ class ShortcutService extends ChangeNotifier {
       name: '切换明亮 / 暗黑模式',
       category: '视图模式',
       description: '在日间明亮和夜间暗黑阅读主题之间无缝切换',
-      defaultKey: LogicalKeyboardKey.keyT,
+      defaultKey: LogicalKeyboardKey.keyL, // Cmd+Shift+L / Ctrl+Shift+L, as in Notion
+      hasShift: true,
     ),
     AppShortcutAction(
       id: 'toggleTwoPage',
@@ -102,7 +113,49 @@ class ShortcutService extends ChangeNotifier {
       defaultKey: LogicalKeyboardKey.keyR,
     ),
 
-    // 缩放与自适应
+    // 标签页: browser conventions, which SumatraPDF shares
+    AppShortcutAction(
+      id: 'openFileInNewTab',
+      name: '在新标签页中打开文件',
+      category: '标签页',
+      description: '选择一个文件并始终在新标签页中打开，不替换当前文档',
+      defaultKey: LogicalKeyboardKey.keyT,
+    ),
+    AppShortcutAction(
+      id: 'closeTab',
+      name: '关闭标签页',
+      category: '标签页',
+      description: '关闭当前标签页，关闭最后一个时回到欢迎文档',
+      defaultKey: LogicalKeyboardKey.keyW,
+    ),
+    AppShortcutAction(
+      id: 'reopenClosedTab',
+      name: '重新打开关闭的标签页',
+      category: '标签页',
+      description: '按关闭顺序倒序恢复最近关闭的标签页',
+      defaultKey: LogicalKeyboardKey.keyT,
+      hasShift: true,
+    ),
+    AppShortcutAction(
+      id: 'nextTab',
+      name: '下一个标签页',
+      category: '标签页',
+      description: '切换到右侧的标签页（亦支持 Ctrl+Tab、Ctrl+PageDown）',
+      defaultKey: LogicalKeyboardKey.bracketRight,
+      hasShift: true,
+    ),
+    AppShortcutAction(
+      id: 'previousTab',
+      name: '上一个标签页',
+      category: '标签页',
+      description: '切换到左侧的标签页（亦支持 Ctrl+Shift+Tab、Ctrl+PageUp）',
+      defaultKey: LogicalKeyboardKey.bracketLeft,
+      hasShift: true,
+    ),
+
+    // 缩放与自适应: Windows / Linux follow SumatraPDF and Acrobat (Ctrl+0 fit
+    // page, Ctrl+1 actual size, Ctrl+2 fit width); macOS follows Preview
+    // (Cmd+0 actual size, Cmd+9 zoom to fit) with fit width next to it.
     AppShortcutAction(
       id: 'zoomIn',
       name: '放大页面视口',
@@ -122,21 +175,24 @@ class ShortcutService extends ChangeNotifier {
       name: '重置缩放到 100%',
       category: '缩放自适应',
       description: '将页面缩放快速恢复为 100% 原始比例',
-      defaultKey: LogicalKeyboardKey.digit0,
+      defaultKey: LogicalKeyboardKey.digit1,
+      macDefaultKey: LogicalKeyboardKey.digit0,
     ),
     AppShortcutAction(
       id: 'fitWidth',
       name: '自适应窗口宽度',
       category: '缩放自适应',
       description: '根据当前窗口自适应页面宽度',
-      defaultKey: LogicalKeyboardKey.digit9,
+      defaultKey: LogicalKeyboardKey.digit2,
+      macDefaultKey: LogicalKeyboardKey.digit8,
     ),
     AppShortcutAction(
       id: 'fitPage',
       name: '自适应整页全貌',
       category: '缩放自适应',
       description: '自适应整页视口使页面完整呈现',
-      defaultKey: LogicalKeyboardKey.digit1,
+      defaultKey: LogicalKeyboardKey.digit0,
+      macDefaultKey: LogicalKeyboardKey.digit9,
     ),
 
     // 排版与设置
@@ -220,6 +276,12 @@ class ShortcutService extends ChangeNotifier {
     for (final entry in _nameToKey.entries) entry.value: entry.key,
   };
 
+  /// Overrides the platform for default keys and labels in tests.
+  @visibleForTesting
+  static bool? debugIsMacLayout;
+
+  static bool get isMacLayout => debugIsMacLayout ?? (!kIsWeb && Platform.isMacOS);
+
   final Map<String, LogicalKeyboardKey> _customKeys = {};
 
   ShortcutService();
@@ -230,7 +292,26 @@ class ShortcutService extends ChangeNotifier {
       return _customKeys[actionId]!;
     }
     final action = actionMap[actionId];
-    return action?.defaultKey ?? LogicalKeyboardKey.keyF;
+    return action?.platformDefaultKey ?? LogicalKeyboardKey.keyF;
+  }
+
+  /// True when [actionId] still uses its default key but the user bound that
+  /// same shortcut to another action. The customization wins, so a changed
+  /// default never silently takes over a key the user picked.
+  bool isShadowed(String actionId) {
+    final action = actionMap[actionId];
+    if (action == null || _customKeys.containsKey(actionId)) return false;
+    final key = action.platformDefaultKey;
+    for (final entry in _customKeys.entries) {
+      final other = actionMap[entry.key];
+      if (other != null &&
+          entry.value == key &&
+          other.hasShift == action.hasShift &&
+          other.hasMetaOrControl == action.hasMetaOrControl) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// Whether the action currently uses a customized key.
@@ -243,7 +324,7 @@ class ShortcutService extends ChangeNotifier {
     final action = actionMap[actionId];
     if (action == null) return;
 
-    if (action.defaultKey == key) {
+    if (action.platformDefaultKey == key) {
       _customKeys.remove(actionId);
     } else {
       _customKeys[actionId] = key;
@@ -274,7 +355,8 @@ class ShortcutService extends ChangeNotifier {
     for (final action in allActions) {
       if (action.id == actionId) continue;
       if (action.hasShift == targetAction.hasShift &&
-          action.hasMetaOrControl == targetAction.hasMetaOrControl) {
+          action.hasMetaOrControl == targetAction.hasMetaOrControl &&
+          !isShadowed(action.id)) {
         final currentKeyForOther = getKey(action.id);
         if (currentKeyForOther == candidateKey) {
           return action.name;
@@ -292,11 +374,11 @@ class ShortcutService extends ChangeNotifier {
   /// Formatted shortcut label for tooltips and menus, e.g. 'Cmd+F' or 'Ctrl+F'.
   String getShortcutLabel(String actionId) {
     final action = actionMap[actionId];
-    if (action == null) return '';
+    if (action == null || isShadowed(actionId)) return '';
 
     final key = getKey(actionId);
     final keyName = getKeyDisplayName(key);
-    final isMac = !kIsWeb && Platform.isMacOS;
+    final isMac = isMacLayout;
 
     final buffer = StringBuffer();
     if (action.hasMetaOrControl) {
@@ -351,7 +433,7 @@ class ShortcutService extends ChangeNotifier {
         final action = actionMap[entry.key];
         if (action != null) {
           final key = _nameToKey[keyStr]!;
-          if (key != action.defaultKey) {
+          if (key != action.platformDefaultKey) {
             _customKeys[entry.key] = key;
           }
         }
@@ -360,6 +442,21 @@ class ShortcutService extends ChangeNotifier {
     if (notify) {
       notifyListeners();
     }
+  }
+
+  static const List<LogicalKeyboardKey> _tabDigits = [
+    LogicalKeyboardKey.digit1, LogicalKeyboardKey.digit2, LogicalKeyboardKey.digit3,
+    LogicalKeyboardKey.digit4, LogicalKeyboardKey.digit5, LogicalKeyboardKey.digit6,
+    LogicalKeyboardKey.digit7, LogicalKeyboardKey.digit8, LogicalKeyboardKey.digit9,
+  ];
+
+  /// Alt+1..8 activates that tab and Alt+9 the last one (Windows / Linux).
+  Map<ShortcutActivator, VoidCallback> buildTabNumberBindings(void Function(int number) onTabNumber) {
+    if (isMacLayout) return const {};
+    return {
+      for (var i = 0; i < _tabDigits.length; i++)
+        SingleActivator(_tabDigits[i], alt: true): () => onTabNumber(i + 1),
+    };
   }
 
   /// Build CallbackShortcuts bindings map based on active configuration.
@@ -382,13 +479,18 @@ class ShortcutService extends ChangeNotifier {
     VoidCallback? onFindInDocument,
     VoidCallback? onPreferences,
     VoidCallback? onKeyboardShortcuts,
+    VoidCallback? onOpenFileInNewTab,
+    VoidCallback? onCloseTab,
+    VoidCallback? onReopenClosedTab,
+    VoidCallback? onNextTab,
+    VoidCallback? onPreviousTab,
   }) {
     final Map<ShortcutActivator, VoidCallback> map = {};
 
     void addAction(String actionId, VoidCallback? callback) {
       if (callback == null) return;
       final action = actionMap[actionId];
-      if (action == null) return;
+      if (action == null || isShadowed(actionId)) return;
       final key = getKey(actionId);
 
       if (action.hasMetaOrControl) {
@@ -417,6 +519,23 @@ class ShortcutService extends ChangeNotifier {
     addAction('fontSettings', onFontSettings);
     addAction('preferences', onPreferences ?? onKeyboardShortcuts);
     addAction('keyboardShortcuts', onKeyboardShortcuts ?? onPreferences);
+    addAction('openFileInNewTab', onOpenFileInNewTab);
+    addAction('closeTab', onCloseTab);
+    addAction('reopenClosedTab', onReopenClosedTab);
+    addAction('nextTab', onNextTab);
+    addAction('previousTab', onPreviousTab);
+
+    // Fixed tab aliases, not rebindable: Ctrl+Tab and Ctrl+PageDown/PageUp use
+    // the Control key on every platform, and Alt+1..9 (Windows / Linux, as in
+    // SumatraPDF and Firefox) jumps to a tab, 9 being the last one.
+    if (onNextTab != null) {
+      map[const SingleActivator(LogicalKeyboardKey.tab, control: true)] = onNextTab;
+      map[const SingleActivator(LogicalKeyboardKey.pageDown, control: true)] = onNextTab;
+    }
+    if (onPreviousTab != null) {
+      map[const SingleActivator(LogicalKeyboardKey.tab, control: true, shift: true)] = onPreviousTab;
+      map[const SingleActivator(LogicalKeyboardKey.pageUp, control: true)] = onPreviousTab;
+    }
 
     return map;
   }

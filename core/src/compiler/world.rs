@@ -6,17 +6,133 @@ use std::sync::OnceLock;
 use typst::diag::{FileError, FileResult};
 use typst::foundations::{Bytes, Datetime, Duration};
 use typst::syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot};
-use typst::text::{Font, FontBook};
+use typst::text::{Font, FontBook, FontInfo};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
 
 
 /// Global font store to avoid re-scanning and re-loading fonts on every compile.
+///
+/// The book is built from `FontInfo` alone; system fonts are parsed into a `Font` only when Typst
+/// first asks for that index, so a document pays for the handful of faces it actually uses rather
+/// than every matched system face. See [`FontSlot`] and [`FontIndexCache`].
 pub struct GlobalFontStore {
     pub book: LazyHash<FontBook>,
-    pub fonts: Vec<Font>,
+    fonts: Vec<FontSlot>,
     pub monospace_families: Vec<String>,
     pub body_families: Vec<String>,
+}
+
+/// One entry of the font book, in book order.
+enum FontSlot {
+    /// Embedded fonts and in-memory faces, parsed up front.
+    Loaded(Font),
+    /// A system face, parsed on first use.
+    Lazy {
+        file: std::sync::Arc<LazyFontFile>,
+        index: u32,
+        font: OnceLock<Option<Font>>,
+    },
+}
+
+impl FontSlot {
+    fn get(&self) -> Option<Font> {
+        match self {
+            FontSlot::Loaded(font) => Some(font.clone()),
+            FontSlot::Lazy { file, index, font } => font
+                .get_or_init(|| Font::new(file.bytes()?, *index))
+                .clone(),
+        }
+    }
+}
+
+/// A font file mapped once and shared by every face of a collection (`PingFang.ttc` holds 18).
+struct LazyFontFile {
+    path: PathBuf,
+    bytes: OnceLock<Option<Bytes>>,
+}
+
+impl LazyFontFile {
+    fn bytes(&self) -> Option<Bytes> {
+        self.bytes.get_or_init(|| load_font_file(&self.path)).clone()
+    }
+}
+
+/// On-disk cache of the `FontInfo` of every matched system face.
+///
+/// Computing a `FontInfo` walks the face's whole cmap to build its coverage, which for the ~190
+/// matched faces of a typical macOS install is ~40 ms — nearly all of the font store's startup
+/// cost. The info depends only on the file's bytes, so it is keyed by path, collection index,
+/// size and modification time, and recomputed for any face whose file changed.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct FontIndexCache {
+    /// `FontInfo`'s layout belongs to the Typst version this build links, so any engine release
+    /// invalidates the cache.
+    version: String,
+    faces: Vec<CachedFace>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CachedFace {
+    path: PathBuf,
+    index: u32,
+    len: u64,
+    mtime_secs: u64,
+    mtime_nanos: u32,
+    info: FontInfo,
+}
+
+fn font_index_cache_version() -> String {
+    format!("1-{}", env!("CARGO_PKG_VERSION"))
+}
+
+fn font_index_cache_path() -> Option<PathBuf> {
+    get_default_image_cache_dir()
+        .parent()
+        .map(|dir| dir.join("font_index.json"))
+}
+
+/// File identity used to validate a cached `FontInfo`: size plus modification time.
+fn file_stamp(path: &Path) -> Option<(u64, u64, u32)> {
+    let meta = fs::metadata(path).ok()?;
+    let mtime = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some((meta.len(), mtime.as_secs(), mtime.subsec_nanos()))
+}
+
+fn load_font_index_cache(path: &Path) -> HashMap<(PathBuf, u32), CachedFace> {
+    let Ok(data) = fs::read(path) else {
+        return HashMap::new();
+    };
+    match serde_json::from_slice::<FontIndexCache>(&data) {
+        Ok(cache) if cache.version == font_index_cache_version() => cache
+            .faces
+            .into_iter()
+            .map(|face| ((face.path.clone(), face.index), face))
+            .collect(),
+        _ => HashMap::new(),
+    }
+}
+
+/// Writes the cache through a temporary file so a crash or a concurrent writer (the CLI and the
+/// app share it) never leaves a truncated file behind; a failed write only costs the next start.
+fn save_font_index_cache(path: &Path, faces: Vec<CachedFace>) {
+    let cache = FontIndexCache {
+        version: font_index_cache_version(),
+        faces,
+    };
+    let Ok(json) = serde_json::to_vec(&cache) else {
+        return;
+    };
+    let Some(dir) = path.parent() else {
+        return;
+    };
+    if fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let tmp = dir.join(format!("font_index.json.{}.tmp", std::process::id()));
+    if fs::write(&tmp, json).is_ok() && fs::rename(&tmp, path).is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -85,12 +201,14 @@ impl GlobalFontStore {
     pub fn get() -> &'static GlobalFontStore {
         FONT_STORE.get_or_init(|| {
             let mut fonts = Vec::new();
+            let mut infos = Vec::new();
 
             let mut asset_count = 0;
             for font_bytes in typst_assets::fonts() {
                 let bytes = Bytes::new(font_bytes);
                 for font in Font::iter(bytes) {
-                    fonts.push(font);
+                    infos.push(font.info().clone());
+                    fonts.push(FontSlot::Loaded(font));
                     asset_count += 1;
                 }
             }
@@ -172,7 +290,16 @@ impl GlobalFontStore {
                 "emoji",
             ];
 
-            let mut font_file_cache: HashMap<PathBuf, Bytes> = HashMap::new();
+            let cache_path = font_index_cache_path();
+            let mut cached_faces = cache_path
+                .as_deref()
+                .map(load_font_index_cache)
+                .unwrap_or_default();
+            let mut cache_misses = 0usize;
+            let mut seen_faces = std::collections::HashSet::new();
+            let mut fresh_faces = Vec::new();
+            let mut font_files: HashMap<PathBuf, (std::sync::Arc<LazyFontFile>, Option<(u64, u64, u32)>)> =
+                HashMap::new();
             let mut detected_mono = std::collections::BTreeSet::new();
             let mut detected_body = std::collections::BTreeSet::new();
 
@@ -213,36 +340,77 @@ impl GlobalFontStore {
 
                 match &face.source {
                     fontdb::Source::File(path) => {
-                        let bytes = if let Some(b) = font_file_cache.get(path) {
-                            b.clone()
-                        } else {
-                            match load_font_file(path) {
-                                Some(b) => {
-                                    font_file_cache.insert(path.clone(), b.clone());
-                                    b
-                                }
-                                None => continue,
+                        let (file, stamp) = font_files
+                            .entry(path.clone())
+                            .or_insert_with(|| {
+                                let file = std::sync::Arc::new(LazyFontFile {
+                                    path: path.clone(),
+                                    bytes: OnceLock::new(),
+                                });
+                                (file, file_stamp(path))
+                            })
+                            .clone();
+                        let Some((len, mtime_secs, mtime_nanos)) = stamp else {
+                            continue;
+                        };
+                        // `load_system_fonts` already covers `~/Library/Fonts` on macOS, so the
+                        // explicit user-directory scans above can report a face twice.
+                        if !seen_faces.insert((path.clone(), face.index)) {
+                            continue;
+                        }
+
+                        let cached = cached_faces
+                            .remove(&(path.clone(), face.index))
+                            .filter(|c| c.len == len && c.mtime_secs == mtime_secs && c.mtime_nanos == mtime_nanos);
+                        let info = match cached {
+                            Some(c) => c.info,
+                            None => {
+                                cache_misses += 1;
+                                let Some(info) = file.bytes().and_then(|b| FontInfo::new(&b, face.index)) else {
+                                    continue;
+                                };
+                                info
                             }
                         };
-                        if let Some(font) = Font::new(bytes, face.index) {
-                            fonts.push(font);
-                        }
+
+                        fresh_faces.push(CachedFace {
+                            path: path.clone(),
+                            index: face.index,
+                            len,
+                            mtime_secs,
+                            mtime_nanos,
+                            info: info.clone(),
+                        });
+                        infos.push(info);
+                        fonts.push(FontSlot::Lazy {
+                            file,
+                            index: face.index,
+                            font: OnceLock::new(),
+                        });
                     }
                     _ => {
                         db.with_face_data(face.id, |data, index| {
                             let bytes = Bytes::new(data.to_vec());
                             if let Some(font) = Font::new(bytes, index) {
-                                fonts.push(font);
+                                infos.push(font.info().clone());
+                                fonts.push(FontSlot::Loaded(font));
                             }
                         });
                     }
                 }
             }
 
+            // Rewrite when anything was recomputed or a cached face disappeared (font uninstalled).
+            if let Some(path) = cache_path
+                && (cache_misses > 0 || !cached_faces.is_empty())
+            {
+                save_font_index_cache(&path, fresh_faces);
+            }
+
             let monospace_families: Vec<String> = detected_mono.into_iter().collect();
             let body_families: Vec<String> = detected_body.into_iter().collect();
 
-            let book = LazyHash::new(FontBook::from_fonts(&fonts));
+            let book = LazyHash::new(FontBook::from_infos(infos));
             GlobalFontStore {
                 book,
                 fonts,
@@ -491,7 +659,7 @@ impl World for MemoryWorld {
 
 
     fn font(&self, index: usize) -> Option<Font> {
-        GlobalFontStore::get().fonts.get(index).cloned()
+        GlobalFontStore::get().fonts.get(index)?.get()
     }
 
     fn today(&self, _offset: Option<Duration>) -> Option<Datetime> {
@@ -695,3 +863,55 @@ const BROKEN_IMAGE_GIF: &[u8] = &[
     0x4d, 0x58, 0xd7, 0x7d, 0x16, 0xc6, 0x85, 0x61, 0x86, 0x53, 0x25, 0xd6, 0xd0, 0x87, 0x20, 0x86,
     0x88, 0xd0, 0x43, 0x01, 0x01, 0x00, 0x3b,
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_cache_path(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("sogood_font_index_{}_{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        dir.join("font_index.json")
+    }
+
+    fn embedded_face() -> CachedFace {
+        let font = Font::iter(Bytes::new(typst_assets::fonts().next().unwrap())).next().unwrap();
+        CachedFace {
+            path: PathBuf::from("/fonts/a.ttf"),
+            index: 0,
+            len: 42,
+            mtime_secs: 7,
+            mtime_nanos: 9,
+            info: font.info().clone(),
+        }
+    }
+
+    #[test]
+    fn font_index_cache_round_trips_infos() {
+        let path = temp_cache_path("round_trip");
+        let face = embedded_face();
+        let info = face.info.clone();
+        save_font_index_cache(&path, vec![face]);
+
+        let loaded = load_font_index_cache(&path);
+        let cached = &loaded[&(PathBuf::from("/fonts/a.ttf"), 0)];
+        assert_eq!((cached.len, cached.mtime_secs, cached.mtime_nanos), (42, 7, 9));
+        assert_eq!(cached.info, info);
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn font_index_cache_ignores_other_versions_and_corrupt_files() {
+        let path = temp_cache_path("invalid");
+        save_font_index_cache(&path, vec![embedded_face()]);
+        let stale = fs::read_to_string(&path)
+            .unwrap()
+            .replace(&font_index_cache_version(), "0-stale");
+        fs::write(&path, stale).unwrap();
+        assert!(load_font_index_cache(&path).is_empty());
+
+        fs::write(&path, b"{\"version\":").unwrap();
+        assert!(load_font_index_cache(&path).is_empty());
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+}

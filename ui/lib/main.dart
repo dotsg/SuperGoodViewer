@@ -33,7 +33,7 @@ class SuperGoodViewerApp extends StatefulWidget {
 
 typedef SoGoodViewerApp = SuperGoodViewerApp;
 
-class _SuperGoodViewerAppState extends State<SuperGoodViewerApp> {
+class _SuperGoodViewerAppState extends State<SuperGoodViewerApp> with WidgetsBindingObserver {
   late final ReaderController _controller;
 
   @override
@@ -43,6 +43,8 @@ class _SuperGoodViewerAppState extends State<SuperGoodViewerApp> {
       initialFilePath: widget.initialFile,
       defaultLanguage: 'system',
     );
+    WidgetsBinding.instance.addObserver(this);
+    _syncPlatformBrightness();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       StartupMetrics.markFirstFrame();
       UpdateService.cleanupStaleUpdateArtifactsAsync();
@@ -50,7 +52,17 @@ class _SuperGoodViewerAppState extends State<SuperGoodViewerApp> {
   }
 
   @override
+  void didChangePlatformBrightness() => _syncPlatformBrightness();
+
+  void _syncPlatformBrightness() {
+    _controller.updatePlatformBrightness(
+      WidgetsBinding.instance.platformDispatcher.platformBrightness,
+    );
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.dispose();
     super.dispose();
   }

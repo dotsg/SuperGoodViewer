@@ -150,7 +150,8 @@ class _UpdateDialogState extends State<UpdateDialog> {
         setState(() {
           _isInstalling = false;
           _state = _UpdateState.error;
-          _errorMessage = '${e.message}\n请前往 GitHub Releases 页面手动下载匹配当前硬件架构的安装包。';
+          final s = widget.controller.strings;
+          _errorMessage = '${e.localizedMessage(s)}\n${s.updateManualDownloadHint}';
         });
       }
     } catch (e) {
@@ -158,7 +159,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
         setState(() {
           _isInstalling = false;
           _state = _UpdateState.error;
-          _errorMessage = '安装更新时出错: $e';
+          _errorMessage = widget.controller.strings.updateInstallError('$e');
         });
       }
     }
@@ -251,7 +252,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '当前版本: v${widget.info.currentVersion}${widget.info.formattedSize.isNotEmpty ? '  •  大小: ${widget.info.formattedSize}' : ''}',
+                        '${s.updateCurrentVersion(widget.info.currentVersion)}${widget.info.formattedSize.isNotEmpty ? '  •  ${s.updateSize(widget.info.formattedSize)}' : ''}',
                         style: TextStyle(
                           fontSize: 12,
                           color: isDark ? Colors.white54 : Colors.black54,
@@ -266,9 +267,9 @@ class _UpdateDialogState extends State<UpdateDialog> {
             const SizedBox(height: 18),
 
             // Release notes container
-            const Text(
-              '更新内容与优化 (Release Notes)',
-              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+            Text(
+              s.releaseNotesTitle,
+              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 8),
 
@@ -286,7 +287,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
                   child: SelectableText(
                     widget.info.releaseNotes.isNotEmpty
                         ? widget.info.releaseNotes
-                        : '包含性能优化与稳定性提升。',
+                        : s.releaseNotesFallback,
                     style: TextStyle(
                       fontSize: 12,
                       height: 1.5,
@@ -346,14 +347,14 @@ class _UpdateDialogState extends State<UpdateDialog> {
                     color: Colors.green.withValues(alpha: 0.3),
                   ),
                 ),
-                child: const Row(
+                child: Row(
                   children: [
-                    Icon(Icons.check_circle_rounded, color: Colors.green, size: 18),
-                    SizedBox(width: 8),
+                    const Icon(Icons.check_circle_rounded, color: Colors.green, size: 18),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        '更新包已就绪！重启软件后将瞬间生效。',
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                        s.updateReadyRestart,
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
                       ),
                     ),
                   ],

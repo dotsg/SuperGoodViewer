@@ -4,8 +4,27 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sogoodviewer/controllers/reader_controller.dart';
+import 'package:sogoodviewer/models/render_options.dart';
 import 'package:sogoodviewer/services/document_cache_service.dart';
 import 'package:sogoodviewer/views/settings_dialog.dart';
+import 'package:url_launcher_platform_interface/link.dart';
+import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
+
+class _RecordingUrlLauncher extends UrlLauncherPlatform {
+  final List<String> launched = [];
+
+  @override
+  LinkDelegate? get linkDelegate => null;
+
+  @override
+  Future<bool> canLaunch(String url) async => true;
+
+  @override
+  Future<bool> launchUrl(String url, LaunchOptions options) async {
+    launched.add(url);
+    return true;
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -69,13 +88,12 @@ void main() {
 
       // Verify General tab content (toolbar duplicate options removed)
       expect(find.text('常规与阅读偏好'), findsOneWidget);
-      expect(find.text('侧边栏布局 (Sidebar Placement)'), findsOneWidget);
-      expect(find.text('文件修改自动热重载 (Auto Reload)'), findsOneWidget);
-      expect(find.text('会话与历史记录 (Session & History)'), findsOneWidget);
+      expect(find.text('侧边栏布局'), findsOneWidget);
+      expect(find.text('文件修改自动热重载'), findsOneWidget);
+      expect(find.text('会话与历史记录'), findsOneWidget);
       expect(find.text('最近打开文档记录'), findsOneWidget);
       expect(find.text('启动恢复上次会话'), findsOneWidget);
       expect(find.text('默认排版模式 (Default View Mode)'), findsNothing);
-      expect(find.text('阅读外观主题 (Appearance Theme)'), findsNothing);
       expect(find.text('A4 页面展示偏好 (Spread Layout)'), findsNothing);
 
       // Switch to Typography tab
@@ -83,14 +101,14 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('字体排版与中英文等宽对齐'), findsOneWidget);
-      expect(find.text('正文排版字体 (Body Typography)'), findsOneWidget);
-      expect(find.text('排版基础字号 (Base Typesetting Font Size)'), findsOneWidget);
+      expect(find.text('正文排版字体'), findsOneWidget);
+      expect(find.text('排版基础字号'), findsOneWidget);
       expect(find.text('恢复默认字体'), findsOneWidget);
 
       // Verify Live Typography Preview card is visible
-      expect(find.text('排版实时渲染预览 (Live Typography Preview)'), findsOneWidget);
-      expect(find.text('实时排版预览 (Live Preview)'), findsOneWidget);
-      expect(find.text('现代出版级技术文档排版 (Publisher-Grade Typography)'), findsOneWidget);
+      expect(find.text('排版实时渲染预览'), findsOneWidget);
+      expect(find.text('实时排版预览'), findsOneWidget);
+      expect(find.text('现代出版级技术文档排版'), findsOneWidget);
       expect(find.text('ASCII 表格全角/半角严格 1:2 等宽对齐校验'), findsOneWidget);
 
       // Switch to Shortcuts tab
@@ -112,7 +130,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('关于 SuperGoodViewer'), findsOneWidget);
-      expect(find.text('载入精选排版样例 (Sample Document)'), findsOneWidget);
+      expect(find.text('载入精选排版样例'), findsOneWidget);
       expect(find.text('载入体验'), findsOneWidget);
 
       // Close dialog
@@ -152,7 +170,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('字体排版与中英文等宽对齐'), findsOneWidget);
-      expect(find.text('正文排版字体 (Body Typography)'), findsOneWidget);
+      expect(find.text('正文排版字体'), findsOneWidget);
     });
 
     testWidgets('toggling auto reload and font size in SettingsDialog updates controller', (tester) async {
@@ -177,6 +195,8 @@ void main() {
       final initialReload = controller.autoReload;
       final reloadSwitch = find.byType(Switch);
       expect(reloadSwitch, findsOneWidget);
+      await tester.ensureVisible(reloadSwitch);
+      await tester.pumpAndSettle();
       await tester.tap(reloadSwitch);
       await tester.pumpAndSettle();
 
@@ -213,6 +233,66 @@ void main() {
       expect(find.textContaining('10.5 pt'), findsWidgets);
     });
 
+    testWidgets('General tab appearance selector switches theme preference', (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SettingsDialog(
+            controller: controller,
+            initialTab: SettingsTab.general,
+          ),
+        ),
+      );
+
+      expect(find.text('外观'), findsOneWidget);
+      expect(find.text('外观主题'), findsOneWidget);
+      expect(controller.themePreference, ThemePreference.system);
+
+      await tester.tap(find.text('暗黑模式'));
+      await tester.pumpAndSettle();
+      expect(controller.themePreference, ThemePreference.dark);
+      expect(controller.renderOptions.theme, 'dark');
+
+      await tester.tap(find.text('跟随系统'));
+      await tester.pumpAndSettle();
+      expect(controller.themePreference, ThemePreference.system);
+      expect(controller.renderOptions.theme, 'light');
+    });
+
+    testWidgets('About tab opens the project homepage', (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final originalLauncher = UrlLauncherPlatform.instance;
+      final launcher = _RecordingUrlLauncher();
+      UrlLauncherPlatform.instance = launcher;
+      addTearDown(() => UrlLauncherPlatform.instance = originalLauncher);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SettingsDialog(controller: controller, initialTab: SettingsTab.about),
+        ),
+      );
+
+      expect(find.byTooltip('打开项目主页'), findsOneWidget);
+      await tester.tap(find.text('github.com/dotsg/SuperGoodViewer'));
+      await tester.pumpAndSettle();
+
+      expect(launcher.launched, ['https://github.com/dotsg/SuperGoodViewer']);
+    });
+
     testWidgets('General tab displays compiled cache info and clears cache on button press', (tester) async {
       tester.view.physicalSize = const Size(1200, 1100);
       tester.view.devicePixelRatio = 1.0;
@@ -241,7 +321,7 @@ void main() {
       await tester.pump();
 
       // Verify cache section elements
-      expect(find.text('预编译 PDF 缓存 (Compiled Cache)'), findsOneWidget);
+      expect(find.text('预编译 PDF 缓存'), findsOneWidget);
       expect(find.text('本地磁盘缓存'), findsOneWidget);
       expect(find.textContaining('已缓存 1 个文档'), findsOneWidget);
       expect(find.text('打开目录'), findsOneWidget);

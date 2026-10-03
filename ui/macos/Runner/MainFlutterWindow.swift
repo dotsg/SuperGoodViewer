@@ -28,12 +28,24 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     self.styleMask.insert(.fullSizeContentView)
     self.delegate = self
 
+    // Layout is verified down to 800x600 (see test/layout_overflow_test.dart).
+    let minimumContentSize = NSSize(width: 800, height: 600)
+    self.contentMinSize = minimumContentSize
+
     let windowAutosaveName = "SuperGoodViewerMainWindow"
     if !self.setFrameUsingName(windowAutosaveName) {
       var windowFrame = self.frame
       windowFrame.size = NSSize(width: 1080, height: 750)
       self.setFrame(windowFrame, display: true)
       self.center()
+    }
+    // A frame saved before the minimum existed may be smaller than it.
+    let restoredSize = self.contentRect(forFrameRect: self.frame).size
+    if restoredSize.width < minimumContentSize.width || restoredSize.height < minimumContentSize.height {
+      self.setContentSize(NSSize(
+        width: max(restoredSize.width, minimumContentSize.width),
+        height: max(restoredSize.height, minimumContentSize.height)
+      ))
     }
     self.setFrameAutosaveName(windowAutosaveName)
 

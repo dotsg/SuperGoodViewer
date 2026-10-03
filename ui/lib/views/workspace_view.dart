@@ -11,12 +11,14 @@ import 'package:path/path.dart' as p;
 import '../controllers/reader_controller.dart';
 import '../i18n/app_strings.dart';
 import '../models/render_options.dart';
+import '../services/shortcut_service.dart';
 import '../services/cli_ipc_service.dart';
 import '../services/native_cli_service.dart';
 import 'pdf_canvas_view.dart';
 import 'presentation_view.dart';
 import 'settings_dialog.dart';
 import 'sidebar_view.dart';
+import 'tab_strip.dart';
 import 'update_dialog.dart';
 import '../services/update_service.dart';
 
@@ -80,6 +82,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   bool get _shouldShowTitleBar {
     if (_isFullScreen) return false;
     if (_isSidebarOpen) return true;
+    // Keep the tabs reachable once there is more than one document.
+    if (widget.controller.sessions.length > 1) return true;
     if (_isHoveringTitleBar) return true;
     return _isAtTop && _isTitleBarVisible;
   }
@@ -122,8 +126,11 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _updateTrafficLights();
       _syncWindowTitle();
+      _syncWindowTheme();
+      _syncMenuTitles();
     });
     widget.controller.addListener(_onControllerChanged);
+    FocusManager.instance.addListener(_reclaimLostFocus);
     final enableIntegration = widget.enableSystemIntegration ?? WorkspaceView.defaultEnableSystemIntegration;
     if (enableIntegration) {
       NativeCliService.channel.setMethodCallHandler(_handleNativeMethodCall);
@@ -172,6 +179,51 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       try {
         _windowChannel.invokeMethod('setWindowTitle', fullTitle);
       } catch (_) {}
+    }
+  }
+
+  bool? _lastSyncedDark;
+
+  final FocusNode _workspaceFocusNode = FocusNode(debugLabel: 'workspace');
+  bool _focusCheckScheduled = false;
+
+  /// The PDF viewer takes focus on clicks, and its focus node goes away when
+  /// a document is swapped in (tab switch, theme or layout change, reload).
+  /// Focus then falls back to an enclosing scope outside the workspace and
+  /// every keyboard shortcut stops working until the user clicks the page.
+  /// Take it back in that case; focus in a dialog is left alone.
+  void _reclaimLostFocus() {
+    if (_focusCheckScheduled) return;
+    _focusCheckScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusCheckScheduled = false;
+      if (!mounted || _workspaceFocusNode.hasFocus) return;
+      final focus = FocusManager.instance.primaryFocus;
+      if (focus == null || _workspaceFocusNode.ancestors.contains(focus)) {
+        _workspaceFocusNode.requestFocus();
+      }
+    });
+  }
+  String? _lastSyncedMenuLanguage;
+
+  void _syncMenuTitles() {
+    final enableIntegration = widget.enableSystemIntegration ?? WorkspaceView.defaultEnableSystemIntegration;
+    if (!enableIntegration) return;
+    final language = widget.controller.language;
+    if (_lastSyncedMenuLanguage != language) {
+      _lastSyncedMenuLanguage = language;
+      NativeCliService.setMenuTitles(widget.controller.strings);
+    }
+  }
+
+  /// Native Windows / GTK title bars only track the system theme on their own,
+  /// so pin them to the app theme (which may be an explicit light/dark choice).
+  void _syncWindowTheme() {
+    if (!Platform.isWindows && !Platform.isLinux) return;
+    final isDark = widget.controller.renderOptions.isDark;
+    if (_lastSyncedDark != isDark) {
+      _lastSyncedDark = isDark;
+      _windowChannel.invokeMethod('setDarkTitleBar', isDark).catchError((_) {});
     }
   }
 
@@ -230,11 +282,15 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       }
     }
     _syncWindowTitle();
+    _syncWindowTheme();
+    _syncMenuTitles();
     _updateTrafficLights();
   }
 
   @override
   void dispose() {
+    FocusManager.instance.removeListener(_reclaimLostFocus);
+    _workspaceFocusNode.dispose();
     _windowChannel.setMethodCallHandler(null);
     final enableIntegration = widget.enableSystemIntegration ?? WorkspaceView.defaultEnableSystemIntegration;
     if (enableIntegration) {
@@ -336,7 +392,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     _setSidebarOpen(!_isSidebarOpen);
   }
 
-  Future<void> _pickAndOpenFile() async {
+  Future<void> _pickAndOpenFile({bool? newTab}) async {
     try {
       final file = await FilePicker.pickFile(
         type: FileType.custom,
@@ -345,7 +401,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       );
 
       if (file != null && file.path != null) {
-        await widget.controller.openFile(file.path!);
+        await widget.controller.openFile(file.path!, newTab: newTab);
       }
     } catch (e) {
       if (mounted) {
@@ -411,72 +467,28 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   Future<void> _handleDroppedFiles(List<DropItem> files) async {
     if (files.isEmpty) return;
 
-    String? targetFilePath;
+    final targets = <String>[];
     String? unsupportedReason;
 
     for (final file in files) {
       final path = file.path;
       if (path.isEmpty) continue;
-
-      try {
-        final type = await FileSystemEntity.type(path);
-        if (type == FileSystemEntityType.file) {
-          final f = File(path);
-          if (await _isFileSupported(f)) {
-            targetFilePath = path;
-            break;
-          } else {
-            final ext = p.extension(path);
-            unsupportedReason = ext.isNotEmpty
-                ? widget.controller.strings.unsupportedFileFormat(ext)
-                : widget.controller.strings.unsupportedBinaryFile;
-          }
-        } else if (type == FileSystemEntityType.directory) {
-          // If a directory was dropped, check for common entry files
-          const candidates = [
-            'README.md',
-            'readme.md',
-            'index.md',
-            'main.md',
-            'README.markdown',
-            'readme.markdown',
-          ];
-          for (final c in candidates) {
-            final candidateFile = File(p.join(path, c));
-            if (await candidateFile.exists()) {
-              targetFilePath = candidateFile.path;
-              break;
-            }
-          }
-          if (targetFilePath != null) break;
-
-          // Try to find the first supported file in the directory (sorted deterministically)
-          final dir = Directory(path);
-          final entries = await dir.list(followLinks: false).toList();
-          entries.sort((a, b) {
-            final cmp = a.path.toLowerCase().compareTo(b.path.toLowerCase());
-            return cmp != 0 ? cmp : a.path.compareTo(b.path);
-          });
-          for (final entry in entries) {
-            if (entry is File && await _isFileSupported(entry)) {
-              targetFilePath = entry.path;
-              break;
-            }
-          }
-          if (targetFilePath != null) break;
-
-          unsupportedReason = widget.controller.strings.unsupportedDirectory;
-        }
-      } catch (e) {
-        debugPrint('Error inspecting dropped file: $e');
+      final (target, reason) = await _resolveDropTarget(path);
+      if (target != null) {
+        targets.add(target);
+      } else {
+        unsupportedReason ??= reason;
       }
     }
 
-    if (targetFilePath != null) {
+    if (targets.isNotEmpty) {
       if (mounted && Navigator.canPop(context)) {
         Navigator.of(context, rootNavigator: true).popUntil((route) => route.isFirst);
       }
-      await widget.controller.openFile(targetFilePath);
+      // Several files each get a tab; the first follows the open setting.
+      for (var i = 0; i < targets.length; i++) {
+        await widget.controller.openFile(targets[i], newTab: i == 0 ? null : true);
+      }
     } else {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -488,6 +500,49 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         );
       }
     }
+  }
+
+  /// The document to open for a dropped [path]: the file itself, or for a
+  /// directory its README / index file or first supported file. Otherwise
+  /// returns the reason it cannot be opened.
+  Future<(String?, String?)> _resolveDropTarget(String path) async {
+    final strings = widget.controller.strings;
+    try {
+      final type = await FileSystemEntity.type(path);
+      if (type == FileSystemEntityType.file) {
+        if (await _isFileSupported(File(path))) return (path, null);
+        final ext = p.extension(path);
+        return (null, ext.isNotEmpty ? strings.unsupportedFileFormat(ext) : strings.unsupportedBinaryFile);
+      }
+      if (type == FileSystemEntityType.directory) {
+        const candidates = [
+          'README.md',
+          'readme.md',
+          'index.md',
+          'main.md',
+          'README.markdown',
+          'readme.markdown',
+        ];
+        for (final c in candidates) {
+          final candidateFile = File(p.join(path, c));
+          if (await candidateFile.exists()) return (candidateFile.path, null);
+        }
+
+        // Try to find the first supported file in the directory (sorted deterministically)
+        final entries = await Directory(path).list(followLinks: false).toList();
+        entries.sort((a, b) {
+          final cmp = a.path.toLowerCase().compareTo(b.path.toLowerCase());
+          return cmp != 0 ? cmp : a.path.compareTo(b.path);
+        });
+        for (final entry in entries) {
+          if (entry is File && await _isFileSupported(entry)) return (entry.path, null);
+        }
+        return (null, strings.unsupportedDirectory);
+      }
+    } catch (e) {
+      debugPrint('Error inspecting dropped file: $e');
+    }
+    return (null, null);
   }
 
   Future<void> _handleExportPdf() async {
@@ -814,7 +869,16 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               onFindInDocument: () => _pdfCanvasKey.currentState?.openSearch(),
               onPreferences: () => showSettingsDialog(context, controller, initialTab: SettingsTab.general),
               onKeyboardShortcuts: () => showSettingsDialog(context, controller, initialTab: SettingsTab.shortcuts),
+              onOpenFileInNewTab: () => _pickAndOpenFile(newTab: true),
+              onCloseTab: controller.closeActiveSession,
+              onReopenClosedTab: controller.reopenClosedSession,
+              onNextTab: controller.activateNextSession,
+              onPreviousTab: controller.activatePreviousSession,
             ),
+            ...controller.shortcutService.buildTabNumberBindings((number) {
+              final count = controller.sessions.length;
+              controller.activateSession(number == 9 ? count - 1 : number - 1);
+            }),
 
             // In-Document Search Shortcuts (Cmd+F / Ctrl+F, Cmd+G / Ctrl+G)
             const SingleActivator(LogicalKeyboardKey.keyF, meta: true): () =>
@@ -896,6 +960,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
           _handleDroppedFiles(detail.files);
         },
         child: Focus(
+          focusNode: _workspaceFocusNode,
           autofocus: true,
           child: Scaffold(
             body: Stack(
@@ -920,6 +985,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                       topInset: _shouldShowTitleBar ? 32.0 : 0.0,
                       pdfBytes: controller.currentPdfBytes,
                       documentTitle: controller.documentTitle,
+                      documentId: controller.activeSession.id,
                       renderOptions: controller.renderOptions,
                       isTwoPage: controller.isTwoPage,
                       controller: controller,
@@ -1142,7 +1208,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                                     padding: const EdgeInsets.symmetric(horizontal: 10),
                                     visualDensity: VisualDensity.compact,
                                   ),
-                                  child: const Text('重试', style: TextStyle(fontSize: 12)),
+                                  child: Text(controller.strings.retry, style: const TextStyle(fontSize: 12)),
                                 ),
                               ],
                             ),
@@ -1434,37 +1500,65 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                       ],
                     ],
 
-                    // Native window drag / caption area
+                    // Tabs (2+ documents), then the native window drag / caption area.
+                    // The tabs sit beside the drag area rather than inside it: its
+                    // double-tap-to-zoom recognizer would delay every tab click.
                     Expanded(
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.translucent,
-                        onPanStart: (_) {
-                          try {
-                            _windowChannel.invokeMethod('startDragging');
-                          } catch (_) {}
-                        },
-                        onDoubleTap: () {
-                          try {
-                            _windowChannel.invokeMethod('zoom');
-                          } catch (_) {}
-                        },
-                        child: Container(
-                          height: 32,
-                          alignment: Alignment.center,
-                          child: controller.documentTitle.isNotEmpty
-                              ? Text(
-                                  controller.documentTitle,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w500,
-                                    color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
-                                    letterSpacing: -0.2,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final showTabs = controller.sessions.length > 1;
+                          final tabsWidth = showTabs
+                              ? math.min(
+                                  controller.sessions.length * DocumentTabStrip.maxTabWidth,
+                                  math.max(0.0, constraints.maxWidth - 48),
                                 )
-                              : const SizedBox.shrink(),
-                        ),
+                              : 0.0;
+                          final dragArea = GestureDetector(
+                            behavior: HitTestBehavior.translucent,
+                            onPanStart: (_) {
+                              try {
+                                _windowChannel.invokeMethod('startDragging');
+                              } catch (_) {}
+                            },
+                            onDoubleTap: () {
+                              try {
+                                _windowChannel.invokeMethod('zoom');
+                              } catch (_) {}
+                            },
+                            child: Container(
+                              height: 32,
+                              alignment: Alignment.center,
+                              // With tabs, the active tab already names the document.
+                              child: !showTabs && controller.documentTitle.isNotEmpty
+                                  ? Text(
+                                      controller.documentTitle,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                        color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
+                                        letterSpacing: -0.2,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    )
+                                  : const SizedBox.shrink(),
+                            ),
+                          );
+                          if (!showTabs) return dragArea;
+                          return Row(
+                            children: [
+                              SizedBox(
+                                width: tabsWidth,
+                                child: DocumentTabStrip(
+                                  controller: controller,
+                                  isDark: isDark,
+                                  maxWidth: tabsWidth,
+                                ),
+                              ),
+                              Expanded(child: dragArea),
+                            ],
+                          );
+                        },
                       ),
                     ),
 
@@ -1628,6 +1722,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 autoFitMode: controller.autoFitMode,
                 isDark: isDark,
                 strings: controller.strings,
+                shortcuts: controller.shortcutService,
                 onZoomSelected: (zoom) {
                   if (zoom == -1.0) {
                     _handleFitWidth();
@@ -1908,14 +2003,19 @@ class _ZoomDropdownBadge extends StatelessWidget {
   final bool isDark;
   final ValueChanged<double> onZoomSelected;
   final AppStrings strings;
+  final ShortcutService shortcuts;
 
   const _ZoomDropdownBadge({
     required this.currentZoom,
     required this.autoFitMode,
     required this.isDark,
     required this.strings,
+    required this.shortcuts,
     required this.onZoomSelected,
   });
+
+  Widget _shortcutHint(String label) =>
+      Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey));
 
   @override
   Widget build(BuildContext context) {
@@ -1951,7 +2051,7 @@ class _ZoomDropdownBadge extends StatelessWidget {
               if (autoFitMode == AutoFitMode.fitWidth)
                 Icon(Icons.check_rounded, size: 14, color: theme.colorScheme.primary)
               else
-                const Text('Cmd+9', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                _shortcutHint(shortcuts.getShortcutLabel('fitWidth')),
             ],
           ),
         ),
@@ -1977,7 +2077,7 @@ class _ZoomDropdownBadge extends StatelessWidget {
               if (autoFitMode == AutoFitMode.fitPage)
                 Icon(Icons.check_rounded, size: 14, color: theme.colorScheme.primary)
               else
-                const Text('Cmd+1', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                _shortcutHint(shortcuts.getShortcutLabel('fitPage')),
             ],
           ),
         ),
@@ -1989,14 +2089,15 @@ class _ZoomDropdownBadge extends StatelessWidget {
               const SizedBox(width: 8),
               Text(strings.fullScreenImmersive, style: const TextStyle(fontSize: 12.5)),
               const Spacer(),
-              const Text('Cmd+Ctrl+F', style: TextStyle(fontSize: 11, color: Colors.grey)),
+              // Matches the fixed bindings registered in the workspace shortcuts.
+              _shortcutHint(ShortcutService.isMacLayout ? 'Cmd+Ctrl+F' : 'F11'),
             ],
           ),
         ),
         const PopupMenuDivider(),
         _buildZoomItem(0.50, '50%'),
         _buildZoomItem(0.75, '75%'),
-        _buildZoomItem(1.00, strings.originalSize, shortcut: 'Cmd+0'),
+        _buildZoomItem(1.00, strings.originalSize, shortcut: shortcuts.getShortcutLabel('resetZoom')),
         _buildZoomItem(1.25, '125%'),
         _buildZoomItem(1.50, '150%'),
         _buildZoomItem(2.00, '200%'),

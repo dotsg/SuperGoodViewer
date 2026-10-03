@@ -6,6 +6,7 @@ import '../controllers/reader_controller.dart';
 import '../i18n/locales.dart';
 import '../models/render_options.dart';
 import '../services/document_cache_service.dart';
+import '../services/linux_desktop_integration.dart';
 import '../services/native_cli_service.dart';
 import '../services/shortcut_service.dart';
 import '../services/update_service.dart';
@@ -39,7 +40,8 @@ void showSettingsDialog(
 }
 
 class SettingsDialog extends StatefulWidget {
-  static const String appVersion = '1.0.9';
+  static const String appVersion = '1.1.0';
+  static const String projectHomepage = 'https://github.com/dotsg/SuperGoodViewer';
 
   final ReaderController controller;
   final SettingsTab initialTab;
@@ -62,6 +64,39 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late String? _selectedCodeFont;
   late double _selectedFontSize;
   bool _isScanningFonts = false;
+
+  // Linux desktop integration state
+  DesktopEntryStatus _desktopEntryStatus = DesktopEntryStatus.notInstalled;
+  bool _isUpdatingDesktopEntry = false;
+
+  Future<void> _changeDesktopEntry({required bool install}) async {
+    final s = widget.controller.strings;
+    final integration = LinuxDesktopIntegration.instance;
+    setState(() => _isUpdatingDesktopEntry = true);
+    String message;
+    try {
+      if (install) {
+        await integration.install();
+      } else {
+        await integration.uninstall();
+      }
+      message = install ? s.desktopEntryAdded : s.desktopEntryRemoved;
+    } catch (e) {
+      message = s.desktopEntryFailed('$e');
+    }
+    if (!mounted) return;
+    setState(() {
+      _isUpdatingDesktopEntry = false;
+      _desktopEntryStatus = integration.status();
+    });
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
 
   // Layout & Header/Footer state
   late String _selectedPageFormat;
@@ -207,6 +242,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
   void initState() {
     super.initState();
     _currentTab = widget.initialTab;
+    if (LinuxDesktopIntegration.isSupported) {
+      _desktopEntryStatus = LinuxDesktopIntegration.instance.status();
+    }
     final opts = widget.controller.renderOptions;
     _selectedBodyFont = opts.bodyFont;
     _selectedCodeFont = opts.codeFont;
@@ -345,8 +383,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
     );
   }
 
-  Future<void> _openMapleGitHub() async {
-    final uri = Uri.parse('https://github.com/subframe7536/maple-font/releases');
+  Future<void> _openMapleGitHub() => _openUrl('https://github.com/subframe7536/maple-font/releases');
+
+  Future<void> _openUrl(String url) async {
+    final uri = Uri.parse(url);
     try {
       if (await canLaunchUrl(uri)) {
         await launchUrl(uri);
@@ -359,10 +399,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
       const ClipboardData(text: 'https://github.com/subframe7536/maple-font'),
     );
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('已复制 Maple Mono GitHub 链接到剪贴板'),
+      SnackBar(
+        content: Text(widget.controller.strings.mapleLinkCopied),
         behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: 2),
+        duration: const Duration(seconds: 2),
       ),
     );
   }
@@ -687,6 +727,86 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 
   // ==================== LAYOUT TAB ====================
+  Widget _buildDesktopEntryCard(ThemeData theme, bool isDark) {
+    final s = widget.controller.strings;
+    final status = _desktopEntryStatus;
+    final buttonStyle = OutlinedButton.styleFrom(
+      visualDensity: VisualDensity.compact,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+    );
+    final busy = _isUpdatingDesktopEntry;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF9F9F9),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.apps_rounded, size: 22, color: theme.colorScheme.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  s.desktopEntryTitle,
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  status == DesktopEntryStatus.outdated ? s.desktopEntryOutdated : s.desktopEntryDesc,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: status == DesktopEntryStatus.outdated
+                        ? (isDark ? const Color(0xFFFBBF24) : const Color(0xFFB45309))
+                        : (isDark ? const Color(0xFF888888) : const Color(0xFF666666)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          if (status == DesktopEntryStatus.notInstalled)
+            FilledButton(
+              onPressed: busy ? null : () => _changeDesktopEntry(install: true),
+              style: FilledButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              ),
+              child: Text(s.desktopEntryAdd, style: const TextStyle(fontSize: 11.5)),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              alignment: WrapAlignment.end,
+              children: [
+                if (status == DesktopEntryStatus.outdated)
+                  FilledButton(
+                    onPressed: busy ? null : () => _changeDesktopEntry(install: true),
+                    style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    ),
+                    child: Text(s.desktopEntryUpdate, style: const TextStyle(fontSize: 11.5)),
+                  ),
+                OutlinedButton(
+                  onPressed: busy ? null : () => _changeDesktopEntry(install: false),
+                  style: buttonStyle,
+                  child: Text(s.desktopEntryRemove, style: const TextStyle(fontSize: 11.5)),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildLayoutTab(ThemeData theme, bool isDark) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -697,10 +817,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _buildSectionHeader('页面排版版式 (Page Format)'),
+                _buildSectionHeader(widget.controller.strings.pageFormatSection),
         const SizedBox(height: 6),
         Text(
-          '设置文档默认排版形态。演示请选择 16:9 / 4:3 幻灯片，出版阅读请选择 A4 或自适应流式。',
+          widget.controller.strings.pageFormatDesc,
           style: TextStyle(
             fontSize: 12,
             color: isDark ? const Color(0xFF9E9E9E) : const Color(0xFF666666),
@@ -713,23 +833,23 @@ class _SettingsDialogState extends State<SettingsDialog> {
           IconData icon;
           switch (fmt) {
             case PageFormat.fluid:
-              desc = '锁定黄金阅读行宽，高度自适应，连续无缝卷轴滚动，适合技术文档与长文';
+              desc = widget.controller.strings.pageFormatFluidDesc;
               icon = Icons.view_stream_rounded;
               break;
             case PageFormat.a4Portrait:
-              desc = '标准 A4 出版纵向 (595.28 × 841.89 pt)，带页眉页脚与孤行控制，适合出版打印';
+              desc = widget.controller.strings.pageFormatA4PortraitDesc;
               icon = Icons.description_outlined;
               break;
             case PageFormat.a4Landscape:
-              desc = '标准 A4 出版横向 (841.89 × 595.28 pt)，适合架构图与横向宽表排版';
+              desc = widget.controller.strings.pageFormatA4LandscapeDesc;
               icon = Icons.landscape_outlined;
               break;
             case PageFormat.slide16x9:
-              desc = '16:9 现代宽屏幻灯片 (960 × 540 pt)，大字号，适合高保真 PPT 演播';
+              desc = widget.controller.strings.pageFormatSlide169Desc;
               icon = Icons.slideshow_rounded;
               break;
             case PageFormat.slide4x3:
-              desc = '4:3 经典传统幻灯片 (960 × 720 pt)，适合传统投影仪演示与学术报告';
+              desc = widget.controller.strings.pageFormatSlide43Desc;
               icon = Icons.tv_rounded;
               break;
             default:
@@ -810,10 +930,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
         }),
 
         const SizedBox(height: 18),
-        _buildSectionHeader('${widget.controller.strings.headerFooterSection} (Header & Footer)'),
+        _buildSectionHeader(widget.controller.strings.headerFooterSection),
         const SizedBox(height: 6),
         Text(
-          '支持三插槽定制。可用占位宏：{title} (标题)、{page} (当前页)、{total} (总页数)、{date} (日期)。在流式模式下页眉页脚自动隐藏。',
+          widget.controller.strings.headerFooterDesc,
           style: TextStyle(
             fontSize: 12,
             color: isDark ? const Color(0xFF9E9E9E) : const Color(0xFF666666),
@@ -825,7 +945,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
           value: _skipFirstPage,
           onChanged: (val) => setState(() => _skipFirstPage = val),
           title: Text(widget.controller.strings.skipFirstPage, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-          subtitle: const Text('出版物与 PPT 标题页惯例，第一页不打印页眉页脚', style: TextStyle(fontSize: 11.5)),
+          subtitle: Text(widget.controller.strings.skipFirstPageDesc, style: const TextStyle(fontSize: 11.5)),
           dense: true,
           contentPadding: EdgeInsets.zero,
         ),
@@ -848,7 +968,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('页眉插槽 (Header Slots)', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: theme.colorScheme.primary)),
+            Text(widget.controller.strings.headerSlotsTitle, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: theme.colorScheme.primary)),
             TextButton.icon(
               icon: const Icon(Icons.clear_all_rounded, size: 14),
               label: Text(widget.controller.strings.clearHeaderSlots, style: const TextStyle(fontSize: 11)),
@@ -898,7 +1018,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('页脚插槽 (Footer Slots)', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: theme.colorScheme.primary)),
+            Text(widget.controller.strings.footerSlotsTitle, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: theme.colorScheme.primary)),
             TextButton.icon(
               icon: const Icon(Icons.clear_all_rounded, size: 14),
               label: Text(widget.controller.strings.clearFooterSlots, style: const TextStyle(fontSize: 11)),
@@ -945,7 +1065,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ),
 
         const SizedBox(height: 20),
-        _buildSectionHeader('${widget.controller.strings.marpCompatibility} (Marp Directives)'),
+        _buildSectionHeader(widget.controller.strings.marpCompatibility),
         const SizedBox(height: 6),
         SwitchListTile(
           value: _marpEnabled,
@@ -988,7 +1108,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
           color: hasChanges ? const Color(0xFFF59E0B) : const Color(0xFF10B981),
         ),
         const SizedBox(width: 6),
-        Flexible(
+        Expanded(
           child: Text(
             hasChanges ? s.layoutHasChanges : s.layoutUpToDate,
             overflow: TextOverflow.ellipsis,
@@ -1001,7 +1121,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
             ),
           ),
         ),
-        const Spacer(),
+        const SizedBox(width: 8),
         if (hasChanges) ...[
           OutlinedButton(
             onPressed: _revertLayout,
@@ -1069,7 +1189,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // 1. Language Selector
-        _buildSectionHeader('${strings.displayLanguage} (Display Language)'),
+        _buildSectionHeader(strings.languageSection),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -1136,8 +1256,85 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ),
         const SizedBox(height: 18),
 
+        // Appearance Theme Selector
+        _buildSectionHeader(strings.appearanceSection),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF9F9F9),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.contrast_rounded, size: 22, color: theme.colorScheme.primary),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          strings.themeMode,
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          strings.themeModeDesc,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<String>(
+                  segments: [
+                    ButtonSegment<String>(
+                      value: ThemePreference.system,
+                      icon: const Icon(Icons.brightness_auto_outlined, size: 15),
+                      label: Text(strings.themeSystem, style: const TextStyle(fontSize: 12)),
+                    ),
+                    ButtonSegment<String>(
+                      value: ThemePreference.light,
+                      icon: const Icon(Icons.light_mode_outlined, size: 15),
+                      label: Text(strings.themeLight, style: const TextStyle(fontSize: 12)),
+                    ),
+                    ButtonSegment<String>(
+                      value: ThemePreference.dark,
+                      icon: const Icon(Icons.dark_mode_outlined, size: 15),
+                      label: Text(strings.themeDark, style: const TextStyle(fontSize: 12)),
+                    ),
+                  ],
+                  selected: {controller.themePreference},
+                  onSelectionChanged: (newSelection) {
+                    controller.setThemePreference(newSelection.first);
+                    setState(() {});
+                  },
+                  style: const ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+
         // 2. Sidebar Placement Selector
-        _buildSectionHeader('${strings.sidebarPositionSection} (Sidebar Placement)'),
+        _buildSectionHeader(strings.sidebarPositionSection),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.all(14),
@@ -1214,8 +1411,70 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ),
         const SizedBox(height: 18),
 
+        // Open behavior: new tab or replace the current document
+        _buildSectionHeader(strings.openBehaviorTitle),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF9F9F9),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.tab_rounded, size: 22, color: theme.colorScheme.primary),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      strings.openBehaviorDesc,
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<bool>(
+                  segments: [
+                    ButtonSegment<bool>(
+                      value: true,
+                      icon: const Icon(Icons.add_box_outlined, size: 15),
+                      label: Text(strings.openInNewTab, style: const TextStyle(fontSize: 12)),
+                    ),
+                    ButtonSegment<bool>(
+                      value: false,
+                      icon: const Icon(Icons.swap_horiz_rounded, size: 15),
+                      label: Text(strings.openReplaceCurrent, style: const TextStyle(fontSize: 12)),
+                    ),
+                  ],
+                  selected: {controller.openInNewTab},
+                  onSelectionChanged: (newSelection) {
+                    controller.setOpenInNewTab(newSelection.first);
+                    setState(() {});
+                  },
+                  style: const ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+
         // Auto Reload Switch
-        _buildSectionHeader('${strings.autoReloadSection} (Hot Reload)'),
+        _buildSectionHeader(strings.autoReloadSection),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -1258,8 +1517,15 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ),
         const SizedBox(height: 18),
 
+        if (LinuxDesktopIntegration.isSupported) ...[
+          _buildSectionHeader(strings.desktopIntegrationSection),
+          const SizedBox(height: 6),
+          _buildDesktopEntryCard(theme, isDark),
+          const SizedBox(height: 18),
+        ],
+
         // Session & History
-        _buildSectionHeader('${strings.sessionSection} (Session & History)'),
+        _buildSectionHeader(strings.sessionSection),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -1326,13 +1592,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          '启动恢复上次会话',
-                          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                        Text(
+                          widget.controller.strings.restoreSession,
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          '重新启动应用时自动还原上次浏览文档与阅读进度',
+                          widget.controller.strings.restoreSessionDesc,
                           style: TextStyle(
                             fontSize: 11.5,
                             color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
@@ -1348,7 +1614,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
-                      '已启用',
+                      widget.controller.strings.enabledBadge,
                       style: TextStyle(
                         fontSize: 11.5,
                         fontWeight: FontWeight.w600,
@@ -1364,7 +1630,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         const SizedBox(height: 18),
 
         // Compiled Document Cache Section
-        _buildSectionHeader('${strings.cacheSection} (Compiled Cache)'),
+        _buildSectionHeader(strings.cacheSection),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -1476,18 +1742,18 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final mapleInstalled = report['maple_mono_installed'] == true;
 
     final bodyFontOptions = <Map<String, String?>>[
-      {'label': '系统出版推荐 (Inter + SF Pro + 苹方/微软雅黑)', 'value': null},
-      {'label': '苹方 (PingFang SC)', 'value': 'PingFang SC'},
-      {'label': '宋体 (Songti SC)', 'value': 'Songti SC'},
-      {'label': '冬青黑体 (Hiragino Sans GB)', 'value': 'Hiragino Sans GB'},
-      {'label': '微软雅黑 (Microsoft YaHei)', 'value': 'Microsoft YaHei'},
-      {'label': '思源黑体 (Source Han Sans SC)', 'value': 'Source Han Sans SC'},
-      {'label': 'Inter (现代无衬线)', 'value': 'Inter'},
+      {'label': widget.controller.strings.fontOptionSystemRecommended, 'value': null},
+      {'label': widget.controller.strings.fontOptionPingFang, 'value': 'PingFang SC'},
+      {'label': widget.controller.strings.fontOptionSongti, 'value': 'Songti SC'},
+      {'label': widget.controller.strings.fontOptionHiragino, 'value': 'Hiragino Sans GB'},
+      {'label': widget.controller.strings.fontOptionYaHei, 'value': 'Microsoft YaHei'},
+      {'label': widget.controller.strings.fontOptionSourceHanSans, 'value': 'Source Han Sans SC'},
+      {'label': widget.controller.strings.fontOptionInter, 'value': 'Inter'},
     ];
     if (_selectedBodyFont != null &&
         !bodyFontOptions.any((opt) => opt['value'] == _selectedBodyFont)) {
       bodyFontOptions.add({
-        'label': '$_selectedBodyFont (自定义)',
+        'label': widget.controller.strings.fontOptionCustom(_selectedBodyFont!),
         'value': _selectedBodyFont,
       });
     }
@@ -1498,10 +1764,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
         <String>[];
 
     final baseCodeFonts = <Map<String, String?>>[
-      {'label': 'Maple Mono (推荐: 1:2 严格等宽对齐)', 'value': null},
-      {'label': 'Menlo (macOS 系统默认等宽)', 'value': 'Menlo'},
-      {'label': 'Monaco (macOS 经典等宽)', 'value': 'Monaco'},
-      {'label': 'Courier New (经典衬线等宽)', 'value': 'Courier New'},
+      {'label': widget.controller.strings.fontOptionMapleMono, 'value': null},
+      {'label': widget.controller.strings.fontOptionMenlo, 'value': 'Menlo'},
+      {'label': widget.controller.strings.fontOptionMonaco, 'value': 'Monaco'},
+      {'label': widget.controller.strings.fontOptionCourierNew, 'value': 'Courier New'},
       {'label': 'JetBrains Mono', 'value': 'JetBrains Mono'},
       {'label': 'Fira Code', 'value': 'Fira Code'},
       {'label': 'Cascadia Code', 'value': 'Cascadia Code'},
@@ -1513,7 +1779,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       if (!knownValues.contains(monoName.toLowerCase()) &&
           !monoName.toLowerCase().contains('maple')) {
         codeFontOptions.add({
-          'label': '$monoName (系统已安装)',
+          'label': widget.controller.strings.fontOptionInstalled(monoName),
           'value': monoName,
         });
       }
@@ -1521,7 +1787,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     if (_selectedCodeFont != null &&
         !codeFontOptions.any((opt) => opt['value'] == _selectedCodeFont)) {
       codeFontOptions.add({
-        'label': '$_selectedCodeFont (自定义)',
+        'label': widget.controller.strings.fontOptionCustom(_selectedCodeFont!),
         'value': _selectedCodeFont,
       });
     }
@@ -1564,7 +1830,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                               const SizedBox(width: 6),
                               Expanded(
                                 child: Text(
-                                  '当前正在阅读独立 PDF 文档，此处的排版设置将在阅读 Markdown 文档时生效。',
+                                  widget.controller.strings.pdfTypographyInlineNotice,
                                   style: TextStyle(
                                     fontSize: 11.5,
                                     color: isDark ? const Color(0xFFBAE6FD) : const Color(0xFF0369A1),
@@ -1584,10 +1850,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Flexible(
+                          Flexible(
                             child: Text(
-                              '正文排版字体 (Body Typography)',
-                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5),
+                              widget.controller.strings.bodyTypographyTitle,
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
@@ -1598,7 +1864,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                                 visualDensity: VisualDensity.compact,
                                 padding: const EdgeInsets.symmetric(horizontal: 4),
                               ),
-                              child: const Text('恢复推荐', style: TextStyle(fontSize: 11)),
+                              child: Text(widget.controller.strings.useRecommended, style: const TextStyle(fontSize: 11)),
                             ),
                         ],
                       ),
@@ -1615,10 +1881,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Flexible(
+                          Flexible(
                             child: Text(
-                              '代码与 ASCII 表格字体 (Monospace Typography)',
-                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                              widget.controller.strings.monoTypographyTitle,
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
@@ -1629,7 +1895,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                                 visualDensity: VisualDensity.compact,
                                 padding: const EdgeInsets.symmetric(horizontal: 4),
                               ),
-                              child: const Text('恢复默认', style: TextStyle(fontSize: 11)),
+                              child: Text(widget.controller.strings.restoreDefault, style: const TextStyle(fontSize: 11)),
                             ),
                         ],
                       ),
@@ -1646,10 +1912,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Flexible(
+                          Flexible(
                             child: Text(
-                              '排版基础字号 (Base Typesetting Font Size)',
-                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                              widget.controller.strings.baseFontSizeTitle,
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
@@ -1659,7 +1925,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                               visualDensity: VisualDensity.compact,
                               padding: const EdgeInsets.symmetric(horizontal: 4),
                             ),
-                            child: const Text('恢复默认 (10.5 pt)', style: TextStyle(fontSize: 11)),
+                            child: Text(widget.controller.strings.restoreDefaultFontSize('10.5'), style: const TextStyle(fontSize: 11)),
                           ),
                         ],
                       ),
@@ -1677,7 +1943,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                           children: [
                             IconButton(
                               icon: const Icon(Icons.remove_rounded, size: 16),
-                              tooltip: '缩小字号',
+                              tooltip: widget.controller.strings.decreaseFontSize,
                               visualDensity: VisualDensity.compact,
                               padding: EdgeInsets.zero,
                               constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
@@ -1708,7 +1974,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                             ),
                             IconButton(
                               icon: const Icon(Icons.add_rounded, size: 16),
-                              tooltip: '放大字号',
+                              tooltip: widget.controller.strings.increaseFontSize,
                               visualDensity: VisualDensity.compact,
                               padding: EdgeInsets.zero,
                               constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
@@ -1747,7 +2013,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                               });
                             },
                             icon: const Icon(Icons.refresh_rounded, size: 13),
-                            label: const Text('恢复默认字体', style: TextStyle(fontSize: 11.5)),
+                            label: Text(widget.controller.strings.restoreDefaultFonts, style: const TextStyle(fontSize: 11.5)),
                             style: OutlinedButton.styleFrom(
                               visualDensity: VisualDensity.compact,
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -1825,9 +2091,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 child: Text(
                   hasCjkMono
                       ? (mapleInstalled
-                          ? 'Maple Mono 就绪 (1:2 严格等宽)'
-                          : '检测到 CJK 严格等宽字体')
-                      : '建议安装 Maple Mono 字体',
+                          ? widget.controller.strings.mapleMonoReady
+                          : widget.controller.strings.cjkMonoDetected)
+                      : widget.controller.strings.mapleMonoSuggested,
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 12,
@@ -1842,8 +2108,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
           const SizedBox(height: 3),
           Text(
             hasCjkMono
-                ? 'CJK 严格等宽已生效，ASCII 表格与代码中英文严格 1:2 对齐。'
-                : '缺少 CJK 等宽字体，ASCII 表格或混排代码可能有微弱错位。',
+                ? widget.controller.strings.cjkMonoActiveDesc
+                : widget.controller.strings.cjkMonoMissingDesc,
             style: TextStyle(
               fontSize: 11,
               height: 1.3,
@@ -1851,11 +2117,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
             ),
           ),
           const SizedBox(height: 6),
-          Row(
+          Wrap(
             children: [
               TextButton.icon(
                 icon: const Icon(Icons.open_in_new_rounded, size: 12),
-                label: const Text('下载字体', style: TextStyle(fontSize: 11)),
+                label: Text(widget.controller.strings.downloadFont, style: const TextStyle(fontSize: 11)),
                 onPressed: _openMapleGitHub,
                 style: TextButton.styleFrom(
                   visualDensity: VisualDensity.compact,
@@ -1864,7 +2130,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ),
               TextButton.icon(
                 icon: const Icon(Icons.copy_rounded, size: 12),
-                label: const Text('复制链接', style: TextStyle(fontSize: 11)),
+                label: Text(widget.controller.strings.copyLink, style: const TextStyle(fontSize: 11)),
                 onPressed: _copyMapleDownloadLink,
                 style: TextButton.styleFrom(
                   visualDensity: VisualDensity.compact,
@@ -1879,7 +2145,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.refresh_rounded, size: 12),
-                label: Text(_isScanningFonts ? '检测中...' : '重新检测', style: const TextStyle(fontSize: 11)),
+                label: Text(_isScanningFonts ? widget.controller.strings.detectingFonts : widget.controller.strings.redetectFonts, style: const TextStyle(fontSize: 11)),
                 onPressed: _isScanningFonts
                     ? null
                     : () async {
@@ -1951,7 +2217,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
           color: hasChanges ? const Color(0xFFF59E0B) : const Color(0xFF10B981),
         ),
         const SizedBox(width: 6),
-        Flexible(
+        Expanded(
           child: Text(
             hasChanges ? s.typographyHasChanges : s.typographyUpToDate,
             overflow: TextOverflow.ellipsis,
@@ -1964,7 +2230,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
             ),
           ),
         ),
-        const Spacer(),
+        const SizedBox(width: 8),
         if (hasChanges) ...[
           OutlinedButton(
             onPressed: _revertTypography,
@@ -1994,7 +2260,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final fontSize = _selectedFontSize;
     final bodyFont = _selectedBodyFont;
     final codeFont = _selectedCodeFont;
-    final displayCodeFont = codeFont ?? 'Maple Mono (默认)';
+    final displayCodeFont = codeFont ?? widget.controller.strings.mapleMonoDefault;
 
     return Container(
       decoration: BoxDecoration(
@@ -2030,14 +2296,14 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                const Expanded(
+                Expanded(
                   child: Row(
                     children: [
                       Flexible(
                         child: Text(
-                          '实时排版预览 (Live Preview)',
+                          widget.controller.strings.livePreviewBadge,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 11.5,
                             fontWeight: FontWeight.w600,
                           ),
@@ -2049,8 +2315,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
                           width: 0,
                           height: 0,
                           child: Text(
-                            '排版实时渲染预览 (Live Typography Preview)',
-                            style: TextStyle(fontSize: 0),
+                            widget.controller.strings.livePreviewTitle,
+                            style: const TextStyle(fontSize: 0),
                           ),
                         ),
                       ),
@@ -2078,7 +2344,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 children: [
                   // 1. Body Typography Sample
                   Text(
-                    '现代出版级技术文档排版 (Publisher-Grade Typography)',
+                    widget.controller.strings.previewSpecimenHeading,
                     style: TextStyle(
                       fontFamily: bodyFont,
                       fontFamilyFallback: const [
@@ -2095,7 +2361,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'SuperGoodViewer 专为高密度技术文档、工程规格说明书与论文设计。本段文字实时应用当前设置的正文字体与基础字号，展示精致的中西文混排字距、行高节奏与标点间隙。The quick brown fox jumps over the lazy dog.',
+                    widget.controller.strings.previewSpecimenBody,
                     style: TextStyle(
                       fontFamily: bodyFont,
                       fontFamilyFallback: const [
@@ -2122,7 +2388,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       const SizedBox(width: 4),
                       Expanded(
                         child: Text(
-                          '代码字体渲染: $displayCodeFont',
+                          widget.controller.strings.previewCodeFont(displayCodeFont),
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 11,
@@ -2177,11 +2443,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         color: isDark ? Colors.white60 : Colors.black54,
                       ),
                       const SizedBox(width: 4),
-                      const Expanded(
+                      Expanded(
                         child: Text(
-                          'ASCII 表格全角/半角严格 1:2 等宽对齐校验',
+                          widget.controller.strings.asciiAlignmentCheck,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
                           ),
@@ -2202,6 +2468,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     ),
                     child: SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
+                      // Not localized: the specimen needs full-width CJK cells
+                      // to show the 1:2 alignment in every UI language.
                       child: Text(
                         '┌─────────────────────┬─────────────────────┐\n'
                         '│ 量子纠缠分发网关    │ 相对论时空频率同步  │\n'
@@ -2366,7 +2634,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
-                          '已修改',
+                          widget.controller.strings.shortcutModified,
                           style: TextStyle(
                             fontSize: 10,
                             color: theme.colorScheme.primary,
@@ -2458,7 +2726,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     ),
                     const SizedBox(width: 5),
                     Text(
-                      isListening ? strings.pressNewShortcut : shortcutLabel,
+                      isListening
+                          ? strings.pressNewShortcut
+                          : (shortcutLabel.isEmpty ? strings.shortcutUnassigned : shortcutLabel),
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
@@ -2479,7 +2749,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
             const SizedBox(width: 6),
             IconButton(
               icon: const Icon(Icons.undo_rounded, size: 16),
-              tooltip: '恢复此项默认',
+              tooltip: widget.controller.strings.resetShortcutToDefault,
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
               onPressed: () {
@@ -2507,7 +2777,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         child: Padding(
           padding: const EdgeInsets.all(32),
           child: Text(
-            '命令行工具功能仅在 macOS 系统上支持',
+            widget.controller.strings.cliErrorPlatformNotSupported,
             style: TextStyle(color: isDark ? Colors.white60 : Colors.black54),
           ),
         ),
@@ -2622,7 +2892,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ),
         const SizedBox(height: 18),
 
-        _buildSectionHeader('${s.cliUsageExamples} (Terminal Usage)'),
+        _buildSectionHeader(s.cliUsageExamples),
         const SizedBox(height: 8),
 
         _buildCliCodeSnippet(s.cliExampleCurrentDir, 'sgv README.md', isDark),
@@ -2731,7 +3001,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    '${s.aboutVersion(SettingsDialog.appVersion)} (Build 2026.09)',
+                    s.aboutVersion(SettingsDialog.appVersion),
                     style: TextStyle(
                       fontSize: 12,
                       color: isDark ? Colors.white54 : Colors.black45,
@@ -2768,6 +3038,32 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       ),
                     ),
                 ],
+              ),
+              const SizedBox(height: 6),
+              Tooltip(
+                message: s.openProjectHomepage,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(4),
+                  onTap: () => _openUrl(SettingsDialog.projectHomepage),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.open_in_new_rounded, size: 13, color: theme.colorScheme.primary),
+                        const SizedBox(width: 4),
+                        Text(
+                          SettingsDialog.projectHomepage.replaceFirst('https://', ''),
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: theme.colorScheme.primary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
               if (_updateStatusMessage != null) ...[
                 const SizedBox(height: 6),
@@ -2833,16 +3129,16 @@ class _SettingsDialogState extends State<SettingsDialog> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                '核心排版渲染引擎',
-                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+              Text(
+                widget.controller.strings.aboutEngineSection,
+                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
               ),
               const SizedBox(height: 8),
-              _buildTechItem('Typst 0.13.1', '毫秒级编译内核，完美支持高级数学公式、表格与代码块'),
+              _buildTechItem('Typst 0.13.1', widget.controller.strings.aboutTypstDesc),
               const SizedBox(height: 6),
-              _buildTechItem('PDFium 矢量渲染', '无损 120 FPS 丝滑视口平移与部分预渲染技术'),
+              _buildTechItem(widget.controller.strings.aboutPdfiumTitle, widget.controller.strings.aboutPdfiumDesc),
               const SizedBox(height: 6),
-              _buildTechItem('CJK 1:2 等宽保障', '内置 CJK 等宽字体感知，杜绝 ASCII 表格与图表锯齿撕裂'),
+              _buildTechItem(widget.controller.strings.aboutCjkTitle, widget.controller.strings.aboutCjkDesc),
             ],
           ),
         ),
@@ -2866,13 +3162,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      '载入精选排版样例 (Sample Document)',
-                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                    Text(
+                      widget.controller.strings.loadSampleDocument,
+                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '即刻体验包含复杂数学公式、Mermaid 图表、Callout 标注与代码高亮的演示文档',
+                      widget.controller.strings.loadSampleDocumentDesc,
                       style: TextStyle(
                         fontSize: 11.5,
                         color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),

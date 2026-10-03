@@ -6,7 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:sogoodviewer/controllers/reader_controller.dart';
 import 'package:sogoodviewer/services/preferences_service.dart';
 import 'package:sogoodviewer/services/shortcut_service.dart';
-import 'package:sogoodviewer/views/keyboard_shortcuts_dialog.dart';
+import 'package:sogoodviewer/views/settings_dialog.dart';
 
 void main() {
   late Directory tempTestDir;
@@ -59,9 +59,75 @@ void main() {
       expect(service.getKey('openFile'), LogicalKeyboardKey.keyO);
       expect(service.getKey('toggleSidebar'), LogicalKeyboardKey.keyB);
       expect(service.getKey('compileDocument'), LogicalKeyboardKey.keyR);
-      expect(service.getKey('toggleTheme'), LogicalKeyboardKey.keyT);
+      expect(service.getKey('toggleTheme'), LogicalKeyboardKey.keyL);
+      expect(service.getShortcutLabel('toggleTheme'), endsWith('Shift+L'));
       expect(service.getKey('toggleTwoPage'), LogicalKeyboardKey.keyD);
       expect(service.getKey('keyboardShortcuts'), LogicalKeyboardKey.comma);
+    });
+
+    group('zoom defaults follow each platform', () {
+      tearDown(() => ShortcutService.debugIsMacLayout = null);
+
+      test('macOS follows Preview', () {
+        ShortcutService.debugIsMacLayout = true;
+        final service = ShortcutService();
+        expect(service.getShortcutLabel('resetZoom'), 'Cmd+0');
+        expect(service.getShortcutLabel('fitPage'), 'Cmd+9');
+        expect(service.getShortcutLabel('fitWidth'), 'Cmd+8');
+        expect(service.getShortcutLabel('toggleTheme'), 'Cmd+Shift+L');
+      });
+
+      test('Windows and Linux follow SumatraPDF and Acrobat', () {
+        ShortcutService.debugIsMacLayout = false;
+        final service = ShortcutService();
+        expect(service.getShortcutLabel('fitPage'), 'Ctrl+0');
+        expect(service.getShortcutLabel('resetZoom'), 'Ctrl+1');
+        expect(service.getShortcutLabel('fitWidth'), 'Ctrl+2');
+        expect(service.getShortcutLabel('toggleTheme'), 'Ctrl+Shift+L');
+      });
+
+      test('a persisted platform default is not stored as a customization', () {
+        ShortcutService.debugIsMacLayout = false;
+        final service = ShortcutService()..loadFromMap({'fitWidth': '2'}, notify: false);
+        expect(service.isCustomized('fitWidth'), isFalse);
+      });
+    });
+
+    test('a user binding wins over a default that moved onto the same key', () {
+      ShortcutService.debugIsMacLayout = false;
+      addTearDown(() => ShortcutService.debugIsMacLayout = null);
+      // Saved before Ctrl+2 became the fit-width default.
+      final service = ShortcutService()..loadFromMap({'compileDocument': '2'}, notify: false);
+
+      expect(service.isShadowed('fitWidth'), isTrue);
+      expect(service.getShortcutLabel('fitWidth'), isEmpty);
+      expect(service.findConflict('openFile', LogicalKeyboardKey.digit2), '刷新 / 重新编译');
+
+      var compiled = 0;
+      var fitted = 0;
+      void noop() {}
+      final bindings = service.buildBindings(
+        onToggleMode: noop, onExportPdf: noop, onOpenFile: noop, onToggleSidebar: noop,
+        onCompileDocument: () => compiled++, onToggleTheme: noop, onToggleTwoPage: noop,
+        onZoomIn: noop, onZoomOut: noop, onResetZoom: noop, onFitWidth: () => fitted++,
+        onFitPage: noop, onToggleToolbar: noop, onFontSettings: noop,
+      );
+      final ctrl2 = bindings.entries.where((e) {
+        final activator = e.key;
+        return activator is SingleActivator &&
+            activator.trigger == LogicalKeyboardKey.digit2 &&
+            activator.control &&
+            !activator.shift;
+      }).toList();
+      expect(ctrl2, hasLength(1));
+      ctrl2.single.value();
+      expect(compiled, 1);
+      expect(fitted, 0);
+
+      // Moving the custom binding away frees the default again.
+      service.resetKey('compileDocument');
+      expect(service.isShadowed('fitWidth'), isFalse);
+      expect(service.getShortcutLabel('fitWidth'), 'Ctrl+2');
     });
 
     test('rebinding, customization detection and reset work properly', () {
@@ -190,8 +256,8 @@ void main() {
     });
   });
 
-  group('KeyboardShortcutsDialog Widget Tests', () {
-    testWidgets('renders all action categories and allows key rebinding', (tester) async {
+  group('Settings shortcuts tab Widget Tests', () {
+    testWidgets('renders all action categories and current key labels', (tester) async {
       tester.view.physicalSize = const Size(1200, 900);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -202,41 +268,24 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: Scaffold(
-            body: Builder(
-              builder: (ctx) => ElevatedButton(
-                onPressed: () => showKeyboardShortcutsDialog(ctx, controller),
-                child: const Text('Open Dialog'),
-              ),
-            ),
-          ),
+          home: SettingsDialog(controller: controller, initialTab: SettingsTab.shortcuts),
         ),
       );
 
-      // Open dialog
-      await tester.tap(find.text('Open Dialog'));
-      await tester.pumpAndSettle();
-
-      // Dialog title & top categories visible
-      expect(find.text('快捷键自定义设置'), findsOneWidget);
+      // Top categories visible
       expect(find.text('视图模式'), findsOneWidget);
       expect(find.text('文档文件'), findsOneWidget);
 
       // Primary actions are present
       expect(find.text('切换版式 / 视图模式'), findsOneWidget);
-      expect(find.text('全屏单页演示 (PPT)'), findsOneWidget);
+      expect(find.text('全屏单页演示'), findsOneWidget);
       expect(find.text('查找文档内容'), findsOneWidget);
       expect(find.text('导出为出版级 PDF'), findsOneWidget);
 
-      // Initial keys: toggleMode is M, exportPdf is P
+      // Initial keys: toggleMode is M
       final modeShortcutLabel = controller.shortcutService.getShortcutLabel('toggleMode');
       expect(modeShortcutLabel, contains('M'));
       expect(find.text(modeShortcutLabel), findsWidgets);
-
-      // Close dialog
-      await tester.tap(find.byTooltip('关闭'));
-      await tester.pumpAndSettle();
-      expect(find.text('快捷键自定义设置'), findsNothing);
     });
 
     testWidgets('customizing a key displays modification chip and resets on button click', (tester) async {
@@ -253,7 +302,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: KeyboardShortcutsDialog(controller: controller),
+          home: SettingsDialog(controller: controller, initialTab: SettingsTab.shortcuts),
         ),
       );
 

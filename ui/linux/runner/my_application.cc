@@ -39,6 +39,23 @@ static void first_frame_cb(MyApplication* self, FlView* view) {
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
 }
 
+// Gives the window an icon even when no desktop entry is installed (X11 window
+// managers and taskbars read it from the window). The file ships in the bundle
+// via linux/CMakeLists.txt.
+static void set_window_icon_from_bundle(GtkWindow* window) {
+  g_autofree gchar* exe_path = g_file_read_link("/proc/self/exe", nullptr);
+  if (exe_path == nullptr) {
+    return;
+  }
+  g_autofree gchar* exe_dir = g_path_get_dirname(exe_path);
+  g_autofree gchar* icon_path =
+      g_build_filename(exe_dir, "data", "icons", "app_icon_256.png", nullptr);
+  g_autoptr(GError) error = nullptr;
+  if (!gtk_window_set_icon_from_file(window, icon_path, &error)) {
+    g_debug("Window icon not set from %s: %s", icon_path, error->message);
+  }
+}
+
 static gchar* get_linux_cli_target_script() {
   gchar* exe_path = g_file_read_link("/proc/self/exe", nullptr);
   if (exe_path != nullptr) {
@@ -300,6 +317,17 @@ static void window_channel_method_call_cb(FlMethodChannel* channel,
     g_autoptr(FlMethodResponse) response =
         FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
     fl_method_call_respond(method_call, response, nullptr);
+  } else if (g_strcmp0(method, "setDarkTitleBar") == 0) {
+    // GTK3 themes such as Adwaita ship a dark variant for the header bar and
+    // GTK dialogs; a theme that is dark by name cannot be forced back to light.
+    if (fl_value_get_type(args) == FL_VALUE_TYPE_BOOL) {
+      g_object_set(gtk_settings_get_default(),
+                   "gtk-application-prefer-dark-theme",
+                   fl_value_get_bool(args), nullptr);
+    }
+    g_autoptr(FlMethodResponse) response =
+        FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
+    fl_method_call_respond(method_call, response, nullptr);
   } else {
     g_autoptr(FlMethodResponse) response =
         FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
@@ -372,6 +400,7 @@ static void my_application_activate(GApplication* application) {
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
   self->window = window;
+  set_window_icon_from_bundle(window);
 
   gboolean use_header_bar = TRUE;
 #ifdef GDK_WINDOWING_X11
@@ -405,6 +434,8 @@ static void my_application_activate(GApplication* application) {
   gdk_rgba_parse(&background_color, "#000000");
   fl_view_set_background_color(view, &background_color);
   gtk_widget_show(GTK_WIDGET(view));
+  // Layout is verified down to 800x600 (see test/layout_overflow_test.dart).
+  gtk_widget_set_size_request(GTK_WIDGET(view), 800, 600);
   gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
 
   g_signal_connect_swapped(view, "first-frame", G_CALLBACK(first_frame_cb),
