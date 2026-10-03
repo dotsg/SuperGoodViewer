@@ -37,7 +37,7 @@ void main() {
       final lines = entry.split('\n');
 
       expect(lines.first, '[Desktop Entry]');
-      expect(lines, contains('Exec="${p.join(bundleDir, 'bin', 'sgv')}" %F'));
+      expect(lines, contains('Exec=${LinuxDesktopIntegration.quoteExecArgument(p.join(bundleDir, 'bin', 'sgv'))} %F'));
       expect(lines, contains('Icon=com.sogood.sogoodviewer'));
       expect(lines, contains('StartupWMClass=com.sogood.sogoodviewer'));
       expect(lines, contains('MimeType=text/markdown;text/x-markdown;application/pdf;'));
