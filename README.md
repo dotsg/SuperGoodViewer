@@ -6,7 +6,7 @@
 </div>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Release: v1.0.9](https://img.shields.io/badge/Release-v1.0.9-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
+[![Release: v1.1.0](https://img.shields.io/badge/Release-v1.1.0-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
 [![CI Status](https://img.shields.io/badge/CI-Passing-brightgreen.svg)]()
 [![Platform: macOS | Windows | Linux](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)]()
 
@@ -238,6 +238,30 @@ cat draft.md | sgv export - -o draft.pdf
 ---
 
 ## 📝 更新日志 (Changelog)
+
+### v1.1.0 (2026-10)
+- **多标签页阅读支持 (Document Tabs) (#18)**：
+  - 新增现代化标签栏，支持多篇 Markdown 与 PDF 文档在同一窗口中并行打开与秒级切换；
+  - 外部打开、命令行 `sgv` 启动或桌面拖拽多文件时自动在独立标签页中开启；
+  - **智能同名标签消歧**：多份重名文件（如多个仓库的 `README.md`）自动向上展开父级目录名称（如 `README · project-one`），最多向上追溯 3 层；
+  - **会话状态严格隔离 (`DocumentSession`)**：各标签页独立保留各自的滚动浏览进度、大纲跳转状态与专属页面版式（Front Matter 配置互不干扰）；
+  - **会话持久化与懒加载**：重新启动应用自动恢复上次打开的所有标签页，后台标签页按需异步加载与编译；
+  - **丰富快捷操作**：支持 `Cmd/Ctrl+T` 新建标签、`Cmd/Ctrl+W` 关闭当前标签、`Cmd/Ctrl+Shift+T` 重新打开关闭的标签、`Ctrl+Tab` / `Ctrl+Shift+Tab` 轮转切换，Windows/Linux 支持 `Alt+1..9` 快速直达。
+- **跨平台快捷键重构与标准对齐**：
+  - 页面缩放快捷键全面遵循主流平台标准：Windows / Linux 遵从 SumatraPDF 与 Acrobat 规范（`Ctrl+0` 适合页面、`Ctrl+1` 原始比例、`Ctrl+2` 适应宽度）；macOS 遵从 Preview 规范（`Cmd+0` 原始比例、`Cmd+9` 适合页面、`Cmd+8` 适应宽度）；
+  - 主题切换快捷键由 `Cmd/Ctrl+T` 移至 `Cmd/Ctrl+Shift+L`（对标 Notion），为标签页快捷键腾出黄金键位；
+  - 智能阴影与冲突保护：用户自定义键位享有最高优先级，默认键位调整绝不静默覆盖用户设定。
+- **桌面原生特性与体验深化**：
+  - **Windows**：拦截 `WM_GETMINMAXINFO` 强制 800×600 DPI 自适应最小窗口尺寸；支持 `setDarkTitleBar` 沉浸式暗色标题栏；实现焦点丢失自动夺回保障快捷键始终生效；
+  - **Linux**：无桌面入口时通过 `/proc/self/exe` 读取同级 `data/icons/` 初始化窗口图标；新增免 root 安装/更新桌面入口（`~/.local/share/applications` 与 `hicolor` 图标），支持 MIME 关联与通过 `bin/sgv` IPC 复用窗口；GTK3 深色主题适配；
+  - **macOS**：x64 Intel 构建使用 Skia 替代 Impeller 渲染，消除老款 Intel 芯片上的页面抖动问题 (#17)。
+- **底层排版引擎秒级冷启与缓存加速**：
+  - 引入 `FontIndexCache`（`font_index.json`），仅从轻量 `FontInfo` 构建字体书，字形数据按需通过 `memmap2` 零拷贝映射解析，首屏冷启耗时降低约 60%，常驻内存显著优化；
+  - 忽略相同路径未修改文档的重复无效重编。
+- **设置面板统一与严格国际化规范**：
+  - 新增外观“跟随系统”选项 (#19)；
+  - 移除已废弃的独立字体/快捷键弹窗，全面整合至统一 SettingsDialog；
+  - 清除界面所有硬编码中文，全流程接入 `AppStrings` 并补充完整的英文、繁体中文翻译与溢出防护测试。
 
 ### v1.0.9 (2026-09)
 - **macOS Apple Silicon 与 Intel 独立安装包切分与安全更新 (#11)**：
