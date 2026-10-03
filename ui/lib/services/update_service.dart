@@ -43,7 +43,7 @@ class IncompatibleArchitectureException implements Exception {
 class UpdateService {
   static const String repoOwner = 'dotsg';
   static const String repoName = 'supergoodviewer';
-  static const String defaultAppVersion = '1.1.0';
+  static const String defaultAppVersion = '1.1.1';
 
   static const String prefAutoCheck = 'autoCheckUpdates';
   static const String prefLastCheckTime = 'lastUpdateCheckTime';
@@ -96,6 +96,28 @@ class UpdateService {
       } catch (_) {}
     }
     return _cachedIsMacArm = false;
+  }
+
+  static bool? _cachedIsLinuxArm;
+
+  /// Detects whether the current Linux host hardware is ARM64 (aarch64).
+  static bool _detectLinuxArm() {
+    if (_cachedIsLinuxArm != null) return _cachedIsLinuxArm!;
+    if (Platform.version.toLowerCase().contains('arm64') || Platform.version.toLowerCase().contains('aarch64')) {
+      return _cachedIsLinuxArm = true;
+    }
+    if (Platform.isLinux) {
+      try {
+        final res = Process.runSync('uname', ['-m']);
+        if (res.exitCode == 0) {
+          final arch = (res.stdout as String).trim().toLowerCase();
+          if (arch == 'aarch64' || arch == 'arm64') {
+            return _cachedIsLinuxArm = true;
+          }
+        }
+      } catch (_) {}
+    }
+    return _cachedIsLinuxArm = false;
   }
 
   /// Parses the Mach-O header of a binary file without external tools like lipo.
@@ -175,6 +197,7 @@ class UpdateService {
 
     final winArch = (Platform.environment['PROCESSOR_ARCHITECTURE'] ?? '').toLowerCase();
     final isWinArm = targetIsArm64 ?? (winArch.contains('arm') || Platform.version.toLowerCase().contains('arm'));
+    final isLinuxArm = targetIsArm64 ?? _detectLinuxArm();
 
     Map<String, dynamic>? candidate;
 
@@ -224,9 +247,19 @@ class UpdateService {
         if (asset is! Map<String, dynamic>) continue;
         final name = (asset['name'] as String? ?? '').toLowerCase();
 
+        final isArmAsset = name.contains('arm64') || name.contains('aarch64');
+        final isX64Asset = name.contains('x64') || name.contains('x86_64') || name.contains('amd64');
+
         if ((name.endsWith('.tar.gz') || name.endsWith('.appimage')) && name.contains('linux')) {
-          candidate = asset;
-          break;
+          if (isLinuxArm && isArmAsset) {
+            candidate = asset;
+            break;
+          } else if (!isLinuxArm && isX64Asset) {
+            candidate = asset;
+            break;
+          } else if (!isArmAsset && !isX64Asset) {
+            candidate ??= asset;
+          }
         }
       }
     }
@@ -246,7 +279,14 @@ class UpdateService {
           }
         }
         if (isWin && name.endsWith('.zip')) candidate = asset;
-        if (isLinux && name.endsWith('.tar.gz')) candidate = asset;
+        if (isLinux && (name.endsWith('.tar.gz') || name.endsWith('.appimage'))) {
+          final isArmAsset = name.contains('arm64') || name.contains('aarch64');
+          if (isLinuxArm == isArmAsset) {
+            candidate = asset;
+            break;
+          }
+          candidate ??= asset;
+        }
       }
     }
 

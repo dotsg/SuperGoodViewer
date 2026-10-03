@@ -414,11 +414,92 @@ jobs:
           if-no-files-found: error
 
   # =============================================================
+  # Linux ARM64 Build & Package (aarch64 portable tar.gz)
+  # =============================================================
+  build-linux-arm64:
+    name: Build Linux ARM64
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Verify Release Version
+        shell: bash
+        run: |
+          v="${RELEASE_VERSION}"
+          [[ "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version format: $v (expected vX.Y.Z)"; exit 1; }
+          c=$(grep -m1 '^version' core/Cargo.toml | cut -d'"' -f2)
+          [ "${v#v}" = "$c" ] || { echo "::error::$v != Cargo.toml $c"; exit 1; }
+          p=$(grep -m1 '^version:' ui/pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
+          [ "${v#v}" = "$p" ] || { echo "::error::$v != pubspec.yaml $p"; exit 1; }
+          echo "Verified release version: $v (matches Cargo.toml $c, pubspec.yaml $p)"
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build libgtk-3-dev pkg-config
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Setup Flutter SDK (Linux ARM64)
+        run: |
+          git clone -b stable --depth 1 https://github.com/flutter/flutter.git $HOME/flutter
+          echo "$HOME/flutter/bin" >> $GITHUB_PATH
+
+      - name: Cache Rust Build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: linux-arm64
+
+      - name: Build Rust sogood_core & sgv-cli (Release)
+        run: |
+          cd core
+          # The workspace root package is sogood_core, so a bare `cargo build`
+          # skips the sgv-cli member entirely.
+          cargo build --release --lib
+          cargo build --release -p sgv-cli --bin sgv-cli
+
+      - name: Build Flutter Desktop Linux App (Release)
+        run: |
+          cd ui
+          flutter pub get
+          flutter build linux --release
+
+      - name: Package Linux ARM64 Portable tar.gz
+        run: |
+          BUNDLE="ui/build/linux/arm64/release/bundle"
+          test -f "$BUNDLE/supergoodviewer" || { echo "::error::$BUNDLE/supergoodviewer missing"; exit 1; }
+          test -f "$BUNDLE/lib/libsogood_core.so" || { echo "::error::$BUNDLE/lib/libsogood_core.so missing"; exit 1; }
+          test -f "$BUNDLE/bin/sgv" || { echo "::error::$BUNDLE/bin/sgv missing"; exit 1; }
+          test -x "$BUNDLE/bin/sgv" || { echo "::error::$BUNDLE/bin/sgv is not executable"; exit 1; }
+          for size in 256 512; do
+            test -f "$BUNDLE/data/icons/app_icon_$size.png" || { echo "::error::$BUNDLE/data/icons/app_icon_$size.png missing"; exit 1; }
+          done
+          cp core/target/release/sgv-cli "$BUNDLE/bin/sgv-cli"
+          chmod +x "$BUNDLE/bin/sgv-cli"
+          test -f "$BUNDLE/bin/sgv-cli" || { echo "::error::$BUNDLE/bin/sgv-cli missing"; exit 1; }
+          test -x "$BUNDLE/bin/sgv-cli" || { echo "::error::$BUNDLE/bin/sgv-cli is not executable"; exit 1; }
+          mkdir -p dist
+          tar -czvf "dist/SuperGoodViewer-${{ env.RELEASE_VERSION }}-linux-arm64.tar.gz" -C "$BUNDLE" .
+
+      - name: Upload Linux ARM64 Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-arm64-binaries
+          path: dist/*
+          if-no-files-found: error
+
+  # =============================================================
   # Publish Release
   # =============================================================
   publish-release:
     name: Publish GitHub Release
-    needs: [build-macos, build-windows-x64, build-windows-arm64, build-linux-x64]
+    needs: [build-macos, build-windows-x64, build-windows-arm64, build-linux-x64, build-linux-arm64]
     runs-on: ubuntu-latest
 
     steps:
@@ -473,5 +554,6 @@ jobs:
 
             #### 🐧 Linux 用户
             - **Intel / AMD 64位 Linux**：下载 `SuperGoodViewer-${{ env.RELEASE_VERSION }}-linux-x64.tar.gz`
+            - **ARM64 Linux（树莓派 4/5、飞腾/鲲鹏、ARM 服务器等）**：下载 `SuperGoodViewer-${{ env.RELEASE_VERSION }}-linux-arm64.tar.gz`（纯原生 ARM64 极致体验）
             - **系统要求**：Ubuntu 20.04+、Debian 11+、Fedora、Arch Linux 等主流 64 位发行版（需安装 GTK 3 环境）
             - **使用方式**：解压 tar.gz 归档至任意目录，运行 `./supergoodviewer` 即可直接启动（绿色免安装）；亦可将解压目录中的 `bin/sgv` 脚本软链接至 `~/.local/bin/sgv`，在终端随时以命令行唤起。

@@ -1,7 +1,16 @@
 ifeq ($(OS),Windows_NT)
   FLUTTER ?= flutter.bat
+  LINUX_ARCH ?= x64
 else
   FLUTTER ?= flutter
+  UNAME_M := $(shell uname -m)
+  ifeq ($(UNAME_M),aarch64)
+    LINUX_ARCH ?= arm64
+  else ifeq ($(UNAME_M),arm64)
+    LINUX_ARCH ?= arm64
+  else
+    LINUX_ARCH ?= x64
+  endif
 endif
 
 .PHONY: all build build-universal build-core build-core-universal build-app build-windows build-windows-arm64 build-linux test test-core test-app test-release-local bench bench-json benchmark clean run-macos run-windows run-linux dmg dmg-arm64 dmg-x64 dmg-universal package-windows package-windows-arm64 package-linux
@@ -126,25 +135,25 @@ run-windows: build-core
 	@cd ui && $(FLUTTER) run -d windows
 
 build-linux: build-core
-	@echo "==> Building Flutter Desktop Linux app..."
+	@echo "==> Building Flutter Desktop Linux app ($(LINUX_ARCH))..."
 	@cd ui && $(FLUTTER) build linux --release
 	@echo "==> Injecting CLI tools into Linux bundle..."
-	@mkdir -p ui/build/linux/x64/release/bundle/bin
-	@cp core/target/release/sgv-cli ui/build/linux/x64/release/bundle/bin/
-	@chmod +x ui/build/linux/x64/release/bundle/bin/sgv-cli
-	@echo "==> Linux build complete! Output: ui/build/linux/x64/release/bundle/"
+	@mkdir -p ui/build/linux/$(LINUX_ARCH)/release/bundle/bin
+	@cp core/target/release/sgv-cli ui/build/linux/$(LINUX_ARCH)/release/bundle/bin/
+	@chmod +x ui/build/linux/$(LINUX_ARCH)/release/bundle/bin/sgv-cli
+	@echo "==> Linux build complete! Output: ui/build/linux/$(LINUX_ARCH)/release/bundle/"
 
 run-linux: build-core
-	@echo "==> Launching SuperGoodViewer in dev mode (Linux)..."
-	@mkdir -p ui/build/linux/x64/debug/bundle/lib
-	@cp core/target/release/libsogood_core.so ui/build/linux/x64/debug/bundle/lib/ 2>/dev/null || true
+	@echo "==> Launching SuperGoodViewer in dev mode (Linux $(LINUX_ARCH))..."
+	@mkdir -p ui/build/linux/$(LINUX_ARCH)/debug/bundle/lib
+	@cp core/target/release/libsogood_core.so ui/build/linux/$(LINUX_ARCH)/debug/bundle/lib/ 2>/dev/null || true
 	@cd ui && $(FLUTTER) run -d linux
 
 package-linux: build-linux
-	@echo "==> Packaging Linux portable release..."
+	@echo "==> Packaging Linux $(LINUX_ARCH) portable release..."
 	@mkdir -p dist
-	@tar -czvf dist/SuperGoodViewer-linux-x64.tar.gz -C ui/build/linux/x64/release/bundle .
-	@echo "==> Package created: dist/SuperGoodViewer-linux-x64.tar.gz"
+	@tar -czvf dist/SuperGoodViewer-linux-$(LINUX_ARCH).tar.gz -C ui/build/linux/$(LINUX_ARCH)/release/bundle .
+	@echo "==> Package created: dist/SuperGoodViewer-linux-$(LINUX_ARCH).tar.gz"
 
 clean:
 	@echo "==> Cleaning artifacts..."

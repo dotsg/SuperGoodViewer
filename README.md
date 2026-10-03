@@ -6,7 +6,7 @@
 </div>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Release: v1.1.0](https://img.shields.io/badge/Release-v1.1.0-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
+[![Release: v1.1.1](https://img.shields.io/badge/Release-v1.1.1-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
 [![CI Status](https://img.shields.io/badge/CI-Passing-brightgreen.svg)]()
 [![Platform: macOS | Windows | Linux](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)]()
 
@@ -144,9 +144,9 @@ make test
   ```bash
   make package-windows-arm64 # 生成 dist/SuperGoodViewer-windows-arm64.zip
   ```
-- **Linux x64 便携包**:
+- **Linux 便携包 (x64 / ARM64)**:
   ```bash
-  make package-linux         # 生成 dist/SuperGoodViewer-linux-x64.tar.gz
+  make package-linux         # 自动识别系统架构生成对应便携包 (dist/SuperGoodViewer-linux-x64.tar.gz 或 dist/SuperGoodViewer-linux-arm64.tar.gz)
   ```
   解压后运行 `supergoodviewer`，在 偏好设置 → 常规 → 桌面集成 中点击“添加”，即可写入应用菜单项与图标（位于 `~/.local/share`，无需 root），并在文件管理器的“打开方式”中用它打开 Markdown 与 PDF。
 
@@ -238,6 +238,13 @@ cat draft.md | sgv export - -o draft.pdf
 ---
 
 ## 📝 更新日志 (Changelog)
+
+### v1.1.1 (2026-10)
+- **Linux ARM64 原生发布支持 (Native AArch64 / ARM64 Linux)**：
+  - 新增 GitHub Actions Linux ARM64 CI 构建流水线（基于原生 `ubuntu-24.04-arm` 运行器），提供专为 64 位 ARM 设备编译的便携归档包（`SuperGoodViewer-*-linux-arm64.tar.gz`）；
+  - 全面支持树莓派 4/5、飞腾/鲲鹏国产架构 PC、ARM64 Linux 虚拟机及云服务器；
+  - `UpdateService` 新增 Linux 宿主 CPU 架构探测（`aarch64` / `arm64`），应用内检查更新自动精准下载与匹配对应架构的更新包，防止交叉错下；
+  - `Makefile` 构建脚本全面支持基于 `uname -m` 自动检测并编译打包 Linux x64 与 ARM64 产物。
 
 ### v1.1.0 (2026-10)
 - **多标签页阅读支持 (Document Tabs) (#18)**：

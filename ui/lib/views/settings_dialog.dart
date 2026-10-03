@@ -40,7 +40,7 @@ void showSettingsDialog(
 }
 
 class SettingsDialog extends StatefulWidget {
-  static const String appVersion = '1.1.0';
+  static const String appVersion = '1.1.1';
   static const String projectHomepage = 'https://github.com/dotsg/SuperGoodViewer';
 
   final ReaderController controller;

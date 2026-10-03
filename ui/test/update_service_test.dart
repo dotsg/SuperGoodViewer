@@ -203,6 +203,39 @@ void main() {
       expect(intelWithArmOnly.name, isNull);
     });
 
+    test('resolvePlatformAsset differentiates Linux architectures (arm64, x64)', () {
+      final linuxAssets = [
+        {
+          'name': 'SuperGoodViewer-v1.1.0-linux-arm64.tar.gz',
+          'browser_download_url': 'https://example.com/SuperGoodViewer-v1.1.0-linux-arm64.tar.gz',
+          'size': 42000000,
+        },
+        {
+          'name': 'SuperGoodViewer-v1.1.0-linux-x64.tar.gz',
+          'browser_download_url': 'https://example.com/SuperGoodViewer-v1.1.0-linux-x64.tar.gz',
+          'size': 45000000,
+        },
+      ];
+
+      // Linux ARM64 host should resolve arm64 asset
+      final armAsset = UpdateService.resolvePlatformAsset(
+        linuxAssets,
+        targetIsLinux: true,
+        targetIsArm64: true,
+      );
+      expect(armAsset.name, 'SuperGoodViewer-v1.1.0-linux-arm64.tar.gz');
+      expect(armAsset.url, 'https://example.com/SuperGoodViewer-v1.1.0-linux-arm64.tar.gz');
+
+      // Linux x64 host should resolve x64 asset
+      final x64Asset = UpdateService.resolvePlatformAsset(
+        linuxAssets,
+        targetIsLinux: true,
+        targetIsArm64: false,
+      );
+      expect(x64Asset.name, 'SuperGoodViewer-v1.1.0-linux-x64.tar.gz');
+      expect(x64Asset.url, 'https://example.com/SuperGoodViewer-v1.1.0-linux-x64.tar.gz');
+    });
+
     test('readMachOArchitectures parses thin and fat Mach-O headers accurately', () {
       final tempDir = Directory.systemTemp.createTempSync('macho_test_');
       try {
