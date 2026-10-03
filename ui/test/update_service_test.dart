@@ -1284,6 +1284,8 @@ echo "/dev/mock 100000 99999 1 99% /"
     });
 
     test('UpdateService.cleanupStaleUpdateArtifacts sweeps dead directories, protects live updater PID, and recovers journal without nesting', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
       final testDir = Directory.systemTemp.createTempSync('linux_cleanup_test_');
       addTearDown(() {
         try {
@@ -1344,6 +1346,8 @@ echo "/dev/mock 100000 99999 1 99% /"
     });
 
     test('UpdateService.cleanupStaleUpdateArtifacts protects active updater journal and artifacts when PID is alive', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
       final testDir = Directory.systemTemp.createTempSync('linux_active_cleanup_test_');
       addTearDown(() {
         try {
@@ -1377,6 +1381,8 @@ echo "/dev/mock 100000 99999 1 99% /"
     });
 
     test('UpdateService.cleanupStaleUpdateArtifacts cleans dangling journal when backupDir does not exist and PID is dead', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
       final testDir = Directory.systemTemp.createTempSync('linux_dangling_cleanup_test_');
       addTearDown(() {
         try {
@@ -1395,6 +1401,8 @@ echo "/dev/mock 100000 99999 1 99% /"
     });
 
     test('UpdateService.cleanupStaleUpdateArtifactsAsync executes asynchronously in an isolate', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
       final testDir = Directory.systemTemp.createTempSync('linux_async_cleanup_test_');
       addTearDown(() {
         try {
@@ -1898,6 +1906,8 @@ exec /bin/mv "\$@"
     });
 
     test('UpdateService.cleanupStaleUpdateArtifacts strictly validates path containment and rejects traversal/symlink journals', () {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
       final testDir = Directory.systemTemp.createTempSync('dart_cleanup_containment_test_');
       addTearDown(() {
         try {
