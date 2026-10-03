@@ -1,4 +1,4 @@
-# Local Release Workflow Test Script (Simulates GitHub Actions release.yml)
+﻿# Local Release Workflow Test Script (Simulates GitHub Actions release.yml)
 param(
     [string]$Version = "",
     [switch]$SkipLinux,
