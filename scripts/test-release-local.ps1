@@ -72,7 +72,7 @@ if (-not $SkipWindows) {
     if (-not (Test-Path "$winBuildDir\sgv.cmd")) { throw "Missing sgv.cmd" }
     $swWin.Stop()
     $winSize = (Get-Item $winZip).Length / 1MB
-    Write-Host ("  [OK] Windows x64 Package Created: {0:N2} MB ({1}s)" -f $winSize, $swWin.Elapsed.TotalSeconds.ToString("F1")) -ForegroundColor Green
+    Write-Host ("  ✓ Windows x64 Package Created: {0:N2} MB ({1}s)" -f $winSize, $swWin.Elapsed.TotalSeconds.ToString("F1")) -ForegroundColor Green
 } else {
     Write-Host "`n[2/4] Skipping Windows x64 Release Build (-SkipWindows specified)" -ForegroundColor Yellow
 }
@@ -122,7 +122,7 @@ tar -czvf "dist/SuperGoodViewer-$Version-linux-amd64.tar.gz" -C ui/build/linux/x
         $linuxTar = "$distDir\SuperGoodViewer-$Version-linux-amd64.tar.gz"
         $swLinux.Stop()
         $linuxSize = (Get-Item $linuxTar).Length / 1MB
-        Write-Host ("  [OK] Linux AMD64 Package Created: {0:N2} MB ({1}s)" -f $linuxSize, $swLinux.Elapsed.TotalSeconds.ToString("F1")) -ForegroundColor Green
+        Write-Host ("  ✓ Linux AMD64 Package Created: {0:N2} MB ({1}s)" -f $linuxSize, $swLinux.Elapsed.TotalSeconds.ToString("F1")) -ForegroundColor Green
 
         # Restore Windows Flutter package config
         Write-Host "  -> Restoring Windows host package config..."
