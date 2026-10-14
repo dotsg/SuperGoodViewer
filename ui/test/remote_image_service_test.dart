@@ -120,6 +120,41 @@ Ignored pseudo-images:
       expect(service.extractRemoteImageUrlsFallback(complexMarkdown), expected);
     });
 
+    test('extractRemoteImageUrls and fallback support HTML img with spaced = and unquoted src attributes', () {
+      final service = RemoteImageService.instance;
+      const htmlAttrMarkdown = '''
+# HTML <img> 属性语法测试
+
+普通双引号对照：
+<img src="https://example.com/control.png" width="32" alt="Control red square">
+
+等号两侧带空格：
+<img src = "https://example.com/spaced_double.png" width="32" alt="Spaced red square">
+<img src = 'https://example.com/spaced_single.png' width = 32>
+
+无引号属性值：
+<img src=https://example.com/unquoted.png width="32" alt="Unquoted red square">
+<img src = https://example.com/spaced_unquoted.png width=32>
+<img src=https://example.com/self_closing.png/>
+
+排除同名后缀或其它属性干扰：
+<img async data-src="https://example.com/ignored_data_src.png" srcset="https://example.com/ignored_srcset.png" alt="src=https://example.com/ignored_alt.png" src = https://example.com/actual.png>
+''';
+
+      const expected = [
+        'https://example.com/control.png',
+        'https://example.com/spaced_double.png',
+        'https://example.com/spaced_single.png',
+        'https://example.com/unquoted.png',
+        'https://example.com/spaced_unquoted.png',
+        'https://example.com/self_closing.png',
+        'https://example.com/actual.png',
+      ];
+
+      expect(service.extractRemoteImageUrls(htmlAttrMarkdown), expected);
+      expect(service.extractRemoteImageUrlsFallback(htmlAttrMarkdown), expected);
+    });
+
     test('computeExtension uses path last segment and handles deceptive directory names', () {
       expect(RemoteImageService.computeExtension('https://cdn.x/.png-assets/a.jpg'), 'jpg');
       expect(RemoteImageService.computeExtension('https://cdn.x/.png-assets/a.jpeg?token=123'), 'jpg');

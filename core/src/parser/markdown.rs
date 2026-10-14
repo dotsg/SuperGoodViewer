@@ -644,7 +644,10 @@ fn extract_html_attr(tag: &str, attr: &str) -> Option<String> {
     let bytes = tag.as_bytes();
     let mut i = 0;
 
-    // Skip leading '<' and tag name
+    // Skip leading whitespace, '<', and tag name
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
     if i < bytes.len() && bytes[i] == b'<' {
         i += 1;
     }
@@ -656,8 +659,12 @@ fn extract_html_attr(tag: &str, attr: &str) -> Option<String> {
         while i < bytes.len() && bytes[i].is_ascii_whitespace() {
             i += 1;
         }
-        if i >= bytes.len() || bytes[i] == b'>' || bytes[i] == b'/' {
+        if i >= bytes.len() || bytes[i] == b'>' {
             break;
+        }
+        if bytes[i] == b'/' {
+            i += 1;
+            continue;
         }
 
         let name_start = i;
@@ -701,7 +708,7 @@ fn extract_html_attr(tag: &str, attr: &str) -> Option<String> {
                 while i < bytes.len()
                     && !bytes[i].is_ascii_whitespace()
                     && bytes[i] != b'>'
-                    && bytes[i] != b'/'
+                    && !(bytes[i] == b'/' && (i + 1 >= bytes.len() || bytes[i + 1] == b'>'))
                 {
                     i += 1;
                 }
@@ -1069,7 +1076,12 @@ impl<'a> HtmlTranspiler<'a> {
             out.push_str("]/**/");
         } else if trimmed_lower == "<br>" || trimmed_lower == "<br/>" || trimmed_lower == "<br />" {
             out.push_str("\\ \n");
-        } else if trimmed_lower.starts_with("<a ") {
+        } else if trimmed_lower.starts_with("<a")
+            && trimmed_lower
+                .as_bytes()
+                .get(2)
+                .is_some_and(|b| b.is_ascii_whitespace())
+        {
             if let Some(href) = extract_html_attr(tag, "href") {
                 let escaped_href = escape_typst_string(&href);
                 out.push_str(&format!("#link(\"{escaped_href}\")["));
@@ -3474,4 +3486,77 @@ HTML 图片与多行属性：
             ]
         );
     }
+
+    #[test]
+    fn test_html_img_attribute_spaced_equals_and_unquoted_values() {
+        let opts = RenderOptions::default();
+
+        // Exact reproduction of Issue #25 plus additional edge cases:
+        // - Spaced `=` with double/single quotes
+        // - Unquoted `src`, `width`, `height`, `alt`
+        // - Unquoted relative path containing `/` (`sub/red.png`)
+        // - Self-closing `/>` directly attached to unquoted value (`src=red.png/>`)
+        // - Prefix/suffix attribute names (`data-src`, `srcset`) and boolean attributes (`async`)
+        let md = r#"# HTML <img> 属性语法测试
+
+普通双引号对照：
+<img src="red.png" width="32" alt="Control red square">
+
+等号两侧带空格：
+<img src = "red.png" width="32" alt="Spaced red square">
+
+无引号属性值：
+<img src=red.png width="32" alt="Unquoted red square">
+
+子目录无引号路径与无引号宽高、自闭合标签：
+<img async data-src="wrong.png" srcset="wrong2.png" src = sub/red.png width = 48 height=24/>
+"#;
+
+        let parsed = convert_markdown_to_typst(md, "HTML Attribute Test", &opts);
+
+        let count_red = parsed
+            .typst_source
+            .matches("#image(\"red.png\", width: 32pt)")
+            .count();
+        assert_eq!(
+            count_red, 3,
+            "All three HTML <img> variants (control, spaced '=', unquoted) must emit #image(\"red.png\", width: 32pt), got:\n{}",
+            parsed.typst_source
+        );
+
+        assert!(
+            parsed
+                .typst_source
+                .contains("#image(\"sub/red.png\", width: 48pt, height: 24pt)"),
+            "Unquoted relative path with '/', spaced '=', and self-closing '/>' must be parsed accurately without matching data-src or srcset, got:\n{}",
+            parsed.typst_source
+        );
+        assert!(!parsed.typst_source.contains("wrong.png"));
+        assert!(!parsed.typst_source.contains("wrong2.png"));
+
+        // Also verify remote image URL extraction for HTML <img> with spaced `=` and unquoted URLs
+        let remote_md = r#"
+<img src="https://example.com/control.png" width="32">
+<img src = "https://example.com/spaced_double.png" width="32">
+<img src = 'https://example.com/spaced_single.png' width = 32>
+<img src=https://example.com/unquoted.png width="32">
+<img src = https://example.com/spaced_unquoted.png width=32>
+<img src=https://example.com/self_closing.png/>
+<img data-src="https://example.com/ignored_data_src.png" srcset="https://example.com/ignored_srcset.png" alt="src=https://example.com/ignored_alt.png" src = https://example.com/actual.png>
+"#;
+        let remote_urls = extract_remote_image_urls(remote_md);
+        assert_eq!(
+            remote_urls,
+            vec![
+                "https://example.com/control.png",
+                "https://example.com/spaced_double.png",
+                "https://example.com/spaced_single.png",
+                "https://example.com/unquoted.png",
+                "https://example.com/spaced_unquoted.png",
+                "https://example.com/self_closing.png",
+                "https://example.com/actual.png",
+            ]
+        );
+    }
 }
+

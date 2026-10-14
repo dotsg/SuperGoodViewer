@@ -599,12 +599,94 @@ class RemoteImageService {
   }
 
   static String? _extractHtmlSrcAttr(String tag) {
-    final attrRegex = RegExp(
-      r'''\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"'/]+))''',
-      caseSensitive: false,
-    );
-    final m = attrRegex.firstMatch(tag);
-    return m?.group(1) ?? m?.group(2) ?? m?.group(3);
+    return _extractHtmlAttr(tag, 'src');
+  }
+
+  static String? _extractHtmlAttr(String tag, String attrName) {
+    final len = tag.length;
+    int i = 0;
+
+    while (i < len && _isSpaceOrNewline(tag.codeUnitAt(i))) {
+      i++;
+    }
+    if (i < len && tag.codeUnitAt(i) == 0x3C /* < */ ) {
+      i++;
+    }
+    while (i < len &&
+        !_isSpaceOrNewline(tag.codeUnitAt(i)) &&
+        tag.codeUnitAt(i) != 0x3E /* > */ &&
+        tag.codeUnitAt(i) != 0x2F /* / */ ) {
+      i++;
+    }
+
+    final targetLower = attrName.toLowerCase();
+
+    while (i < len) {
+      while (i < len && _isSpaceOrNewline(tag.codeUnitAt(i))) {
+        i++;
+      }
+      if (i >= len || tag.codeUnitAt(i) == 0x3E /* > */ ) {
+        break;
+      }
+      if (tag.codeUnitAt(i) == 0x2F /* / */ ) {
+        i++;
+        continue;
+      }
+
+      final nameStart = i;
+      while (i < len &&
+          !_isSpaceOrNewline(tag.codeUnitAt(i)) &&
+          tag.codeUnitAt(i) != 0x3D /* = */ &&
+          tag.codeUnitAt(i) != 0x3E /* > */ &&
+          tag.codeUnitAt(i) != 0x2F /* / */ ) {
+        i++;
+      }
+      final name = tag.substring(nameStart, i);
+
+      while (i < len && _isSpaceOrNewline(tag.codeUnitAt(i))) {
+        i++;
+      }
+
+      if (i < len && tag.codeUnitAt(i) == 0x3D /* = */ ) {
+        i++;
+        while (i < len && _isSpaceOrNewline(tag.codeUnitAt(i))) {
+          i++;
+        }
+        if (i >= len) break;
+
+        String val;
+        final ch = tag.codeUnitAt(i);
+        if (ch == 0x22 /* " */ || ch == 0x27 /* ' */ ) {
+          final quote = ch;
+          i++;
+          final valStart = i;
+          while (i < len && tag.codeUnitAt(i) != quote) {
+            i++;
+          }
+          if (i >= len) return null;
+          val = tag.substring(valStart, i);
+          i++;
+        } else {
+          final valStart = i;
+          while (i < len &&
+              !_isSpaceOrNewline(tag.codeUnitAt(i)) &&
+              tag.codeUnitAt(i) != 0x3E /* > */ &&
+              !(tag.codeUnitAt(i) == 0x2F /* / */ &&
+                  (i + 1 >= len || tag.codeUnitAt(i + 1) == 0x3E /* > */ ))) {
+            i++;
+          }
+          val = tag.substring(valStart, i);
+        }
+
+        if (name.toLowerCase() == targetLower) {
+          return val;
+        }
+      } else if (name.isEmpty) {
+        i++;
+      }
+    }
+
+    return null;
   }
 
   /// Validates file header magic bytes to prevent corrupted, truncated, or HTML error pages from being cached.

@@ -1243,4 +1243,70 @@ Second index.
             .expect("Corrupted data:image URIs must gracefully degrade to placeholder badges and compile to PDF");
         assert!(corrupted_pdf.starts_with(b"%PDF-"));
     }
+
+    #[test]
+    fn test_html_img_spaced_and_unquoted_attributes_e2e() {
+        use typst::layout::{Frame, FrameItem};
+
+        fn collect_image_sizes(frame: &Frame, sizes: &mut Vec<(u32, u32)>) {
+            for (_, item) in frame.items() {
+                match item {
+                    FrameItem::Image(img, _, _) => {
+                        sizes.push((img.width() as u32, img.height() as u32));
+                    }
+                    FrameItem::Group(group) => collect_image_sizes(&group.frame, sizes),
+                    _ => {}
+                }
+            }
+        }
+
+        let temp_dir = std::env::temp_dir().join(format!("sgv_html_attr_test_{}", std::process::id()));
+        let _guard = TempDirGuard(temp_dir.clone());
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        // Decode 32x32 red square PNG and write to red.png in temp_dir
+        let red_square_png_uri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKElEQVR4nO3NsQ0AAAzCMP5/un0CNkuZ41wybXsHAAAAAAAAAAAAxR4yw/wuPL6QkAAAAABJRU5ErkJggg==";
+        let (_, png_bytes) = crate::parser::markdown::decode_data_image_uri_with_limit(
+            red_square_png_uri,
+            crate::parser::markdown::MAX_DATA_IMAGE_BYTES,
+        )
+        .expect("Valid 32x32 red PNG");
+        std::fs::write(temp_dir.join("red.png"), png_bytes.as_slice()).unwrap();
+
+        let md = r#"# HTML <img> 属性语法测试
+
+普通双引号对照：
+<img src="red.png" width="32" alt="Control red square">
+
+等号两侧带空格：
+<img src = "red.png" width="32" alt="Spaced red square">
+
+无引号属性值：
+<img src=red.png width="32" alt="Unquoted red square">
+"#;
+
+        let opts = RenderOptions::default();
+        let parsed = crate::parser::markdown::convert_markdown_to_typst(md, "HTML Attribute E2E", &opts);
+        let world = crate::compiler::world::MemoryWorld::new(
+            &parsed.typst_source,
+            &temp_dir,
+            parsed.virtual_files,
+        );
+        let doc = typst::compile::<typst_layout::PagedDocument>(&world)
+            .output
+            .expect("Typst compilation of HTML img attribute variants should succeed");
+
+        let mut image_sizes = Vec::new();
+        collect_image_sizes(&doc.pages()[0].frame, &mut image_sizes);
+        assert_eq!(
+            image_sizes,
+            vec![(32, 32), (32, 32), (32, 32)],
+            "All three HTML <img> variants (control, spaced '=', unquoted) must render as real 32x32 images"
+        );
+
+        let pdf = compile_markdown_to_pdf(md, "HTML Attribute E2E", &temp_dir, &opts)
+            .expect("PDF compilation of HTML img attribute variants must succeed");
+        assert!(pdf.starts_with(b"%PDF-"));
+    }
 }
+
