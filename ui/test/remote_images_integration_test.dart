@@ -138,13 +138,15 @@ void main() {
     expect(RemoteImageService.instance.isCached(corruptUrl), isFalse);
   });
 
-  test('fetchImagesInMarkdown concurrently fetches images with worker pool and debounces callback', () async {
+  test('fetchImagesInMarkdown concurrently fetches images with worker pool (including title, angle-bracket, and reference syntax) and debounces callback', () async {
     final markdown = '''
 # Test Document with Multiple Images
-![Img 1]($serverBaseUrl/valid_png_1.png)
-![Img 2]($serverBaseUrl/valid_png_2.png)
-![Img 3]($serverBaseUrl/valid_png_3.png)
-![Img 4]($serverBaseUrl/valid_png_4.png)
+![Control]($serverBaseUrl/valid_png_1.png)
+![With title]($serverBaseUrl/valid_png_2.png "Neutral test title")
+![Angle destination](<$serverBaseUrl/valid_png_3.png>)
+![Reference image][ref-img-4]
+
+[ref-img-4]: $serverBaseUrl/valid_png_4.png "Ref title"
 ''';
 
     int callbackCount = 0;
@@ -164,6 +166,7 @@ void main() {
     expect(callbackCount, greaterThanOrEqualTo(1));
 
     final urls = RemoteImageService.instance.extractRemoteImageUrls(markdown);
+    expect(urls.length, 4);
     for (final url in urls) {
       expect(RemoteImageService.instance.isCached(url), isTrue);
     }

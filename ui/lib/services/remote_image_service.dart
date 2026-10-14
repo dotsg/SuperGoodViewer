@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import '../bridge/native_engine.dart';
 
 /// Worker pool for limiting concurrent asynchronous tasks.
 class _WorkerPool {
@@ -252,30 +253,358 @@ class RemoteImageService {
     return true;
   }
 
-  /// Extracts all distinct HTTP/HTTPS image URLs from Markdown (both Markdown `![]()` and HTML `<img src="">`),
-  /// normalizing each URL by removing client fragments.
+  /// Extracts all distinct HTTP/HTTPS image URLs from Markdown (both Markdown `![]()` / `![][ref]`
+  /// and HTML `<img src="">`), normalizing each URL by removing client fragments.
+  ///
+  /// Delegates to the Rust `pulldown-cmark` AST when the native engine is loaded so
+  /// download discovery and Typst rendering share identical Markdown grammar rules,
+  /// and falls back to an AST-aligned Dart parser when running without the native library.
   List<String> extractRemoteImageUrls(String markdown) {
+    final nativeUrls = NativeEngine.instance.extractRemoteImageUrls(markdown);
+    if (nativeUrls != null) {
+      return nativeUrls;
+    }
+    return extractRemoteImageUrlsFallback(markdown);
+  }
+
+  /// Pure-Dart fallback for extracting remote image URLs when the native FFI symbol is unavailable.
+  /// Supports inline titles, `<...>` destinations, balanced parentheses in URLs, reference-style
+  /// images, and HTML `<img>` tags while ignoring frontmatter, comments, escaped syntax, and code blocks.
+  @visibleForTesting
+  List<String> extractRemoteImageUrlsFallback(String markdown) {
     final urls = <String>{};
 
-    // 1. Markdown images: ![alt](url)
-    final mdImgRegex = RegExp(r'!\[.*?\]\((https?://[^\s\)]+)\)');
-    for (final match in mdImgRegex.allMatches(markdown)) {
-      final rawUrl = match.group(1)?.trim();
-      if (rawUrl != null && rawUrl.isNotEmpty) {
-        urls.add(sanitizeImageUrl(rawUrl));
+    void recordUrl(String? rawUrl) {
+      if (rawUrl == null) return;
+      final trimmed = rawUrl.trim();
+      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        final clean = sanitizeImageUrl(trimmed);
+        if (clean.isNotEmpty) {
+          urls.add(clean);
+        }
       }
     }
 
-    // 2. HTML images: <img ... src="url" ...>
-    final htmlImgRegex = RegExp(r'''<img[^>]+src=["'](https?://[^"'\s]+)["'][^>]*>''', caseSensitive: false);
-    for (final match in htmlImgRegex.allMatches(markdown)) {
-      final rawUrl = match.group(1)?.trim();
-      if (rawUrl != null && rawUrl.isNotEmpty) {
-        urls.add(sanitizeImageUrl(rawUrl));
+    final body = _stripNonProseRegions(markdown);
+    final refDefs = <String, String>{};
+    final bodyWithoutDefs = _extractAndRemoveReferenceDefs(body, refDefs);
+
+    int i = 0;
+    final len = bodyWithoutDefs.length;
+    while (i < len) {
+      final ch = bodyWithoutDefs.codeUnitAt(i);
+
+      // Skip backslash-escaped character
+      if (ch == 0x5C /* \ */ ) {
+        i += 2;
+        continue;
       }
+
+      // 1. Markdown image: ![alt]...
+      if (ch == 0x21 /* ! */ && i + 1 < len && bodyWithoutDefs.codeUnitAt(i + 1) == 0x5B /* [ */ ) {
+        final altEnd = _findClosingBracket(bodyWithoutDefs, i + 1);
+        if (altEnd != null) {
+          final altText = bodyWithoutDefs.substring(i + 2, altEnd);
+          final afterAlt = altEnd + 1;
+          if (afterAlt < len && bodyWithoutDefs.codeUnitAt(afterAlt) == 0x28 /* ( */ ) {
+            final parsed = _parseInlineDestination(bodyWithoutDefs, afterAlt);
+            if (parsed != null) {
+              recordUrl(parsed.$1);
+              i = parsed.$2;
+              continue;
+            }
+          } else if (afterAlt < len && bodyWithoutDefs.codeUnitAt(afterAlt) == 0x5B /* [ */ ) {
+            final refEnd = _findClosingBracket(bodyWithoutDefs, afterAlt);
+            if (refEnd != null) {
+              final rawRef = bodyWithoutDefs.substring(afterAlt + 1, refEnd);
+              final key = _normalizeRefLabel(rawRef.isEmpty ? altText : rawRef);
+              recordUrl(refDefs[key]);
+              i = refEnd + 1;
+              continue;
+            }
+          } else {
+            final key = _normalizeRefLabel(altText);
+            if (refDefs.containsKey(key)) {
+              recordUrl(refDefs[key]);
+              i = afterAlt;
+              continue;
+            }
+          }
+        }
+      }
+
+      // 2. HTML <img ...>
+      if (ch == 0x3C /* < */ && i + 4 < len) {
+        final rest = bodyWithoutDefs.substring(i);
+        if (rest.length >= 4 && rest.substring(0, 4).toLowerCase() == '<img') {
+          final nextChar = rest.length > 4 ? rest.codeUnitAt(4) : 0x20;
+          if (nextChar == 0x20 || nextChar == 0x09 || nextChar == 0x0A || nextChar == 0x0D || nextChar == 0x2F) {
+            final tagEnd = _findHtmlTagEnd(bodyWithoutDefs, i);
+            if (tagEnd != null) {
+              final tag = bodyWithoutDefs.substring(i, tagEnd + 1);
+              recordUrl(_extractHtmlSrcAttr(tag));
+              i = tagEnd + 1;
+              continue;
+            }
+          }
+        }
+      }
+
+      i++;
     }
 
     return urls.toList();
+  }
+
+  static String _normalizeRefLabel(String label) {
+    return label.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  static String _stripNonProseRegions(String markdown) {
+    var text = markdown;
+    // Strip YAML frontmatter at start of document
+    final trimmedStart = text.trimLeft();
+    if (trimmedStart.startsWith('---')) {
+      final firstNl = trimmedStart.indexOf('\n');
+      if (firstNl != -1 && trimmedStart.substring(3, firstNl).trim().isEmpty) {
+        final afterFirst = trimmedStart.substring(firstNl + 1);
+        final lines = afterFirst.split('\n');
+        int byteOffset = 0;
+        for (final line in lines) {
+          byteOffset += line.length + 1;
+          if (line.trim() == '---') {
+            text = byteOffset <= afterFirst.length ? afterFirst.substring(byteOffset) : '';
+            break;
+          }
+        }
+      }
+    }
+
+    // Strip fenced and indented code blocks line-by-line
+    final lines = text.split('\n');
+    final buf = StringBuffer();
+    String? fenceChar;
+    int fenceLen = 0;
+    bool prevLineBlank = true;
+    bool inIndentedCode = false;
+
+    for (final line in lines) {
+      final trimmedLeft = line.trimLeft();
+      final leadingSpaces = line.length - trimmedLeft.length;
+
+      if (fenceChar != null) {
+        if (leadingSpaces <= 3 && trimmedLeft.startsWith(fenceChar * fenceLen)) {
+          final rest = trimmedLeft.substring(fenceLen).trim();
+          if (rest.isEmpty) {
+            fenceChar = null;
+            fenceLen = 0;
+            prevLineBlank = true;
+          }
+        }
+        buf.writeln();
+        continue;
+      }
+
+      if (trimmedLeft.isEmpty) {
+        prevLineBlank = true;
+        inIndentedCode = false;
+        buf.writeln();
+        continue;
+      }
+
+      final hasTabIndent = line.startsWith('\t');
+      if ((prevLineBlank || inIndentedCode) && (leadingSpaces >= 4 || hasTabIndent)) {
+        inIndentedCode = true;
+        buf.writeln();
+        continue;
+      }
+      inIndentedCode = false;
+      prevLineBlank = false;
+
+      if (leadingSpaces <= 3 && (trimmedLeft.startsWith('```') || trimmedLeft.startsWith('~~~'))) {
+        final fc = trimmedLeft[0];
+        int fl = 0;
+        while (fl < trimmedLeft.length && trimmedLeft[fl] == fc) {
+          fl++;
+        }
+        fenceChar = fc;
+        fenceLen = fl;
+        buf.writeln();
+        continue;
+      }
+
+      buf.writeln(line);
+    }
+
+    // Strip HTML comments and inline code spans
+    final withoutBlocks = buf.toString();
+    final out = StringBuffer();
+    int i = 0;
+    final n = withoutBlocks.length;
+    while (i < n) {
+      if (withoutBlocks.startsWith('<!--', i)) {
+        final endComment = withoutBlocks.indexOf('-->', i + 4);
+        if (endComment != -1) {
+          i = endComment + 3;
+          continue;
+        }
+      }
+      final ch = withoutBlocks.codeUnitAt(i);
+      if (ch == 0x5C /* \ */ && i + 1 < n) {
+        out.write(withoutBlocks.substring(i, i + 2));
+        i += 2;
+        continue;
+      }
+      if (ch == 0x60 /* ` */ ) {
+        int ticks = 0;
+        while (i + ticks < n && withoutBlocks.codeUnitAt(i + ticks) == 0x60) {
+          ticks++;
+        }
+        final delimiter = '`' * ticks;
+        final closeIdx = withoutBlocks.indexOf(delimiter, i + ticks);
+        if (closeIdx != -1) {
+          i = closeIdx + ticks;
+          continue;
+        }
+      }
+      out.writeCharCode(ch);
+      i++;
+    }
+    return out.toString();
+  }
+
+  static String _extractAndRemoveReferenceDefs(String body, Map<String, String> refDefs) {
+    final defRegex = RegExp(
+      r'^[ ]{0,3}\[([^\]]+)\]:[ \t\n]*(?:<([^>\n]+)>|([^\s\n]+))(?:[ \t\n]+(?:"[^"]*"|'
+      r"'[^']*'"
+      r'|\([^\)]*\)))?[ \t]*$',
+      multiLine: true,
+    );
+    return body.replaceAllMapped(defRegex, (match) {
+      final rawLabel = match.group(1);
+      final rawUrl = match.group(2) ?? match.group(3);
+      if (rawLabel != null && rawUrl != null) {
+        final key = _normalizeRefLabel(rawLabel);
+        refDefs.putIfAbsent(key, () => rawUrl.trim());
+      }
+      return '';
+    });
+  }
+
+  static int? _findClosingBracket(String s, int openIdx) {
+    int depth = 0;
+    for (int i = openIdx; i < s.length; i++) {
+      final ch = s.codeUnitAt(i);
+      if (ch == 0x5C /* \ */ ) {
+        i++;
+        continue;
+      }
+      if (ch == 0x5B /* [ */ ) {
+        depth++;
+      } else if (ch == 0x5D /* ] */ ) {
+        depth--;
+        if (depth == 0) return i;
+      }
+    }
+    return null;
+  }
+
+  static (String, int)? _parseInlineDestination(String s, int openParenIdx) {
+    int i = openParenIdx + 1;
+    final len = s.length;
+    while (i < len && _isSpaceOrNewline(s.codeUnitAt(i))) {
+      i++;
+    }
+    if (i >= len) return null;
+
+    String url;
+    if (s.codeUnitAt(i) == 0x3C /* < */ ) {
+      i++;
+      final urlStart = i;
+      while (i < len && s.codeUnitAt(i) != 0x3E /* > */ && s.codeUnitAt(i) != 0x0A) {
+        if (s.codeUnitAt(i) == 0x5C /* \ */ ) i++;
+        i++;
+      }
+      if (i >= len || s.codeUnitAt(i) != 0x3E /* > */ ) return null;
+      url = s.substring(urlStart, i);
+      i++;
+    } else {
+      final urlStart = i;
+      int parenDepth = 0;
+      while (i < len) {
+        final ch = s.codeUnitAt(i);
+        if (ch == 0x5C /* \ */ ) {
+          i += 2;
+          continue;
+        }
+        if (_isSpaceOrNewline(ch)) break;
+        if (ch == 0x28 /* ( */ ) {
+          parenDepth++;
+        } else if (ch == 0x29 /* ) */ ) {
+          if (parenDepth == 0) break;
+          parenDepth--;
+        }
+        i++;
+      }
+      url = s.substring(urlStart, i);
+    }
+
+    while (i < len && _isSpaceOrNewline(s.codeUnitAt(i))) {
+      i++;
+    }
+    if (i < len && s.codeUnitAt(i) == 0x29 /* ) */ ) {
+      return (url, i + 1);
+    }
+
+    // Optional title: "...", '...', or (...)
+    if (i < len) {
+      final quote = s.codeUnitAt(i);
+      if (quote == 0x22 /* " */ || quote == 0x27 /* ' */ || quote == 0x28 /* ( */ ) {
+        final closeQuote = quote == 0x28 ? 0x29 : quote;
+        i++;
+        while (i < len && s.codeUnitAt(i) != closeQuote) {
+          if (s.codeUnitAt(i) == 0x5C /* \ */ ) i++;
+          i++;
+        }
+        if (i >= len || s.codeUnitAt(i) != closeQuote) return null;
+        i++;
+        while (i < len && _isSpaceOrNewline(s.codeUnitAt(i))) {
+          i++;
+        }
+        if (i < len && s.codeUnitAt(i) == 0x29 /* ) */ ) {
+          return (url, i + 1);
+        }
+      }
+    }
+
+    return null;
+  }
+
+  static bool _isSpaceOrNewline(int ch) =>
+      ch == 0x20 || ch == 0x09 || ch == 0x0A || ch == 0x0D;
+
+  static int? _findHtmlTagEnd(String s, int startIdx) {
+    int? inQuote;
+    for (int i = startIdx + 1; i < s.length; i++) {
+      final ch = s.codeUnitAt(i);
+      if (inQuote != null) {
+        if (ch == inQuote) inQuote = null;
+      } else if (ch == 0x22 /* " */ || ch == 0x27 /* ' */ ) {
+        inQuote = ch;
+      } else if (ch == 0x3E /* > */ ) {
+        return i;
+      }
+    }
+    return null;
+  }
+
+  static String? _extractHtmlSrcAttr(String tag) {
+    final attrRegex = RegExp(
+      r'''\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"'/]+))''',
+      caseSensitive: false,
+    );
+    final m = attrRegex.firstMatch(tag);
+    return m?.group(1) ?? m?.group(2) ?? m?.group(3);
   }
 
   /// Validates file header magic bytes to prevent corrupted, truncated, or HTML error pages from being cached.

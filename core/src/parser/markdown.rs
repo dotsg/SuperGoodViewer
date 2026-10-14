@@ -1837,16 +1837,7 @@ pub fn convert_markdown_to_typst(
     }
 
     // 2. Parse Markdown AST with pulldown-cmark
-    let mut parser_opts = Options::empty();
-    parser_opts.insert(Options::ENABLE_TABLES);
-    parser_opts.insert(Options::ENABLE_FOOTNOTES);
-    parser_opts.insert(Options::ENABLE_STRIKETHROUGH);
-    parser_opts.insert(Options::ENABLE_TASKLISTS);
-    parser_opts.insert(Options::ENABLE_MATH);
-    parser_opts.insert(Options::ENABLE_HEADING_ATTRIBUTES);
-    parser_opts.insert(Options::ENABLE_GFM);
-
-    let parser = Parser::new_ext(markdown_body, parser_opts);
+    let parser = Parser::new_ext(markdown_body, markdown_parser_options());
 
     let mut in_code_block = false;
     let mut code_block_lang = String::new();
@@ -2275,6 +2266,87 @@ pub fn convert_markdown_to_typst(
         is_fluid,
         raw_equations,
     }
+}
+
+fn markdown_parser_options() -> Options {
+    let mut parser_opts = Options::empty();
+    parser_opts.insert(Options::ENABLE_TABLES);
+    parser_opts.insert(Options::ENABLE_FOOTNOTES);
+    parser_opts.insert(Options::ENABLE_STRIKETHROUGH);
+    parser_opts.insert(Options::ENABLE_TASKLISTS);
+    parser_opts.insert(Options::ENABLE_MATH);
+    parser_opts.insert(Options::ENABLE_HEADING_ATTRIBUTES);
+    parser_opts.insert(Options::ENABLE_GFM);
+    parser_opts
+}
+
+/// Extracts all distinct HTTP/HTTPS remote image URLs from a Markdown document using
+/// the exact `pulldown-cmark` AST and HTML `<img>` scanner used during Typst rendering.
+///
+/// This guarantees that inline images with optional titles (`![a](url "title")`),
+/// angle-bracket destinations (`![a](<url>)`), reference-style images (`![a][ref]`),
+/// and HTML `<img src="...">` tags are discovered identically to rendering, while
+/// ignoring escaped syntax (`\![...]`), comments, and pseudo-image syntax in code blocks.
+pub fn extract_remote_image_urls(markdown_input: &str) -> Vec<String> {
+    let (_, markdown_body) = extract_frontmatter(markdown_input);
+    let parser = Parser::new_ext(markdown_body, markdown_parser_options());
+
+    let mut urls = Vec::new();
+    let mut seen = HashSet::new();
+    let mut pending_html_tag = String::new();
+
+    let mut record_url = |raw_url: &str| {
+        let trimmed = raw_url.trim();
+        if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+            let clean = sanitize_image_url(trimmed).to_string();
+            if !clean.is_empty() && seen.insert(clean.clone()) {
+                urls.push(clean);
+            }
+        }
+    };
+
+    for event in parser {
+        match event {
+            Event::Start(Tag::Image { dest_url, .. }) => {
+                record_url(&dest_url);
+            }
+            Event::Html(raw) | Event::InlineHtml(raw) => {
+                let combined;
+                let mut rest: &str = if pending_html_tag.is_empty() {
+                    &raw
+                } else {
+                    combined = format!("{}{}", pending_html_tag, raw);
+                    pending_html_tag.clear();
+                    &combined
+                };
+                while !rest.is_empty() {
+                    if let Some(start) = rest.find('<') {
+                        let (_, tag_start) = rest.split_at(start);
+                        if let Some(end) = find_html_tag_end(tag_start) {
+                            let tag = &tag_start[..=end];
+                            rest = &tag_start[end + 1..];
+                            let trimmed_lower = tag.trim().to_ascii_lowercase();
+                            if !trimmed_lower.starts_with("<!--")
+                                && trimmed_lower.starts_with("<img")
+                            {
+                                if let Some(src) = extract_html_attr(tag, "src") {
+                                    record_url(&src);
+                                }
+                            }
+                        } else {
+                            pending_html_tag.push_str(tag_start);
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    urls
 }
 
 #[cfg(test)]
@@ -3325,5 +3397,81 @@ size: 16:9
             "Data URI exceeding max_bytes limit must be rejected"
         );
         assert!(vfiles.is_empty());
+    }
+
+    #[test]
+    fn test_extract_remote_image_urls_ast_coverage() {
+        let md = r#"---
+header: "![Fake Frontmatter](https://example.com/frontmatter.png)"
+---
+# 网络图片语法测试
+
+普通语法对照：
+![Control](http://127.0.0.1:8765/control.png#frag)
+
+带可选标题（双引号、单引号、圆括号）：
+![With title](http://127.0.0.1:8765/title.png "Neutral test title")
+![Single title](https://example.com/single.png 'Single quoted title')
+![Paren title](https://example.com/paren.png (Paren title))
+
+尖括号目标及带标题尖括号目标：
+![Angle destination](<http://127.0.0.1:8765/angle.png>)
+![Angle with title](<https://example.com/angle_title.png> "Angle title")
+
+带平衡括号的 URL：
+![Balanced parens](https://example.com/path_(1)/image.png "Title")
+
+引用式图片（完整引用、折叠引用、快捷引用）：
+![Ref Full][ref-1]
+![ref-collapsed][]
+![ref-shortcut]
+
+HTML 图片与多行属性：
+<img src="https://example.com/html1.png#hash" alt="html1" />
+<img
+  alt="html2"
+  src='https://example.com/html2.jpg'
+/>
+
+以下内容不应触发下载：
+- 转义图片：\![Escaped](https://example.com/escaped.png)
+- 普通链接：[Not an image](https://example.com/link_only.png)
+- 引用式普通链接：[Not an image ref][link-only-ref]
+- 行内代码：`![Inline code](https://example.com/inline_code.png)` 与 `<img src="https://example.com/inline_html.png">`
+- HTML 注释：<!-- <img src="https://example.com/commented.png" /> -->
+- 本地图片与内联 data URI：![Local](./local.png) ![Data](data:image/png;base64,iVBORw0KGgo=)
+
+```markdown
+![Fenced code](https://example.com/fenced_code.png)
+<img src="https://example.com/fenced_html.png" />
+```
+
+    ![Indented code](https://example.com/indented_code.png)
+
+[ref-1]: https://example.com/ref_full.png "Ref title"
+[ref-collapsed]: <https://example.com/ref_collapsed.png> 'Collapsed title'
+[ref-shortcut]: https://example.com/ref_shortcut.png
+[link-only-ref]: https://example.com/not_used_as_image.png
+[unused-def]: https://example.com/unused_def.png
+"#;
+
+        let urls = extract_remote_image_urls(md);
+        assert_eq!(
+            urls,
+            vec![
+                "http://127.0.0.1:8765/control.png",
+                "http://127.0.0.1:8765/title.png",
+                "https://example.com/single.png",
+                "https://example.com/paren.png",
+                "http://127.0.0.1:8765/angle.png",
+                "https://example.com/angle_title.png",
+                "https://example.com/path_(1)/image.png",
+                "https://example.com/ref_full.png",
+                "https://example.com/ref_collapsed.png",
+                "https://example.com/ref_shortcut.png",
+                "https://example.com/html1.png",
+                "https://example.com/html2.jpg",
+            ]
+        );
     }
 }
