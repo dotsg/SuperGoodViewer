@@ -9,7 +9,13 @@ import 'package:path/path.dart' as p;
 class PreferencesService {
   static const String _prefFileName = 'preferences.json';
   static File? _cachedConfigFile;
+  static Directory? _appSupportDir;
   static Future<void>? _pendingSave;
+
+  static void setAppSupportDir(Directory dir) {
+    _appSupportDir = dir;
+    _cachedConfigFile = File(p.join(dir.path, _prefFileName));
+  }
 
   @visibleForTesting
   static File? testConfigFileOverride;
@@ -27,6 +33,13 @@ class PreferencesService {
   static File _resolveConfigFileSync() {
     if (testConfigFileOverride != null) return testConfigFileOverride!;
     if (_cachedConfigFile != null) return _cachedConfigFile!;
+    if (_appSupportDir != null) {
+      if (!_appSupportDir!.existsSync()) {
+        _appSupportDir!.createSync(recursive: true);
+      }
+      _cachedConfigFile = File(p.join(_appSupportDir!.path, _prefFileName));
+      return _cachedConfigFile!;
+    }
 
     try {
       final home = Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];

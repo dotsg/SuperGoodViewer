@@ -274,9 +274,11 @@ class NativeCliService {
     } catch (_) {}
   }
 
-  /// Queries the initial file passed to the app via macOS openFiles on cold launch
+  /// Queries the initial file passed to the app on cold launch (macOS openFiles, Android ACTION_VIEW, etc.)
   static Future<String?> getInitialFile() async {
-    if (!isSupported) return null;
+    if (!Platform.isMacOS && !Platform.isWindows && !Platform.isLinux && !Platform.isAndroid && !Platform.isIOS) {
+      return null;
+    }
     try {
       return await channel.invokeMethod<String>('getInitialFile');
     } catch (_) {

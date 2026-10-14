@@ -44,6 +44,20 @@ pub extern "C" fn sogood_get_version() -> *const c_char {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sogood_set_cache_dir(dir: *const c_char) {
+    if dir.is_null() {
+        return;
+    }
+    let c_str = unsafe { CStr::from_ptr(dir) };
+    if let Ok(s) = c_str.to_str() {
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            crate::compiler::world::set_global_cache_dir(std::path::PathBuf::from(trimmed));
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sogood_get_last_error() -> *mut c_char {
     LAST_ERROR.with(|cell| {
         let guard = cell.borrow();

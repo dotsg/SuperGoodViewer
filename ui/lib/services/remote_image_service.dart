@@ -125,10 +125,20 @@ class RemoteImageService {
     _negativeCache[cleanUrl] = now.add(ttl);
   }
 
+  static Directory? _appRemoteImageCacheDir;
+  static void setAppRemoteImageCacheDir(Directory dir) {
+    final imagesDir = Directory(p.join(dir.path, 'remote_images'));
+    if (!imagesDir.existsSync()) {
+      imagesDir.createSync(recursive: true);
+    }
+    _appRemoteImageCacheDir = imagesDir;
+  }
+
   /// Returns the platform-specific cache directory for remote images.
   Directory getCacheDirectory() {
     if (_customCacheDirForTesting != null) return _customCacheDirForTesting!;
     if (_cachedDir != null) return _cachedDir!;
+    if (_appRemoteImageCacheDir != null) return _appRemoteImageCacheDir!;
 
     try {
       final home = Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];

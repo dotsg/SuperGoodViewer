@@ -59,6 +59,9 @@ typedef SogoodExtractRemoteImageUrlsJsonDart = Pointer<Utf8> Function(Pointer<Ut
 typedef SogoodExtractImageSourcesJsonC = Pointer<Utf8> Function(Pointer<Utf8> markdown);
 typedef SogoodExtractImageSourcesJsonDart = Pointer<Utf8> Function(Pointer<Utf8> markdown);
 
+typedef SogoodSetCacheDirC = Void Function(Pointer<Utf8> dir);
+typedef SogoodSetCacheDirDart = void Function(Pointer<Utf8> dir);
+
 /// Result from compiling markdown via the native engine.
 class NativeCompilationResult {
   final Uint8List? pdfBytes;
@@ -91,6 +94,7 @@ class NativeEngine {
   SogoodGetLastDegradedEquationsJsonDart? _getLastDegradedEquationsJson;
   SogoodExtractRemoteImageUrlsJsonDart? _extractRemoteImageUrlsJson;
   SogoodExtractImageSourcesJsonDart? _extractImageSourcesJson;
+  SogoodSetCacheDirDart? _setCacheDir;
 
   bool _initialized = false;
   String? _initError;
@@ -176,6 +180,13 @@ class NativeEngine {
         >('sogood_extract_image_sources_json');
       } catch (_) {}
 
+      try {
+        _setCacheDir = lib.lookupFunction<
+          SogoodSetCacheDirC,
+          SogoodSetCacheDirDart
+        >('sogood_set_cache_dir');
+      } catch (_) {}
+
       _initialized = true;
     } catch (e) {
       _initError = 'Failed to bind native engine functions: $e';
@@ -184,6 +195,10 @@ class NativeEngine {
   }
 
   static String _resolveLibraryPath() {
+    if (Platform.isAndroid) {
+      return 'libsogood_core.so';
+    }
+
     final String libName;
     if (Platform.isMacOS) {
       libName = 'libsogood_core.dylib';
@@ -323,6 +338,17 @@ class NativeEngine {
       }
     } finally {
       calloc.free(mdPtr);
+    }
+  }
+
+  /// Sets the global cache directory for the native core (remote images, font index, etc.).
+  void setCacheDir(String path) {
+    if (!isAvailable || _setCacheDir == null) return;
+    final pathPtr = path.toNativeUtf8();
+    try {
+      _setCacheDir!(pathPtr);
+    } finally {
+      calloc.free(pathPtr);
     }
   }
 

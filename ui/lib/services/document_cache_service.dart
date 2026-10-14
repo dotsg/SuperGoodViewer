@@ -13,6 +13,16 @@ class DocumentCacheService {
   static Directory? _customCacheDirForTesting;
   static Directory? _cachedDir;
 
+  static Directory? _appCacheDir;
+  static void setAppCacheDir(Directory dir) {
+    final compiledDir = Directory(p.join(dir.path, 'compiled'));
+    if (!compiledDir.existsSync()) {
+      compiledDir.createSync(recursive: true);
+    }
+    _appCacheDir = compiledDir;
+    _cachedDir = compiledDir;
+  }
+
   @visibleForTesting
   static void setCacheDirForTesting(Directory? dir) {
     _customCacheDirForTesting = dir;
@@ -25,6 +35,7 @@ class DocumentCacheService {
   static Directory _getCacheDir() {
     if (_customCacheDirForTesting != null) return _customCacheDirForTesting!;
     if (_cachedDir != null) return _cachedDir!;
+    if (_appCacheDir != null) return _appCacheDir!;
 
     try {
       final home = Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];

@@ -1838,13 +1838,14 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     await scrollByDelta(-step, accelerate: false);
   }
 
-  Future<void> goToPageNumber(int pageNumber) async {
+  Future<void> goToPageNumber(int pageNumber, {double? customTopInset}) async {
     if (!_pdfController.isReady) return;
     final pCount = _pdfController.pageCount;
     final target = pageNumber.clamp(1, pCount);
     final layout = _pdfController.layoutOrNull;
     final zoom = _pdfController.currentZoom;
-    final topDocOffset = zoom > 0 ? widget.topInset / zoom : 0.0;
+    final effectiveInset = customTopInset ?? widget.topInset;
+    final topDocOffset = zoom > 0 ? effectiveInset / zoom : 0.0;
     if (layout != null && target <= layout.pageLayouts.length && topDocOffset > 0) {
       final pageRect = layout.pageLayouts[target - 1];
       final targetY = pageRect.top - topDocOffset;

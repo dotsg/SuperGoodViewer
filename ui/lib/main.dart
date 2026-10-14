@@ -47,7 +47,9 @@ class _SuperGoodViewerAppState extends State<SuperGoodViewerApp> with WidgetsBin
     _syncPlatformBrightness();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       StartupMetrics.markFirstFrame();
-      UpdateService.cleanupStaleUpdateArtifactsAsync();
+      if (!Platform.isAndroid && !Platform.isIOS) {
+        UpdateService.cleanupStaleUpdateArtifactsAsync();
+      }
     });
   }
 

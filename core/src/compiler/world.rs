@@ -82,11 +82,20 @@ struct CachedFace {
     info: FontInfo,
 }
 
+static GLOBAL_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn set_global_cache_dir(dir: PathBuf) {
+    let _ = GLOBAL_CACHE_DIR.set(dir);
+}
+
 fn font_index_cache_version() -> String {
     format!("1-{}", env!("CARGO_PKG_VERSION"))
 }
 
 fn font_index_cache_path() -> Option<PathBuf> {
+    if let Some(dir) = GLOBAL_CACHE_DIR.get() {
+        return Some(dir.join("font_index.json"));
+    }
     get_default_image_cache_dir()
         .parent()
         .map(|dir| dir.join("font_index.json"))
@@ -218,6 +227,23 @@ impl GlobalFontStore {
             let mut db = fontdb::Database::new();
             db.load_system_fonts();
 
+            // Load Android system fonts (fontdb's load_system_fonts does not support target_os = "android")
+            let android_font_dirs = [
+                "/system/fonts",
+                "/system/font",
+                "/product/fonts",
+                "/system_ext/fonts",
+                "/apex/com.android.runtime/fonts",
+                "/apex/com.android.i18n/fonts",
+                "/data/fonts",
+            ];
+            for dir in android_font_dirs {
+                let path = Path::new(dir);
+                if path.is_dir() {
+                    db.load_fonts_dir(path);
+                }
+            }
+
             // Load user font directories across platforms
             if let Ok(home) = std::env::var("HOME") {
                 let home = PathBuf::from(home);
@@ -253,14 +279,35 @@ impl GlobalFontStore {
                 "simhei",
                 "noto sans cjk",
                 "noto serif cjk",
+                "noto sans sc",
+                "noto sans tc",
+                "noto sans hk",
+                "noto sans jp",
+                "noto sans kr",
+                "noto serif sc",
+                "noto serif tc",
                 "source han sans",
                 "source han serif",
+                "droid sans",
+                "misans",
+                "milanpro",
+                "harmonyos",
+                "opposans",
+                "oplussans",
+                "oneplus",
+                "vivo sans",
+                "origin sans",
+                "honor sans",
+                "samsung",
+                "sec sans",
+                "smartisan",
                 // Western Clean Proportional Fonts
                 "inter",
                 "sf pro",
                 "segoe ui",
                 "helvetica neue",
                 "arial",
+                "roboto",
                 // CJK Strict Monospace / Alignment Fonts
                 "maple mono",
                 "sarasa mono",
@@ -279,6 +326,9 @@ impl GlobalFontStore {
                 "menlo",
                 "monaco",
                 "courier new",
+                "noto sans mono",
+                "droid sans mono",
+                "roboto mono",
                 // Math Fonts
                 "stix two",
                 // Emoji Fonts
@@ -304,7 +354,16 @@ impl GlobalFontStore {
             let mut detected_body = std::collections::BTreeSet::new();
 
             for face in db.faces() {
+                // Filter out private / system-internal fonts starting with '.' (e.g. macOS UI fonts)
+                let has_valid_name = face.families.iter().any(|(f_name, _)| !f_name.starts_with('.'));
+                if !has_valid_name {
+                    continue;
+                }
+
                 let is_target = face.families.iter().any(|(f_name, _)| {
+                    if f_name.starts_with('.') {
+                        return false;
+                    }
                     let l = f_name.to_lowercase();
                     target_prefixes.iter().any(|p| l.contains(p))
                 });
@@ -312,21 +371,38 @@ impl GlobalFontStore {
                     continue;
                 }
 
+                let is_android_env = cfg!(target_os = "android") || match &face.source {
+                    fontdb::Source::File(p) => {
+                        let s = p.to_string_lossy();
+                        s.starts_with("/system/")
+                            || s.starts_with("/product/")
+                            || s.starts_with("/apex/")
+                            || s.starts_with("/system_ext/")
+                            || s.starts_with("/data/fonts/")
+                    }
+                    _ => false,
+                };
+
                 // For multi-weight CJK / Monospace families (like Maple Mono with 32 TTFs),
-                // only keep standard Regular (380-450) and Bold (650-750) to optimize memory.
-                let is_cjk_multi_weight = face.families.iter().any(|(f_name, _)| {
-                    let l = f_name.to_lowercase();
-                    l.contains("maple") || l.contains("sarasa") || l.contains("noto")
-                });
-                if is_cjk_multi_weight {
-                    let w = face.weight.0;
-                    if (w < 380 || w > 450) && (w < 650 || w > 750) {
-                        continue;
+                // only keep standard Regular (380-450) and Bold (650-750) to optimize memory on desktop.
+                if !is_android_env {
+                    let is_cjk_multi_weight = face.families.iter().any(|(f_name, _)| {
+                        let l = f_name.to_lowercase();
+                        l.contains("maple") || l.contains("sarasa")
+                    });
+                    if is_cjk_multi_weight {
+                        let w = face.weight.0;
+                        if (w < 380 || w > 450) && (w < 650 || w > 750) {
+                            continue;
+                        }
                     }
                 }
 
-                // Track detected font families (excluding emoji fonts from UI font selection list)
+                // Track detected font families (excluding emoji and private dot-prefixed fonts)
                 for (f, _) in &face.families {
+                    if f.starts_with('.') {
+                        continue;
+                    }
                     let l = f.to_lowercase();
                     if l.contains("emoji") {
                         continue;
@@ -469,6 +545,9 @@ impl MemoryWorld {
 }
 
 pub fn get_default_image_cache_dir() -> PathBuf {
+    if let Some(dir) = GLOBAL_CACHE_DIR.get() {
+        return dir.join("remote_images");
+    }
     #[cfg(target_os = "windows")]
     {
         if let Ok(local) = std::env::var("LOCALAPPDATA") {

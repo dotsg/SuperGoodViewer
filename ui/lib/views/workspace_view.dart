@@ -89,6 +89,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _updateTrafficLights() {
+    if (!Platform.isMacOS) return;
     // In full screen, macOS handles traffic lights automatically on top hover.
     // Never hide standard window buttons in full screen mode.
     final show = _isFullScreen ? true : _shouldShowTitleBar;
@@ -120,7 +121,9 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         : (widget.controller.lastScrollRatio <= 0.005 && widget.controller.lastPageNumber <= 1);
     _isAtTop = atTop;
     _isTitleBarVisible = atTop;
-    _initWindowChannel();
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      _initWindowChannel();
+    }
     // Briefly display the toolbar on launch so the user discovers the controls
     _showToolbarTemporarily();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -135,16 +138,19 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     if (enableIntegration) {
       NativeCliService.channel.setMethodCallHandler(_handleNativeMethodCall);
       _checkInitialFileFromSystem();
-      CliIpcService.start((filePath) {
-        if (mounted) {
-          widget.controller.openFile(filePath);
-        }
-      });
+      if (!Platform.isAndroid && !Platform.isIOS) {
+        CliIpcService.start((filePath) {
+          if (mounted) {
+            widget.controller.openFile(filePath);
+          }
+        });
+      }
     }
     _scheduleStartupUpdateCheck();
   }
 
   void _scheduleStartupUpdateCheck() {
+    if (Platform.isAndroid || Platform.isIOS) return;
     final shouldCheck = widget.enableStartupUpdateCheck ?? WorkspaceView.defaultEnableStartupUpdateCheck;
     if (!shouldCheck) return;
     if (!widget.controller.autoRestorePreferences) return;
@@ -168,6 +174,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   String? _lastSyncedTitle;
 
   void _syncWindowTitle() {
+    if (Platform.isAndroid || Platform.isIOS) return;
     final appTitle = widget.controller.strings.appTitle;
     final docTitle = widget.controller.documentTitle;
     final fullTitle = (docTitle.isNotEmpty && docTitle != 'Welcome' && docTitle != 'SuperGoodViewer Demo')
@@ -207,6 +214,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   String? _lastSyncedMenuLanguage;
 
   void _syncMenuTitles() {
+    if (Platform.isAndroid || Platform.isIOS) return;
     final enableIntegration = widget.enableSystemIntegration ?? WorkspaceView.defaultEnableSystemIntegration;
     if (!enableIntegration) return;
     final language = widget.controller.language;
@@ -291,11 +299,15 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   void dispose() {
     FocusManager.instance.removeListener(_reclaimLostFocus);
     _workspaceFocusNode.dispose();
-    _windowChannel.setMethodCallHandler(null);
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      _windowChannel.setMethodCallHandler(null);
+    }
     final enableIntegration = widget.enableSystemIntegration ?? WorkspaceView.defaultEnableSystemIntegration;
     if (enableIntegration) {
-      CliIpcService.stop();
       NativeCliService.channel.setMethodCallHandler(null);
+      if (!Platform.isAndroid && !Platform.isIOS) {
+        CliIpcService.stop();
+      }
     }
     widget.controller.removeListener(_onControllerChanged);
     _toolbarTimer?.cancel();

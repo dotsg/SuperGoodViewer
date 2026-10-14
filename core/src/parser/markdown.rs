@@ -1521,6 +1521,22 @@ pub fn convert_markdown_to_typst(
         "PingFang SC",
         "Microsoft YaHei",
         "Noto Sans CJK SC",
+        "Noto Sans SC",
+        "Noto Sans TC",
+        "Noto Sans HK",
+        "Noto Sans",
+        "Droid Sans Fallback",
+        "MiSans",
+        "MiSans VF",
+        "HarmonyOS Sans SC",
+        "HarmonyOS Sans",
+        "OPPOSans",
+        "OPlusSans",
+        "OnePlus Sans",
+        "vivo Sans",
+        "vivo Sans SC",
+        "HONOR Sans",
+        "Roboto",
         "STIX Two Text",
         "Apple Color Emoji",
         "Segoe UI Emoji",
@@ -1528,12 +1544,24 @@ pub fn convert_markdown_to_typst(
         "Twemoji Mozilla",
     ];
     let custom_body = options.body_font.as_deref().unwrap_or("").trim();
-    let body_font_str = if !custom_body.is_empty() {
-        let escaped_custom = escape_typst_string(custom_body);
-        format!("(\"{}\", {})", escaped_custom, body_fonts_default.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
-    } else {
-        format!("({})", body_fonts_default.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
-    };
+    let mut all_body_fonts: Vec<String> = Vec::new();
+    if !custom_body.is_empty() {
+        all_body_fonts.push(custom_body.to_string());
+    }
+    for f in &body_fonts_default {
+        let s = f.to_string();
+        if !all_body_fonts.contains(&s) {
+            all_body_fonts.push(s);
+        }
+    }
+    let body_font_str = format!(
+        "({})",
+        all_body_fonts
+            .iter()
+            .map(|f| format!("\"{}\"", escape_typst_string(f)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     let code_fonts_default = [
         "Maple Mono NF CN",
@@ -1548,7 +1576,11 @@ pub fn convert_markdown_to_typst(
         "Fira Code",
         "Menlo",
         "Consolas",
+        "Noto Sans Mono",
+        "Droid Sans Mono",
+        "Roboto Mono",
         "PingFang SC",
+        "Noto Sans SC",
         "DejaVu Sans Mono",
         "Apple Color Emoji",
         "Segoe UI Emoji",
@@ -1556,12 +1588,24 @@ pub fn convert_markdown_to_typst(
         "Twemoji Mozilla",
     ];
     let custom_code = options.code_font.as_deref().unwrap_or("").trim();
-    let code_font_str = if !custom_code.is_empty() {
-        let escaped_custom = escape_typst_string(custom_code);
-        format!("(\"{}\", {})", escaped_custom, code_fonts_default.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
-    } else {
-        format!("({})", code_fonts_default.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
-    };
+    let mut all_code_fonts: Vec<String> = Vec::new();
+    if !custom_code.is_empty() {
+        all_code_fonts.push(custom_code.to_string());
+    }
+    for f in &code_fonts_default {
+        let s = f.to_string();
+        if !all_code_fonts.contains(&s) {
+            all_code_fonts.push(s);
+        }
+    }
+    let code_font_str = format!(
+        "({})",
+        all_code_fonts
+            .iter()
+            .map(|f| format!("\"{}\"", escape_typst_string(f)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     let degraded_math_macro_str = crate::compiler::engine::default_degraded_math_macro(is_dark, Some(&code_font_str));
 
     out.push_str(&format!(

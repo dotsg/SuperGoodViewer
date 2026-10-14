@@ -11,11 +11,16 @@ class SidebarView extends StatefulWidget {
   final VoidCallback? onClose;
   final ValueChanged<OutlineItem>? onJumpToOutline;
 
+  final double? width;
+  final bool showResizeHandle;
+
   const SidebarView({
     super.key,
     required this.controller,
     this.onClose,
     this.onJumpToOutline,
+    this.width,
+    this.showResizeHandle = true,
   });
 
   @override
@@ -513,15 +518,16 @@ class _SidebarViewState extends State<SidebarView> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final controller = widget.controller;
+    final effectiveWidth = widget.width ?? widget.controller.sidebarWidth;
 
     return SizedBox(
-      width: widget.controller.sidebarWidth,
+      width: effectiveWidth,
       child: Stack(
         children: [
           Material(
             color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F7F7),
             child: Container(
-              width: widget.controller.sidebarWidth,
+              width: effectiveWidth,
               decoration: BoxDecoration(
                 border: Border(
                   left: widget.controller.isSidebarOnRight
@@ -555,8 +561,8 @@ class _SidebarViewState extends State<SidebarView> {
                     ),
                     child: Row(
                       children: [
-                        // Dedicated safe spacing for macOS traffic lights (Close/Miniaturize/Zoom)
-                        if (Platform.isMacOS && !widget.controller.isSidebarOnRight) const SizedBox(width: 78),
+                        // Dedicated safe spacing for macOS traffic lights (Close/Miniaturize/Zoom) - docked sidebar only
+                        if (widget.showResizeHandle && Platform.isMacOS && !widget.controller.isSidebarOnRight) const SizedBox(width: 78),
                         Expanded(
                           child: GestureDetector(
                             behavior: HitTestBehavior.translucent,
@@ -843,17 +849,18 @@ class _SidebarViewState extends State<SidebarView> {
       ),
     ),
     // Draggable column resize handle on the inner edge
-    Positioned(
-      top: 0,
-      bottom: 0,
-      left: widget.controller.isSidebarOnRight ? 0 : null,
-      right: !widget.controller.isSidebarOnRight ? 0 : null,
-      width: 7,
-      child: _SidebarResizeHandle(
-        controller: widget.controller,
-        isRightDocked: widget.controller.isSidebarOnRight,
+    if (widget.showResizeHandle)
+      Positioned(
+        top: 0,
+        bottom: 0,
+        left: widget.controller.isSidebarOnRight ? 0 : null,
+        right: !widget.controller.isSidebarOnRight ? 0 : null,
+        width: 7,
+        child: _SidebarResizeHandle(
+          controller: widget.controller,
+          isRightDocked: widget.controller.isSidebarOnRight,
+        ),
       ),
-    ),
   ],
 ),
 );
