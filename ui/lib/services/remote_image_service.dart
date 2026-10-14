@@ -273,16 +273,32 @@ class RemoteImageService {
   @visibleForTesting
   List<String> extractRemoteImageUrlsFallback(String markdown) {
     final urls = <String>{};
-
-    void recordUrl(String? rawUrl) {
-      if (rawUrl == null) return;
-      final trimmed = rawUrl.trim();
-      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-        final clean = sanitizeImageUrl(trimmed);
+    for (final raw in extractAllImageSources(markdown)) {
+      if (raw.startsWith('http://') || raw.startsWith('https://')) {
+        final clean = sanitizeImageUrl(raw);
         if (clean.isNotEmpty) {
           urls.add(clean);
         }
       }
+    }
+    return urls.toList();
+  }
+
+  /// Extracts all distinct image source strings (both local relative paths and remote HTTP/HTTPS URLs,
+  /// excluding inline `data:` URIs) referenced by Markdown image syntax (`![]()`, `![][ref]`, `![ref]`)
+  /// and HTML `<img src=...>` tags, while ignoring YAML frontmatter, HTML comments, escaped syntax,
+  /// and code blocks/spans.
+  List<String> extractAllImageSources(String markdown) {
+    final sources = <String>{};
+
+    void recordSource(String? rawSrc) {
+      if (rawSrc == null) return;
+      final trimmed = rawSrc.trim();
+      if (trimmed.isEmpty) return;
+      if (trimmed.length >= 5 && trimmed.substring(0, 5).toLowerCase() == 'data:') {
+        return;
+      }
+      sources.add(trimmed);
     }
 
     final body = _stripNonProseRegions(markdown);
@@ -309,7 +325,7 @@ class RemoteImageService {
           if (afterAlt < len && bodyWithoutDefs.codeUnitAt(afterAlt) == 0x28 /* ( */ ) {
             final parsed = _parseInlineDestination(bodyWithoutDefs, afterAlt);
             if (parsed != null) {
-              recordUrl(parsed.$1);
+              recordSource(parsed.$1);
               i = parsed.$2;
               continue;
             }
@@ -318,14 +334,14 @@ class RemoteImageService {
             if (refEnd != null) {
               final rawRef = bodyWithoutDefs.substring(afterAlt + 1, refEnd);
               final key = _normalizeRefLabel(rawRef.isEmpty ? altText : rawRef);
-              recordUrl(refDefs[key]);
+              recordSource(refDefs[key]);
               i = refEnd + 1;
               continue;
             }
           } else {
             final key = _normalizeRefLabel(altText);
             if (refDefs.containsKey(key)) {
-              recordUrl(refDefs[key]);
+              recordSource(refDefs[key]);
               i = afterAlt;
               continue;
             }
@@ -342,7 +358,7 @@ class RemoteImageService {
             final tagEnd = _findHtmlTagEnd(bodyWithoutDefs, i);
             if (tagEnd != null) {
               final tag = bodyWithoutDefs.substring(i, tagEnd + 1);
-              recordUrl(_extractHtmlSrcAttr(tag));
+              recordSource(_extractHtmlSrcAttr(tag));
               i = tagEnd + 1;
               continue;
             }
@@ -353,7 +369,88 @@ class RemoteImageService {
       i++;
     }
 
-    return urls.toList();
+    return sources.toList();
+  }
+
+  /// Decodes `%XX` percent-encoded UTF-8 sequences identically to Rust `decode_percent`.
+  static String decodePercent(String s) {
+    final bytes = utf8.encode(s);
+    final out = <int>[];
+    int i = 0;
+    int? hexVal(int b) {
+      if (b >= 0x30 && b <= 0x39) return b - 0x30;
+      if (b >= 0x61 && b <= 0x66) return b - 0x61 + 10;
+      if (b >= 0x41 && b <= 0x46) return b - 0x41 + 10;
+      return null;
+    }
+
+    while (i < bytes.length) {
+      if (bytes[i] == 0x25 /* % */ && i + 2 < bytes.length) {
+        final h1 = hexVal(bytes[i + 1]);
+        final h2 = hexVal(bytes[i + 2]);
+        if (h1 != null && h2 != null) {
+          out.add((h1 << 4) | h2);
+          i += 3;
+          continue;
+        }
+      }
+      out.add(bytes[i]);
+      i++;
+    }
+    try {
+      return utf8.decode(out);
+    } catch (_) {
+      return s;
+    }
+  }
+
+  /// Resolves a local image reference [rawSrc] relative to [docDir], returning
+  /// ordered candidate file paths within [docDir] (matching `MemoryWorld::file` resolution).
+  /// Returns an empty list if [rawSrc] is a remote/data URI, absolute path, or escapes [docDir].
+  List<String> resolveLocalImageCandidates(String docDir, String rawSrc) {
+    final trimmed = rawSrc.trim();
+    if (trimmed.isEmpty) return const [];
+    final lower = trimmed.toLowerCase();
+    if (lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('data:')) {
+      return const [];
+    }
+
+    final decoded = decodePercent(trimmed).replaceAll('\\', '/');
+    if (decoded.isEmpty || decoded.startsWith('/')) return const [];
+    if (decoded.length >= 2 &&
+        RegExp(r'^[a-zA-Z]:').hasMatch(decoded)) {
+      return const [];
+    }
+
+    final normDocDir = p.normalize(p.absolute(docDir));
+    final candidates = <String>[];
+
+    void addCandidate(String relPath) {
+      final joined = p.normalize(p.join(normDocDir, relPath));
+      if (p.isWithin(normDocDir, joined) && !candidates.contains(joined)) {
+        candidates.add(joined);
+      }
+    }
+
+    addCandidate(decoded);
+    if (decoded.contains(' ')) {
+      addCandidate(decoded.replaceAll(' ', '%20'));
+    }
+    if (trimmed.contains('%')) {
+      addCandidate(trimmed.replaceAll('\\', '/'));
+    }
+
+    return candidates;
+  }
+
+  /// Returns all candidate absolute file paths for local image attachments referenced in [markdown].
+  Set<String> extractLocalImageCandidatePaths(String markdown, String docDir) {
+    final paths = <String>{};
+    for (final src in extractAllImageSources(markdown)) {
+      if (src.startsWith('http://') || src.startsWith('https://')) continue;
+      paths.addAll(resolveLocalImageCandidates(docDir, src));
+    }
+    return paths;
   }
 
   static String _normalizeRefLabel(String label) {

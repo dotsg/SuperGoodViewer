@@ -132,10 +132,21 @@ class ReaderController extends ChangeNotifier {
     notifyListeners();
     if (_needsRerender(doc)) {
       final options = _optionsFor(doc);
-      final cached = doc.filePath != null ? DocumentCacheService.getCachedPdf(doc.filePath!, options) : null;
+      final fingerprint = doc.filePath != null
+          ? DocumentCacheService.computeAttachmentFingerprint(doc.filePath!, doc.markdown, options)
+          : '';
+      final cached = doc.filePath != null
+          ? DocumentCacheService.getCachedPdf(
+              doc.filePath!,
+              options,
+              markdown: doc.markdown,
+              attachmentFingerprint: fingerprint,
+            )
+          : null;
       if (cached != null && cached.isNotEmpty) {
         doc.pdfBytes = cached;
         doc.renderedWith = options;
+        doc.attachmentFingerprint = fingerprint;
         notifyListeners();
       } else {
         renderOptionsChanged = true;
@@ -149,6 +160,16 @@ class ReaderController extends ChangeNotifier {
     final rendered = doc.renderedWith;
     if (rendered == null) return doc.pdfBytes == null;
     final current = _optionsFor(doc);
+    if (doc.filePath != null) {
+      final currentFingerprint = DocumentCacheService.computeAttachmentFingerprint(
+        doc.filePath!,
+        doc.markdown,
+        current,
+      );
+      if (currentFingerprint != doc.attachmentFingerprint) {
+        return true;
+      }
+    }
     // Fluid width only matters past the same 40pt threshold setViewportWidth uses.
     return rendered.copyWith(viewportWidth: current.viewportWidth) != current ||
         (current.isFluid && (rendered.viewportWidth - current.viewportWidth).abs() > 40);
@@ -925,12 +946,13 @@ class ReaderController extends ChangeNotifier {
     _doc.isLoaded = true;
     final file = File(filePath);
     if (!file.existsSync()) {
-      _doc.watcherSubscription?.cancel();
+      _doc.cancelWatchers();
       _doc.filePath = filePath;
       _doc.title = p.basenameWithoutExtension(filePath);
       _doc.pdfBytes = null;
       _doc.outlineItems = [];
       _doc.markdown = '';
+      _doc.attachmentFingerprint = '';
       _doc.isRawPdf = false;
       _doc.errorMessage = 'File not found: $filePath';
       _doc.degradedEquationCount = 0;
@@ -952,6 +974,7 @@ class ReaderController extends ChangeNotifier {
         _doc.hasPendingCompile = false;
         _doc.isRawPdf = true;
         _doc.markdown = '';
+        _doc.attachmentFingerprint = '';
         _doc.outlineItems = [];
         _doc.pdfBytes = bytes;
         _doc.errorMessage = null;
@@ -1035,14 +1058,25 @@ class ReaderController extends ChangeNotifier {
         _recentFiles.removeLast();
       }
 
+      final options = _optionsFor(_doc);
+      _doc.attachmentFingerprint = DocumentCacheService.computeAttachmentFingerprint(
+        filePath,
+        content,
+        options,
+      );
+
       RemoteImageService.instance.clearNegativeCache();
       _persistDebounced();
       _setupFileWatcher(_doc);
       _triggerRemoteImageDownloads(_doc);
 
       // Check fast disk cache for pre-compiled PDF!
-      final options = _optionsFor(_doc);
-      final cachedPdf = DocumentCacheService.getCachedPdf(filePath, options);
+      final cachedPdf = DocumentCacheService.getCachedPdf(
+        filePath,
+        options,
+        markdown: content,
+        attachmentFingerprint: _doc.attachmentFingerprint,
+      );
       if (cachedPdf != null && cachedPdf.isNotEmpty) {
         _doc.pdfBytes = cachedPdf;
         _doc.renderedWith = options;
@@ -1088,7 +1122,8 @@ class ReaderController extends ChangeNotifier {
     _openFileInternal(filePath, preservePosition: preservePosition);
   }
 
-  /// True when [filePath] names the document already loaded, with unchanged bytes.
+  /// True when [filePath] names the document already loaded, with unchanged bytes
+  /// and unchanged referenced image attachments.
   ///
   /// macOS delivers a launch file twice: once in argv and again as an `openFiles`
   /// Apple Event, where the path is standardized (`/tmp/...` for argv's
@@ -1106,7 +1141,16 @@ class ReaderController extends ChangeNotifier {
         final pdf = _doc.pdfBytes;
         return pdf != null && listEquals(pdf, bytes);
       }
-      return _doc.markdown.isNotEmpty && utf8.decode(bytes, allowMalformed: true) == _doc.markdown;
+      final text = utf8.decode(bytes, allowMalformed: true);
+      if (_doc.markdown.isEmpty || text != _doc.markdown) {
+        return false;
+      }
+      final currentFingerprint = DocumentCacheService.computeAttachmentFingerprint(
+        current,
+        text,
+        _optionsFor(_doc),
+      );
+      return currentFingerprint == _doc.attachmentFingerprint;
     } catch (_) {
       return false;
     }
@@ -1118,26 +1162,100 @@ class ReaderController extends ChangeNotifier {
     notifyListeners();
   }
 
+  static String _canonicalWatchPath(String rawPath) {
+    var norm = p.normalize(p.absolute(rawPath));
+    try {
+      final parent = Directory(p.dirname(norm));
+      if (parent.existsSync()) {
+        norm = p.normalize(p.join(parent.resolveSymbolicLinksSync(), p.basename(norm)));
+      }
+    } catch (_) {}
+    if (Platform.isMacOS) {
+      if (norm.startsWith('/private/var/')) {
+        norm = norm.substring('/private'.length);
+      } else if (norm.startsWith('/private/tmp/')) {
+        norm = norm.substring('/private'.length);
+      }
+    }
+    return norm;
+  }
+
   void _setupFileWatcher(DocumentSession doc) {
-    doc.watcherSubscription?.cancel();
+    doc.cancelWatchers();
     final filePath = doc.filePath;
     if (!_autoReload || filePath == null) return;
 
     final file = File(filePath);
-    final dir = file.parent;
+    final docDir = file.parent;
+    final canonicalDocPath = _canonicalWatchPath(filePath);
 
-    try {
-      doc.watcherSubscription = dir.watch().listen((event) {
-        if (p.normalize(event.path) == p.normalize(filePath)) {
-          if (event.type == FileSystemEvent.modify ||
-              event.type == FileSystemEvent.create) {
-            // Debounced reload
+    final watchedTargets = <String>{canonicalDocPath};
+    final dirsToWatch = <String, Directory>{};
+    if (docDir.existsSync()) {
+      dirsToWatch[_canonicalWatchPath(docDir.path)] = docDir;
+    }
+
+    if (!_isPdf(doc) && doc.markdown.isNotEmpty) {
+      final normDocDir = _canonicalWatchPath(docDir.path);
+      final candidates = RemoteImageService.instance.extractLocalImageCandidatePaths(
+        doc.markdown,
+        docDir.path,
+      );
+      for (final candidate in candidates) {
+        watchedTargets.add(_canonicalWatchPath(candidate));
+        var dir = Directory(p.dirname(candidate));
+        while (!dir.existsSync()) {
+          final parent = dir.parent;
+          if (parent.path == dir.path) break;
+          dir = parent;
+          if (_canonicalWatchPath(dir.path) == normDocDir) break;
+        }
+        if (dir.existsSync()) {
+          dirsToWatch[_canonicalWatchPath(dir.path)] = dir;
+        }
+      }
+    }
+
+    for (final dir in dirsToWatch.values) {
+      try {
+        final sub = dir.watch().listen((event) {
+          final eventCanonical = _canonicalWatchPath(event.path);
+          String? moveDestCanonical;
+          if (event is FileSystemMoveEvent && event.destination != null) {
+            moveDestCanonical = _canonicalWatchPath(event.destination!);
+          }
+
+          if (eventCanonical == canonicalDocPath || moveDestCanonical == canonicalDocPath) {
+            if (event.type == FileSystemEvent.modify ||
+                event.type == FileSystemEvent.create ||
+                event.type == FileSystemEvent.move) {
+              _onExternalFileModified(doc);
+            }
+            return;
+          }
+
+          final matchesAttachment = watchedTargets.contains(eventCanonical) ||
+              (moveDestCanonical != null && watchedTargets.contains(moveDestCanonical));
+          if (matchesAttachment) {
+            _onExternalFileModified(doc);
+            return;
+          }
+
+          final prefix = '$eventCanonical${p.separator}';
+          final destPrefix = moveDestCanonical != null ? '$moveDestCanonical${p.separator}' : null;
+          final isTargetAncestor = watchedTargets.any(
+            (t) => t.startsWith(prefix) || (destPrefix != null && t.startsWith(destPrefix)),
+          );
+          if (isTargetAncestor) {
+            _setupFileWatcher(doc);
             _onExternalFileModified(doc);
           }
-        }
-      });
-    } catch (e) {
-      debugPrint('Watcher setup failed: $e');
+        });
+        doc.watcherSubscriptions.add(sub);
+        doc.watcherSubscription ??= sub;
+      } catch (e) {
+        debugPrint('Watcher setup failed for ${dir.path}: $e');
+      }
     }
   }
 
@@ -1192,12 +1310,23 @@ class ReaderController extends ChangeNotifier {
           }
           final bytes = await file.readAsBytes();
           final text = utf8.decode(bytes, allowMalformed: true);
-          if (text == doc.markdown) {
-            return; // Content unchanged, skip redundant compilation & remount
+          final options = _optionsFor(doc);
+          final nextFingerprint = DocumentCacheService.computeAttachmentFingerprint(
+            doc.filePath!,
+            text,
+            options,
+          );
+          if (text == doc.markdown && nextFingerprint == doc.attachmentFingerprint) {
+            return; // Both Markdown content and referenced attachments unchanged
           }
+          final markdownChanged = text != doc.markdown;
           doc.markdown = text;
-          _extractOutline(doc);
-          _triggerRemoteImageDownloads(doc);
+          doc.attachmentFingerprint = nextFingerprint;
+          if (markdownChanged) {
+            _extractOutline(doc);
+            _setupFileWatcher(doc);
+            _triggerRemoteImageDownloads(doc);
+          }
           _startReloading(doc);
           await _compile(doc);
         } catch (e) {
@@ -1305,7 +1434,21 @@ class ReaderController extends ChangeNotifier {
           }
           debugPrint('[ReaderController] compileDocument: SUCCESS gen $generation (${pdfBytes.length} bytes)');
           if (doc.filePath != null) {
-            unawaited(DocumentCacheService.saveCachedPdf(doc.filePath!, options, pdfBytes));
+            final fingerprint = DocumentCacheService.computeAttachmentFingerprint(
+              doc.filePath!,
+              doc.markdown,
+              options,
+            );
+            doc.attachmentFingerprint = fingerprint;
+            unawaited(
+              DocumentCacheService.saveCachedPdf(
+                doc.filePath!,
+                options,
+                pdfBytes,
+                markdown: doc.markdown,
+                attachmentFingerprint: fingerprint,
+              ),
+            );
           }
         } else {
           doc.degradedEquationCount = 0;
@@ -1352,10 +1495,21 @@ class ReaderController extends ChangeNotifier {
     notifyListeners();
     if (_doc.filePath != null) {
       final options = _optionsFor(_doc);
-      final cached = DocumentCacheService.getCachedPdf(_doc.filePath!, options);
+      final fingerprint = DocumentCacheService.computeAttachmentFingerprint(
+        _doc.filePath!,
+        _doc.markdown,
+        options,
+      );
+      final cached = DocumentCacheService.getCachedPdf(
+        _doc.filePath!,
+        options,
+        markdown: _doc.markdown,
+        attachmentFingerprint: fingerprint,
+      );
       if (cached != null && cached.isNotEmpty) {
         _doc.pdfBytes = cached;
         _doc.renderedWith = options;
+        _doc.attachmentFingerprint = fingerprint;
         _doc.errorMessage = null;
         debugPrint('[ReaderController] PageFormat change cache hit: instant PDF loaded');
         notifyListeners();
@@ -1490,10 +1644,21 @@ class ReaderController extends ChangeNotifier {
     notifyListeners();
     if (_doc.filePath != null) {
       final options = _optionsFor(_doc);
-      final cached = DocumentCacheService.getCachedPdf(_doc.filePath!, options);
+      final fingerprint = DocumentCacheService.computeAttachmentFingerprint(
+        _doc.filePath!,
+        _doc.markdown,
+        options,
+      );
+      final cached = DocumentCacheService.getCachedPdf(
+        _doc.filePath!,
+        options,
+        markdown: _doc.markdown,
+        attachmentFingerprint: fingerprint,
+      );
       if (cached != null && cached.isNotEmpty) {
         _doc.pdfBytes = cached;
         _doc.renderedWith = options;
+        _doc.attachmentFingerprint = fingerprint;
         _doc.errorMessage = null;
         debugPrint('[ReaderController] Theme change cache hit: instant PDF loaded');
         notifyListeners();
@@ -1586,7 +1751,9 @@ class ReaderController extends ChangeNotifier {
     if (enabled && _doc.filePath != null) {
       _setupFileWatcher(_doc);
     } else {
-      _doc.watcherSubscription?.cancel();
+      for (final session in _sessions) {
+        session.cancelWatchers();
+      }
     }
     notifyListeners();
   }
@@ -1606,7 +1773,11 @@ class ReaderController extends ChangeNotifier {
       final exportOptions = options.copyWith(theme: 'light');
 
       if (doc.filePath != null) {
-        final cached = DocumentCacheService.getCachedPdf(doc.filePath!, exportOptions);
+        final cached = DocumentCacheService.getCachedPdf(
+          doc.filePath!,
+          exportOptions,
+          markdown: doc.markdown,
+        );
         if (cached != null && cached.isNotEmpty) {
           return cached;
         }
@@ -1637,7 +1808,14 @@ class ReaderController extends ChangeNotifier {
       }
 
       if (bytes != null && bytes.isNotEmpty && doc.filePath != null) {
-        unawaited(DocumentCacheService.saveCachedPdf(doc.filePath!, exportOptions, bytes));
+        unawaited(
+          DocumentCacheService.saveCachedPdf(
+            doc.filePath!,
+            exportOptions,
+            bytes,
+            markdown: doc.markdown,
+          ),
+        );
       }
 
       if (bytes == null || bytes.isEmpty) {

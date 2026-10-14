@@ -3,12 +3,13 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import '../models/render_options.dart';
+import 'remote_image_service.dart';
 
 /// High-performance disk cache for pre-compiled PDF documents.
 /// Enables 0ms instantaneous document open on cold start and document switching.
 class DocumentCacheService {
   // Bump when renderer changes must invalidate previously compiled PDFs.
-  static const _renderCacheVersion = 4;
+  static const _renderCacheVersion = 5;
   static Directory? _customCacheDirForTesting;
   static Directory? _cachedDir;
 
@@ -56,11 +57,113 @@ class DocumentCacheService {
     return fallback;
   }
 
-  static String _computeCacheFileName(String filePath, int mtime, int size, RenderOptions options) {
+  static String _fingerprintFile(File file) {
+    try {
+      if (!file.existsSync()) return 'missing';
+      final stat = file.statSync();
+      if (stat.type != FileSystemEntityType.file) return 'missing';
+      final size = stat.size;
+      final mtimeMicros = stat.modified.microsecondsSinceEpoch;
+      int hash = 0xcbf29ce484222325;
+      if (size <= 65536) {
+        final bytes = file.readAsBytesSync();
+        for (int i = 0; i < bytes.length; i++) {
+          hash ^= bytes[i];
+          hash = (hash * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF;
+        }
+      } else {
+        final raf = file.openSync(mode: FileMode.read);
+        try {
+          final head = raf.readSync(32768);
+          for (int i = 0; i < head.length; i++) {
+            hash ^= head[i];
+            hash = (hash * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF;
+          }
+          raf.setPositionSync(size - 32768);
+          final tail = raf.readSync(32768);
+          for (int i = 0; i < tail.length; i++) {
+            hash ^= tail[i];
+            hash = (hash * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF;
+          }
+        } finally {
+          raf.closeSync();
+        }
+      }
+      return '$size:$mtimeMicros:${hash.toRadixString(16)}';
+    } catch (_) {
+      return 'missing';
+    }
+  }
+
+  /// Computes a deterministic fingerprint of all local image attachments and
+  /// cached remote images referenced by [markdown] relative to [filePath].
+  static String computeAttachmentFingerprint(
+    String filePath,
+    String markdown,
+    RenderOptions options,
+  ) {
+    if (markdown.isEmpty) return '';
+    final sources = RemoteImageService.instance.extractAllImageSources(markdown);
+    if (sources.isEmpty) return '';
+
+    final docDir = p.dirname(filePath);
+    final normDocDir = p.normalize(p.absolute(docDir));
+    final remoteCacheDir = (options.imageCacheDir != null && options.imageCacheDir!.isNotEmpty)
+        ? options.imageCacheDir!
+        : RemoteImageService.instance.getCacheDirectory().path;
+
+    final parts = <String>[];
+    for (final src in sources) {
+      if (src.startsWith('http://') || src.startsWith('https://')) {
+        final cacheFileName = RemoteImageService.instance.urlToCacheFilename(src);
+        final cacheFile = File(p.join(remoteCacheDir, cacheFileName));
+        parts.add('R:$cacheFileName:${_fingerprintFile(cacheFile)}');
+      } else {
+        final candidates = RemoteImageService.instance.resolveLocalImageCandidates(docDir, src);
+        if (candidates.isEmpty) continue;
+        String chosenPath = candidates.first;
+        for (final c in candidates) {
+          if (File(c).existsSync()) {
+            chosenPath = c;
+            break;
+          }
+        }
+        final relKey = p.relative(chosenPath, from: normDocDir);
+        parts.add('L:$relKey:${_fingerprintFile(File(chosenPath))}');
+      }
+    }
+    return parts.join('|');
+  }
+
+  static String _readMarkdownSafelySync(File file) {
+    try {
+      final bytes = file.readAsBytesSync();
+      return utf8.decode(bytes, allowMalformed: true);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  static Future<String> _readMarkdownSafelyAsync(File file) async {
+    try {
+      final bytes = await file.readAsBytes();
+      return utf8.decode(bytes, allowMalformed: true);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  static String _computeCacheFileName(
+    String filePath,
+    int mtime,
+    int size,
+    RenderOptions options,
+    String attachmentFingerprint,
+  ) {
     // Quantize viewportWidth to 20pt grid to maximize cache hit rates across minor window resize variations,
     // which aligns with ReaderController's 40pt deadband threshold for fluid re-renders.
     final quantizedWidth = (options.viewportWidth / 20.0).round() * 20;
-    final raw = '$filePath#$mtime#$size#${options.mode}#${options.effectivePageFormat}#${options.theme}#${options.fontSize}#$quantizedWidth#${options.bodyFont ?? ''}#${options.codeFont ?? ''}#${options.headerLeft ?? ''}#${options.headerCenter ?? ''}#${options.headerRight ?? ''}#${options.footerLeft ?? ''}#${options.footerCenter ?? ''}#${options.footerRight ?? ''}#${options.showHeaderRule ?? false}#${options.showFooterRule ?? false}#${options.skipFirstPageHeaderFooter ?? false}#${options.marpEnabled ?? true}';
+    final raw = '$filePath#$mtime#$size#${options.mode}#${options.effectivePageFormat}#${options.theme}#${options.fontSize}#$quantizedWidth#${options.bodyFont ?? ''}#${options.codeFont ?? ''}#${options.headerLeft ?? ''}#${options.headerCenter ?? ''}#${options.headerRight ?? ''}#${options.footerLeft ?? ''}#${options.footerCenter ?? ''}#${options.footerRight ?? ''}#${options.showHeaderRule ?? false}#${options.showFooterRule ?? false}#${options.skipFirstPageHeaderFooter ?? false}#${options.marpEnabled ?? true}#$attachmentFingerprint';
     int hash = 0xcbf29ce484222325;
     for (final unit in utf8.encode(raw)) {
       hash ^= unit;
@@ -71,19 +174,36 @@ class DocumentCacheService {
   }
 
   /// Fast synchronous lookup for pre-compiled PDF bytes.
-  /// Returns null if not cached or if source file was modified.
+  /// Returns null if not cached or if source file or any referenced image attachment was modified.
   ///
   /// Note on synchronous design: This lookup runs synchronously during [ReaderController.openFile]
   /// to satisfy the "instant 0ms document opening" user experience requirement, allowing the cached
   /// PDF to be painted on the very first Flutter frame before any async compilation or disk reads start.
   /// Disk cache hits only involve a fast existence check and single file read (typically < 1ms on SSD),
   /// whereas cache writes, pruning, stats querying, and clearing are all performed asynchronously.
-  static Uint8List? getCachedPdf(String filePath, RenderOptions options) {
+  static Uint8List? getCachedPdf(
+    String filePath,
+    RenderOptions options, {
+    String? markdown,
+    String? attachmentFingerprint,
+  }) {
     try {
       final file = File(filePath);
       if (!file.existsSync()) return null;
       final stat = file.statSync();
-      final fileName = _computeCacheFileName(filePath, stat.modified.millisecondsSinceEpoch, stat.size, options);
+      final fingerprint = attachmentFingerprint ??
+          computeAttachmentFingerprint(
+            filePath,
+            markdown ?? _readMarkdownSafelySync(file),
+            options,
+          );
+      final fileName = _computeCacheFileName(
+        filePath,
+        stat.modified.millisecondsSinceEpoch,
+        stat.size,
+        options,
+        fingerprint,
+      );
       final cacheFile = File(p.join(_getCacheDir().path, fileName));
       if (cacheFile.existsSync()) {
         final bytes = cacheFile.readAsBytesSync();
@@ -102,13 +222,31 @@ class DocumentCacheService {
   }
 
   /// Asynchronously persists compiled PDF bytes to disk cache.
-  static Future<void> saveCachedPdf(String filePath, RenderOptions options, Uint8List pdfBytes) async {
+  static Future<void> saveCachedPdf(
+    String filePath,
+    RenderOptions options,
+    Uint8List pdfBytes, {
+    String? markdown,
+    String? attachmentFingerprint,
+  }) async {
     if (pdfBytes.isEmpty) return;
     try {
       final file = File(filePath);
       if (!await file.exists()) return;
       final stat = await file.stat();
-      final fileName = _computeCacheFileName(filePath, stat.modified.millisecondsSinceEpoch, stat.size, options);
+      final fingerprint = attachmentFingerprint ??
+          computeAttachmentFingerprint(
+            filePath,
+            markdown ?? await _readMarkdownSafelyAsync(file),
+            options,
+          );
+      final fileName = _computeCacheFileName(
+        filePath,
+        stat.modified.millisecondsSinceEpoch,
+        stat.size,
+        options,
+        fingerprint,
+      );
       final cacheDir = _getCacheDir();
       final cacheFile = File(p.join(cacheDir.path, fileName));
       final tmpFile = File(p.join(cacheDir.path, '$fileName.tmp'));
