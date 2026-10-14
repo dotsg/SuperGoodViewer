@@ -247,15 +247,22 @@ const SUPPORTED_IMAGE_EXTENSIONS: &[&str] = &[
     "png", "jpg", "jpeg", "jfif", "jpe", "gif", "webp", "apng", "svg", "svgz",
 ];
 
+pub fn is_data_uri(s: &str) -> bool {
+    s.trim()
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"))
+}
+
 /// Checks whether a local image path is valid within the Typst project root (`doc_dir`).
 ///
 /// Returns `false` if the path attempts to escape the root (e.g. `../secret.png`,
 /// `a/../../secret.png`), is an absolute path (`/Users/...`, `C:/...`), contains Windows
-/// drive prefixes (`C:...`), has an unsupported non-image extension (e.g. `.csv`, `.json`, `.txt`),
-/// or is otherwise an invalid virtual path that would cause Typst compilation to abort.
+/// drive prefixes (`C:...`), is a `data:` URI, has an unsupported non-image extension
+/// (e.g. `.csv`, `.json`, `.txt`), or is otherwise an invalid virtual path that would
+/// cause Typst compilation to abort.
 pub fn is_local_image_path_valid(path: &str) -> bool {
     let trimmed = path.trim();
-    if trimmed.is_empty() {
+    if trimmed.is_empty() || is_data_uri(trimmed) {
         return false;
     }
     let normalized = trimmed.replace('\\', "/");
@@ -301,6 +308,250 @@ fn log_escaping_image_path(path: &str) {
                 "[Parser] Warning: local image path {:?} escapes project root (doc_dir) or is invalid, falling back to placeholder badge",
                 path
             );
+        }
+    }
+}
+
+/// Maximum decoded byte size for an inline `data:image/...` URI (10 MiB).
+pub const MAX_DATA_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum DataImageFormat {
+    Raster(typst::visualize::ExchangeFormat, &'static str),
+    Svg,
+}
+
+impl DataImageFormat {
+    fn from_mime(mime: &str) -> Option<Self> {
+        match mime.trim().to_ascii_lowercase().as_str() {
+            "image/png" | "image/x-png" | "image/apng" => {
+                Some(Self::Raster(typst::visualize::ExchangeFormat::Png, "png"))
+            }
+            "image/jpeg" | "image/jpg" | "image/pjpeg" => {
+                Some(Self::Raster(typst::visualize::ExchangeFormat::Jpg, "jpg"))
+            }
+            "image/gif" => Some(Self::Raster(typst::visualize::ExchangeFormat::Gif, "gif")),
+            "image/webp" => Some(Self::Raster(typst::visualize::ExchangeFormat::Webp, "webp")),
+            "image/svg+xml" | "image/svg" => Some(Self::Svg),
+            _ => None,
+        }
+    }
+}
+
+#[inline]
+fn decode_base64_value(b: u8) -> Option<u8> {
+    match b {
+        b'A'..=b'Z' => Some(b - b'A'),
+        b'a'..=b'z' => Some(b - b'a' + 26),
+        b'0'..=b'9' => Some(b - b'0' + 52),
+        b'+' | b'-' => Some(62),
+        b'/' | b'_' => Some(63),
+        _ => None,
+    }
+}
+
+fn decode_base64_bounded(raw: &str, max_bytes: usize) -> Option<Vec<u8>> {
+    let bytes = raw.as_bytes();
+    let estimated_capacity = (bytes.len() / 4).saturating_mul(3).min(max_bytes);
+    let mut out = Vec::with_capacity(estimated_capacity.min(64 * 1024));
+
+    let mut quartet = [0u8; 4];
+    let mut q_len = 0usize;
+    let mut pad_count = 0usize;
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        let b = if bytes[i] == b'%' {
+            if i + 2 >= bytes.len() {
+                return None;
+            }
+            let h1 = from_hex_digit(bytes[i + 1])?;
+            let h2 = from_hex_digit(bytes[i + 2])?;
+            i += 3;
+            (h1 << 4) | h2
+        } else {
+            let ch = bytes[i];
+            i += 1;
+            ch
+        };
+
+        if matches!(b, b' ' | b'\t' | b'\n' | b'\r') {
+            continue;
+        }
+
+        if b == b'=' {
+            pad_count += 1;
+            if pad_count > 2 {
+                return None;
+            }
+            continue;
+        }
+
+        if pad_count > 0 {
+            return None;
+        }
+
+        let val = decode_base64_value(b)?;
+        quartet[q_len] = val;
+        q_len += 1;
+
+        if q_len == 4 {
+            if out.len() + 3 > max_bytes {
+                return None;
+            }
+            out.push((quartet[0] << 2) | (quartet[1] >> 4));
+            out.push((quartet[1] << 4) | (quartet[2] >> 2));
+            out.push((quartet[2] << 6) | quartet[3]);
+            q_len = 0;
+        }
+    }
+
+    match q_len {
+        0 => {
+            if pad_count > 0 {
+                return None;
+            }
+        }
+        1 => return None,
+        2 => {
+            if pad_count != 0 && pad_count != 2 {
+                return None;
+            }
+            if out.len() + 1 > max_bytes {
+                return None;
+            }
+            out.push((quartet[0] << 2) | (quartet[1] >> 4));
+        }
+        3 => {
+            if pad_count > 1 {
+                return None;
+            }
+            if out.len() + 2 > max_bytes {
+                return None;
+            }
+            out.push((quartet[0] << 2) | (quartet[1] >> 4));
+            out.push((quartet[1] << 4) | (quartet[2] >> 2));
+        }
+        _ => unreachable!(),
+    }
+
+    if out.is_empty() {
+        return None;
+    }
+
+    Some(out)
+}
+
+fn decode_percent_bytes_bounded(s: &str, max_bytes: usize) -> Option<Vec<u8>> {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len().min(max_bytes).min(64 * 1024));
+    let mut i = 0;
+    while i < bytes.len() {
+        if out.len() >= max_bytes {
+            return None;
+        }
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h1), Some(h2)) = (from_hex_digit(bytes[i + 1]), from_hex_digit(bytes[i + 2])) {
+                out.push((h1 << 4) | h2);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(out)
+}
+
+pub fn decode_data_image_uri_with_limit(uri: &str, max_bytes: usize) -> Option<(&'static str, Bytes)> {
+    let trimmed = uri.trim();
+    let prefix = trimmed.get(..5)?;
+    if !prefix.eq_ignore_ascii_case("data:") {
+        return None;
+    }
+    let rest = trimmed.get(5..)?;
+    let (meta, raw_payload) = rest.split_once(',')?;
+
+    let mut segments = meta.split(';');
+    let mime = segments.next()?;
+    let format = DataImageFormat::from_mime(mime)?;
+    let is_base64 = segments.any(|seg| seg.trim().eq_ignore_ascii_case("base64"));
+
+    let decoded_bytes = if is_base64 {
+        decode_base64_bounded(raw_payload, max_bytes)?
+    } else {
+        let html_decoded;
+        let payload = if !raw_payload.contains('<') && raw_payload.to_ascii_lowercase().contains("&lt;") {
+            html_decoded = decode_html_entities(raw_payload);
+            html_decoded.as_str()
+        } else {
+            raw_payload
+        };
+        decode_percent_bytes_bounded(payload, max_bytes)?
+    };
+
+    let bytes = Bytes::new(decoded_bytes);
+    match format {
+        DataImageFormat::Raster(expected_format, ext) => {
+            let detected = typst::visualize::ExchangeFormat::detect(bytes.as_slice())?;
+            if detected != expected_format {
+                return None;
+            }
+            typst::visualize::RasterImage::plain(bytes.clone(), expected_format).ok()?;
+            Some((ext, bytes))
+        }
+        DataImageFormat::Svg => {
+            std::str::from_utf8(bytes.as_slice()).ok()?;
+            typst::visualize::SvgImage::new(bytes.clone()).ok()?;
+            Some(("svg", bytes))
+        }
+    }
+}
+
+pub fn resolve_data_image_uri_with_limit(
+    uri: &str,
+    virtual_files: &mut HashMap<PathBuf, Bytes>,
+    max_bytes: usize,
+) -> Option<String> {
+    let (ext, bytes) = decode_data_image_uri_with_limit(uri, max_bytes)?;
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(bytes.as_slice());
+    let hash = format!("{:x}", hasher.finalize());
+    let virtual_filename = format!("data_image_{}.{ext}", &hash[..32]);
+    virtual_files
+        .entry(PathBuf::from(&virtual_filename))
+        .or_insert(bytes);
+    Some(virtual_filename)
+}
+
+pub fn resolve_data_image_uri(
+    uri: &str,
+    virtual_files: &mut HashMap<PathBuf, Bytes>,
+) -> Option<String> {
+    resolve_data_image_uri_with_limit(uri, virtual_files, MAX_DATA_IMAGE_BYTES)
+}
+
+fn resolve_image_source(
+    src: &str,
+    custom_cache: Option<&Path>,
+    virtual_files: &mut HashMap<PathBuf, Bytes>,
+) -> Option<String> {
+    let trimmed = src.trim();
+    if is_data_uri(trimmed) {
+        resolve_data_image_uri(trimmed, virtual_files)
+    } else if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        find_cached_image_file(custom_cache, trimmed)
+    } else {
+        let normalized = normalize_local_image_path(trimmed);
+        if is_local_image_path_valid(&normalized) {
+            Some(normalized)
+        } else {
+            log_escaping_image_path(src);
+            None
         }
     }
 }
@@ -371,23 +622,101 @@ fn decode_html_entities(s: &str) -> String {
         .replace("&nbsp;", " ")
 }
 
-fn extract_html_attr(tag: &str, attr: &str) -> Option<String> {
-    let lower_tag = tag.to_lowercase();
-    let needle_double = format!("{}=\"", attr);
-    let needle_single = format!("{}='", attr);
-    let (start_idx, quote_char) = if let Some(pos) = lower_tag.find(&needle_double) {
-        (pos + needle_double.len(), '"')
-    } else if let Some(pos) = lower_tag.find(&needle_single) {
-        (pos + needle_single.len(), '\'')
-    } else {
-        return None;
-    };
-    let rest = &tag[start_idx..];
-    if let Some(end_idx) = rest.find(quote_char) {
-        Some(rest[..end_idx].to_string())
-    } else {
-        None
+fn find_html_tag_end(tag_start: &str) -> Option<usize> {
+    if tag_start.starts_with("<!--") {
+        return tag_start.find("-->").map(|pos| pos + 2);
     }
+    let bytes = tag_start.as_bytes();
+    let mut in_quote: Option<u8> = None;
+    for (i, &b) in bytes.iter().enumerate().skip(1) {
+        match in_quote {
+            Some(q) if b == q => in_quote = None,
+            Some(_) => {}
+            None if b == b'"' || b == b'\'' => in_quote = Some(b),
+            None if b == b'>' => return Some(i),
+            None => {}
+        }
+    }
+    None
+}
+
+fn extract_html_attr(tag: &str, attr: &str) -> Option<String> {
+    let bytes = tag.as_bytes();
+    let mut i = 0;
+
+    // Skip leading '<' and tag name
+    if i < bytes.len() && bytes[i] == b'<' {
+        i += 1;
+    }
+    while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' && bytes[i] != b'/' {
+        i += 1;
+    }
+
+    while i < bytes.len() {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() || bytes[i] == b'>' || bytes[i] == b'/' {
+            break;
+        }
+
+        let name_start = i;
+        while i < bytes.len()
+            && !bytes[i].is_ascii_whitespace()
+            && bytes[i] != b'='
+            && bytes[i] != b'>'
+            && bytes[i] != b'/'
+        {
+            i += 1;
+        }
+        let name = &tag[name_start..i];
+
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+
+        if i < bytes.len() && bytes[i] == b'=' {
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i >= bytes.len() {
+                break;
+            }
+            let val = if bytes[i] == b'"' || bytes[i] == b'\'' {
+                let quote = bytes[i];
+                i += 1;
+                let val_start = i;
+                while i < bytes.len() && bytes[i] != quote {
+                    i += 1;
+                }
+                if i >= bytes.len() {
+                    return None;
+                }
+                let v = &tag[val_start..i];
+                i += 1;
+                v
+            } else {
+                let val_start = i;
+                while i < bytes.len()
+                    && !bytes[i].is_ascii_whitespace()
+                    && bytes[i] != b'>'
+                    && bytes[i] != b'/'
+                {
+                    i += 1;
+                }
+                &tag[val_start..i]
+            };
+
+            if name.eq_ignore_ascii_case(attr) {
+                return Some(val.to_string());
+            }
+        } else if name.is_empty() {
+            i += 1;
+        }
+    }
+
+    None
 }
 
 fn parse_dimension(val: &str) -> Option<String> {
@@ -503,32 +832,30 @@ fn render_html_image(
     badge_stroke: &str,
     badge_fg: &str,
     custom_cache: Option<&Path>,
+    virtual_files: &mut HashMap<PathBuf, Bytes>,
 ) -> String {
     let src = extract_html_attr(tag, "src").unwrap_or_default();
     if src.is_empty() {
         return String::new();
     }
-    let alt = extract_html_attr(tag, "alt").unwrap_or_else(|| "图片".to_string());
+    let alt = extract_html_attr(tag, "alt")
+        .map(|s| decode_html_entities(&s))
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "图片".to_string());
     let width = extract_html_attr(tag, "width");
     let height = extract_html_attr(tag, "height");
 
-    let is_url = src.starts_with("http://") || src.starts_with("https://");
-    let resolved_src = if is_url {
-        find_cached_image_file(custom_cache, &src)
-    } else {
-        let normalized = normalize_local_image_path(&src);
-        if is_local_image_path_valid(&normalized) {
-            Some(normalized)
-        } else {
-            log_escaping_image_path(&src);
-            None
-        }
-    };
+    let resolved_src = resolve_image_source(&src, custom_cache, virtual_files);
 
     let resolved_src = match resolved_src {
         Some(s) => s,
         None => {
             let escaped_alt = escape_typst_text(&alt);
+            if is_data_uri(&src) {
+                return format!(
+                    "#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 5pt, y: 2.5pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🖼️ {escaped_alt}]]"
+                );
+            }
             let escaped_src = escape_typst_string(&src);
             return format!(
                 "#link(\"{escaped_src}\")[#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 5pt, y: 2.5pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🖼️ {escaped_alt}]]]"
@@ -576,6 +903,7 @@ struct HtmlTranspiler<'a> {
     badge_stroke: &'a str,
     badge_fg: &'a str,
     custom_cache: Option<&'a Path>,
+    pending_tag: String,
 }
 
 impl<'a> HtmlTranspiler<'a> {
@@ -595,23 +923,44 @@ impl<'a> HtmlTranspiler<'a> {
             badge_stroke,
             badge_fg,
             custom_cache,
+            pending_tag: String::new(),
         }
     }
 
-    fn transpile_chunk(&mut self, chunk: &str, out: &mut String) {
-        let mut rest = chunk;
+    fn flush_pending_tag(&mut self, out: &mut String) {
+        if !self.pending_tag.is_empty() {
+            let pending = std::mem::take(&mut self.pending_tag);
+            out.push_str(&escape_typst_text(&decode_html_entities(&pending)));
+        }
+    }
+
+    fn transpile_chunk(
+        &mut self,
+        chunk: &str,
+        out: &mut String,
+        virtual_files: &mut HashMap<PathBuf, Bytes>,
+    ) {
+        let combined;
+        let mut rest = if !self.pending_tag.is_empty() {
+            let mut buf = std::mem::take(&mut self.pending_tag);
+            buf.push_str(chunk);
+            combined = buf;
+            combined.as_str()
+        } else {
+            chunk
+        };
         while !rest.is_empty() {
             if let Some(start) = rest.find('<') {
                 let (before, tag_start) = rest.split_at(start);
                 if !before.is_empty() {
                     out.push_str(&escape_typst_text(&decode_html_entities(before)));
                 }
-                if let Some(end) = tag_start.find('>') {
+                if let Some(end) = find_html_tag_end(tag_start) {
                     let tag = &tag_start[..=end];
                     rest = &tag_start[end + 1..];
-                    self.handle_tag(tag, out);
+                    self.handle_tag(tag, out, virtual_files);
                 } else {
-                    out.push_str(&escape_typst_text(&decode_html_entities(tag_start)));
+                    self.pending_tag.push_str(tag_start);
                     break;
                 }
             } else {
@@ -621,7 +970,12 @@ impl<'a> HtmlTranspiler<'a> {
         }
     }
 
-    fn handle_tag(&mut self, tag: &str, out: &mut String) {
+    fn handle_tag(
+        &mut self,
+        tag: &str,
+        out: &mut String,
+        virtual_files: &mut HashMap<PathBuf, Bytes>,
+    ) {
         let lower = tag.to_lowercase();
         let trimmed_lower = lower.trim();
         if trimmed_lower.starts_with("<!--") {
@@ -671,6 +1025,7 @@ impl<'a> HtmlTranspiler<'a> {
                 self.badge_stroke,
                 self.badge_fg,
                 self.custom_cache,
+                virtual_files,
             );
             out.push_str(&rendered);
         } else if (trimmed_lower.starts_with("<div")
@@ -727,6 +1082,7 @@ impl<'a> HtmlTranspiler<'a> {
     }
 
     fn finish(&mut self, out: &mut String) {
+        self.flush_pending_tag(out);
         while self.center_depth > 0 {
             self.center_depth -= 1;
             out.push_str("]\n\n");
@@ -1782,19 +2138,9 @@ pub fn convert_markdown_to_typst(
                         };
                         let escaped_alt = escape_typst_text(&alt);
                         let in_link = link_stack.iter().any(|&active| active);
-
-                        let is_url = url.starts_with("http://") || url.starts_with("https://");
-                        let resolved_image = if is_url {
-                            find_cached_image_file(custom_cache, &url)
-                        } else {
-                            let normalized = normalize_local_image_path(&url);
-                            if is_local_image_path_valid(&normalized) {
-                                Some(normalized)
-                            } else {
-                                log_escaping_image_path(&url);
-                                None
-                            }
-                        };
+                        let is_data = is_data_uri(&url);
+                        let resolved_image =
+                            resolve_image_source(&url, custom_cache, &mut virtual_files);
 
                         if let Some(target_path) = resolved_image {
                             let (img_stroke, img_radius) = if is_dark {
@@ -1807,8 +2153,8 @@ pub fn convert_markdown_to_typst(
                             // explicit hard breaks, rather than image loading, control wrapping.
                             out.push_str(&format!("#box(radius: {img_radius}, stroke: {img_stroke}, clip: true)[#image(\"{escaped_target_path}\")]"));
                         } else {
-                            // Remote image not yet cached: render elegant clickable placeholder badge
-                            if in_link {
+                            // Remote image not yet cached or invalid inline data URI: render placeholder badge
+                            if in_link || is_data {
                                 out.push_str(&format!(
                                     "#box(fill: {badge_bg}, stroke: 0.5pt + {badge_stroke}, radius: 3pt, inset: (x: 5pt, y: 2.5pt), baseline: 10%)[#text(size: 8pt, weight: \"medium\", fill: {badge_fg})[🖼️ {}]]",
                                     escaped_alt
@@ -1902,7 +2248,7 @@ pub fn convert_markdown_to_typst(
             Event::SoftBreak => out.push('\n'),
             Event::HardBreak => out.push_str("\\ \n"),
             Event::Html(raw) | Event::InlineHtml(raw) => {
-                html_transpiler.transpile_chunk(&raw, &mut out);
+                html_transpiler.transpile_chunk(&raw, &mut out, &mut virtual_files);
             }
             _ => {}
         }
@@ -2871,5 +3217,113 @@ size: 16:9
         assert!(parsed_escape.typst_source.contains("abs2"));
         assert!(parsed_escape.typst_source.contains("data"));
         assert!(parsed_escape.typst_source.contains("notes"));
+    }
+
+    #[test]
+    fn test_data_image_uri_markdown_html_deduplication_and_svg_variants() {
+        let opts = RenderOptions::default();
+        // Valid 32x32 red square PNG in Base64
+        let red_square_png_uri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKElEQVR4nO3NsQ0AAAzCMP5/un0CNkuZ41wybXsHAAAAAAAAAAAAxR4yw/wuPL6QkAAAAABJRU5ErkJggg==";
+        let svg_base64_uri = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0IiBmaWxsPSIjMDA4OGZmIi8+PC9zdmc+";
+        let svg_utf8_uri = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'><rect width='20' height='20' fill='green'/></svg>";
+        let svg_percent_uri = "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%3E%3Ccircle%20cx%3D%228%22%20cy%3D%228%22%20r%3D%226%22%20fill%3D%22orange%22%2F%3E%3C%2Fsvg%3E";
+
+        let md = format!(
+            "# Data Image Test\n\n\
+            Markdown PNG:\n\
+            ![Red Square]({red_square_png_uri})\n\n\
+            HTML PNG (duplicate payload):\n\
+            <img src=\"{red_square_png_uri}\" alt=\"Red Square HTML\" width=\"64\" />\n\n\
+            Markdown SVG base64:\n\
+            ![Blue Box]({svg_base64_uri})\n\n\
+            HTML SVG utf8 with inner '>' and width attributes:\n\
+            <img src=\"{svg_utf8_uri}\" alt=\"Green SVG\" width=\"40\" />\n\n\
+            Markdown SVG percent-encoded:\n\
+            ![Orange Circle]({svg_percent_uri})\n"
+        );
+
+        let parsed = convert_markdown_to_typst(&md, "Data URI Test", &opts);
+
+        // 1. Raw data:image/... strings must never be passed directly to #image(...)
+        assert!(!parsed.typst_source.contains("#image(\"data:"));
+
+        // 2. Duplicate PNG references across Markdown and HTML must share 1 virtual file entry;
+        //    plus 3 distinct SVGs = 4 virtual files total.
+        assert_eq!(parsed.virtual_files.len(), 4);
+
+        let png_vfiles: Vec<_> = parsed
+            .virtual_files
+            .keys()
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("png"))
+            .collect();
+        assert_eq!(png_vfiles.len(), 1);
+        let png_vname = png_vfiles[0].to_string_lossy();
+
+        // Markdown and HTML both reference the same virtual filename, and HTML width="64" (64pt) is preserved
+        assert!(parsed.typst_source.contains(&format!("#image(\"{png_vname}\")")));
+        assert!(parsed
+            .typst_source
+            .contains(&format!("#image(\"{png_vname}\", width: 64pt)")));
+
+        // 3. Verify HTML <img src="data:image/svg+xml;utf8,<svg ... width='20' ...>"> extracted outer width="40" (40pt)
+        //    rather than the inner SVG width='20', and did not break at the inner '>' characters.
+        assert!(parsed.typst_source.contains("width: 40pt)"));
+        assert!(!parsed.typst_source.contains("</svg>"));
+    }
+
+    #[test]
+    fn test_data_image_uri_corrupted_invalid_and_oversized_graceful_fallback() {
+        let opts = RenderOptions::default();
+
+        // Includes:
+        // - Corrupted PNG base64 (truncated/corrupted zlib stream)
+        // - Invalid base64 characters
+        // - Unsupported MIME type (image/bmp, text/plain)
+        // - Corrupted SVG XML (both percent-encoded in Markdown and raw utf8 in HTML)
+        let corrupted_png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAKElEQVR4nO3NsQ0AAAzCMP5/un0CNkuZ41G29/d4A9YCVgJWAlb+BawErASsBKwErASsBKwErASsBKwErASsBKwErASsBKwErASsBKwErASsBKwErASsBKwErH4L2L3rAasBKwErASsBKwEruwF2fF333wAAAABJRU5ErkJggg==";
+        let truncated_png = "data:image/png;base64,iVBORw0KGgo=";
+        let invalid_b64 = "data:image/png;base64,@@@not_valid_base64@@@";
+        let unsupported_mime = "data:image/bmp;base64,Qk0=";
+        let broken_svg_md = "data:image/svg+xml;utf8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%3E%3Cunclosed%3E";
+        let broken_svg_html = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'><unclosed>";
+
+        let md = format!(
+            "Paragraph before images.\n\n\
+            ![Corrupted PNG]({corrupted_png})\n\n\
+            <img src=\"{truncated_png}\" alt=\"Truncated HTML PNG\" />\n\n\
+            ![Invalid B64]({invalid_b64})\n\n\
+            <img src=\"{unsupported_mime}\" alt=\"Unsupported BMP\" />\n\n\
+            ![Broken SVG]({broken_svg_md})\n\n\
+            <img src=\"{broken_svg_html}\" alt=\"Broken HTML SVG\" />\n\n\
+            Paragraph after images must remain intact."
+        );
+
+        let parsed = convert_markdown_to_typst(&md, "Corrupted Data URI", &opts);
+
+        // None of the invalid/corrupted data URIs may be registered in virtual_files or emitted as #image or #link
+        assert!(parsed.virtual_files.is_empty());
+        assert!(!parsed.typst_source.contains("#image("));
+        assert!(!parsed.typst_source.contains("#link(\"data:"));
+
+        // All fallback badges and surrounding text must be preserved
+        assert!(parsed.typst_source.contains("Paragraph before images."));
+        assert!(parsed.typst_source.contains("🖼️ Corrupted PNG"));
+        assert!(parsed.typst_source.contains("🖼️ Truncated HTML PNG"));
+        assert!(parsed.typst_source.contains("🖼️ Invalid B64"));
+        assert!(parsed.typst_source.contains("🖼️ Unsupported BMP"));
+        assert!(parsed.typst_source.contains("🖼️ Broken SVG"));
+        assert!(parsed.typst_source.contains("🖼️ Broken HTML SVG"));
+        assert!(parsed
+            .typst_source
+            .contains("Paragraph after images must remain intact."));
+
+        // Verify size cap enforcement on data:image URIs
+        let valid_png_uri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKElEQVR4nO3NsQ0AAAzCMP5/un0CNkuZ41wybXsHAAAAAAAAAAAAxR4yw/wuPL6QkAAAAABJRU5ErkJggg==";
+        let mut vfiles = HashMap::new();
+        assert!(
+            resolve_data_image_uri_with_limit(valid_png_uri, &mut vfiles, 32).is_none(),
+            "Data URI exceeding max_bytes limit must be rejected"
+        );
+        assert!(vfiles.is_empty());
     }
 }
