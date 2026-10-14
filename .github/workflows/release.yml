@@ -336,7 +336,7 @@ jobs:
   # =============================================================
   build-linux-amd64:
     name: Build Linux AMD64 (x86_64)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout Code
@@ -418,7 +418,7 @@ jobs:
   # =============================================================
   build-linux-arm64:
     name: Build Linux ARM64
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-22.04-arm
 
     steps:
       - name: Checkout Code
@@ -449,6 +449,7 @@ jobs:
         run: |
           git clone -b stable --depth 1 https://github.com/flutter/flutter.git $HOME/flutter
           echo "$HOME/flutter/bin" >> $GITHUB_PATH
+          $HOME/flutter/bin/flutter --version
 
       - name: Cache Rust Build
         uses: Swatinem/rust-cache@v2
@@ -554,6 +555,6 @@ jobs:
 
             #### 🐧 Linux 用户
             - **Intel / AMD 64位 Linux (x86_64 / amd64)**：下载 `SuperGoodViewer-${{ env.RELEASE_VERSION }}-linux-amd64.tar.gz`
-            - **ARM64 Linux（树莓派 4/5、飞腾/鲲鹏、ARM 服务器等）**：下载 `SuperGoodViewer-${{ env.RELEASE_VERSION }}-linux-arm64.tar.gz`（纯原生 ARM64 极致体验）
-            - **系统要求**：Ubuntu 20.04+、Debian 11+、Fedora、Arch Linux 等主流 64 位发行版（需安装 GTK 3 环境）
+            - **ARM64 Linux（树莓派 4/5、Apple Silicon Linux 虚拟机、ARM 云服务器等）**：下载 `SuperGoodViewer-${{ env.RELEASE_VERSION }}-linux-arm64.tar.gz`（纯原生 ARM64 极致体验）
+            - **系统要求**：glibc ≥ 2.35（Ubuntu 22.04+、Debian 12+ / Raspberry Pi OS Bookworm、Fedora、Arch Linux 等主流 64 位发行版，需安装 GTK 3 环境）
             - **使用方式**：解压 tar.gz 归档至任意目录，运行 `./supergoodviewer` 即可直接启动（绿色免安装）；亦可将解压目录中的 `bin/sgv` 脚本软链接至 `~/.local/bin/sgv`，在终端随时以命令行唤起。

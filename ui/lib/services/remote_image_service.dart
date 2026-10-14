@@ -88,6 +88,7 @@ class RemoteImageService {
   @visibleForTesting
   void resetForTesting() {
     _negativeCache.clear();
+    _imageSourcesCache.clear();
     _lastPruneTime = null;
     _tempFileCounter = 0;
   }
@@ -253,6 +254,9 @@ class RemoteImageService {
     return true;
   }
 
+  final Map<String, List<String>> _imageSourcesCache = {};
+  static const int _maxImageSourcesCacheEntries = 16;
+
   /// Extracts all distinct HTTP/HTTPS image URLs from Markdown (both Markdown `![]()` / `![][ref]`
   /// and HTML `<img src="">`), normalizing each URL by removing client fragments.
   ///
@@ -273,7 +277,7 @@ class RemoteImageService {
   @visibleForTesting
   List<String> extractRemoteImageUrlsFallback(String markdown) {
     final urls = <String>{};
-    for (final raw in extractAllImageSources(markdown)) {
+    for (final raw in extractAllImageSourcesFallback(markdown)) {
       if (raw.startsWith('http://') || raw.startsWith('https://')) {
         final clean = sanitizeImageUrl(raw);
         if (clean.isNotEmpty) {
@@ -288,7 +292,30 @@ class RemoteImageService {
   /// excluding inline `data:` URIs) referenced by Markdown image syntax (`![]()`, `![][ref]`, `![ref]`)
   /// and HTML `<img src=...>` tags, while ignoring YAML frontmatter, HTML comments, escaped syntax,
   /// and code blocks/spans.
+  ///
+  /// Delegates to the Rust `pulldown-cmark` AST when the native library is available and memoizes
+  /// results by Markdown content to avoid repeated parsing across open, tab switch, compile, and watch.
   List<String> extractAllImageSources(String markdown) {
+    if (markdown.isEmpty) return const [];
+    final cached = _imageSourcesCache[markdown];
+    if (cached != null) return cached;
+
+    final result = NativeEngine.instance.extractImageSources(markdown) ??
+        extractAllImageSourcesFallback(markdown);
+
+    if (_imageSourcesCache.length >= _maxImageSourcesCacheEntries) {
+      _imageSourcesCache.remove(_imageSourcesCache.keys.first);
+    }
+    final unmodifiable = List<String>.unmodifiable(result);
+    _imageSourcesCache[markdown] = unmodifiable;
+    return unmodifiable;
+  }
+
+  /// Pure-Dart fallback for extracting all image sources (local and remote, excluding `data:` URIs)
+  /// when the native FFI library is unavailable.
+  @visibleForTesting
+  List<String> extractAllImageSourcesFallback(String markdown) {
+    if (markdown.isEmpty) return const [];
     final sources = <String>{};
 
     void recordSource(String? rawSrc) {
@@ -298,7 +325,14 @@ class RemoteImageService {
       if (trimmed.length >= 5 && trimmed.substring(0, 5).toLowerCase() == 'data:') {
         return;
       }
-      sources.add(trimmed);
+      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        final clean = sanitizeImageUrl(trimmed);
+        if (clean.isNotEmpty) {
+          sources.add(clean);
+        }
+      } else {
+        sources.add(trimmed);
+      }
     }
 
     final body = _stripNonProseRegions(markdown);
@@ -349,20 +383,14 @@ class RemoteImageService {
         }
       }
 
-      // 2. HTML <img ...>
-      if (ch == 0x3C /* < */ && i + 4 < len) {
-        final rest = bodyWithoutDefs.substring(i);
-        if (rest.length >= 4 && rest.substring(0, 4).toLowerCase() == '<img') {
-          final nextChar = rest.length > 4 ? rest.codeUnitAt(4) : 0x20;
-          if (nextChar == 0x20 || nextChar == 0x09 || nextChar == 0x0A || nextChar == 0x0D || nextChar == 0x2F) {
-            final tagEnd = _findHtmlTagEnd(bodyWithoutDefs, i);
-            if (tagEnd != null) {
-              final tag = bodyWithoutDefs.substring(i, tagEnd + 1);
-              recordSource(_extractHtmlSrcAttr(tag));
-              i = tagEnd + 1;
-              continue;
-            }
-          }
+      // 2. HTML <img ...> (in-place O(1) prefix check, no substring copy)
+      if (ch == 0x3C /* < */ && _isImgTagStart(bodyWithoutDefs, i)) {
+        final tagEnd = _findHtmlTagEnd(bodyWithoutDefs, i);
+        if (tagEnd != null) {
+          final tag = bodyWithoutDefs.substring(i, tagEnd + 1);
+          recordSource(_extractHtmlSrcAttr(tag));
+          i = tagEnd + 1;
+          continue;
         }
       }
 
@@ -680,16 +708,42 @@ class RemoteImageService {
   static bool _isSpaceOrNewline(int ch) =>
       ch == 0x20 || ch == 0x09 || ch == 0x0A || ch == 0x0D;
 
+  static bool _isImgTagStart(String s, int i) {
+    if (i + 4 >= s.length) return false;
+    final c1 = s.codeUnitAt(i + 1) | 0x20;
+    final c2 = s.codeUnitAt(i + 2) | 0x20;
+    final c3 = s.codeUnitAt(i + 3) | 0x20;
+    if (c1 != 0x69 /* i */ || c2 != 0x6D /* m */ || c3 != 0x67 /* g */ ) {
+      return false;
+    }
+    final next = s.codeUnitAt(i + 4);
+    return _isSpaceOrNewline(next) || next == 0x2F /* / */ ;
+  }
+
   static int? _findHtmlTagEnd(String s, int startIdx) {
     int? inQuote;
+    bool afterEq = false;
     for (int i = startIdx + 1; i < s.length; i++) {
       final ch = s.codeUnitAt(i);
       if (inQuote != null) {
         if (ch == inQuote) inQuote = null;
-      } else if (ch == 0x22 /* " */ || ch == 0x27 /* ' */ ) {
-        inQuote = ch;
-      } else if (ch == 0x3E /* > */ ) {
-        return i;
+      } else {
+        if (ch == 0x3E /* > */ ) {
+          return i;
+        }
+        if (ch == 0x3C /* < */ ) {
+          return null;
+        }
+        if (ch == 0x3D /* = */ ) {
+          afterEq = true;
+        } else if (ch == 0x22 /* " */ || ch == 0x27 /* ' */ ) {
+          if (afterEq) {
+            inQuote = ch;
+            afterEq = false;
+          }
+        } else if (!_isSpaceOrNewline(ch)) {
+          afterEq = false;
+        }
       }
     }
     return null;

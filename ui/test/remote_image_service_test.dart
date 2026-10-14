@@ -155,6 +155,37 @@ Ignored pseudo-images:
       expect(service.extractRemoteImageUrlsFallback(htmlAttrMarkdown), expected);
     });
 
+    test('extractAllImageSources handles prose < and apostrophes inside HTML blocks and runs in O(n) on large documents', () {
+      final service = RemoteImageService.instance;
+      const regressionMd = '<div>\na < b and it\'s fine > ok\n</div>\n\nText <img src="x.png"> and ![remote](https://example.com/r.png#frag) end\n';
+      expect(
+        service.extractAllImageSources(regressionMd),
+        ['x.png', 'https://example.com/r.png'],
+      );
+      expect(
+        service.extractAllImageSourcesFallback(regressionMd),
+        ['x.png', 'https://example.com/r.png'],
+      );
+
+      // Verify O(n) performance on a ~500 KB document with thousands of '<' and HTML tags
+      final bigBuffer = StringBuffer();
+      for (int i = 0; i < 6000; i++) {
+        bigBuffer.writeln('<div>Line $i: 1 < 2 and a < b and it\'s fine > ok <span>tag</span></div>');
+      }
+      bigBuffer.writeln('<img src="sub/final.png" width=64>');
+      final bigMarkdown = bigBuffer.toString();
+
+      final sw = Stopwatch()..start();
+      final fallbackSources = service.extractAllImageSourcesFallback(bigMarkdown);
+      sw.stop();
+      expect(fallbackSources, ['sub/final.png']);
+      expect(
+        sw.elapsedMilliseconds,
+        lessThan(2000),
+        reason: 'Dart fallback image source extraction must be O(n) without substring copying',
+      );
+    });
+
     test('computeExtension uses path last segment and handles deceptive directory names', () {
       expect(RemoteImageService.computeExtension('https://cdn.x/.png-assets/a.jpg'), 'jpg');
       expect(RemoteImageService.computeExtension('https://cdn.x/.png-assets/a.jpeg?token=123'), 'jpg');

@@ -211,6 +211,30 @@ pub extern "C" fn sogood_extract_remote_image_urls_json(
     .unwrap_or_else(|_| std::ptr::null_mut())
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn sogood_extract_image_sources_json(
+    markdown_ptr: *const c_char,
+) -> *mut c_char {
+    std::panic::catch_unwind(|| {
+        if markdown_ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        let markdown = match unsafe { CStr::from_ptr(markdown_ptr) }.to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let sources = crate::parser::markdown::extract_image_sources(markdown);
+        match serde_json::to_string(&sources) {
+            Ok(json) => match CString::new(json) {
+                Ok(c_str) => c_str.into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            },
+            Err(_) => std::ptr::null_mut(),
+        }
+    })
+    .unwrap_or_else(|_| std::ptr::null_mut())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

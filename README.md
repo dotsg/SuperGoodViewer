@@ -240,11 +240,20 @@ cat draft.md | sgv export - -o draft.pdf
 ## 📝 更新日志 (Changelog)
 
 ### v1.1.1 (2026-10)
+- **内联 `data:image/...` 图片渲染支持 (#21)**：
+  - 全面支持 Markdown `![](data:image/...)` 与 HTML `<img src="data:image/...">` 内联图片（涵盖 PNG、JPEG、GIF、WebP 及 SVG 的 Base64 与 raw/percent-encoded UTF-8 编码）；
+  - 基于内容 SHA-256 虚拟文件自动去重与校验结果缓存，支持最大 10 MiB 解码上限及损坏数据优雅降级为占位徽标。
+- **本地图片附件热重载与缓存指纹联动 (#22)**：
+  - 将文档引用的本地图片附件与远程缓存图片内容指纹纳入 PDF 磁盘缓存键，图片文件在外部被替换或重绘后重开文档自动失效旧缓存并重新编译；
+  - 文件监听器同步监听文档引用的本地图片附件（含子目录及大小写不敏感文件系统匹配），实现仅修改图片、不改 Markdown 时的实时自动热重载。
+- **网络图片 URL 提取全面对齐 Markdown AST (#24)**：
+  - 通过 Rust `pulldown-cmark` AST FFI 导出与 Dart 降级解析器双端对齐，完整支持带标题图片（`![a](url "title")`）、尖括号目标（`![a](<url>)`）及引用式图片（`![a][ref]` / `![ref][]` / `![ref]`），精准忽略转义语法与代码块中的伪图片文本。
+- **HTML `<img>` 属性语法兼容性增强 (#25)**：
+  - 支持属性等号两侧带空格（`src = "..."`、`width = 120`）及无引号属性值（`src=red.png`、`src=sub/red.png`、`src=https://...`），严格按属性名边界匹配避免误伤 `data-src` / `srcset`。
 - **Linux ARM64 原生发布支持与旧版本自动更新平滑兼容 (Native ARM64 Linux & Auto-Update)**：
-  - 新增 GitHub Actions Linux ARM64 CI 构建流水线（基于原生 `ubuntu-24.04-arm` 运行器），提供专为 64 位 ARM 设备编译的便携归档包（`SuperGoodViewer-*-linux-arm64.tar.gz`）；
-  - 全面支持树莓派 4/5、飞腾/鲲鹏国产架构 PC、ARM64 Linux 虚拟机及云服务器；
-  - **旧版自动更新无缝兼容**：Linux 64 位 Intel/AMD 安装包规范命名为 `linux-amd64.tar.gz`，借助 ASCII 字典序优先机制（`amd64` 排序天然优先于 `arm64`），彻底避免旧版本（v1.0.6~v1.1.0）x86 客户端误下载 ARM64 包，实现 100% 零感平滑自动升级；
-  - `UpdateService` 新增 Linux 宿主 CPU 架构探测（`aarch64` / `arm64`），升级至 1.1.1 后后续全版本享有严格的双向架构过滤；
+  - 新增 GitHub Actions Linux ARM64 CI 构建流水线（固定 `ubuntu-22.04` / `ubuntu-22.04-arm` 运行器，兼容 glibc ≥ 2.35 的 Ubuntu 22.04+、Debian 12+ / Raspberry Pi OS Bookworm 等主流发行版），提供专为 64 位 ARM 设备编译的便携归档包（`SuperGoodViewer-*-linux-arm64.tar.gz`）；
+  - **旧版自动更新无缝兼容**：Linux 64 位 Intel/AMD 安装包规范命名为 `linux-amd64.tar.gz`，借助 ASCII 字典序优先机制（`amd64` 排序天然优先于 `arm64`），避免旧版本（v1.0.6~v1.1.0）x86 客户端误下载 ARM64 包，实现平滑自动升级；
+  - `UpdateService` 新增 Linux 宿主 CPU 架构探测（`aarch64` / `arm64`）与跨架构降级保护，升级至 1.1.1 后后续全版本享有严格的双向架构过滤；
   - `Makefile` 构建脚本全面支持基于 `uname -m` 自动检测并编译打包 Linux amd64 与 arm64 产物。
 
 ### v1.1.0 (2026-10)

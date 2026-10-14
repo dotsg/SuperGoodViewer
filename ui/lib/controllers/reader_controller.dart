@@ -126,15 +126,18 @@ class ReaderController extends ChangeNotifier {
       _persistDebounced();
       return;
     }
+    if (_autoReload && doc.filePath != null && doc.watcherSubscriptions.isEmpty) {
+      _setupFileWatcher(doc);
+    }
     renderOptionsChanged = false;
     _startReloading(doc);
     _persistDebounced();
     notifyListeners();
-    if (_needsRerender(doc)) {
-      final options = _optionsFor(doc);
-      final fingerprint = doc.filePath != null
-          ? DocumentCacheService.computeAttachmentFingerprint(doc.filePath!, doc.markdown, options)
-          : '';
+    final options = _optionsFor(doc);
+    final fingerprint = (!_isPdf(doc) && doc.markdown.isNotEmpty && doc.filePath != null)
+        ? DocumentCacheService.computeAttachmentFingerprint(doc.filePath!, doc.markdown, options)
+        : '';
+    if (_needsRerender(doc, currentOptions: options, currentFingerprint: fingerprint)) {
       final cached = doc.filePath != null
           ? DocumentCacheService.getCachedPdf(
               doc.filePath!,
@@ -150,23 +153,28 @@ class ReaderController extends ChangeNotifier {
         notifyListeners();
       } else {
         renderOptionsChanged = true;
-        _compile(doc);
+        _compile(doc, precomputedFingerprint: fingerprint);
       }
     }
   }
 
-  bool _needsRerender(DocumentSession doc) {
+  bool _needsRerender(
+    DocumentSession doc, {
+    RenderOptions? currentOptions,
+    String? currentFingerprint,
+  }) {
     if (_isPdf(doc) || doc.markdown.isEmpty) return false;
     final rendered = doc.renderedWith;
     if (rendered == null) return doc.pdfBytes == null;
-    final current = _optionsFor(doc);
+    final current = currentOptions ?? _optionsFor(doc);
     if (doc.filePath != null) {
-      final currentFingerprint = DocumentCacheService.computeAttachmentFingerprint(
-        doc.filePath!,
-        doc.markdown,
-        current,
-      );
-      if (currentFingerprint != doc.attachmentFingerprint) {
+      final fp = currentFingerprint ??
+          DocumentCacheService.computeAttachmentFingerprint(
+            doc.filePath!,
+            doc.markdown,
+            current,
+          );
+      if (fp != doc.attachmentFingerprint) {
         return true;
       }
     }
@@ -1177,6 +1185,9 @@ class ReaderController extends ChangeNotifier {
         norm = norm.substring('/private'.length);
       }
     }
+    if (Platform.isMacOS || Platform.isWindows) {
+      norm = norm.toLowerCase();
+    }
     return norm;
   }
 
@@ -1328,7 +1339,7 @@ class ReaderController extends ChangeNotifier {
             _triggerRemoteImageDownloads(doc);
           }
           _startReloading(doc);
-          await _compile(doc);
+          await _compile(doc, precomputedFingerprint: nextFingerprint);
         } catch (e) {
           debugPrint('Failed to reload modified file: $e');
         }
@@ -1381,7 +1392,10 @@ class ReaderController extends ChangeNotifier {
 
   Future<void> compileDocument() => _compile(_doc);
 
-  Future<void> _compile(DocumentSession doc) async {
+  Future<void> _compile(
+    DocumentSession doc, {
+    String? precomputedFingerprint,
+  }) async {
     if (_isPdf(doc)) return;
     if (doc.markdown.isEmpty) return;
 
@@ -1406,13 +1420,27 @@ class ReaderController extends ChangeNotifier {
         return;
       }
 
-      final docDir = doc.filePath != null
-          ? p.dirname(doc.filePath!)
+      final filePathSnapshot = doc.filePath;
+      final markdownSnapshot = doc.markdown;
+      final docDir = filePathSnapshot != null
+          ? p.dirname(filePathSnapshot)
           : Directory.current.path;
 
       final options = _optionsFor(doc);
+      // Snapshot attachment fingerprint BEFORE starting async compilation so that if an
+      // attachment is modified on disk while compilation is in flight, the old PDF is not
+      // saved under the new attachment's fingerprint.
+      final fingerprintSnapshot = filePathSnapshot != null
+          ? (precomputedFingerprint ??
+              DocumentCacheService.computeAttachmentFingerprint(
+                filePathSnapshot,
+                markdownSnapshot,
+                options,
+              ))
+          : '';
+
       final result = await NativeEngine.instance.compileMarkdownResultAsync(
-        doc.markdown,
+        markdownSnapshot,
         title: doc.title,
         docDir: docDir,
         options: options,
@@ -1433,20 +1461,15 @@ class ReaderController extends ChangeNotifier {
             );
           }
           debugPrint('[ReaderController] compileDocument: SUCCESS gen $generation (${pdfBytes.length} bytes)');
-          if (doc.filePath != null) {
-            final fingerprint = DocumentCacheService.computeAttachmentFingerprint(
-              doc.filePath!,
-              doc.markdown,
-              options,
-            );
-            doc.attachmentFingerprint = fingerprint;
+          if (filePathSnapshot != null) {
+            doc.attachmentFingerprint = fingerprintSnapshot;
             unawaited(
               DocumentCacheService.saveCachedPdf(
-                doc.filePath!,
+                filePathSnapshot,
                 options,
                 pdfBytes,
-                markdown: doc.markdown,
-                attachmentFingerprint: fingerprint,
+                markdown: markdownSnapshot,
+                attachmentFingerprint: fingerprintSnapshot,
               ),
             );
           }
@@ -1748,8 +1771,12 @@ class ReaderController extends ChangeNotifier {
 
   void setAutoReload(bool enabled) {
     _autoReload = enabled;
-    if (enabled && _doc.filePath != null) {
-      _setupFileWatcher(_doc);
+    if (enabled) {
+      for (final session in _sessions) {
+        if (session.isLoaded && session.filePath != null) {
+          _setupFileWatcher(session);
+        }
+      }
     } else {
       for (final session in _sessions) {
         session.cancelWatchers();

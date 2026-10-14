@@ -466,7 +466,47 @@ fn decode_percent_bytes_bounded(s: &str, max_bytes: usize) -> Option<Vec<u8>> {
     Some(out)
 }
 
-pub fn decode_data_image_uri_with_limit(uri: &str, max_bytes: usize) -> Option<(&'static str, Bytes)> {
+fn validate_decoded_data_image(format: DataImageFormat, bytes: &Bytes, digest: [u8; 32]) -> Option<&'static str> {
+    use std::sync::{Mutex, OnceLock};
+    static VALIDATION_CACHE: OnceLock<Mutex<HashMap<([u8; 32], &'static str), bool>>> = OnceLock::new();
+
+    let ext = match format {
+        DataImageFormat::Raster(_, ext) => ext,
+        DataImageFormat::Svg => "svg",
+    };
+
+    let cache = VALIDATION_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(guard) = cache.lock() {
+        if let Some(&is_valid) = guard.get(&(digest, ext)) {
+            return if is_valid { Some(ext) } else { None };
+        }
+    }
+
+    let is_valid = match format {
+        DataImageFormat::Raster(expected_format, _) => {
+            typst::visualize::ExchangeFormat::detect(bytes.as_slice()) == Some(expected_format)
+                && typst::visualize::RasterImage::plain(bytes.clone(), expected_format).is_ok()
+        }
+        DataImageFormat::Svg => {
+            std::str::from_utf8(bytes.as_slice()).is_ok()
+                && typst::visualize::SvgImage::new(bytes.clone()).is_ok()
+        }
+    };
+
+    if let Ok(mut guard) = cache.lock() {
+        if guard.len() >= 512 {
+            guard.clear();
+        }
+        guard.insert((digest, ext), is_valid);
+    }
+
+    if is_valid { Some(ext) } else { None }
+}
+
+fn decode_and_hash_data_image_uri_with_limit(
+    uri: &str,
+    max_bytes: usize,
+) -> Option<(&'static str, Bytes, [u8; 32])> {
     let trimmed = uri.trim();
     let prefix = trimmed.get(..5)?;
     if !prefix.eq_ignore_ascii_case("data:") {
@@ -493,22 +533,19 @@ pub fn decode_data_image_uri_with_limit(uri: &str, max_bytes: usize) -> Option<(
         decode_percent_bytes_bounded(payload, max_bytes)?
     };
 
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(&decoded_bytes);
+    let digest: [u8; 32] = hasher.finalize().into();
+
     let bytes = Bytes::new(decoded_bytes);
-    match format {
-        DataImageFormat::Raster(expected_format, ext) => {
-            let detected = typst::visualize::ExchangeFormat::detect(bytes.as_slice())?;
-            if detected != expected_format {
-                return None;
-            }
-            typst::visualize::RasterImage::plain(bytes.clone(), expected_format).ok()?;
-            Some((ext, bytes))
-        }
-        DataImageFormat::Svg => {
-            std::str::from_utf8(bytes.as_slice()).ok()?;
-            typst::visualize::SvgImage::new(bytes.clone()).ok()?;
-            Some(("svg", bytes))
-        }
-    }
+    let ext = validate_decoded_data_image(format, &bytes, digest)?;
+    Some((ext, bytes, digest))
+}
+
+pub fn decode_data_image_uri_with_limit(uri: &str, max_bytes: usize) -> Option<(&'static str, Bytes)> {
+    let (ext, bytes, _) = decode_and_hash_data_image_uri_with_limit(uri, max_bytes)?;
+    Some((ext, bytes))
 }
 
 pub fn resolve_data_image_uri_with_limit(
@@ -516,12 +553,13 @@ pub fn resolve_data_image_uri_with_limit(
     virtual_files: &mut HashMap<PathBuf, Bytes>,
     max_bytes: usize,
 ) -> Option<String> {
-    let (ext, bytes) = decode_data_image_uri_with_limit(uri, max_bytes)?;
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(bytes.as_slice());
-    let hash = format!("{:x}", hasher.finalize());
-    let virtual_filename = format!("data_image_{}.{ext}", &hash[..32]);
+    let (ext, bytes, digest) = decode_and_hash_data_image_uri_with_limit(uri, max_bytes)?;
+    let mut hash_hex = String::with_capacity(32);
+    for b in &digest[..16] {
+        use std::fmt::Write;
+        let _ = write!(&mut hash_hex, "{b:02x}");
+    }
+    let virtual_filename = format!("data_image_{hash_hex}.{ext}");
     virtual_files
         .entry(PathBuf::from(&virtual_filename))
         .or_insert(bytes);
@@ -622,22 +660,61 @@ fn decode_html_entities(s: &str) -> String {
         .replace("&nbsp;", " ")
 }
 
-fn find_html_tag_end(tag_start: &str) -> Option<usize> {
-    if tag_start.starts_with("<!--") {
-        return tag_start.find("-->").map(|pos| pos + 2);
+enum HtmlTagScan {
+    Complete(usize),
+    Incomplete,
+    NotATag(usize),
+}
+
+fn is_html_tag_start(bytes: &[u8]) -> bool {
+    if bytes.len() < 2 || bytes[0] != b'<' {
+        return false;
     }
+    match bytes[1] {
+        b'a'..=b'z' | b'A'..=b'Z' | b'!' | b'?' => true,
+        b'/' => bytes.len() >= 3 && bytes[2].is_ascii_alphabetic(),
+        _ => false,
+    }
+}
+
+fn scan_html_tag(tag_start: &str) -> HtmlTagScan {
     let bytes = tag_start.as_bytes();
+    if !is_html_tag_start(bytes) {
+        return HtmlTagScan::NotATag(1);
+    }
+    if tag_start.starts_with("<!--") {
+        return match tag_start.find("-->") {
+            Some(pos) => HtmlTagScan::Complete(pos + 2),
+            None => HtmlTagScan::Incomplete,
+        };
+    }
     let mut in_quote: Option<u8> = None;
+    let mut after_eq = false;
     for (i, &b) in bytes.iter().enumerate().skip(1) {
         match in_quote {
             Some(q) if b == q => in_quote = None,
             Some(_) => {}
-            None if b == b'"' || b == b'\'' => in_quote = Some(b),
-            None if b == b'>' => return Some(i),
-            None => {}
+            None => {
+                if b == b'>' {
+                    return HtmlTagScan::Complete(i);
+                }
+                if b == b'<' {
+                    return HtmlTagScan::NotATag(i);
+                }
+                if b == b'=' {
+                    after_eq = true;
+                } else if b == b'"' || b == b'\'' {
+                    if after_eq {
+                        in_quote = Some(b);
+                        after_eq = false;
+                    }
+                } else if !b.is_ascii_whitespace() {
+                    after_eq = false;
+                }
+            }
         }
     }
-    None
+    HtmlTagScan::Incomplete
 }
 
 fn extract_html_attr(tag: &str, attr: &str) -> Option<String> {
@@ -934,12 +1011,30 @@ impl<'a> HtmlTranspiler<'a> {
         }
     }
 
-    fn flush_pending_tag(&mut self, out: &mut String) {
-        if !self.pending_tag.is_empty() {
+    fn flush_pending_tag(
+        &mut self,
+        out: &mut String,
+        virtual_files: &mut HashMap<PathBuf, Bytes>,
+    ) {
+        while !self.pending_tag.is_empty() {
             let pending = std::mem::take(&mut self.pending_tag);
+            if !pending.starts_with("<!--") {
+                if let Some(end) = pending.find('>') {
+                    let tag = &pending[..=end];
+                    let remainder = &pending[end + 1..];
+                    self.handle_tag(tag, out, virtual_files);
+                    if !remainder.is_empty() {
+                        self.transpile_chunk(remainder, out, virtual_files);
+                    }
+                    continue;
+                }
+            }
             out.push_str(&escape_typst_text(&decode_html_entities(&pending)));
         }
     }
+
+    const MAX_PENDING_HTML_TAG_BYTES: usize = 64 * 1024;
+    const MAX_PENDING_DATA_IMG_TAG_BYTES: usize = 15 * 1024 * 1024;
 
     fn transpile_chunk(
         &mut self,
@@ -962,13 +1057,34 @@ impl<'a> HtmlTranspiler<'a> {
                 if !before.is_empty() {
                     out.push_str(&escape_typst_text(&decode_html_entities(before)));
                 }
-                if let Some(end) = find_html_tag_end(tag_start) {
-                    let tag = &tag_start[..=end];
-                    rest = &tag_start[end + 1..];
-                    self.handle_tag(tag, out, virtual_files);
-                } else {
-                    self.pending_tag.push_str(tag_start);
-                    break;
+                match scan_html_tag(tag_start) {
+                    HtmlTagScan::Complete(end) => {
+                        let tag = &tag_start[..=end];
+                        rest = &tag_start[end + 1..];
+                        self.handle_tag(tag, out, virtual_files);
+                    }
+                    HtmlTagScan::NotATag(prefix_len) => {
+                        let literal = &tag_start[..prefix_len];
+                        out.push_str(&escape_typst_text(&decode_html_entities(literal)));
+                        rest = &tag_start[prefix_len..];
+                    }
+                    HtmlTagScan::Incomplete => {
+                        let is_data_img = tag_start
+                            .get(..4)
+                            .is_some_and(|p| p.eq_ignore_ascii_case("<img"))
+                            && tag_start.to_ascii_lowercase().contains("data:image/");
+                        let limit = if is_data_img {
+                            Self::MAX_PENDING_DATA_IMG_TAG_BYTES
+                        } else {
+                            Self::MAX_PENDING_HTML_TAG_BYTES
+                        };
+                        if tag_start.len() > limit {
+                            out.push_str(&escape_typst_text(&decode_html_entities(tag_start)));
+                        } else {
+                            self.pending_tag.push_str(tag_start);
+                        }
+                        break;
+                    }
                 }
             } else {
                 out.push_str(&escape_typst_text(&decode_html_entities(rest)));
@@ -1093,8 +1209,8 @@ impl<'a> HtmlTranspiler<'a> {
         }
     }
 
-    fn finish(&mut self, out: &mut String) {
-        self.flush_pending_tag(out);
+    fn finish(&mut self, out: &mut String, virtual_files: &mut HashMap<PathBuf, Bytes>) {
+        self.flush_pending_tag(out, virtual_files);
         while self.center_depth > 0 {
             self.center_depth -= 1;
             out.push_str("]\n\n");
@@ -1888,6 +2004,9 @@ pub fn convert_markdown_to_typst(
                 }
             }
         }
+        if !matches!(event, Event::Html(_) | Event::InlineHtml(_)) {
+            html_transpiler.flush_pending_tag(&mut out, &mut virtual_files);
+        }
         match event {
             Event::Start(tag) => match tag {
                 Tag::Paragraph => {
@@ -2257,7 +2376,7 @@ pub fn convert_markdown_to_typst(
         }
     }
 
-    html_transpiler.finish(&mut out);
+    html_transpiler.finish(&mut out, &mut virtual_files);
 
     if is_fluid_sliced {
         out.push_str("\n#v(56pt)\n");
@@ -2292,35 +2411,39 @@ fn markdown_parser_options() -> Options {
     parser_opts
 }
 
-/// Extracts all distinct HTTP/HTTPS remote image URLs from a Markdown document using
-/// the exact `pulldown-cmark` AST and HTML `<img>` scanner used during Typst rendering.
-///
-/// This guarantees that inline images with optional titles (`![a](url "title")`),
-/// angle-bracket destinations (`![a](<url>)`), reference-style images (`![a][ref]`),
-/// and HTML `<img src="...">` tags are discovered identically to rendering, while
-/// ignoring escaped syntax (`\![...]`), comments, and pseudo-image syntax in code blocks.
-pub fn extract_remote_image_urls(markdown_input: &str) -> Vec<String> {
+/// Extracts all distinct image sources (both local paths and remote HTTP/HTTPS URLs,
+/// excluding inline `data:` URIs) from a Markdown document using the exact `pulldown-cmark`
+/// AST and HTML `<img>` scanner used during Typst rendering.
+pub fn extract_image_sources(markdown_input: &str) -> Vec<String> {
     let (_, markdown_body) = extract_frontmatter(markdown_input);
     let parser = Parser::new_ext(markdown_body, markdown_parser_options());
 
-    let mut urls = Vec::new();
+    let mut sources = Vec::new();
     let mut seen = HashSet::new();
     let mut pending_html_tag = String::new();
 
-    let mut record_url = |raw_url: &str| {
-        let trimmed = raw_url.trim();
-        if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-            let clean = sanitize_image_url(trimmed).to_string();
-            if !clean.is_empty() && seen.insert(clean.clone()) {
-                urls.push(clean);
-            }
+    let mut record_source = |raw_src: &str| {
+        let trimmed = raw_src.trim();
+        if trimmed.is_empty() || is_data_uri(trimmed) {
+            return;
+        }
+        let normalized = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+            sanitize_image_url(trimmed).to_string()
+        } else {
+            trimmed.to_string()
+        };
+        if !normalized.is_empty() && seen.insert(normalized.clone()) {
+            sources.push(normalized);
         }
     };
 
     for event in parser {
+        if !matches!(event, Event::Html(_) | Event::InlineHtml(_)) {
+            pending_html_tag.clear();
+        }
         match event {
             Event::Start(Tag::Image { dest_url, .. }) => {
-                record_url(&dest_url);
+                record_source(&dest_url);
             }
             Event::Html(raw) | Event::InlineHtml(raw) => {
                 let combined;
@@ -2334,20 +2457,28 @@ pub fn extract_remote_image_urls(markdown_input: &str) -> Vec<String> {
                 while !rest.is_empty() {
                     if let Some(start) = rest.find('<') {
                         let (_, tag_start) = rest.split_at(start);
-                        if let Some(end) = find_html_tag_end(tag_start) {
-                            let tag = &tag_start[..=end];
-                            rest = &tag_start[end + 1..];
-                            let trimmed_lower = tag.trim().to_ascii_lowercase();
-                            if !trimmed_lower.starts_with("<!--")
-                                && trimmed_lower.starts_with("<img")
-                            {
-                                if let Some(src) = extract_html_attr(tag, "src") {
-                                    record_url(&src);
+                        match scan_html_tag(tag_start) {
+                            HtmlTagScan::Complete(end) => {
+                                let tag = &tag_start[..=end];
+                                rest = &tag_start[end + 1..];
+                                let trimmed_lower = tag.trim().to_ascii_lowercase();
+                                if !trimmed_lower.starts_with("<!--")
+                                    && trimmed_lower.starts_with("<img")
+                                {
+                                    if let Some(src) = extract_html_attr(tag, "src") {
+                                        record_source(&src);
+                                    }
                                 }
                             }
-                        } else {
-                            pending_html_tag.push_str(tag_start);
-                            break;
+                            HtmlTagScan::NotATag(prefix_len) => {
+                                rest = &tag_start[prefix_len..];
+                            }
+                            HtmlTagScan::Incomplete => {
+                                if tag_start.len() <= HtmlTranspiler::MAX_PENDING_HTML_TAG_BYTES {
+                                    pending_html_tag.push_str(tag_start);
+                                }
+                                break;
+                            }
                         }
                     } else {
                         break;
@@ -2358,7 +2489,21 @@ pub fn extract_remote_image_urls(markdown_input: &str) -> Vec<String> {
         }
     }
 
-    urls
+    sources
+}
+
+/// Extracts all distinct HTTP/HTTPS remote image URLs from a Markdown document using
+/// the exact `pulldown-cmark` AST and HTML `<img>` scanner used during Typst rendering.
+///
+/// This guarantees that inline images with optional titles (`![a](url "title")`),
+/// angle-bracket destinations (`![a](<url>)`), reference-style images (`![a][ref]`),
+/// and HTML `<img src="...">` tags are discovered identically to rendering, while
+/// ignoring escaped syntax (`\![...]`), comments, and pseudo-image syntax in code blocks.
+pub fn extract_remote_image_urls(markdown_input: &str) -> Vec<String> {
+    extract_image_sources(markdown_input)
+        .into_iter()
+        .filter(|src| src.starts_with("http://") || src.starts_with("https://"))
+        .collect()
 }
 
 #[cfg(test)]
@@ -3556,6 +3701,98 @@ HTML 图片与多行属性：
                 "https://example.com/self_closing.png",
                 "https://example.com/actual.png",
             ]
+        );
+    }
+
+    #[test]
+    fn test_html_block_prose_angle_brackets_and_apostrophes_regression() {
+        let opts = RenderOptions::default();
+
+        // Case 1: `1 < 2` inside `<div align="center">` must not swallow `</div>` or `< 2`,
+        // and subsequent paragraphs must not remain trapped inside `#align(center)[...]`.
+        let md1 = "<div align=\"center\">\n1 < 2\n</div>\n\n后续段落\n";
+        let parsed1 = convert_markdown_to_typst(md1, "HTML Center Less-Than", &opts);
+        let pos1 = parsed1
+            .typst_source
+            .find("1 \\< 2")
+            .expect("Literal '1 < 2' inside HTML block must be preserved");
+        let body1 = &parsed1.typst_source[pos1..];
+        let center_end = body1
+            .find("]\n")
+            .expect("</div> must close #align(center)[...] block after '1 < 2'");
+        let after_pos = body1
+            .find("后续段落")
+            .expect("Subsequent paragraph must be present");
+        assert!(
+            center_end < after_pos,
+            "</div> must close #align(center) BEFORE subsequent paragraph, got:\n{body1}"
+        );
+
+        // Case 2: Prose `<` and apostrophe `it's` inside HTML block must not enter quote state
+        // or swallow subsequent `<img src="x.png">` / reorder content to the end of the document.
+        let md2 = "<div>\na < b and it's fine > ok\n</div>\n\nText <img src=\"x.png\"> end\n";
+        let parsed2 = convert_markdown_to_typst(md2, "HTML Apostrophe & Image", &opts);
+        assert!(
+            parsed2.typst_source.contains("a \\< b and it's fine \\> ok"),
+            "Prose '<' and apostrophe inside <div> must be preserved as text, got:\n{}",
+            parsed2.typst_source
+        );
+        let img_pos = parsed2
+            .typst_source
+            .find("#image(\"x.png\")")
+            .expect("<img src=\"x.png\"> after <div> must be rendered as an image");
+        let end_pos = parsed2
+            .typst_source
+            .find(" end")
+            .expect("Trailing text ' end' must be present");
+        assert!(
+            img_pos < end_pos,
+            "<img src=\"x.png\"> must appear in-place before ' end', got:\n{}",
+            parsed2.typst_source
+        );
+
+        // Case 3: Unclosed `<b` in prose inside HTML block followed by `</div>` and remote image
+        let md3 = "<div align=\"center\">\na <b and it's fine\n</div>\n\nParagraph <img src=\"https://example.com/pic.png\"> tail\n";
+        let parsed3 = convert_markdown_to_typst(md3, "Unclosed Tag Start", &opts);
+        let pos3 = parsed3
+            .typst_source
+            .find("a \\<b and it's fine")
+            .expect("Unclosed '<b' must be emitted as text");
+        let body3 = &parsed3.typst_source[pos3..];
+        let center_close3 = body3
+            .find("]\n")
+            .expect("</div> must still close #align(center) after unclosed '<b'");
+        let para_pos3 = body3
+            .find("Paragraph")
+            .expect("Paragraph must be present");
+        assert!(center_close3 < para_pos3);
+        assert_eq!(
+            extract_remote_image_urls(md3),
+            vec!["https://example.com/pic.png"]
+        );
+        assert_eq!(
+            extract_image_sources(md2),
+            vec!["x.png"]
+        );
+
+        // Case 4: Malformed HTML with unclosed attribute quote `<span title="oops>x</span>`
+        // must still allow `</div>` to close `#align(center)` when flushed at block end.
+        let md4 = "<div align=\"center\">\n<span title=\"oops>x</span>\n</div>\n\n后续段落\n";
+        let parsed4 = convert_markdown_to_typst(md4, "Unclosed Attribute Quote", &opts);
+        let pos4 = parsed4
+            .typst_source
+            .find("#align(center)[")
+            .expect("Center block must start");
+        let body4 = &parsed4.typst_source[pos4..];
+        let center_close4 = body4
+            .find("]\n")
+            .expect("</div> must close #align(center) even after unclosed quote in <span>");
+        let after_pos4 = body4
+            .find("后续段落")
+            .expect("Subsequent paragraph must be present");
+        assert!(
+            center_close4 < after_pos4,
+            "</div> must close #align(center) BEFORE subsequent paragraph even with unclosed quote, got:\n{body4}"
         );
     }
 }

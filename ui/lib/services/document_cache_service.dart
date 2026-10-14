@@ -108,15 +108,19 @@ class DocumentCacheService {
 
     final docDir = p.dirname(filePath);
     final normDocDir = p.normalize(p.absolute(docDir));
-    final remoteCacheDir = (options.imageCacheDir != null && options.imageCacheDir!.isNotEmpty)
+    final defaultRemoteCacheDir = RemoteImageService.instance.getCacheDirectory().path;
+    final customRemoteCacheDir = (options.imageCacheDir != null && options.imageCacheDir!.isNotEmpty)
         ? options.imageCacheDir!
-        : RemoteImageService.instance.getCacheDirectory().path;
+        : null;
 
     final parts = <String>[];
     for (final src in sources) {
       if (src.startsWith('http://') || src.startsWith('https://')) {
         final cacheFileName = RemoteImageService.instance.urlToCacheFilename(src);
-        final cacheFile = File(p.join(remoteCacheDir, cacheFileName));
+        File cacheFile = File(p.join(customRemoteCacheDir ?? defaultRemoteCacheDir, cacheFileName));
+        if (customRemoteCacheDir != null && !cacheFile.existsSync()) {
+          cacheFile = File(p.join(defaultRemoteCacheDir, cacheFileName));
+        }
         parts.add('R:$cacheFileName:${_fingerprintFile(cacheFile)}');
       } else {
         final candidates = RemoteImageService.instance.resolveLocalImageCandidates(docDir, src);

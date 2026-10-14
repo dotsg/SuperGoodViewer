@@ -243,6 +243,9 @@ class UpdateService {
         }
       }
     } else if (isLinux) {
+      // Note: Release assets use `linux-amd64` (rather than `linux-x64`) so that in GitHub Releases'
+      // alphabetical asset list, `linux-amd64` sorts before `linux-arm64`, preserving compatibility
+      // with legacy (v1.0.6–v1.1.0) x86_64 Linux clients that picked the first matching Linux asset.
       for (final asset in assets) {
         if (asset is! Map<String, dynamic>) continue;
         final name = (asset['name'] as String? ?? '').toLowerCase();
@@ -281,11 +284,15 @@ class UpdateService {
         if (isWin && name.endsWith('.zip')) candidate = asset;
         if (isLinux && (name.endsWith('.tar.gz') || name.endsWith('.appimage'))) {
           final isArmAsset = name.contains('arm64') || name.contains('aarch64');
-          if (isLinuxArm == isArmAsset) {
+          final isX64Asset = name.contains('x64') || name.contains('x86_64') || name.contains('amd64');
+          // Never fallback to an asset explicitly built for the opposite Linux architecture
+          if (isLinuxArm && !isX64Asset) {
+            candidate = asset;
+            break;
+          } else if (!isLinuxArm && !isArmAsset) {
             candidate = asset;
             break;
           }
-          candidate ??= asset;
         }
       }
     }
