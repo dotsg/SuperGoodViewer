@@ -54,6 +54,138 @@ And another one with single quotes:
       expect(urls, contains('http://example.com/cat.jpg'));
     });
 
+    test('extractRemoteImageUrls supports titles, angle brackets, reference images, and ignores escaped or code-block syntax', () {
+      final service = RemoteImageService.instance;
+      expect(
+        service.extractRemoteImageUrls('![a](https://example.com/title.png "title")'),
+        ['https://example.com/title.png'],
+      );
+      expect(
+        service.extractRemoteImageUrls('![a](<https://example.com/angle.png>)'),
+        ['https://example.com/angle.png'],
+      );
+
+      const complexMarkdown = r'''---
+header: "![Frontmatter](https://example.com/frontmatter.png)"
+---
+# Remote Image Syntax Coverage
+
+![Control](http://127.0.0.1:8765/control.png)
+![With title](http://127.0.0.1:8765/title.png "Neutral test title")
+![Single title](https://example.com/single.png 'Single title')
+![Paren title](https://example.com/paren.png (Paren title))
+![Angle destination](<http://127.0.0.1:8765/angle.png>)
+![Angle with title](<https://example.com/angle_title.png> "Angle title")
+![Balanced parens](https://example.com/path_(1)/image.png "Title")
+![Ref Full][ref-1]
+![ref-collapsed][]
+![ref-shortcut]
+
+Ignored pseudo-images:
+\![Escaped](https://example.com/escaped.png)
+[Regular link](https://example.com/link_only.png)
+[Regular ref link][link-only-ref]
+`![Inline code](https://example.com/inline_code.png)`
+`<img src="https://example.com/inline_html.png">`
+<!-- <img src="https://example.com/commented.png"> -->
+
+```markdown
+![Fenced code](https://example.com/fenced.png)
+<img src="https://example.com/fenced_html.png" />
+```
+
+    ![Indented code](https://example.com/indented.png)
+
+[ref-1]: https://example.com/ref_full.png "Ref title"
+[ref-collapsed]: <https://example.com/ref_collapsed.png> 'Collapsed title'
+[ref-shortcut]: https://example.com/ref_shortcut.png
+[link-only-ref]: https://example.com/not_an_image.png
+[unused-ref]: https://example.com/unused.png
+''';
+
+      const expected = [
+        'http://127.0.0.1:8765/control.png',
+        'http://127.0.0.1:8765/title.png',
+        'https://example.com/single.png',
+        'https://example.com/paren.png',
+        'http://127.0.0.1:8765/angle.png',
+        'https://example.com/angle_title.png',
+        'https://example.com/path_(1)/image.png',
+        'https://example.com/ref_full.png',
+        'https://example.com/ref_collapsed.png',
+        'https://example.com/ref_shortcut.png',
+      ];
+
+      expect(service.extractRemoteImageUrls(complexMarkdown), expected);
+      expect(service.extractRemoteImageUrlsFallback(complexMarkdown), expected);
+    });
+
+    test('extractRemoteImageUrls and fallback support HTML img with spaced = and unquoted src attributes', () {
+      final service = RemoteImageService.instance;
+      const htmlAttrMarkdown = '''
+# HTML <img> 属性语法测试
+
+普通双引号对照：
+<img src="https://example.com/control.png" width="32" alt="Control red square">
+
+等号两侧带空格：
+<img src = "https://example.com/spaced_double.png" width="32" alt="Spaced red square">
+<img src = 'https://example.com/spaced_single.png' width = 32>
+
+无引号属性值：
+<img src=https://example.com/unquoted.png width="32" alt="Unquoted red square">
+<img src = https://example.com/spaced_unquoted.png width=32>
+<img src=https://example.com/self_closing.png/>
+
+排除同名后缀或其它属性干扰：
+<img async data-src="https://example.com/ignored_data_src.png" srcset="https://example.com/ignored_srcset.png" alt="src=https://example.com/ignored_alt.png" src = https://example.com/actual.png>
+''';
+
+      const expected = [
+        'https://example.com/control.png',
+        'https://example.com/spaced_double.png',
+        'https://example.com/spaced_single.png',
+        'https://example.com/unquoted.png',
+        'https://example.com/spaced_unquoted.png',
+        'https://example.com/self_closing.png',
+        'https://example.com/actual.png',
+      ];
+
+      expect(service.extractRemoteImageUrls(htmlAttrMarkdown), expected);
+      expect(service.extractRemoteImageUrlsFallback(htmlAttrMarkdown), expected);
+    });
+
+    test('extractAllImageSources handles prose < and apostrophes inside HTML blocks and runs in O(n) on large documents', () {
+      final service = RemoteImageService.instance;
+      const regressionMd = '<div>\na < b and it\'s fine > ok\n</div>\n\nText <img src="x.png"> and ![remote](https://example.com/r.png#frag) end\n';
+      expect(
+        service.extractAllImageSources(regressionMd),
+        ['x.png', 'https://example.com/r.png'],
+      );
+      expect(
+        service.extractAllImageSourcesFallback(regressionMd),
+        ['x.png', 'https://example.com/r.png'],
+      );
+
+      // Verify O(n) performance on a ~500 KB document with thousands of '<' and HTML tags
+      final bigBuffer = StringBuffer();
+      for (int i = 0; i < 6000; i++) {
+        bigBuffer.writeln('<div>Line $i: 1 < 2 and a < b and it\'s fine > ok <span>tag</span></div>');
+      }
+      bigBuffer.writeln('<img src="sub/final.png" width=64>');
+      final bigMarkdown = bigBuffer.toString();
+
+      final sw = Stopwatch()..start();
+      final fallbackSources = service.extractAllImageSourcesFallback(bigMarkdown);
+      sw.stop();
+      expect(fallbackSources, ['sub/final.png']);
+      expect(
+        sw.elapsedMilliseconds,
+        lessThan(2000),
+        reason: 'Dart fallback image source extraction must be O(n) without substring copying',
+      );
+    });
+
     test('computeExtension uses path last segment and handles deceptive directory names', () {
       expect(RemoteImageService.computeExtension('https://cdn.x/.png-assets/a.jpg'), 'jpg');
       expect(RemoteImageService.computeExtension('https://cdn.x/.png-assets/a.jpeg?token=123'), 'jpg');

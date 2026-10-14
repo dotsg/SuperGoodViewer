@@ -53,6 +53,12 @@ typedef SogoodGetLastDegradedCountDart = int Function();
 typedef SogoodGetLastDegradedEquationsJsonC = Pointer<Utf8> Function();
 typedef SogoodGetLastDegradedEquationsJsonDart = Pointer<Utf8> Function();
 
+typedef SogoodExtractRemoteImageUrlsJsonC = Pointer<Utf8> Function(Pointer<Utf8> markdown);
+typedef SogoodExtractRemoteImageUrlsJsonDart = Pointer<Utf8> Function(Pointer<Utf8> markdown);
+
+typedef SogoodExtractImageSourcesJsonC = Pointer<Utf8> Function(Pointer<Utf8> markdown);
+typedef SogoodExtractImageSourcesJsonDart = Pointer<Utf8> Function(Pointer<Utf8> markdown);
+
 /// Result from compiling markdown via the native engine.
 class NativeCompilationResult {
   final Uint8List? pdfBytes;
@@ -83,6 +89,8 @@ class NativeEngine {
   late final SogoodDetectFontsDart _detectFonts;
   SogoodGetLastDegradedCountDart? _getLastDegradedCount;
   SogoodGetLastDegradedEquationsJsonDart? _getLastDegradedEquationsJson;
+  SogoodExtractRemoteImageUrlsJsonDart? _extractRemoteImageUrlsJson;
+  SogoodExtractImageSourcesJsonDart? _extractImageSourcesJson;
 
   bool _initialized = false;
   String? _initError;
@@ -152,6 +160,20 @@ class NativeEngine {
           SogoodGetLastDegradedEquationsJsonC,
           SogoodGetLastDegradedEquationsJsonDart
         >('sogood_get_last_degraded_equations_json');
+      } catch (_) {}
+
+      try {
+        _extractRemoteImageUrlsJson = lib.lookupFunction<
+          SogoodExtractRemoteImageUrlsJsonC,
+          SogoodExtractRemoteImageUrlsJsonDart
+        >('sogood_extract_remote_image_urls_json');
+      } catch (_) {}
+
+      try {
+        _extractImageSourcesJson = lib.lookupFunction<
+          SogoodExtractImageSourcesJsonC,
+          SogoodExtractImageSourcesJsonDart
+        >('sogood_extract_image_sources_json');
       } catch (_) {}
 
       _initialized = true;
@@ -250,6 +272,57 @@ class NativeEngine {
       return const [];
     } finally {
       _freeString(ptr);
+    }
+  }
+
+  /// Extracts distinct HTTP/HTTPS remote image URLs using the Rust `pulldown-cmark` AST.
+  /// Returns `null` if the native library or symbol is unavailable.
+  List<String>? extractRemoteImageUrls(String markdown) {
+    if (!isAvailable || _extractRemoteImageUrlsJson == null) return null;
+    final mdPtr = markdown.toNativeUtf8();
+    try {
+      final ptr = _extractRemoteImageUrlsJson!(mdPtr);
+      if (ptr.address == 0) return null;
+      try {
+        final jsonStr = ptr.toDartString();
+        final decoded = jsonDecode(jsonStr);
+        if (decoded is List) {
+          return List<String>.from(decoded.map((e) => e.toString()));
+        }
+        return null;
+      } catch (_) {
+        return null;
+      } finally {
+        _freeString(ptr);
+      }
+    } finally {
+      calloc.free(mdPtr);
+    }
+  }
+
+  /// Extracts all distinct image sources (both local paths and remote HTTP/HTTPS URLs,
+  /// excluding inline `data:` URIs) using the Rust `pulldown-cmark` AST.
+  /// Returns `null` if the native library or symbol is unavailable.
+  List<String>? extractImageSources(String markdown) {
+    if (!isAvailable || _extractImageSourcesJson == null) return null;
+    final mdPtr = markdown.toNativeUtf8();
+    try {
+      final ptr = _extractImageSourcesJson!(mdPtr);
+      if (ptr.address == 0) return null;
+      try {
+        final jsonStr = ptr.toDartString();
+        final decoded = jsonDecode(jsonStr);
+        if (decoded is List) {
+          return List<String>.from(decoded.map((e) => e.toString()));
+        }
+        return null;
+      } catch (_) {
+        return null;
+      } finally {
+        _freeString(ptr);
+      }
+    } finally {
+      calloc.free(mdPtr);
     }
   }
 

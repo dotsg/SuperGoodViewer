@@ -84,6 +84,7 @@ class DocumentSession {
   /// shown again needs a recompile after app-wide settings changed.
   RenderOptions? renderedWith;
   String markdown = '';
+  String attachmentFingerprint = '';
   String title = 'Welcome';
   Uint8List? pdfBytes;
   bool isRawPdf = false;
@@ -103,6 +104,7 @@ class DocumentSession {
   Timer? reloadingSafetyTimer;
 
   StreamSubscription<FileSystemEvent>? watcherSubscription;
+  final List<StreamSubscription<FileSystemEvent>> watcherSubscriptions = [];
   Timer? reloadDebounceTimer;
   DateTime? firstStreamEventTime;
 
@@ -112,10 +114,19 @@ class DocumentSession {
   bool isActiveOutlineLocked = false;
   OutlineItem? requestedJumpItem;
 
+  void cancelWatchers() {
+    watcherSubscription?.cancel();
+    watcherSubscription = null;
+    for (final sub in watcherSubscriptions) {
+      sub.cancel();
+    }
+    watcherSubscriptions.clear();
+  }
+
   void dispose() {
     reloadingSafetyTimer?.cancel();
     reloadDebounceTimer?.cancel();
     activeOutlineLockTimer?.cancel();
-    watcherSubscription?.cancel();
+    cancelWatchers();
   }
 }

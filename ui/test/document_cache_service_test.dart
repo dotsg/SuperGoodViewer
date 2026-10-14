@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
@@ -6,6 +7,7 @@ import 'package:sogoodviewer/controllers/reader_controller.dart';
 import 'package:sogoodviewer/models/render_options.dart';
 import 'package:sogoodviewer/services/document_cache_service.dart';
 import 'package:sogoodviewer/services/preferences_service.dart';
+import 'package:sogoodviewer/services/remote_image_service.dart';
 
 void main() {
   late Directory tempDir;
@@ -14,6 +16,14 @@ void main() {
     0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x37, // %PDF-1.7
     ...List.filled(120, 0x20),
   ]);
+
+  // Exact 99-byte red and blue 32x32 PNGs from Issue #22
+  final redTileBytes = base64Decode(
+    'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR4nGO4Y2REU8QwasGoBaMWjFowasGoBaMWjFowasGoBaMWDBULAHsMAExPRcGKAAAAAElFTkSuQmCC',
+  );
+  final blueTileBytes = base64Decode(
+    'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR4nGPQSLlDU8QwasGoBaMWjFowasGoBaMWjFowasGoBaMWDBULADuXoEyJ6NMPAAAAAElFTkSuQmCC',
+  );
 
   setUp(() {
     tempDir = Directory.systemTemp.createTempSync('sgv_cache_test_');
@@ -66,6 +76,84 @@ void main() {
       // Should now be a cache miss
       final cachedAfterEdit = DocumentCacheService.getCachedPdf(sampleMdFile.path, options);
       expect(cachedAfterEdit, isNull);
+    });
+
+    test('invalidates cache when referenced local image attachment is replaced, created, or deleted (#22)', () async {
+      // Both red and blue PNGs are 99 bytes; replacing tile.png without touching cache-test.md must invalidate cache!
+      expect(redTileBytes.length, 99);
+      expect(blueTileBytes.length, 99);
+
+      final tileFile = File(p.join(tempDir.path, 'tile.png'));
+      final subDir = Directory(p.join(tempDir.path, 'assets', 'sub'))..createSync(recursive: true);
+      final subTileFile = File(p.join(subDir.path, 'sub_tile.png'));
+
+      tileFile.writeAsBytesSync(redTileBytes);
+      subTileFile.writeAsBytesSync(redTileBytes);
+
+      final mdFile = File(p.join(tempDir.path, 'cache-test.md'));
+      mdFile.writeAsStringSync(
+        '# 附件缓存测试\n\n![颜色方块](tile.png)\n\n<img src = "assets/sub/sub_tile.png" width="32">\n',
+      );
+      final originalMdStat = mdFile.statSync();
+
+      const options = RenderOptions();
+      await DocumentCacheService.saveCachedPdf(mdFile.path, options, dummyPdfHeader);
+      expect(DocumentCacheService.getCachedPdf(mdFile.path, options), isNotNull);
+
+      // 1. Replace tile.png with blueTileBytes (exact same 99-byte size, Markdown untouched)
+      tileFile.writeAsBytesSync(blueTileBytes);
+      expect(mdFile.statSync().modified, originalMdStat.modified);
+      expect(
+        DocumentCacheService.getCachedPdf(mdFile.path, options),
+        isNull,
+        reason: 'Replacing local image attachment with same-sized file must invalidate cached PDF',
+      );
+
+      // Save new PDF for blue tile
+      await DocumentCacheService.saveCachedPdf(mdFile.path, options, dummyPdfHeader);
+      expect(DocumentCacheService.getCachedPdf(mdFile.path, options), isNotNull);
+
+      // 2. Replace subdirectory HTML <img> attachment
+      subTileFile.writeAsBytesSync(blueTileBytes);
+      expect(
+        DocumentCacheService.getCachedPdf(mdFile.path, options),
+        isNull,
+        reason: 'Replacing subdirectory attachment referenced by HTML <img> must invalidate cached PDF',
+      );
+
+      // Save again, then delete tile.png
+      await DocumentCacheService.saveCachedPdf(mdFile.path, options, dummyPdfHeader);
+      expect(DocumentCacheService.getCachedPdf(mdFile.path, options), isNotNull);
+      tileFile.deleteSync();
+      expect(
+        DocumentCacheService.getCachedPdf(mdFile.path, options),
+        isNull,
+        reason: 'Deleting local image attachment must invalidate cached PDF',
+      );
+    });
+
+    test('invalidates placeholder PDF cache when remote image becomes cached on disk (#22)', () async {
+      final imgCacheDir = Directory(p.join(tempDir.path, 'img_cache'))..createSync(recursive: true);
+      final options = RenderOptions(imageCacheDir: imgCacheDir.path);
+
+      const remoteUrl = 'https://example.com/shared_banner.png';
+      final mdFile = File(p.join(tempDir.path, 'remote-cache-test.md'));
+      mdFile.writeAsStringSync('# Remote Cache Test\n\n![Banner]($remoteUrl)\n');
+
+      // 1. Save PDF while remote image is not yet downloaded (placeholder state)
+      await DocumentCacheService.saveCachedPdf(mdFile.path, options, dummyPdfHeader);
+      expect(DocumentCacheService.getCachedPdf(mdFile.path, options), isNotNull);
+
+      // 2. Simulate the remote image being downloaded (e.g. by another document)
+      final cacheFilename = RemoteImageService.instance.urlToCacheFilename(remoteUrl);
+      File(p.join(imgCacheDir.path, cacheFilename)).writeAsBytesSync(redTileBytes);
+
+      // 3. Old placeholder PDF must now be a cache miss!
+      expect(
+        DocumentCacheService.getCachedPdf(mdFile.path, options),
+        isNull,
+        reason: 'Once remote image is cached on disk, stale placeholder PDF must be invalidated',
+      );
     });
 
     test('ignores PDFs from the unversioned renderer cache', () async {
@@ -177,6 +265,7 @@ void main() {
   group('ReaderController Instant Cache Integration', () {
     test('openFile uses cached PDF immediately without waiting for compileDocument', () async {
       final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
       final options = controller.renderOptions;
       await DocumentCacheService.saveCachedPdf(sampleMdFile.path, options, dummyPdfHeader);
 
@@ -187,5 +276,74 @@ void main() {
       expect(controller.currentPdfBytes!.length, dummyPdfHeader.length);
       expect(controller.currentPdfBytes![0], 0x25); // '%'
     });
+
+    test('reopening and live auto-reload both update PDF when local image attachment is replaced (#22)', () async {
+      final docDir = Directory(p.join(tempDir.path, 'doc_workspace'))..createSync(recursive: true);
+      final tileFile = File(p.join(docDir.path, 'tile.png'));
+      final mdFile = File(p.join(docDir.path, 'cache-test.md'));
+
+      tileFile.writeAsBytesSync(redTileBytes);
+      mdFile.writeAsStringSync('# 附件缓存测试\n\n![颜色方块](tile.png)\n');
+
+      final controller1 = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller1.dispose);
+
+      await controller1.openFile(mdFile.path, newTab: false);
+      while (controller1.isCompiling || controller1.currentPdfBytes == null) {
+        await Future.delayed(const Duration(milliseconds: 20));
+      }
+      final redPdfBytes = Uint8List.fromList(controller1.currentPdfBytes!);
+      expect(redPdfBytes, isNotEmpty);
+
+      // Wait briefly for async saveCachedPdf to finish
+      await Future.delayed(const Duration(milliseconds: 50));
+      expect(
+        DocumentCacheService.getCachedPdf(mdFile.path, controller1.renderOptions),
+        isNotNull,
+      );
+
+      // Test 1: Live auto-reload when tile.png is replaced in-place while controller1 is open
+      final genBeforeLiveReplace = controller1.compileGeneration;
+      tileFile.writeAsBytesSync(blueTileBytes);
+
+      final deadline = DateTime.now().add(const Duration(seconds: 4));
+      while (DateTime.now().isBefore(deadline)) {
+        if (controller1.compileGeneration > genBeforeLiveReplace && !controller1.isCompiling) {
+          break;
+        }
+        await Future.delayed(const Duration(milliseconds: 30));
+      }
+
+      expect(
+        controller1.compileGeneration,
+        greaterThan(genBeforeLiveReplace),
+        reason: 'Modifying referenced local image attachment must trigger live auto-reload',
+      );
+      final bluePdfBytes = Uint8List.fromList(controller1.currentPdfBytes!);
+      expect(
+        bluePdfBytes,
+        isNot(equals(redPdfBytes)),
+        reason: 'Compiled PDF after replacing red tile.png with blue tile.png must differ from red PDF',
+      );
+
+      // Test 2: Re-opening after replacing tile.png while closed (cold cache check)
+      controller1.setAutoReload(false);
+      await Future.delayed(const Duration(milliseconds: 50));
+      // Replace back to red while auto-reload is off
+      tileFile.writeAsBytesSync(redTileBytes);
+
+      final controller2 = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller2.dispose);
+      await controller2.openFile(mdFile.path, newTab: false);
+      while (controller2.isCompiling || controller2.currentPdfBytes == null) {
+        await Future.delayed(const Duration(milliseconds: 20));
+      }
+      expect(
+        controller2.currentPdfBytes,
+        equals(redPdfBytes),
+        reason: 'Reopening document after attachment replacement must not return stale blue PDF',
+      );
+    });
   });
 }
+

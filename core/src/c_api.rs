@@ -187,6 +187,54 @@ pub extern "C" fn sogood_detect_fonts() -> *mut SogoodBuffer {
     .unwrap_or_else(|_| std::ptr::null_mut())
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn sogood_extract_remote_image_urls_json(
+    markdown_ptr: *const c_char,
+) -> *mut c_char {
+    std::panic::catch_unwind(|| {
+        if markdown_ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        let markdown = match unsafe { CStr::from_ptr(markdown_ptr) }.to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let urls = crate::parser::markdown::extract_remote_image_urls(markdown);
+        match serde_json::to_string(&urls) {
+            Ok(json) => match CString::new(json) {
+                Ok(c_str) => c_str.into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            },
+            Err(_) => std::ptr::null_mut(),
+        }
+    })
+    .unwrap_or_else(|_| std::ptr::null_mut())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sogood_extract_image_sources_json(
+    markdown_ptr: *const c_char,
+) -> *mut c_char {
+    std::panic::catch_unwind(|| {
+        if markdown_ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        let markdown = match unsafe { CStr::from_ptr(markdown_ptr) }.to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let sources = crate::parser::markdown::extract_image_sources(markdown);
+        match serde_json::to_string(&sources) {
+            Ok(json) => match CString::new(json) {
+                Ok(c_str) => c_str.into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            },
+            Err(_) => std::ptr::null_mut(),
+        }
+    })
+    .unwrap_or_else(|_| std::ptr::null_mut())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,6 +312,31 @@ mod tests {
             let json_str = json_cstr.to_str().unwrap();
             assert!(json_str.contains(r"\brokencommand{xyz}"));
             assert!(json_str.contains(r"\alsobroken{123}"));
+            sogood_free_string(json_ptr);
+        }
+    }
+
+    #[test]
+    fn test_c_api_extract_remote_image_urls() {
+        let md = CString::new(
+            "![Control](http://127.0.0.1:8765/control.png)\n\
+             ![With title](http://127.0.0.1:8765/title.png \"Neutral test title\")\n\
+             ![Angle destination](<http://127.0.0.1:8765/angle.png>)\n",
+        )
+        .unwrap();
+        let json_ptr = sogood_extract_remote_image_urls_json(md.as_ptr());
+        assert!(!json_ptr.is_null());
+        unsafe {
+            let json_str = CStr::from_ptr(json_ptr).to_str().unwrap();
+            let parsed: Vec<String> = serde_json::from_str(json_str).unwrap();
+            assert_eq!(
+                parsed,
+                vec![
+                    "http://127.0.0.1:8765/control.png",
+                    "http://127.0.0.1:8765/title.png",
+                    "http://127.0.0.1:8765/angle.png",
+                ]
+            );
             sogood_free_string(json_ptr);
         }
     }

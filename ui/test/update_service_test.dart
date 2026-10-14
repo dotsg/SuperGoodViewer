@@ -203,6 +203,44 @@ void main() {
       expect(intelWithArmOnly.name, isNull);
     });
 
+    test('resolvePlatformAsset differentiates Linux architectures (arm64, amd64, x64)', () {
+      final linuxAssets = [
+        {
+          'name': 'SuperGoodViewer-v1.1.1-linux-amd64.tar.gz',
+          'browser_download_url': 'https://example.com/SuperGoodViewer-v1.1.1-linux-amd64.tar.gz',
+          'size': 45000000,
+        },
+        {
+          'name': 'SuperGoodViewer-v1.1.1-linux-arm64.tar.gz',
+          'browser_download_url': 'https://example.com/SuperGoodViewer-v1.1.1-linux-arm64.tar.gz',
+          'size': 42000000,
+        },
+      ];
+
+      // Linux ARM64 host should resolve arm64 asset
+      final armAsset = UpdateService.resolvePlatformAsset(
+        linuxAssets,
+        targetIsLinux: true,
+        targetIsArm64: true,
+      );
+      expect(armAsset.name, 'SuperGoodViewer-v1.1.1-linux-arm64.tar.gz');
+      expect(armAsset.url, 'https://example.com/SuperGoodViewer-v1.1.1-linux-arm64.tar.gz');
+
+      // Linux x64 / amd64 host should resolve amd64 asset
+      final amd64Asset = UpdateService.resolvePlatformAsset(
+        linuxAssets,
+        targetIsLinux: true,
+        targetIsArm64: false,
+      );
+      expect(amd64Asset.name, 'SuperGoodViewer-v1.1.1-linux-amd64.tar.gz');
+      expect(amd64Asset.url, 'https://example.com/SuperGoodViewer-v1.1.1-linux-amd64.tar.gz');
+
+      // Verify legacy v1.0.6~v1.1.0 client logic selects linux-amd64 due to ASCII sorting:
+      final sortedAssetNames = linuxAssets.map((a) => a['name'] as String).toList()..sort();
+      expect(sortedAssetNames.first, 'SuperGoodViewer-v1.1.1-linux-amd64.tar.gz',
+          reason: 'amd64 must sort before arm64 so legacy client picks x86 binary');
+    });
+
     test('readMachOArchitectures parses thin and fat Mach-O headers accurately', () {
       final tempDir = Directory.systemTemp.createTempSync('macho_test_');
       try {
@@ -1246,6 +1284,8 @@ echo "/dev/mock 100000 99999 1 99% /"
     });
 
     test('UpdateService.cleanupStaleUpdateArtifacts sweeps dead directories, protects live updater PID, and recovers journal without nesting', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
       final testDir = Directory.systemTemp.createTempSync('linux_cleanup_test_');
       addTearDown(() {
         try {
@@ -1306,6 +1346,8 @@ echo "/dev/mock 100000 99999 1 99% /"
     });
 
     test('UpdateService.cleanupStaleUpdateArtifacts protects active updater journal and artifacts when PID is alive', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
       final testDir = Directory.systemTemp.createTempSync('linux_active_cleanup_test_');
       addTearDown(() {
         try {
@@ -1339,6 +1381,8 @@ echo "/dev/mock 100000 99999 1 99% /"
     });
 
     test('UpdateService.cleanupStaleUpdateArtifacts cleans dangling journal when backupDir does not exist and PID is dead', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
       final testDir = Directory.systemTemp.createTempSync('linux_dangling_cleanup_test_');
       addTearDown(() {
         try {
@@ -1357,6 +1401,8 @@ echo "/dev/mock 100000 99999 1 99% /"
     });
 
     test('UpdateService.cleanupStaleUpdateArtifactsAsync executes asynchronously in an isolate', () async {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
       final testDir = Directory.systemTemp.createTempSync('linux_async_cleanup_test_');
       addTearDown(() {
         try {
@@ -1860,6 +1906,8 @@ exec /bin/mv "\$@"
     });
 
     test('UpdateService.cleanupStaleUpdateArtifacts strictly validates path containment and rejects traversal/symlink journals', () {
+      if (!Platform.isMacOS && !Platform.isLinux) return;
+
       final testDir = Directory.systemTemp.createTempSync('dart_cleanup_containment_test_');
       addTearDown(() {
         try {
