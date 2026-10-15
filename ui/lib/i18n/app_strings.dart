@@ -415,4 +415,11 @@ abstract class AppStrings {
   String get mobileEdgeTapDesc;
   String get mobileKeepScreenOnTitle;
   String get mobileKeepScreenOnDesc;
+  String get oneClickInstallMapleMono;
+  String downloadingFontProgress(int percent);
+  String get extractingAndInstallingFont;
+  String get importLocalFont;
+  String fontInstallSuccess(String name);
+  String fontInstallFailed(String error);
+  String get mobileSharedDocumentLocation;
 }

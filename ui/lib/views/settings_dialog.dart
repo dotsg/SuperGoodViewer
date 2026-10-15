@@ -6,6 +6,7 @@ import '../controllers/reader_controller.dart';
 import '../i18n/locales.dart';
 import '../models/render_options.dart';
 import '../services/form_factor.dart';
+import '../services/font_download_service.dart';
 import '../services/document_cache_service.dart';
 import '../services/linux_desktop_integration.dart';
 import '../services/native_cli_service.dart';
@@ -444,15 +445,20 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 child: Row(
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.close_rounded),
+                      icon: const Icon(Icons.arrow_back_rounded),
+                      tooltip: widget.controller.strings.close,
                       onPressed: () => Navigator.of(context).pop(),
                     ),
                     const SizedBox(width: 4),
-                    Text(
-                      widget.controller.strings.settingsTitle,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
+                    Expanded(
+                      child: Text(
+                        widget.controller.strings.settingsTitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ],
@@ -513,7 +519,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
               // Tab Body (Full Width on mobile)
               Expanded(
                 child: ListenableBuilder(
-                  listenable: widget.controller,
+                  listenable: Listenable.merge([
+                    widget.controller,
+                    FontDownloadService.instance,
+                  ]),
                   builder: (context, _) => _currentTab == SettingsTab.typography
                       ? Padding(
                           padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
@@ -563,7 +572,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
             // Right Tab Content
             Expanded(
               child: ListenableBuilder(
-                listenable: widget.controller,
+                listenable: Listenable.merge([
+                  widget.controller,
+                  FontDownloadService.instance,
+                ]),
                 builder: (context, _) => _buildTabContent(theme, isDark),
               ),
             ),
@@ -1110,33 +1122,57 @@ class _SettingsDialogState extends State<SettingsDialog> {
           ],
         ),
         const SizedBox(height: 6),
-        Row(
-          children: [
-            Expanded(
-              child: _buildSlotField(
+        if (FormFactor.isMobilePlatform(context) || FormFactor.isCompact(context))
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildSlotField(
                 controller: _headerLeftController,
                 label: widget.controller.strings.slotLeft,
                 hintText: widget.controller.strings.slotHintCustom,
               ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _buildSlotField(
+              const SizedBox(height: 8),
+              _buildSlotField(
                 controller: _headerCenterController,
                 label: widget.controller.strings.slotCenter,
                 hintText: widget.controller.strings.slotHintEmpty,
               ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _buildSlotField(
+              const SizedBox(height: 8),
+              _buildSlotField(
                 controller: _headerRightController,
                 label: widget.controller.strings.slotRight,
                 hintText: '{title}',
               ),
-            ),
-          ],
-        ),
+            ],
+          )
+        else
+          Row(
+            children: [
+              Expanded(
+                child: _buildSlotField(
+                  controller: _headerLeftController,
+                  label: widget.controller.strings.slotLeft,
+                  hintText: widget.controller.strings.slotHintCustom,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildSlotField(
+                  controller: _headerCenterController,
+                  label: widget.controller.strings.slotCenter,
+                  hintText: widget.controller.strings.slotHintEmpty,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildSlotField(
+                  controller: _headerRightController,
+                  label: widget.controller.strings.slotRight,
+                  hintText: '{title}',
+                ),
+              ),
+            ],
+          ),
 
         const SizedBox(height: 14),
         Row(
@@ -1160,33 +1196,57 @@ class _SettingsDialogState extends State<SettingsDialog> {
           ],
         ),
         const SizedBox(height: 6),
-        Row(
-          children: [
-            Expanded(
-              child: _buildSlotField(
+        if (FormFactor.isMobilePlatform(context) || FormFactor.isCompact(context))
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildSlotField(
                 controller: _footerLeftController,
                 label: widget.controller.strings.slotLeft,
                 hintText: widget.controller.strings.slotHintCopyright,
               ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _buildSlotField(
+              const SizedBox(height: 8),
+              _buildSlotField(
                 controller: _footerCenterController,
                 label: widget.controller.strings.slotCenter,
                 hintText: '{page}',
               ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _buildSlotField(
+              const SizedBox(height: 8),
+              _buildSlotField(
                 controller: _footerRightController,
                 label: widget.controller.strings.slotRight,
                 hintText: widget.controller.strings.slotHintPageTotal,
               ),
-            ),
-          ],
-        ),
+            ],
+          )
+        else
+          Row(
+            children: [
+              Expanded(
+                child: _buildSlotField(
+                  controller: _footerLeftController,
+                  label: widget.controller.strings.slotLeft,
+                  hintText: widget.controller.strings.slotHintCopyright,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildSlotField(
+                  controller: _footerCenterController,
+                  label: widget.controller.strings.slotCenter,
+                  hintText: '{page}',
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildSlotField(
+                  controller: _footerRightController,
+                  label: widget.controller.strings.slotRight,
+                  hintText: widget.controller.strings.slotHintPageTotal,
+                ),
+              ),
+            ],
+          ),
 
         const SizedBox(height: 20),
         _buildSectionHeader(widget.controller.strings.marpCompatibility),
@@ -1223,8 +1283,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
   Widget _buildLayoutBottomBar(ThemeData theme, bool isDark) {
     final s = widget.controller.strings;
     final hasChanges = _hasUnsavedLayoutChanges;
+    final isMobile = FormFactor.isMobilePlatform(context);
 
-    return Row(
+    final statusWidget = Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Icon(
           hasChanges ? Icons.edit_note_rounded : Icons.check_circle_outline_rounded,
@@ -1232,7 +1294,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
           color: hasChanges ? const Color(0xFFF59E0B) : const Color(0xFF10B981),
         ),
         const SizedBox(width: 6),
-        Expanded(
+        Flexible(
           child: Text(
             hasChanges ? s.layoutHasChanges : s.layoutUpToDate,
             overflow: TextOverflow.ellipsis,
@@ -1245,6 +1307,51 @@ class _SettingsDialogState extends State<SettingsDialog> {
             ),
           ),
         ),
+      ],
+    );
+
+    if (isMobile && hasChanges) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          statusWidget,
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _revertLayout,
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  ),
+                  child: Text(s.discardChanges, style: const TextStyle(fontSize: 12)),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 2,
+                child: FilledButton.icon(
+                  icon: const Icon(Icons.check_rounded, size: 16),
+                  label: Text(s.saveAndApplyLayout, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    backgroundColor: const Color(0xFF0284C7),
+                  ),
+                  onPressed: _saveLayout,
+                ),
+              ),
+            ],
+          ),
+        ],
+      );
+    }
+
+    return Row(
+      children: [
+        Expanded(child: statusWidget),
         const SizedBox(width: 8),
         if (hasChanges) ...[
           OutlinedButton(
@@ -1478,21 +1585,22 @@ class _SettingsDialogState extends State<SettingsDialog> {
               SizedBox(
                 width: double.infinity,
                 child: SegmentedButton<String>(
+                  showSelectedIcon: !isMobile,
                   segments: [
                     ButtonSegment<String>(
                       value: ThemePreference.system,
                       icon: isMobile ? null : const Icon(Icons.brightness_auto_outlined, size: 15),
-                      label: Text(strings.themeSystem, style: TextStyle(fontSize: isMobile ? 11 : 12)),
+                      label: Text(strings.themeSystem, style: TextStyle(fontSize: isMobile ? 11.5 : 12)),
                     ),
                     ButtonSegment<String>(
                       value: ThemePreference.light,
                       icon: isMobile ? null : const Icon(Icons.light_mode_outlined, size: 15),
-                      label: Text(strings.themeLight, style: TextStyle(fontSize: isMobile ? 11 : 12)),
+                      label: Text(strings.themeLight, style: TextStyle(fontSize: isMobile ? 11.5 : 12)),
                     ),
                     ButtonSegment<String>(
                       value: ThemePreference.dark,
                       icon: isMobile ? null : const Icon(Icons.dark_mode_outlined, size: 15),
-                      label: Text(strings.themeDark, style: TextStyle(fontSize: isMobile ? 11 : 12)),
+                      label: Text(strings.themeDark, style: TextStyle(fontSize: isMobile ? 11.5 : 12)),
                     ),
                   ],
                   selected: {controller.themePreference},
@@ -1505,7 +1613,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     padding: isMobile
                         ? WidgetStateProperty.all(
-                            const EdgeInsets.symmetric(horizontal: 4),
+                            const EdgeInsets.symmetric(horizontal: 6),
                           )
                         : null,
                   ),
@@ -1563,6 +1671,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               SizedBox(
                 width: double.infinity,
                 child: SegmentedButton<String>(
+                  showSelectedIcon: !isMobile,
                   segments: [
                     ButtonSegment<String>(
                       value: 'left',
@@ -1628,6 +1737,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               SizedBox(
                 width: double.infinity,
                 child: SegmentedButton<bool>(
+                  showSelectedIcon: !isMobile,
                   segments: [
                     ButtonSegment<bool>(
                       value: true,
@@ -1927,7 +2037,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final mapleInstalled = report['maple_mono_installed'] == true;
     final isMobile = FormFactor.isMobilePlatform(context);
 
-    final bodyFontOptions = <Map<String, String?>>[
+    final detectedBody = (report['detected_body_fonts'] as List<dynamic>?)
+            ?.map((e) => e.toString())
+            .toList() ??
+        <String>[];
+
+    final baseBodyFonts = <Map<String, String?>>[
       {'label': widget.controller.strings.fontOptionSystemRecommended, 'value': null},
       {'label': widget.controller.strings.fontOptionPingFang, 'value': 'PingFang SC'},
       {'label': widget.controller.strings.fontOptionSongti, 'value': 'Songti SC'},
@@ -1936,6 +2051,18 @@ class _SettingsDialogState extends State<SettingsDialog> {
       {'label': widget.controller.strings.fontOptionSourceHanSans, 'value': 'Source Han Sans SC'},
       {'label': widget.controller.strings.fontOptionInter, 'value': 'Inter'},
     ];
+    final bodyFontOptions = <Map<String, String?>>[...baseBodyFonts];
+    final knownBodyValues =
+        baseBodyFonts.map((m) => m['value']?.toLowerCase()).toSet();
+    for (final bodyName in detectedBody) {
+      if (!knownBodyValues.contains(bodyName.toLowerCase()) &&
+          !bodyName.startsWith('.')) {
+        bodyFontOptions.add({
+          'label': widget.controller.strings.fontOptionInstalled(bodyName),
+          'value': bodyName,
+        });
+      }
+    }
     if (_selectedBodyFont != null &&
         !bodyFontOptions.any((opt) => opt['value'] == _selectedBodyFont)) {
       bodyFontOptions.add({
@@ -2209,9 +2336,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     children: [
                       controlsColumn,
                       const SizedBox(height: 14),
-                      SizedBox(
-                        height: 240,
-                        child: _buildTypographyPreviewCard(theme, isDark),
+                      _buildTypographyPreviewCard(
+                        theme,
+                        isDark,
+                        shrinkWrap: true,
                       ),
                     ],
                   ),
@@ -2263,6 +2391,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
     bool hasCjkMono,
     bool mapleInstalled,
   ) {
+    final s = widget.controller.strings;
+    final fontService = FontDownloadService.instance;
+    final isDownloading = fontService.isBusy;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
@@ -2292,9 +2424,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 child: Text(
                   hasCjkMono
                       ? (mapleInstalled
-                          ? widget.controller.strings.mapleMonoReady
-                          : widget.controller.strings.cjkMonoDetected)
-                      : widget.controller.strings.mapleMonoSuggested,
+                          ? s.mapleMonoReady
+                          : s.cjkMonoDetected)
+                      : s.mapleMonoSuggested,
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 12,
@@ -2309,20 +2441,125 @@ class _SettingsDialogState extends State<SettingsDialog> {
           const SizedBox(height: 3),
           Text(
             hasCjkMono
-                ? widget.controller.strings.cjkMonoActiveDesc
-                : widget.controller.strings.cjkMonoMissingDesc,
+                ? s.cjkMonoActiveDesc
+                : s.cjkMonoMissingDesc,
             style: TextStyle(
               fontSize: 11,
               height: 1.3,
               color: theme.colorScheme.onSurface.withValues(alpha: 0.75),
             ),
           ),
-          const SizedBox(height: 6),
+          if (isDownloading) ...[
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: fontService.isExtracting
+                    ? null
+                    : (fontService.progress > 0 ? fontService.progress : null),
+                minHeight: 4,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              fontService.isExtracting
+                  ? s.extractingAndInstallingFont
+                  : s.downloadingFontProgress(fontService.progressPercent),
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
           Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
+              if (!mapleInstalled)
+                FilledButton.icon(
+                  key: const ValueKey('settings_install_maple_btn'),
+                  icon: isDownloading
+                      ? const SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.download_for_offline_rounded, size: 14),
+                  label: Text(
+                    s.oneClickInstallMapleMono,
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                  ),
+                  onPressed: isDownloading
+                      ? null
+                      : () async {
+                          final ok = await fontService
+                              .downloadAndInstallMapleMono(widget.controller);
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                ok
+                                    ? s.fontInstallSuccess('Maple Mono NF CN')
+                                    : s.fontInstallFailed(
+                                        fontService.errorMessage ?? 'Network error',
+                                      ),
+                              ),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                        },
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  ),
+                ),
+              OutlinedButton.icon(
+                key: const ValueKey('settings_import_font_btn'),
+                icon: const Icon(Icons.file_upload_outlined, size: 13),
+                label: Text(
+                  s.importLocalFont,
+                  style: const TextStyle(fontSize: 11),
+                ),
+                onPressed: isDownloading
+                    ? null
+                    : () async {
+                        final installedName = await fontService
+                            .importLocalFontFile(widget.controller);
+                        if (!mounted) return;
+                        if (installedName != null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                s.fontInstallSuccess(installedName),
+                              ),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                        } else if (fontService.errorMessage != null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                s.fontInstallFailed(fontService.errorMessage!),
+                              ),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                        }
+                      },
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                ),
+              ),
               TextButton.icon(
                 icon: const Icon(Icons.open_in_new_rounded, size: 12),
-                label: Text(widget.controller.strings.downloadFont, style: const TextStyle(fontSize: 11)),
+                label: Text(s.downloadFont, style: const TextStyle(fontSize: 11)),
                 onPressed: _openMapleGitHub,
                 style: TextButton.styleFrom(
                   visualDensity: VisualDensity.compact,
@@ -2331,7 +2568,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ),
               TextButton.icon(
                 icon: const Icon(Icons.copy_rounded, size: 12),
-                label: Text(widget.controller.strings.copyLink, style: const TextStyle(fontSize: 11)),
+                label: Text(s.copyLink, style: const TextStyle(fontSize: 11)),
                 onPressed: _copyMapleDownloadLink,
                 style: TextButton.styleFrom(
                   visualDensity: VisualDensity.compact,
@@ -2346,8 +2583,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.refresh_rounded, size: 12),
-                label: Text(_isScanningFonts ? widget.controller.strings.detectingFonts : widget.controller.strings.redetectFonts, style: const TextStyle(fontSize: 11)),
-                onPressed: _isScanningFonts
+                label: Text(
+                  _isScanningFonts ? s.detectingFonts : s.redetectFonts,
+                  style: const TextStyle(fontSize: 11),
+                ),
+                onPressed: (_isScanningFonts || isDownloading)
                     ? null
                     : () async {
                         setState(() => _isScanningFonts = true);
@@ -2409,8 +2649,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
   Widget _buildTypographyBottomBar(ThemeData theme, bool isDark) {
     final s = widget.controller.strings;
     final hasChanges = _hasUnsavedTypographyChanges;
+    final isMobile = FormFactor.isMobilePlatform(context);
 
-    return Row(
+    final statusRow = Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Icon(
           hasChanges ? Icons.edit_note_rounded : Icons.check_circle_outline_rounded,
@@ -2418,7 +2660,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
           color: hasChanges ? const Color(0xFFF59E0B) : const Color(0xFF10B981),
         ),
         const SizedBox(width: 6),
-        Expanded(
+        Flexible(
           child: Text(
             hasChanges ? s.typographyHasChanges : s.typographyUpToDate,
             overflow: TextOverflow.ellipsis,
@@ -2431,7 +2673,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
             ),
           ),
         ),
-        const SizedBox(width: 8),
+      ],
+    );
+
+    final actionsRow = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
         if (hasChanges) ...[
           OutlinedButton(
             onPressed: _revertTypography,
@@ -2445,7 +2692,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ],
         FilledButton.icon(
           icon: const Icon(Icons.check_rounded, size: 15),
-          label: Text(s.saveAndApplyTypography, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+          label: Text(
+            s.saveAndApplyTypography,
+            style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold),
+          ),
           style: FilledButton.styleFrom(
             visualDensity: VisualDensity.compact,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -2455,13 +2705,198 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ),
       ],
     );
+
+    if (isMobile && hasChanges) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          statusRow,
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerRight,
+            child: actionsRow,
+          ),
+        ],
+      );
+    }
+
+    return Row(
+      children: [
+        Expanded(child: statusRow),
+        const SizedBox(width: 8),
+        actionsRow,
+      ],
+    );
   }
 
-  Widget _buildTypographyPreviewCard(ThemeData theme, bool isDark) {
+  Widget _buildTypographyPreviewCard(
+    ThemeData theme,
+    bool isDark, {
+    bool shrinkWrap = false,
+  }) {
     final fontSize = _selectedFontSize;
     final bodyFont = _selectedBodyFont;
     final codeFont = _selectedCodeFont;
     final displayCodeFont = codeFont ?? widget.controller.strings.mapleMonoDefault;
+
+    final previewBodyContent = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 1. Body Typography Sample
+        Text(
+          widget.controller.strings.previewSpecimenHeading,
+          style: TextStyle(
+            fontFamily: bodyFont,
+            fontFamilyFallback: const [
+              'PingFang SC',
+              'Microsoft YaHei',
+              'Hiragino Sans GB',
+              'sans-serif',
+            ],
+            fontSize: (fontSize * 1.15).clamp(11.0, 20.0),
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.2,
+            color: isDark ? Colors.white : Colors.black87,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          widget.controller.strings.previewSpecimenBody,
+          style: TextStyle(
+            fontFamily: bodyFont,
+            fontFamilyFallback: const [
+              'PingFang SC',
+              'Microsoft YaHei',
+              'Hiragino Sans GB',
+              'sans-serif',
+            ],
+            fontSize: fontSize,
+            height: 1.45,
+            color: isDark ? const Color(0xFFCCCCCC) : const Color(0xFF333333),
+          ),
+        ),
+        const SizedBox(height: 10),
+
+        // 2. Monospace Code Sample (Pure English/ASCII to immediately exhibit monospace font switch)
+        Row(
+          children: [
+            Icon(
+              Icons.code_rounded,
+              size: 13,
+              color: isDark ? Colors.white60 : Colors.black54,
+            ),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                widget.controller.strings.previewCodeFont(displayCodeFont),
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? Colors.white70 : Colors.black87,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF141414) : const Color(0xFFF1F5F9),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFCBD5E1),
+            ),
+          ),
+          child: Text(
+            'fn quick_sort<T: Ord>(arr: &mut [T]) {\n'
+            '    if arr.len() <= 1 { return; }\n'
+            '    let pivot = partition(arr);\n'
+            '    quick_sort(&mut arr[0..pivot]);\n'
+            '    quick_sort(&mut arr[pivot + 1..]);\n'
+            '}',
+            style: TextStyle(
+              fontFamily: codeFont,
+              fontFamilyFallback: const [
+                'Menlo',
+                'Monaco',
+                'Courier New',
+                'Maple Mono',
+                'monospace',
+              ],
+              fontSize: (fontSize * 0.88).clamp(9.0, 15.0),
+              height: 1.35,
+              color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+
+        // 3. Monospace & ASCII Table 1:2 Alignment Sample
+        Row(
+          children: [
+            Icon(
+              Icons.table_chart_outlined,
+              size: 13,
+              color: isDark ? Colors.white60 : Colors.black54,
+            ),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                widget.controller.strings.asciiAlignmentCheck,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF141414) : const Color(0xFFF1F5F9),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFCBD5E1),
+            ),
+          ),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            // Not localized: the specimen needs full-width CJK cells
+            // to show the 1:2 alignment in every UI language.
+            child: Text(
+              '┌─────────────────────┬─────────────────────┐\n'
+              '│ 量子纠缠分发网关    │ 相对论时空频率同步  │\n'
+              '├─────────────────────┼─────────────────────┤\n'
+              '│ 贝尔态多粒子纯化    │ 史瓦西引力场膨胀修正│\n'
+              '│ 拓扑容错量子表面码  │ 零知识量子密钥分发  │\n'
+              '└─────────────────────┴─────────────────────┘',
+              style: TextStyle(
+                fontFamily: codeFont,
+                fontFamilyFallback: const [
+                  'Maple Mono CN',
+                  'Maple Mono NF CN',
+                  'Maple Mono',
+                  'Menlo',
+                  'Monaco',
+                  'monospace',
+                ],
+                fontSize: (fontSize * 0.85).clamp(8.5, 14.0),
+                height: 1.35,
+                letterSpacing: 0.0,
+                color: isDark ? const Color(0xFF34D399) : const Color(0xFF059669),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
 
     return Container(
       decoration: BoxDecoration(
@@ -2473,6 +2908,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: shrinkWrap ? MainAxisSize.min : MainAxisSize.max,
         children: [
           // Preview Top Status Bar
           Container(
@@ -2536,170 +2972,19 @@ class _SettingsDialogState extends State<SettingsDialog> {
             ),
           ),
 
-          // Scrollable Preview Body
-          Expanded(
-            child: SingleChildScrollView(
+          // Preview Body
+          if (shrinkWrap)
+            Padding(
               padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 1. Body Typography Sample
-                  Text(
-                    widget.controller.strings.previewSpecimenHeading,
-                    style: TextStyle(
-                      fontFamily: bodyFont,
-                      fontFamilyFallback: const [
-                        'PingFang SC',
-                        'Microsoft YaHei',
-                        'Hiragino Sans GB',
-                        'sans-serif',
-                      ],
-                      fontSize: (fontSize * 1.15).clamp(11.0, 20.0),
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.2,
-                      color: isDark ? Colors.white : Colors.black87,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    widget.controller.strings.previewSpecimenBody,
-                    style: TextStyle(
-                      fontFamily: bodyFont,
-                      fontFamilyFallback: const [
-                        'PingFang SC',
-                        'Microsoft YaHei',
-                        'Hiragino Sans GB',
-                        'sans-serif',
-                      ],
-                      fontSize: fontSize,
-                      height: 1.45,
-                      color: isDark ? const Color(0xFFCCCCCC) : const Color(0xFF333333),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-
-                  // 2. Monospace Code Sample (Pure English/ASCII to immediately exhibit monospace font switch)
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.code_rounded,
-                        size: 13,
-                        color: isDark ? Colors.white60 : Colors.black54,
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          widget.controller.strings.previewCodeFont(displayCodeFont),
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: isDark ? Colors.white70 : Colors.black87,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                    decoration: BoxDecoration(
-                      color: isDark ? const Color(0xFF141414) : const Color(0xFFF1F5F9),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                        color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFCBD5E1),
-                      ),
-                    ),
-                    child: Text(
-                      'fn quick_sort<T: Ord>(arr: &mut [T]) {\n'
-                      '    if arr.len() <= 1 { return; }\n'
-                      '    let pivot = partition(arr);\n'
-                      '    quick_sort(&mut arr[0..pivot]);\n'
-                      '    quick_sort(&mut arr[pivot + 1..]);\n'
-                      '}',
-                      style: TextStyle(
-                        fontFamily: codeFont,
-                        fontFamilyFallback: const [
-                          'Menlo',
-                          'Monaco',
-                          'Courier New',
-                          'Maple Mono',
-                          'monospace',
-                        ],
-                        fontSize: (fontSize * 0.88).clamp(9.0, 15.0),
-                        height: 1.35,
-                        color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-
-                  // 3. Monospace & ASCII Table 1:2 Alignment Sample
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.table_chart_outlined,
-                        size: 13,
-                        color: isDark ? Colors.white60 : Colors.black54,
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          widget.controller.strings.asciiAlignmentCheck,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                    decoration: BoxDecoration(
-                      color: isDark ? const Color(0xFF141414) : const Color(0xFFF1F5F9),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                        color: isDark ? const Color(0xFF2E2E2E) : const Color(0xFFCBD5E1),
-                      ),
-                    ),
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      // Not localized: the specimen needs full-width CJK cells
-                      // to show the 1:2 alignment in every UI language.
-                      child: Text(
-                        '┌─────────────────────┬─────────────────────┐\n'
-                        '│ 量子纠缠分发网关    │ 相对论时空频率同步  │\n'
-                        '├─────────────────────┼─────────────────────┤\n'
-                        '│ 贝尔态多粒子纯化    │ 史瓦西引力场膨胀修正│\n'
-                        '│ 拓扑容错量子表面码  │ 零知识量子密钥分发  │\n'
-                        '└─────────────────────┴─────────────────────┘',
-                        style: TextStyle(
-                          fontFamily: codeFont,
-                          fontFamilyFallback: const [
-                            'Maple Mono CN',
-                            'Maple Mono NF CN',
-                            'Maple Mono',
-                            'Menlo',
-                            'Monaco',
-                            'monospace',
-                          ],
-                          fontSize: (fontSize * 0.85).clamp(8.5, 14.0),
-                          height: 1.35,
-                          letterSpacing: 0.0,
-                          color: isDark ? const Color(0xFF34D399) : const Color(0xFF059669),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+              child: previewBodyContent,
+            )
+          else
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(12),
+                child: previewBodyContent,
               ),
             ),
-          ),
         ],
       ),
     );

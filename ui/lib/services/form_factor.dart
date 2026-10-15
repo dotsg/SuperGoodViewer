@@ -1,3 +1,4 @@
+import 'dart:async' show unawaited;
 import 'dart:io' show Directory, File, Platform;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import '../bridge/native_engine.dart';
 import '../controllers/reader_controller.dart';
 import 'document_cache_service.dart';
+import 'font_download_service.dart';
 import 'preferences_service.dart';
 import 'remote_image_service.dart';
 
@@ -25,7 +27,11 @@ class FormFactor {
 
   /// Initializes sandboxed mobile application directories on Android / iOS.
   static Future<void> initMobileDirectoriesIfNeeded() async {
-    if (kIsWeb || (!Platform.isAndroid && !Platform.isIOS)) return;
+    if (kIsWeb) return;
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      unawaited(FontDownloadService.instance.loadInstalledCustomFontsIntoFlutter());
+      return;
+    }
     try {
       final appSupportDir = await getApplicationSupportDirectory();
       PreferencesService.setAppSupportDir(appSupportDir);
@@ -34,6 +40,7 @@ class FormFactor {
       RemoteImageService.setAppRemoteImageCacheDir(cacheDir);
       NativeEngine.instance.setCacheDir(appSupportDir.path);
       MobileReadingPrefs.instance.loadFromDisk();
+      unawaited(FontDownloadService.instance.loadInstalledCustomFontsIntoFlutter());
     } catch (e) {
       debugPrint('[Init] Failed to initialize mobile app directories: $e');
     }

@@ -931,4 +931,18 @@ class ZhHantStrings extends ZhHansStrings {
   String get mobileKeepScreenOnTitle => '閱讀時螢幕恆亮';
   @override
   String get mobileKeepScreenOnDesc => '專注長文與論文閱讀時防止自動關閉螢幕';
+  @override
+  String get oneClickInstallMapleMono => '一鍵下載並安裝 Maple Mono';
+  @override
+  String downloadingFontProgress(int percent) => '正在下載字型 ($percent%)...';
+  @override
+  String get extractingAndInstallingFont => '正在解壓並註冊字型...';
+  @override
+  String get importLocalFont => '匯入本機字型 (.ttf/.otf/.zip)';
+  @override
+  String fontInstallSuccess(String name) => '已成功安裝並啟用 $name 字型';
+  @override
+  String fontInstallFailed(String error) => '字型安裝失敗：$error';
+  @override
+  String get mobileSharedDocumentLocation => '來自外部應用分享';
 }

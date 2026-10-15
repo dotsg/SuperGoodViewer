@@ -101,6 +101,16 @@ fn font_index_cache_path() -> Option<PathBuf> {
         .map(|dir| dir.join("font_index.json"))
 }
 
+/// Directory where user-downloaded or imported custom fonts (e.g. Maple Mono) are stored.
+pub fn custom_fonts_dir() -> Option<PathBuf> {
+    if let Some(dir) = GLOBAL_CACHE_DIR.get() {
+        return Some(dir.join("fonts"));
+    }
+    get_default_image_cache_dir()
+        .parent()
+        .map(|dir| dir.join("fonts"))
+}
+
 /// File identity used to validate a cached `FontInfo`: size plus modification time.
 fn file_stamp(path: &Path) -> Option<(u64, u64, u32)> {
     let meta = fs::metadata(path).ok()?;
@@ -156,7 +166,7 @@ pub struct FontCapabilityReport {
 }
 
 pub fn detect_font_capabilities() -> FontCapabilityReport {
-    let store = GlobalFontStore::get();
+    let store = GlobalFontStore::reload_if_initialized();
     let has_cjk_mono = store.monospace_families.iter().any(|f| {
         let l = f.to_lowercase();
         l.contains("maple") || l.contains("sarasa")
@@ -175,7 +185,7 @@ pub fn detect_font_capabilities() -> FontCapabilityReport {
         download_guide: if maple_installed {
             "当前系统已就绪 Maple Mono 字体，支持代码与 ASCII 表格中英文严格 1:2 等宽对齐。".to_string()
         } else {
-            "未检测到 Maple Mono 字体。若文档中含有 ASCII 字符画或中英文混合表格，推荐前往 GitHub 下载并安装 Maple Mono 以获得完美对齐效果。".to_string()
+            "未检测到 Maple Mono 字体。若文档中含有 ASCII 字符画或中英文混合表格，推荐一键下载或前往 GitHub 安装 Maple Mono 以获得完美对齐效果。".to_string()
         },
     }
 }
@@ -204,68 +214,101 @@ fn load_font_file(path: &Path) -> Option<Bytes> {
         .or_else(|| fs::read(path).ok().map(Bytes::new))
 }
 
-static FONT_STORE: OnceLock<GlobalFontStore> = OnceLock::new();
+static FONT_STORE: parking_lot::RwLock<Option<std::sync::Arc<GlobalFontStore>>> =
+    parking_lot::RwLock::new(None);
 
 impl GlobalFontStore {
-    pub fn get() -> &'static GlobalFontStore {
-        FONT_STORE.get_or_init(|| {
-            let mut fonts = Vec::new();
-            let mut infos = Vec::new();
+    pub fn get() -> std::sync::Arc<GlobalFontStore> {
+        if let Some(store) = FONT_STORE.read().as_ref() {
+            return store.clone();
+        }
+        let mut guard = FONT_STORE.write();
+        if let Some(store) = guard.as_ref() {
+            return store.clone();
+        }
+        let store = std::sync::Arc::new(Self::build());
+        *guard = Some(store.clone());
+        store
+    }
 
-            let mut asset_count = 0;
-            for font_bytes in typst_assets::fonts() {
-                let bytes = Bytes::new(font_bytes);
-                for font in Font::iter(bytes) {
-                    infos.push(font.info().clone());
-                    fonts.push(FontSlot::Loaded(font));
-                    asset_count += 1;
-                }
-            }
-            eprintln!("Loaded {} fonts from typst_assets", asset_count);
+    /// Rebuilds the font store if it was already initialized (e.g. when the user downloads or
+    /// installs new fonts and triggers font detection), or initializes it for the first time.
+    pub fn reload_if_initialized() -> std::sync::Arc<GlobalFontStore> {
+        let already_init = FONT_STORE.read().is_some();
+        if !already_init {
+            return Self::get();
+        }
+        let store = std::sync::Arc::new(Self::build());
+        *FONT_STORE.write() = Some(store.clone());
+        store
+    }
 
-            // 2. Discover system fonts via fontdb
-            let mut db = fontdb::Database::new();
-            db.load_system_fonts();
+    fn build() -> GlobalFontStore {
+        let mut fonts = Vec::new();
+        let mut infos = Vec::new();
 
-            // Load Android system fonts (fontdb's load_system_fonts does not support target_os = "android")
-            let android_font_dirs = [
-                "/system/fonts",
-                "/system/font",
-                "/product/fonts",
-                "/system_ext/fonts",
-                "/apex/com.android.runtime/fonts",
-                "/apex/com.android.i18n/fonts",
-                "/data/fonts",
-            ];
-            for dir in android_font_dirs {
-                let path = Path::new(dir);
-                if path.is_dir() {
-                    db.load_fonts_dir(path);
-                }
+        let mut asset_count = 0;
+        for font_bytes in typst_assets::fonts() {
+            let bytes = Bytes::new(font_bytes);
+            for font in Font::iter(bytes) {
+                infos.push(font.info().clone());
+                fonts.push(FontSlot::Loaded(font));
+                asset_count += 1;
             }
+        }
+        eprintln!("Loaded {} fonts from typst_assets", asset_count);
 
-            // Load user font directories across platforms
-            if let Ok(home) = std::env::var("HOME") {
-                let home = PathBuf::from(home);
-                let mac_user_fonts = home.join("Library/Fonts");
-                if mac_user_fonts.exists() {
-                    db.load_fonts_dir(&mac_user_fonts);
-                }
-                let linux_user_fonts = home.join(".local/share/fonts");
-                if linux_user_fonts.exists() {
-                    db.load_fonts_dir(&linux_user_fonts);
-                }
-                let linux_fonts = home.join(".fonts");
-                if linux_fonts.exists() {
-                    db.load_fonts_dir(&linux_fonts);
-                }
+        // 2. Discover system fonts via fontdb
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+
+        // Load Android system fonts (fontdb's load_system_fonts does not support target_os = "android")
+        let android_font_dirs = [
+            "/system/fonts",
+            "/system/font",
+            "/product/fonts",
+            "/system_ext/fonts",
+            "/apex/com.android.runtime/fonts",
+            "/apex/com.android.i18n/fonts",
+            "/data/fonts",
+        ];
+        for dir in android_font_dirs {
+            let path = Path::new(dir);
+            if path.is_dir() {
+                db.load_fonts_dir(path);
             }
-            if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
-                let win_user_fonts = PathBuf::from(local_appdata).join("Microsoft\\Windows\\Fonts");
-                if win_user_fonts.exists() {
-                    db.load_fonts_dir(&win_user_fonts);
-                }
+        }
+
+        // Load app-managed custom font directory (<cache_dir>/fonts) on all platforms
+        let custom_dir = custom_fonts_dir();
+        if let Some(ref cdir) = custom_dir {
+            if cdir.is_dir() {
+                db.load_fonts_dir(cdir);
             }
+        }
+
+        // Load user font directories across platforms
+        if let Ok(home) = std::env::var("HOME") {
+            let home = PathBuf::from(home);
+            let mac_user_fonts = home.join("Library/Fonts");
+            if mac_user_fonts.exists() {
+                db.load_fonts_dir(&mac_user_fonts);
+            }
+            let linux_user_fonts = home.join(".local/share/fonts");
+            if linux_user_fonts.exists() {
+                db.load_fonts_dir(&linux_user_fonts);
+            }
+            let linux_fonts = home.join(".fonts");
+            if linux_fonts.exists() {
+                db.load_fonts_dir(&linux_fonts);
+            }
+        }
+        if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
+            let win_user_fonts = PathBuf::from(local_appdata).join("Microsoft\\Windows\\Fonts");
+            if win_user_fonts.exists() {
+                db.load_fonts_dir(&win_user_fonts);
+            }
+        }
 
             // Target key Chinese / Japanese / Korean & clean UI fonts
             let target_prefixes = [
@@ -360,7 +403,12 @@ impl GlobalFontStore {
                     continue;
                 }
 
-                let is_target = face.families.iter().any(|(f_name, _)| {
+                let is_custom_font = match (&face.source, &custom_dir) {
+                    (fontdb::Source::File(p), Some(cdir)) => p.starts_with(cdir),
+                    _ => false,
+                };
+
+                let is_target = is_custom_font || face.families.iter().any(|(f_name, _)| {
                     if f_name.starts_with('.') {
                         return false;
                     }
@@ -385,7 +433,7 @@ impl GlobalFontStore {
 
                 // For multi-weight CJK / Monospace families (like Maple Mono with 32 TTFs),
                 // only keep standard Regular (380-450) and Bold (650-750) to optimize memory on desktop.
-                if !is_android_env {
+                if !is_android_env && !is_custom_font {
                     let is_cjk_multi_weight = face.families.iter().any(|(f_name, _)| {
                         let l = f_name.to_lowercase();
                         l.contains("maple") || l.contains("sarasa")
@@ -493,7 +541,6 @@ impl GlobalFontStore {
                 monospace_families,
                 body_families,
             }
-        })
     }
 }
 
@@ -509,6 +556,7 @@ pub struct MemoryWorld {
     doc_dir: PathBuf,
     image_cache_dir: Option<PathBuf>,
     virtual_files: std::sync::Arc<HashMap<PathBuf, Bytes>>,
+    font_store: std::sync::Arc<GlobalFontStore>,
     now: Datetime,
 }
 
@@ -539,6 +587,7 @@ impl MemoryWorld {
             doc_dir,
             image_cache_dir,
             virtual_files: virtual_files.into(),
+            font_store: GlobalFontStore::get(),
             now: Datetime::from_ymd(2026, 9, 11).unwrap_or_else(|| Datetime::from_ymd(2026, 1, 1).unwrap()),
         }
     }
@@ -586,7 +635,7 @@ impl World for MemoryWorld {
     }
 
     fn book(&self) -> &LazyHash<FontBook> {
-        &GlobalFontStore::get().book
+        &self.font_store.book
     }
 
     fn main(&self) -> FileId {
@@ -738,7 +787,7 @@ impl World for MemoryWorld {
 
 
     fn font(&self, index: usize) -> Option<Font> {
-        GlobalFontStore::get().fonts.get(index)?.get()
+        self.font_store.fonts.get(index)?.get()
     }
 
     fn today(&self, _offset: Option<Duration>) -> Option<Datetime> {

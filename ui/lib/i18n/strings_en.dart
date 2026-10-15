@@ -956,4 +956,21 @@ class EnStrings implements AppStrings {
   @override
   String get mobileKeepScreenOnDesc =>
       'Prevent screen from sleeping while reading';
+  @override
+  String get oneClickInstallMapleMono => 'One-Click Install Maple Mono';
+  @override
+  String downloadingFontProgress(int percent) =>
+      'Downloading font ($percent%)...';
+  @override
+  String get extractingAndInstallingFont =>
+      'Extracting and registering font...';
+  @override
+  String get importLocalFont => 'Import Local Font (.ttf/.otf/.zip)';
+  @override
+  String fontInstallSuccess(String name) =>
+      'Successfully installed and enabled $name';
+  @override
+  String fontInstallFailed(String error) => 'Font installation failed: $error';
+  @override
+  String get mobileSharedDocumentLocation => 'Shared from external app';
 }

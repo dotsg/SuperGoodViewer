@@ -12,6 +12,8 @@ class PreferencesService {
   static Directory? _appSupportDir;
   static Future<void>? _pendingSave;
 
+  static Directory? get appSupportDir => _appSupportDir;
+
   static void setAppSupportDir(Directory dir) {
     _appSupportDir = dir;
     _cachedConfigFile = File(p.join(dir.path, _prefFileName));

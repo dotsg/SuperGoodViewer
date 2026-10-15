@@ -178,7 +178,7 @@ class MobileWorkspaceChrome {
                       IconButton(
                         icon: const Icon(Icons.menu_rounded),
                         iconSize: 22,
-                        tooltip: controller.strings.toggleSidebarTooltip(''),
+                        tooltip: controller.strings.sidebarTabOutline,
                         onPressed: onToggleSidebar,
                       ),
                       const SizedBox(width: 4),
@@ -258,6 +258,17 @@ class MobileWorkspaceChrome {
                       PopupMenuButton<String>(
                         icon: const Icon(Icons.more_vert_rounded),
                         iconSize: 22,
+                        position: PopupMenuPosition.under,
+                        elevation: 6,
+                        color: isDark ? const Color(0xFF252528) : Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          side: BorderSide(
+                            color: isDark
+                                ? Colors.white.withValues(alpha: 0.08)
+                                : Colors.black.withValues(alpha: 0.06),
+                          ),
+                        ),
                         onSelected: (action) async {
                           switch (action) {
                             case 'open':
@@ -304,10 +315,11 @@ class MobileWorkspaceChrome {
                         itemBuilder: (ctx) => [
                           PopupMenuItem(
                             value: 'open',
+                            height: 46,
                             child: Row(
                               children: [
-                                const Icon(Icons.folder_open_rounded, size: 18),
-                                const SizedBox(width: 10),
+                                const Icon(Icons.folder_open_rounded, size: 20),
+                                const SizedBox(width: 12),
                                 Text(controller.strings.openDocument),
                               ],
                             ),
@@ -315,30 +327,33 @@ class MobileWorkspaceChrome {
                           if (sessionCount > 1)
                             PopupMenuItem(
                               value: 'tabs',
+                              height: 46,
                               child: Row(
                                 children: [
-                                  const Icon(Icons.layers_outlined, size: 18),
-                                  const SizedBox(width: 10),
+                                  const Icon(Icons.layers_outlined, size: 20),
+                                  const SizedBox(width: 12),
                                   Text(controller.strings.mobileOpenTabsMenu(sessionCount)),
                                 ],
                               ),
                             ),
                           PopupMenuItem(
                             value: 'share_pdf',
+                            height: 46,
                             child: Row(
                               children: [
-                                const Icon(Icons.share_rounded, size: 18),
-                                const SizedBox(width: 10),
+                                const Icon(Icons.share_rounded, size: 20),
+                                const SizedBox(width: 12),
                                 Text(controller.strings.mobileSharePdf),
                               ],
                             ),
                           ),
                           PopupMenuItem(
                             value: 'export',
+                            height: 46,
                             child: Row(
                               children: [
-                                const Icon(Icons.download_rounded, size: 18),
-                                const SizedBox(width: 10),
+                                const Icon(Icons.download_rounded, size: 20),
+                                const SizedBox(width: 12),
                                 Text(controller.strings.exportPdf),
                               ],
                             ),
@@ -346,20 +361,22 @@ class MobileWorkspaceChrome {
                           if (controller.currentPdfBytes != null)
                             PopupMenuItem(
                               value: 'presentation',
+                              height: 46,
                               child: Row(
                                 children: [
-                                  const Icon(Icons.slideshow_rounded, size: 18),
-                                  const SizedBox(width: 10),
+                                  const Icon(Icons.slideshow_rounded, size: 20),
+                                  const SizedBox(width: 12),
                                   Text(controller.strings.mobilePresentationMode),
                                 ],
                               ),
                             ),
                           PopupMenuItem(
                             value: 'refresh',
+                            height: 46,
                             child: Row(
                               children: [
-                                const Icon(Icons.refresh_rounded, size: 18),
-                                const SizedBox(width: 10),
+                                const Icon(Icons.refresh_rounded, size: 20),
+                                const SizedBox(width: 12),
                                 Text(controller.strings.reloadDocument),
                               ],
                             ),
@@ -367,20 +384,22 @@ class MobileWorkspaceChrome {
                           const PopupMenuDivider(),
                           PopupMenuItem(
                             value: 'settings',
+                            height: 46,
                             child: Row(
                               children: [
-                                const Icon(Icons.settings_outlined, size: 18),
-                                const SizedBox(width: 10),
+                                const Icon(Icons.settings_outlined, size: 20),
+                                const SizedBox(width: 12),
                                 Text(controller.strings.settingsTitle),
                               ],
                             ),
                           ),
                           PopupMenuItem(
                             value: 'about',
+                            height: 46,
                             child: Row(
                               children: [
-                                const Icon(Icons.info_outline_rounded, size: 18),
-                                const SizedBox(width: 10),
+                                const Icon(Icons.info_outline_rounded, size: 20),
+                                const SizedBox(width: 12),
                                 Text(controller.strings.tabAboutTitle),
                               ],
                             ),
@@ -408,7 +427,7 @@ class MobileWorkspaceChrome {
       context: context,
       backgroundColor: isDark ? const Color(0xFF202022) : Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) {
         return ListenableBuilder(
@@ -417,11 +436,22 @@ class MobileWorkspaceChrome {
             final sessions = controller.sessions;
             return SafeArea(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 10),
+                        decoration: BoxDecoration(
+                          color: isDark ? Colors.white24 : Colors.black26,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
                     Row(
                       children: [
                         const Icon(Icons.layers_outlined, size: 20),
@@ -876,18 +906,31 @@ class _MobileActionButton extends StatelessWidget {
 
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(14),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              size: 22,
-              color: isSelected ? activeColor : defaultColor,
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              width: 52,
+              height: 28,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? activeColor.withValues(alpha: isDark ? 0.22 : 0.14)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(
+                icon,
+                size: 21,
+                color: isSelected ? activeColor : defaultColor,
+              ),
             ),
-            const SizedBox(height: 3),
+            const SizedBox(height: 2),
             Text(
               label,
               style: TextStyle(

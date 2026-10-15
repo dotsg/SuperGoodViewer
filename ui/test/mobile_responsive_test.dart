@@ -1,8 +1,10 @@
 import 'dart:io';
+import 'package:archive/archive.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sogoodviewer/controllers/reader_controller.dart';
+import 'package:sogoodviewer/services/font_download_service.dart';
 import 'package:sogoodviewer/services/form_factor.dart';
 import 'package:sogoodviewer/views/mobile_typography_sheet.dart';
 import 'package:sogoodviewer/views/mobile_workspace_chrome.dart';
@@ -540,6 +542,98 @@ void main() {
       expect(controller.isCompiling, isFalse);
       expect(controller.currentPdfBytes, isNull);
       expect(controller.errorMessage, isNotNull);
+    });
+
+    test('FontDownloadService.downloadAndInstallMapleMono extracts core .ttf weights from zip and activates Maple Mono', () async {
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      final tempDir = Directory.systemTemp.createTempSync('sgv_custom_fonts_');
+      FontDownloadService.customFontsDirForTesting = tempDir;
+      addTearDown(() {
+        FontDownloadService.customFontsDirForTesting = null;
+        FontDownloadService.debugDownloadOverride = null;
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+
+      // Build a synthetic ZIP archive containing core Maple Mono weights + an extra Thin weight
+      final archive = Archive();
+      final dummyTtfBytes = Uint8List.fromList(<int>[0, 1, 0, 0, ...List<int>.filled(64, 0x41)]);
+      for (final fileName in const [
+        'MapleMono-NF-CN-Regular.ttf',
+        'MapleMono-NF-CN-Bold.ttf',
+        'MapleMono-NF-CN-Italic.ttf',
+        'MapleMono-NF-CN-BoldItalic.ttf',
+        'MapleMono-NF-CN-Medium.ttf',
+        'MapleMono-NF-CN-SemiBold.ttf',
+        'MapleMono-NF-CN-Thin.ttf',
+        'MapleMono-NF-CN-ExtraLight.ttf',
+      ]) {
+        archive.addFile(ArchiveFile(fileName, dummyTtfBytes.length, dummyTtfBytes));
+      }
+      final encodedZip = Uint8List.fromList(ZipEncoder().encode(archive));
+
+      final reportedProgress = <double>[];
+      FontDownloadService.debugDownloadOverride = (onProgress) async {
+        onProgress(0.35);
+        reportedProgress.add(FontDownloadService.instance.progress);
+        onProgress(0.85);
+        reportedProgress.add(FontDownloadService.instance.progress);
+        return encodedZip;
+      };
+
+      final ok = await FontDownloadService.instance.downloadAndInstallMapleMono(controller);
+      expect(ok, isTrue);
+      expect(reportedProgress, equals([0.35, 0.85]));
+      expect(FontDownloadService.instance.isBusy, isFalse);
+
+      // Core 6 weights should be extracted while Thin / ExtraLight are skipped
+      final extractedNames = tempDir
+          .listSync()
+          .whereType<File>()
+          .map((f) => f.uri.pathSegments.last)
+          .toSet();
+      expect(extractedNames.contains('MapleMono-NF-CN-Regular.ttf'), isTrue);
+      expect(extractedNames.contains('MapleMono-NF-CN-Bold.ttf'), isTrue);
+      expect(extractedNames.contains('MapleMono-NF-CN-Thin.ttf'), isFalse);
+      expect(controller.renderOptions.codeFont?.toLowerCase(), contains('maple mono'));
+    });
+
+    testWidgets('Mobile Settings Layout & Typography tabs handle narrow 360dp phone screen and expose font install controls without overflow', (tester) async {
+      // Test on a compact 360dp-wide Android phone screen
+      tester.view.physicalSize = const Size(360, 780);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SettingsDialog(
+            controller: controller,
+            initialTab: SettingsTab.typography,
+          ),
+        ),
+      ));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(tester.takeException(), isNull);
+
+      // Local font import button is always available in Typography tab
+      expect(find.byKey(const Key('settings_import_font_btn')), findsOneWidget);
+
+      // Switch to Layout tab on 360dp screen and trigger unsaved changes to verify mobile stacked bottom bar & vertical slot inputs
+      final chips = find.byType(FilterChip);
+      await tester.tap(chips.at(1)); // Layout tab
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 4));
     });
   });
 

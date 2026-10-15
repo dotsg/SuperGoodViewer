@@ -116,6 +116,18 @@ class _SidebarViewState extends State<SidebarView> {
     }
   }
 
+  String _formatDisplayPath(String rawPath) {
+    final normalized = rawPath.replaceAll('\\', '/');
+    if (normalized.contains('/cache/shared_documents/') ||
+        normalized.contains('/cache/file_picker/')) {
+      return widget.controller.strings.mobileSharedDocumentLocation;
+    }
+    if (normalized.startsWith('/storage/emulated/0/')) {
+      return normalized.substring('/storage/emulated/0/'.length);
+    }
+    return rawPath;
+  }
+
   Widget _buildTabButton({
     required String title,
     required IconData icon,
@@ -125,17 +137,22 @@ class _SidebarViewState extends State<SidebarView> {
     required bool isDark,
     required ThemeData theme,
   }) {
+    final isMobileDrawer = !widget.showResizeHandle;
+    final radius = BorderRadius.circular(isMobileDrawer ? 10 : 6);
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(6),
+      borderRadius: radius,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+        padding: EdgeInsets.symmetric(
+          vertical: isMobileDrawer ? 9 : 6,
+          horizontal: isMobileDrawer ? 10 : 8,
+        ),
         decoration: BoxDecoration(
           color: isSelected
               ? (isDark ? const Color(0xFF383838) : Colors.white)
               : Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: radius,
           boxShadow: isSelected
               ? [
                   BoxShadow(
@@ -151,26 +168,30 @@ class _SidebarViewState extends State<SidebarView> {
           children: [
             Icon(
               icon,
-              size: 14,
+              size: isMobileDrawer ? 16 : 14,
               color: isSelected
                   ? theme.colorScheme.primary
                   : theme.colorScheme.onSurface.withValues(alpha: 0.6),
             ),
             const SizedBox(width: 5),
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 11.5,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                color: isSelected
-                    ? (isDark ? Colors.white : Colors.black87)
-                    : theme.colorScheme.onSurface.withValues(alpha: 0.6),
+            Flexible(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: isMobileDrawer ? 13.0 : 11.5,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                  color: isSelected
+                      ? (isDark ? Colors.white : Colors.black87)
+                      : theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                ),
               ),
             ),
             if (count > 0) ...[
               const SizedBox(width: 4),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                 decoration: BoxDecoration(
                   color: isSelected
                       ? theme.colorScheme.primary.withValues(alpha: 0.15)
@@ -180,7 +201,7 @@ class _SidebarViewState extends State<SidebarView> {
                 child: Text(
                   '$count',
                   style: TextStyle(
-                    fontSize: 9.5,
+                    fontSize: isMobileDrawer ? 10.5 : 9.5,
                     fontWeight: FontWeight.w600,
                     color: isSelected
                         ? theme.colorScheme.primary
@@ -254,6 +275,8 @@ class _SidebarViewState extends State<SidebarView> {
     required ThemeData theme,
     required bool isDark,
   }) {
+    final isMobileDrawer = !widget.showResizeHandle;
+    final fontBoost = isMobileDrawer ? 1.5 : 0.0;
     // Proportional indentation:
     // Level 1: 0px (flush)
     // Level 2: 12px
@@ -286,32 +309,32 @@ class _SidebarViewState extends State<SidebarView> {
       textColor = theme.colorScheme.primary;
       switch (item.level) {
         case 1:
-          fontSize = 12.5;
+          fontSize = 12.5 + fontBoost;
           fontWeight = FontWeight.w700;
           break;
         case 2:
-          fontSize = 12.0;
+          fontSize = 12.0 + fontBoost;
           fontWeight = FontWeight.w600;
           break;
         default:
-          fontSize = 11.5;
+          fontSize = 11.5 + fontBoost;
           fontWeight = FontWeight.w600;
           break;
       }
     } else {
       switch (item.level) {
         case 1:
-          fontSize = 12.5;
+          fontSize = 12.5 + fontBoost;
           fontWeight = FontWeight.w600;
           textColor = isDark ? const Color(0xFFE2E8F0) : const Color(0xFF1E293B);
           break;
         case 2:
-          fontSize = 12.0;
+          fontSize = 12.0 + fontBoost;
           fontWeight = FontWeight.w500;
           textColor = isDark ? const Color(0xFFCBD5E1) : const Color(0xFF334155);
           break;
         default:
-          fontSize = 11.5;
+          fontSize = 11.5 + fontBoost;
           fontWeight = FontWeight.w400;
           textColor = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
           break;
@@ -319,15 +342,16 @@ class _SidebarViewState extends State<SidebarView> {
     }
 
     final activeBgColor = theme.colorScheme.primary.withValues(alpha: isDark ? 0.16 : 0.08);
+    final itemRadius = BorderRadius.circular(isMobileDrawer ? 10 : 6);
 
     return Padding(
       key: key,
-      padding: EdgeInsets.only(left: indent, bottom: 2),
+      padding: EdgeInsets.only(left: indent, bottom: isMobileDrawer ? 3 : 2),
       child: Material(
         color: Colors.transparent,
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: itemRadius,
         child: InkWell(
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: itemRadius,
           hoverColor: isDark ? Colors.white.withValues(alpha: 0.04) : Colors.black.withValues(alpha: 0.04),
           onTap: () {
             widget.controller.jumpToOutline(item);
@@ -338,10 +362,13 @@ class _SidebarViewState extends State<SidebarView> {
           },
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 150),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            padding: EdgeInsets.symmetric(
+              horizontal: isMobileDrawer ? 10 : 8,
+              vertical: isMobileDrawer ? 10 : 6,
+            ),
             decoration: BoxDecoration(
               color: isActive ? activeBgColor : Colors.transparent,
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: itemRadius,
             ),
             child: Row(
               children: [
@@ -349,7 +376,7 @@ class _SidebarViewState extends State<SidebarView> {
                 AnimatedContainer(
                   duration: const Duration(milliseconds: 150),
                   width: isActive ? 3.0 : 0.0,
-                  height: isActive ? 14.0 : 0.0,
+                  height: isActive ? (isMobileDrawer ? 16.0 : 14.0) : 0.0,
                   margin: EdgeInsets.only(right: isActive ? 6.0 : 0.0),
                   decoration: BoxDecoration(
                     color: theme.colorScheme.primary,
@@ -383,7 +410,7 @@ class _SidebarViewState extends State<SidebarView> {
                   Text(
                     '${item.pageNumber}',
                     style: TextStyle(
-                      fontSize: 10.5,
+                      fontSize: isMobileDrawer ? 11.5 : 10.5,
                       fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
                       color: isActive
                           ? theme.colorScheme.primary.withValues(alpha: 0.9)
@@ -401,6 +428,7 @@ class _SidebarViewState extends State<SidebarView> {
   }
 
   Widget _buildRecentFilesList(ThemeData theme, bool isDark) {
+    final isMobileDrawer = !widget.showResizeHandle;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -411,7 +439,7 @@ class _SidebarViewState extends State<SidebarView> {
               Text(
                 widget.controller.strings.recentFilesCount(widget.controller.recentFiles.length),
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: isMobileDrawer ? 12 : 11,
                   fontWeight: FontWeight.w600,
                   color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
                 ),
@@ -426,7 +454,7 @@ class _SidebarViewState extends State<SidebarView> {
                     child: Text(
                       widget.controller.strings.clearRecentHistory,
                       style: TextStyle(
-                        fontSize: 10.5,
+                        fontSize: isMobileDrawer ? 11.5 : 10.5,
                         color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
                       ),
                     ),
@@ -471,7 +499,7 @@ class _SidebarViewState extends State<SidebarView> {
                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                             visualDensity: VisualDensity.compact,
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(6),
+                              borderRadius: BorderRadius.circular(8),
                             ),
                           ),
                         ),
@@ -487,27 +515,30 @@ class _SidebarViewState extends State<SidebarView> {
                     final isSelected = path == widget.controller.currentFilePath;
                     final isPdf = path.toLowerCase().endsWith('.pdf');
                     return ListTile(
-                      dense: true,
+                      dense: !isMobileDrawer,
                       selected: isSelected,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: BorderRadius.circular(isMobileDrawer ? 10 : 6),
                       ),
                       leading: Icon(
                         isPdf ? Icons.picture_as_pdf_outlined : Icons.article_outlined,
-                        size: 16,
+                        size: isMobileDrawer ? 20 : 16,
                         color: isPdf ? Colors.redAccent.withValues(alpha: 0.8) : null,
                       ),
                       title: Text(
                         p.basename(path),
-                        style: const TextStyle(fontSize: 12),
+                        style: TextStyle(
+                          fontSize: isMobileDrawer ? 13.5 : 12,
+                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                       subtitle: Text(
-                        path,
+                        _formatDisplayPath(path),
                         style: TextStyle(
-                          fontSize: 10,
-                          color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
+                          fontSize: isMobileDrawer ? 11.0 : 10,
+                          color: theme.colorScheme.onSurface.withValues(alpha: 0.45),
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -533,8 +564,8 @@ class _SidebarViewState extends State<SidebarView> {
     final controller = widget.controller;
     final effectiveWidth = widget.width ?? widget.controller.sidebarWidth;
     final isMobileDrawer = !widget.showResizeHandle;
-    final headerButtonSize = isMobileDrawer ? 36.0 : 24.0;
-    final headerIconSize = isMobileDrawer ? 19.0 : 16.0;
+    final headerButtonSize = isMobileDrawer ? 38.0 : 24.0;
+    final headerIconSize = isMobileDrawer ? 20.0 : 16.0;
 
     return SizedBox(
       width: effectiveWidth,
@@ -563,10 +594,10 @@ class _SidebarViewState extends State<SidebarView> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Sidebar Top Header (Aligned with macOS Traffic Lights)
+                  // Sidebar Top Header
                   Container(
-                    height: isMobileDrawer ? 44 : 32,
-                    padding: const EdgeInsets.only(right: 8),
+                    height: isMobileDrawer ? 52 : 32,
+                    padding: EdgeInsets.only(left: isMobileDrawer ? 14 : 0, right: 8),
                     decoration: BoxDecoration(
                       border: Border(
                         bottom: BorderSide(
@@ -579,22 +610,54 @@ class _SidebarViewState extends State<SidebarView> {
                       children: [
                         // Dedicated safe spacing for macOS traffic lights (Close/Miniaturize/Zoom) - docked sidebar only
                         if (widget.showResizeHandle && Platform.isMacOS && !widget.controller.isSidebarOnRight) const SizedBox(width: 78),
-                        Expanded(
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.translucent,
-                            onPanStart: (_) {
-                              try {
-                                const MethodChannel('com.sogoodviewer.window').invokeMethod('startDragging');
-                              } catch (_) {}
-                            },
-                            onDoubleTap: () {
-                              try {
-                                const MethodChannel('com.sogoodviewer.window').invokeMethod('zoom');
-                              } catch (_) {}
-                            },
-                            child: const SizedBox.expand(),
+                        if (isMobileDrawer) ...[
+                          Container(
+                            width: 24,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFF2563EB), Color(0xFF1D4ED8)],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Icon(
+                              Icons.auto_stories_rounded,
+                              size: 14,
+                              color: Colors.white,
+                            ),
                           ),
-                        ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              controller.strings.appTitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                color: isDark ? Colors.white : Colors.black87,
+                              ),
+                            ),
+                          ),
+                        ] else
+                          Expanded(
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.translucent,
+                              onPanStart: (_) {
+                                try {
+                                  const MethodChannel('com.sogoodviewer.window').invokeMethod('startDragging');
+                                } catch (_) {}
+                              },
+                              onDoubleTap: () {
+                                try {
+                                  const MethodChannel('com.sogoodviewer.window').invokeMethod('zoom');
+                                } catch (_) {}
+                              },
+                              child: const SizedBox.expand(),
+                            ),
+                          ),
                         // One-click quick toggle side button
                         SizedBox(
                           width: headerButtonSize,
@@ -617,7 +680,9 @@ class _SidebarViewState extends State<SidebarView> {
                           width: headerButtonSize,
                           height: headerButtonSize,
                           child: IconButton(
-                            tooltip: '${controller.strings.openDocument} (${controller.shortcutService.getShortcutLabel('openFile')})',
+                            tooltip: isMobileDrawer
+                                ? controller.strings.openDocument
+                                : '${controller.strings.openDocument} (${controller.shortcutService.getShortcutLabel('openFile')})',
                             icon: Icon(Icons.folder_open_rounded, size: headerIconSize),
                             onPressed: () => _pickAndOpenFile(context),
                             style: IconButton.styleFrom(
@@ -633,7 +698,9 @@ class _SidebarViewState extends State<SidebarView> {
                             width: headerButtonSize,
                             height: headerButtonSize,
                             child: IconButton(
-                              tooltip: controller.strings.sidebarCloseTooltip(controller.shortcutService.getShortcutLabel('toggleSidebar')),
+                              tooltip: isMobileDrawer
+                                  ? controller.strings.close
+                                  : controller.strings.sidebarCloseTooltip(controller.shortcutService.getShortcutLabel('toggleSidebar')),
                               icon: Icon(Icons.close_rounded, size: headerIconSize),
                               onPressed: widget.onClose,
                               style: IconButton.styleFrom(
@@ -655,7 +722,7 @@ class _SidebarViewState extends State<SidebarView> {
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: isDark ? const Color(0xFF262626) : Colors.white,
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(isMobileDrawer ? 12 : 8),
                   border: Border.all(
                     color: isDark ? const Color(0xFF333333) : const Color(0xFFE8E8E8),
                   ),
@@ -674,9 +741,9 @@ class _SidebarViewState extends State<SidebarView> {
                         Expanded(
                           child: Text(
                             controller.documentTitle,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontWeight: FontWeight.w600,
-                              fontSize: 13,
+                              fontSize: isMobileDrawer ? 14 : 13,
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -687,9 +754,9 @@ class _SidebarViewState extends State<SidebarView> {
                     if (controller.currentFilePath != null) ...[
                       const SizedBox(height: 4),
                       Text(
-                        controller.currentFilePath!,
+                        _formatDisplayPath(controller.currentFilePath!),
                         style: TextStyle(
-                          fontSize: 10.5,
+                          fontSize: isMobileDrawer ? 11.5 : 10.5,
                           color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
                         ),
                         maxLines: 2,
@@ -744,10 +811,10 @@ class _SidebarViewState extends State<SidebarView> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               child: Container(
-                padding: const EdgeInsets.all(2.5),
+                padding: EdgeInsets.all(isMobileDrawer ? 3.5 : 2.5),
                 decoration: BoxDecoration(
                   color: isDark ? const Color(0xFF282828) : const Color(0xFFECECEC),
-                  borderRadius: BorderRadius.circular(7),
+                  borderRadius: BorderRadius.circular(isMobileDrawer ? 12 : 7),
                 ),
                 child: Row(
                   children: [
@@ -790,9 +857,9 @@ class _SidebarViewState extends State<SidebarView> {
                   : _buildRecentFilesList(theme, isDark),
             ),
 
-            // Compact macOS-style 38px Footer Bar
+            // Footer Bar
             Container(
-              height: 38,
+              height: isMobileDrawer ? 48 : 38,
               padding: const EdgeInsets.symmetric(horizontal: 8),
               decoration: BoxDecoration(
                 border: Border(
@@ -807,25 +874,31 @@ class _SidebarViewState extends State<SidebarView> {
                   // Unified Settings Entry
                   Expanded(
                     child: Tooltip(
-                      message: controller.strings.settingsTooltip(controller.shortcutService.getShortcutLabel('openSettings')),
+                      message: isMobileDrawer
+                          ? controller.strings.settingsTitle
+                          : controller.strings.settingsTooltip(controller.shortcutService.getShortcutLabel('openSettings')),
                       child: InkWell(
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: BorderRadius.circular(isMobileDrawer ? 10 : 6),
                         onTap: () => showSettingsDialog(context, controller),
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                          padding: EdgeInsets.symmetric(
+                            vertical: isMobileDrawer ? 10 : 6,
+                            horizontal: 8,
+                          ),
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Icon(
                                 Icons.settings_outlined,
-                                size: 14,
-                                color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                                size: isMobileDrawer ? 18 : 14,
+                                color: theme.colorScheme.onSurface.withValues(alpha: 0.75),
                               ),
                               const SizedBox(width: 6),
                               Text(
                                 controller.strings.settingsTitle,
                                 style: TextStyle(
-                                  fontSize: 11.5,
+                                  fontSize: isMobileDrawer ? 13.5 : 11.5,
+                                  fontWeight: isMobileDrawer ? FontWeight.w600 : FontWeight.normal,
                                   color: theme.colorScheme.onSurface.withValues(alpha: 0.85),
                                 ),
                               ),
@@ -838,19 +911,22 @@ class _SidebarViewState extends State<SidebarView> {
                   if (controller.recentFiles.isNotEmpty) ...[
                     Container(
                       width: 1,
-                      height: 14,
+                      height: isMobileDrawer ? 18 : 14,
                       color: isDark ? const Color(0x22FFFFFF) : const Color(0x18000000),
                     ),
                     Tooltip(
                       message: controller.strings.clearRecentHistory,
                       child: InkWell(
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: BorderRadius.circular(isMobileDrawer ? 10 : 6),
                         onTap: controller.clearRecentFiles,
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                          padding: EdgeInsets.symmetric(
+                            vertical: isMobileDrawer ? 10 : 6,
+                            horizontal: 10,
+                          ),
                           child: Icon(
                             Icons.delete_sweep_outlined,
-                            size: 15,
+                            size: isMobileDrawer ? 18 : 15,
                             color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
                           ),
                         ),

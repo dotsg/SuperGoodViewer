@@ -884,4 +884,18 @@ class ZhHansStrings implements AppStrings {
   String get mobileKeepScreenOnTitle => '阅读时屏幕常亮';
   @override
   String get mobileKeepScreenOnDesc => '专注长文与论文阅读时防止自动息屏';
+  @override
+  String get oneClickInstallMapleMono => '一键下载并安装 Maple Mono';
+  @override
+  String downloadingFontProgress(int percent) => '正在下载字体 ($percent%)...';
+  @override
+  String get extractingAndInstallingFont => '正在解压并注册字体...';
+  @override
+  String get importLocalFont => '导入本地字体 (.ttf/.otf/.zip)';
+  @override
+  String fontInstallSuccess(String name) => '已成功安装并启用 $name 字体';
+  @override
+  String fontInstallFailed(String error) => '字体安装失败：$error';
+  @override
+  String get mobileSharedDocumentLocation => '来自外部应用分享';
 }

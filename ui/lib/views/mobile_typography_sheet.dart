@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../controllers/reader_controller.dart';
 import '../models/render_options.dart';
+import '../services/font_download_service.dart';
 import '../services/form_factor.dart';
 
 /// Shows the mobile-native typography and reading appearance bottom sheet.
@@ -49,14 +50,16 @@ class _MobileTypographySheetState extends State<MobileTypographySheet> {
     final isDark = theme.brightness == Brightness.dark;
     final strings = controller.strings;
     final mobilePrefs = MobileReadingPrefs.instance;
+    final fontService = FontDownloadService.instance;
 
     return ListenableBuilder(
-      listenable: Listenable.merge([controller, mobilePrefs]),
+      listenable: Listenable.merge([controller, mobilePrefs, fontService]),
       builder: (context, _) {
         final options = controller.renderOptions;
         final currentFontSize = options.fontSize;
         final displayFontSize = _scrubbingFontSize ?? currentFontSize;
         final isSepia = !options.isDark && mobilePrefs.isSepia;
+        final hasMapleMono = controller.fontReport['has_maple_mono'] == true;
 
         return SafeArea(
           child: ConstrainedBox(
@@ -530,7 +533,6 @@ class _MobileTypographySheetState extends State<MobileTypographySheet> {
                               const <String>[];
                           final cleanFonts =
                               rawFonts.where((f) => !f.startsWith('.')).toList();
-                          if (cleanFonts.isEmpty) return const SizedBox.shrink();
 
                           bool isCjkOrOem(String name) {
                             final l = name.toLowerCase();
@@ -573,40 +575,234 @@ class _MobileTypographySheetState extends State<MobileTypographySheet> {
                           }
 
                           return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              Text(
-                                strings.bodyFont,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  color: isDark ? Colors.white70 : Colors.black54,
+                              if (cleanFonts.isNotEmpty) ...[
+                                Text(
+                                  strings.bodyFont,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: isDark ? Colors.white70 : Colors.black54,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: [
+                                    _FontChoiceChip(
+                                      label: strings.fontOptionSystemRecommended,
+                                      isSelected: options.bodyFont == null ||
+                                          options.bodyFont!.isEmpty,
+                                      isDark: isDark,
+                                      onTap: () => controller.setTypography(bodyFont: ''),
+                                    ),
+                                    ...displayList.map((font) {
+                                      return _FontChoiceChip(
+                                        label: font,
+                                        isSelected: options.bodyFont == font,
+                                        isDark: isDark,
+                                        onTap: () =>
+                                            controller.setTypography(bodyFont: font),
+                                      );
+                                    }),
+                                  ],
+                                ),
+                                const SizedBox(height: 14),
+                              ],
+
+                              // Maple Mono One-Click Install & Local Font Import Card
+                              Container(
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: isDark
+                                      ? const Color(0xFF2A2A2E)
+                                      : const Color(0xFFF3F3F6),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: hasMapleMono
+                                        ? Colors.green.withValues(alpha: 0.35)
+                                        : theme.colorScheme.primary.withValues(alpha: 0.25),
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Icon(
+                                          hasMapleMono
+                                              ? Icons.verified_rounded
+                                              : Icons.font_download_outlined,
+                                          size: 18,
+                                          color: hasMapleMono
+                                              ? Colors.green
+                                              : theme.colorScheme.primary,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            hasMapleMono
+                                                ? strings.mapleMonoReady
+                                                : strings.mapleMonoSuggested,
+                                            style: const TextStyle(
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      hasMapleMono
+                                          ? strings.cjkMonoActiveDesc
+                                          : strings.cjkMonoMissingDesc,
+                                      style: TextStyle(
+                                        fontSize: 11.5,
+                                        color: isDark ? Colors.white60 : Colors.black54,
+                                      ),
+                                    ),
+                                    if (fontService.isBusy) ...[
+                                      const SizedBox(height: 10),
+                                      ClipRRect(
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: LinearProgressIndicator(
+                                          value: fontService.isDownloading
+                                              ? fontService.progress
+                                              : null,
+                                          minHeight: 5,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        fontService.isDownloading
+                                            ? strings.downloadingFontProgress(
+                                                fontService.progressPercent,
+                                              )
+                                            : strings.extractingAndInstallingFont,
+                                        style: TextStyle(
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w600,
+                                          color: theme.colorScheme.primary,
+                                        ),
+                                      ),
+                                    ] else ...[
+                                      const SizedBox(height: 10),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 8,
+                                        children: [
+                                          if (!hasMapleMono)
+                                            FilledButton.icon(
+                                              key: const ValueKey(
+                                                'mobile_sheet_install_maple_btn',
+                                              ),
+                                              icon: const Icon(
+                                                Icons.download_for_offline_rounded,
+                                                size: 16,
+                                              ),
+                                              label: Text(
+                                                strings.oneClickInstallMapleMono,
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                              style: FilledButton.styleFrom(
+                                                visualDensity: VisualDensity.compact,
+                                                padding: const EdgeInsets.symmetric(
+                                                  horizontal: 12,
+                                                  vertical: 8,
+                                                ),
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius: BorderRadius.circular(10),
+                                                ),
+                                              ),
+                                              onPressed: () async {
+                                                final ok = await fontService
+                                                    .downloadAndInstallMapleMono(
+                                                  controller,
+                                                );
+                                                if (!context.mounted) return;
+                                                ScaffoldMessenger.of(context).showSnackBar(
+                                                  SnackBar(
+                                                    content: Text(
+                                                      ok
+                                                          ? strings.fontInstallSuccess(
+                                                              'Maple Mono',
+                                                            )
+                                                          : strings.fontInstallFailed(
+                                                              fontService.errorMessage ?? '',
+                                                            ),
+                                                    ),
+                                                    behavior: SnackBarBehavior.floating,
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                          OutlinedButton.icon(
+                                            key: const ValueKey(
+                                              'mobile_sheet_import_font_btn',
+                                            ),
+                                            icon: const Icon(
+                                              Icons.folder_open_rounded,
+                                              size: 16,
+                                            ),
+                                            label: Text(
+                                              strings.importLocalFont,
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                            style: OutlinedButton.styleFrom(
+                                              visualDensity: VisualDensity.compact,
+                                              padding: const EdgeInsets.symmetric(
+                                                horizontal: 12,
+                                                vertical: 8,
+                                              ),
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(10),
+                                              ),
+                                            ),
+                                            onPressed: () async {
+                                              final installedName = await fontService
+                                                  .importLocalFontFile(controller);
+                                              if (!context.mounted) return;
+                                              if (installedName != null) {
+                                                ScaffoldMessenger.of(context).showSnackBar(
+                                                  SnackBar(
+                                                    content: Text(
+                                                      strings.fontInstallSuccess(
+                                                        installedName,
+                                                      ),
+                                                    ),
+                                                    behavior: SnackBarBehavior.floating,
+                                                  ),
+                                                );
+                                              } else if (fontService.errorMessage != null) {
+                                                ScaffoldMessenger.of(context).showSnackBar(
+                                                  SnackBar(
+                                                    content: Text(
+                                                      strings.fontInstallFailed(
+                                                        fontService.errorMessage!,
+                                                      ),
+                                                    ),
+                                                    behavior: SnackBarBehavior.floating,
+                                                  ),
+                                                );
+                                              }
+                                            },
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ],
                                 ),
                               ),
                               const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  _FontChoiceChip(
-                                    label: strings.fontOptionSystemRecommended,
-                                    isSelected: options.bodyFont == null ||
-                                        options.bodyFont!.isEmpty,
-                                    isDark: isDark,
-                                    onTap: () => controller.setTypography(bodyFont: ''),
-                                  ),
-                                  ...displayList.map((font) {
-                                    return _FontChoiceChip(
-                                      label: font,
-                                      isSelected: options.bodyFont == font,
-                                      isDark: isDark,
-                                      onTap: () =>
-                                          controller.setTypography(bodyFont: font),
-                                    );
-                                  }),
-                                ],
-                              ),
-                              const SizedBox(height: 10),
                             ],
                           );
                         },

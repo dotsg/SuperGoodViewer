@@ -2041,13 +2041,16 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
     final items = <ContextMenuButtonItem>[];
 
+    final isMobile = FormFactor.isMobilePlatform(context);
     final s = widget.controller.strings;
     if (isText) {
       // 1. Text Selection Context Menu: strictly text actions
       if (params.isTextSelectionEnabled && params.textSelectionDelegate.isCopyAllowed) {
         items.add(
           ContextMenuButtonItem(
-            label: '${s.copy} (${Platform.isMacOS ? 'Cmd+C' : 'Ctrl+C'})',
+            label: isMobile
+                ? s.copy
+                : '${s.copy} (${Platform.isMacOS ? 'Cmd+C' : 'Ctrl+C'})',
             type: ContextMenuButtonType.copy,
             onPressed: () async {
               params.dismissContextMenu();
@@ -2062,7 +2065,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (params.isTextSelectionEnabled && !params.textSelectionDelegate.isSelectingAllText) {
         items.add(
           ContextMenuButtonItem(
-            label: '${s.selectAll} (${Platform.isMacOS ? 'Cmd+A' : 'Ctrl+A'})',
+            label: isMobile
+                ? s.selectAll
+                : '${s.selectAll} (${Platform.isMacOS ? 'Cmd+A' : 'Ctrl+A'})',
             type: ContextMenuButtonType.selectAll,
             onPressed: () {
               params.dismissContextMenu();
@@ -2071,8 +2076,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           ),
         );
       }
-    } else {
-      // 2. Canvas / Background Context Menu: document & view actions
+    } else if (!isMobile) {
+      // 2. Canvas / Background Context Menu: desktop right-click actions
       if (params.isTextSelectionEnabled) {
         items.add(
           ContextMenuButtonItem(
@@ -2923,27 +2928,33 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final textField = TextField(
       controller: _searchFieldController,
       focusNode: _searchFocusNode,
-      style: TextStyle(fontSize: 13, color: textColor),
+      style: TextStyle(fontSize: isMobile ? 14.5 : 13, color: textColor),
       decoration: InputDecoration(
         hintText: s.searchPlaceholder,
-        hintStyle: TextStyle(fontSize: 12.5, color: hintColor),
+        hintStyle: TextStyle(fontSize: isMobile ? 14.0 : 12.5, color: hintColor),
         isDense: true,
         border: InputBorder.none,
-        contentPadding: const EdgeInsets.symmetric(vertical: 6),
+        contentPadding: EdgeInsets.symmetric(vertical: isMobile ? 8 : 6),
       ),
       onChanged: _onSearchQueryChanged,
       onSubmitted: (_) => searchNext(),
     );
 
+    final radius = BorderRadius.circular(isMobile ? 24 : 10);
+    final btnMinSize = isMobile ? 38.0 : 26.0;
+
     return ClipRRect(
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: radius,
       child: BackdropFilter(
         filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          padding: EdgeInsets.symmetric(
+            horizontal: isMobile ? 14 : 8,
+            vertical: isMobile ? 5 : 3,
+          ),
           decoration: BoxDecoration(
             color: bgColor,
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: radius,
             border: Border.all(color: borderColor, width: 0.8),
             boxShadow: [
               BoxShadow(
@@ -2956,8 +2967,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           child: Row(
             mainAxisSize: isMobile ? MainAxisSize.max : MainAxisSize.min,
             children: [
-              Icon(Icons.search, size: 16, color: hintColor),
-              const SizedBox(width: 6),
+              Icon(Icons.search_rounded, size: isMobile ? 20 : 16, color: hintColor),
+              SizedBox(width: isMobile ? 8 : 6),
               if (isMobile)
                 Expanded(child: textField)
               else
@@ -2968,7 +2979,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
                   child: Text(
                     matchInfo,
                     style: TextStyle(
-                      fontSize: 11.5,
+                      fontSize: isMobile ? 12.5 : 11.5,
                       color: _searchTotalMatches == 0 && _searchFieldController.text.isNotEmpty
                           ? Colors.redAccent
                           : hintColor,
@@ -2979,30 +2990,30 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
               ],
               const SizedBox(width: 2),
               IconButton(
-                icon: Icon(Icons.keyboard_arrow_up, size: 17, color: iconColor),
+                icon: Icon(Icons.keyboard_arrow_up_rounded, size: isMobile ? 22 : 17, color: iconColor),
                 tooltip: s.searchPrevious,
-                splashRadius: 14,
+                splashRadius: isMobile ? 20 : 14,
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                constraints: BoxConstraints(minWidth: btnMinSize, minHeight: btnMinSize),
                 onPressed: _searchTotalMatches > 0 ? searchPrev : null,
               ),
               IconButton(
-                icon: Icon(Icons.keyboard_arrow_down, size: 17, color: iconColor),
+                icon: Icon(Icons.keyboard_arrow_down_rounded, size: isMobile ? 22 : 17, color: iconColor),
                 tooltip: s.searchNext,
-                splashRadius: 14,
+                splashRadius: isMobile ? 20 : 14,
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                constraints: BoxConstraints(minWidth: btnMinSize, minHeight: btnMinSize),
                 onPressed: _searchTotalMatches > 0 ? searchNext : null,
               ),
               const SizedBox(width: 4),
-              Container(width: 1, height: 14, color: borderColor),
+              Container(width: 1, height: isMobile ? 18 : 14, color: borderColor),
               const SizedBox(width: 4),
               IconButton(
-                icon: Icon(Icons.close, size: 15, color: iconColor),
+                icon: Icon(Icons.close_rounded, size: isMobile ? 19 : 15, color: iconColor),
                 tooltip: s.closeSearch,
-                splashRadius: 14,
+                splashRadius: isMobile ? 20 : 14,
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                constraints: BoxConstraints(minWidth: btnMinSize, minHeight: btnMinSize),
                 onPressed: closeSearch,
               ),
             ],
