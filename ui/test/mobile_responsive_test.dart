@@ -507,6 +507,40 @@ void main() {
 
       prefs.setEdgeTapPageTurn(true);
     });
+
+    test('WeChat / external intent PDF opening detects %PDF header even without .pdf extension and rejects empty/corrupt PDFs', () async {
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      final tempDir = Directory.systemTemp.createTempSync('sgv_wechat_pdf_');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+
+      // 1. Simulate a WeChat FileProvider file whose display name lacked an extension or had a preamble before %PDF-1.7
+      final validPdfBytes = <int>[
+        0x00, 0x00, 0x0A, // preamble bytes within first 1024 bytes
+        0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x37, 0x0A, // %PDF-1.7\n
+        ...List<int>.filled(128, 0x20),
+      ];
+      final wechatFile = File('${tempDir.path}/1710000000_wechat_share.bin')
+        ..writeAsBytesSync(validPdfBytes);
+
+      await controller.openFile(wechatFile.path);
+      expect(controller.isPdfDocument, isTrue);
+      expect(controller.isCompiling, isFalse);
+      expect(controller.errorMessage, isNull);
+      expect(controller.currentPdfBytes, isNotNull);
+      expect(controller.currentPdfBytes!.length, equals(validPdfBytes.length));
+
+      // 2. Simulate an empty or truncated 0-byte .pdf file from failed stream copy
+      final emptyPdf = File('${tempDir.path}/empty_wechat.pdf')
+        ..writeAsBytesSync(const <int>[]);
+
+      await controller.openFile(emptyPdf.path);
+      expect(controller.isPdfDocument, isTrue);
+      expect(controller.isCompiling, isFalse);
+      expect(controller.currentPdfBytes, isNull);
+      expect(controller.errorMessage, isNotNull);
+    });
   });
 
   group('Desktop Narrow Viewport Tests', () {

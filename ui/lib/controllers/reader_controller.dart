@@ -1001,7 +1001,9 @@ class ReaderController extends ChangeNotifier {
 
     try {
       final bytes = file.readAsBytesSync();
-      final isPdf = filePath.toLowerCase().endsWith('.pdf') || startsWithPdfHeader(bytes);
+      final isPdf = filePath.toLowerCase().endsWith('.pdf') ||
+          startsWithPdfHeader(bytes) ||
+          hasPdfHeader(bytes);
 
       _doc.filePath = filePath;
       _doc.title = p.basenameWithoutExtension(filePath);
@@ -1009,14 +1011,24 @@ class ReaderController extends ChangeNotifier {
       if (isPdf) {
         _doc.compileGeneration++;
         _doc.hasPendingCompile = false;
+        _doc.isCompiling = false;
         _doc.isRawPdf = true;
         _doc.markdown = '';
         _doc.attachmentFingerprint = '';
         _doc.outlineItems = [];
-        _doc.pdfBytes = bytes;
-        _doc.errorMessage = null;
         _doc.degradedEquationCount = 0;
         _doc.degradedEquations = const [];
+
+        if (bytes.isEmpty || !hasPdfHeader(bytes)) {
+          _doc.pdfBytes = null;
+          _doc.errorMessage = 'Failed to load PDF document';
+          finishReloading();
+          notifyListeners();
+          return;
+        }
+
+        _doc.pdfBytes = bytes;
+        _doc.errorMessage = null;
 
         if (!preservePosition) {
           final history = _fileHistory[filePath];

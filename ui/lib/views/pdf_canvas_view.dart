@@ -230,11 +230,13 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
         final p1 = layout.pageLayouts[0];
         final p2 = layout.pageLayouts[1];
         const pageGap = 12.0;
-        final spreadWidth = p1.width + p2.width + pageGap;
-        final spreadHeight = math.max(p1.height, p2.height);
+        final spreadWidth = math.max(1.0, p1.width + p2.width + pageGap);
+        final spreadHeight = math.max(1.0, math.max(p1.height, p2.height));
+        final availW = math.max(1.0, viewSize.width - bmh - pageMargin * 2);
+        final availH = math.max(1.0, viewSize.height - bmv - pageMargin * 2);
 
-        final sX = (viewSize.width - bmh - pageMargin * 2) / spreadWidth;
-        final sY = (viewSize.height - bmv - pageMargin * 2) / spreadHeight;
+        final sX = availW / spreadWidth;
+        final sY = availH / spreadHeight;
         final fitSpread = math.min(sX, sY).clamp(0.2, maxScale);
         final fitWidth = sX.clamp(0.2, maxScale);
 
@@ -249,14 +251,18 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
         final page = (pageNumber != null && pageNumber >= 1 && pageNumber <= layout.pageLayouts.length)
             ? layout.pageLayouts[pageNumber - 1]
             : layout.pageLayouts.first;
-        final effectiveWidth = PdfPageAnalysisService.resolveEffectivePageWidth(
+        final rawEffectiveWidth = PdfPageAnalysisService.resolveEffectivePageWidth(
           readerController,
           layout,
           pageNumber,
           pdfCropMargins: pdfCropMargins,
         );
-        final sX = (viewSize.width - bmh - pageMargin * 2) / effectiveWidth;
-        final sY = (viewSize.height - bmv - pageMargin * 2) / page.height;
+        final effectiveWidth = rawEffectiveWidth > 1.0 ? rawEffectiveWidth : math.max(1.0, page.width);
+        final pageHeight = math.max(1.0, page.height);
+        final availW = math.max(1.0, viewSize.width - bmh - pageMargin * 2);
+        final availH = math.max(1.0, viewSize.height - bmv - pageMargin * 2);
+        final sX = availW / effectiveWidth;
+        final sY = availH / pageHeight;
         final fitPage = math.min(sX, sY).clamp(0.2, maxScale);
         final fitWidth = sX.clamp(0.2, maxScale);
 
@@ -962,6 +968,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     if (mounted) setState(() {});
   }
 
+  String? _lastFilePath;
+  bool _lastIsPdfDocument = false;
+
   @override
   void initState() {
     super.initState();
@@ -969,6 +978,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     _searchFocusNode = FocusNode(onKeyEvent: _handleSearchKeyEvent);
     MobileReadingPrefs.instance.addListener(_onMobilePrefsChanged);
 
+    _lastFilePath = widget.controller.currentFilePath;
+    _lastIsPdfDocument = widget.controller.isPdfDocument;
     _slotBytes[0] = widget.pdfBytes;
     _slotDocHash[0] = widget.pdfBytes?.hashCode ?? 0;
     _activeSlot = 0;
@@ -1131,12 +1142,19 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     // Frame A: User changes font/size/theme/mode -> notifyListeners() rebuilds with new options but old bytes.
     // Frame B: Async compilation finishes -> notifyListeners() rebuilds with new bytes.
     // Therefore, option/mode change detection MUST run unconditionally outside the byte hash guard.
+    final filePathChanged = widget.controller.currentFilePath != _lastFilePath;
+    final isPdfDocChanged = widget.controller.isPdfDocument != _lastIsPdfDocument;
+    _lastFilePath = widget.controller.currentFilePath;
+    _lastIsPdfDocument = widget.controller.isPdfDocument;
+
     final pageFormatChanged = widget.renderOptions.effectivePageFormat != oldWidget.renderOptions.effectivePageFormat;
     final optionsChanged = widget.renderOptions != oldWidget.renderOptions ||
         pageFormatChanged ||
         widget.isTwoPage != oldWidget.isTwoPage ||
         widget.documentTitle != oldWidget.documentTitle ||
-        widget.documentId != oldWidget.documentId;
+        widget.documentId != oldWidget.documentId ||
+        filePathChanged ||
+        isPdfDocChanged;
     if (optionsChanged) {
       widget.controller.renderOptionsChanged = true;
     }
@@ -1145,7 +1163,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         pageFormatChanged ||
         widget.isTwoPage != oldWidget.isTwoPage ||
         widget.documentTitle != oldWidget.documentTitle ||
-        widget.documentId != oldWidget.documentId) {
+        widget.documentId != oldWidget.documentId ||
+        filePathChanged ||
+        isPdfDocChanged) {
       _modeOrDocChanged = true;
     }
 
@@ -2203,6 +2223,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final effectiveFluid = isFluid && !isPdfDoc;
     return PdfViewer.data(
       bytes,
+      maxSizeToCacheOnMemory: bytes.length,
       initialPageNumber: effectiveFluid ? 1 : widget.controller.lastPageNumber.clamp(1, 999999),
       key: ValueKey(
         'slot_${slotIndex}_${_slotDocHash[slotIndex]}_${widget.renderOptions.mode}_${widget.renderOptions.effectivePageFormat}_${widget.isTwoPage}_$isPdfDoc',
@@ -2212,6 +2233,16 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       params: PdfViewerParams(
         backgroundColor: canvasBg,
         enableTiledRendering: true,
+        loadingBannerBuilder: (context, bytesDownloaded, totalBytes) => const Center(
+          child: SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.teal),
+            ),
+          ),
+        ),
         onKey: (params, key, isRealKeyPress) {
           if (key == LogicalKeyboardKey.arrowLeft ||
               key == LogicalKeyboardKey.arrowRight ||

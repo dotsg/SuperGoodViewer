@@ -64,7 +64,11 @@ class PresentationViewState extends State<PresentationView> {
     try {
       await pdfrxFlutterInitialize();
       final source = widget.controller.currentFilePath ?? 'presentation_${bytes.length}';
-      final doc = await PdfDocument.openData(bytes, sourceName: source);
+      final doc = await PdfDocument.openData(
+        bytes,
+        sourceName: source,
+        maxSizeToCacheOnMemory: bytes.length,
+      );
       if (mounted) {
         setState(() {
           _document = doc;

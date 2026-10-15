@@ -23,6 +23,8 @@ class MainActivity : FlutterActivity() {
     private var methodChannel: MethodChannel? = null
     private var pendingFileToOpen: String? = null
     private var isFlutterReady: Boolean = false
+    private var isResolvingIntent: Boolean = false
+    private var pendingInitialResult: MethodChannel.Result? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,8 +47,16 @@ class MainActivity : FlutterActivity() {
                 "getInitialFile" -> {
                     isFlutterReady = true
                     val file = pendingFileToOpen
-                    pendingFileToOpen = null
-                    result.success(file)
+                    if (file != null) {
+                        pendingFileToOpen = null
+                        result.success(file)
+                    } else if (isResolvingIntent) {
+                        // Hold the result until the background URI copy finishes so cold-start
+                        // from WeChat never misses the initial file due to copy latency.
+                        pendingInitialResult = result
+                    } else {
+                        result.success(null)
+                    }
                 }
                 "setKeepScreenOn" -> {
                     val enable = call.arguments as? Boolean ?: false
@@ -111,54 +121,76 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun extractIntentStreamUri(intent: Intent): Uri? {
+        intent.data?.let { return it }
+        val streamUri: Uri? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(Intent.EXTRA_STREAM)
+        }
+        if (streamUri != null) return streamUri
+        val clip = intent.clipData
+        if (clip != null && clip.itemCount > 0) {
+            clip.getItemAt(0)?.uri?.let { return it }
+        }
+        return null
+    }
+
     private fun handleIntent(intent: Intent?) {
         if (intent == null) return
         val action = intent.action
         if (Intent.ACTION_VIEW == action) {
-            val uri: Uri? = intent.data
+            val uri = extractIntentStreamUri(intent)
             if (uri != null) {
-                handleIncomingUri(uri)
+                handleIncomingUri(uri, intent.type)
             }
         } else if (Intent.ACTION_SEND == action) {
-            val streamUri: Uri? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                intent.getParcelableExtra(Intent.EXTRA_STREAM)
-            }
+            val streamUri = extractIntentStreamUri(intent)
             if (streamUri != null) {
-                handleIncomingUri(streamUri)
+                handleIncomingUri(streamUri, intent.type)
                 return
             }
             val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
             if (!sharedText.isNullOrBlank()) {
+                isResolvingIntent = true
                 Thread {
                     val savedPath = saveSharedMarkdownText(sharedText)
-                    if (savedPath != null) {
-                        runOnUiThread {
-                            dispatchOpenFile(savedPath)
-                        }
+                    runOnUiThread {
+                        completeResolvedFile(savedPath)
                     }
                 }.start()
             }
         }
     }
 
-    private fun handleIncomingUri(uri: Uri) {
+    private fun handleIncomingUri(uri: Uri, intentType: String?) {
         if (uri.scheme == "file") {
             val filePath = uri.path
             if (filePath != null) {
                 dispatchOpenFile(filePath)
             }
         } else if (uri.scheme == "content") {
+            isResolvingIntent = true
             Thread {
-                val filePath = resolveContentUri(uri)
-                if (filePath != null) {
-                    runOnUiThread {
-                        dispatchOpenFile(filePath)
-                    }
+                val filePath = resolveContentUri(uri, intentType)
+                runOnUiThread {
+                    completeResolvedFile(filePath)
                 }
             }.start()
+        }
+    }
+
+    private fun completeResolvedFile(filePath: String?) {
+        isResolvingIntent = false
+        val waiter = pendingInitialResult
+        if (waiter != null) {
+            pendingInitialResult = null
+            waiter.success(filePath)
+            return
+        }
+        if (filePath != null) {
+            dispatchOpenFile(filePath)
         }
     }
 
@@ -188,62 +220,148 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun dispatchOpenFile(filePath: String) {
-        if (isFlutterReady) {
-            methodChannel?.invokeMethod("onOpenFile", filePath)
+        val channel = methodChannel
+        if (isFlutterReady && channel != null) {
+            channel.invokeMethod("onOpenFile", filePath, object : MethodChannel.Result {
+                override fun success(result: Any?) {}
+                override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+                    pendingFileToOpen = filePath
+                }
+                override fun notImplemented() {
+                    pendingFileToOpen = filePath
+                }
+            })
         } else {
             pendingFileToOpen = filePath
         }
     }
 
-    private fun resolveContentUri(uri: Uri): String? {
-        try {
-            var displayName: String? = null
-            val cursor = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
-            cursor?.use {
-                if (it.moveToFirst()) {
-                    val index = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (index != -1) {
-                        displayName = it.getString(index)
-                    }
+    private fun hasPdfMagicBytes(file: File): Boolean {
+        if (!file.exists() || file.length() < 4L) return false
+        return try {
+            val buf = ByteArray(1028)
+            val readLen = FileInputStream(file).use { it.read(buf) }
+            if (readLen < 4) return false
+            val limit = readLen - 4
+            for (i in 0..limit) {
+                if (buf[i] == 0x25.toByte() &&     // '%'
+                    buf[i + 1] == 0x50.toByte() && // 'P'
+                    buf[i + 2] == 0x44.toByte() && // 'D'
+                    buf[i + 3] == 0x46.toByte()    // 'F'
+                ) {
+                    return true
                 }
             }
+            false
+        } catch (_: Exception) {
+            false
+        }
+    }
 
-            val mimeType = contentResolver.getType(uri)?.lowercase()
-            if (displayName.isNullOrEmpty()) {
-                val ext = if (mimeType == "application/pdf") ".pdf" else ".md"
-                displayName = "document$ext"
-            }
-
-            val sanitizedName = File(displayName!!).name
-            val sessionDir = prepareInboxSessionDir()
-            var targetFile = File(sessionDir, sanitizedName)
-
+    private fun copyUriToFile(uri: Uri, targetFile: File): Boolean {
+        try {
             contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(targetFile).use { output ->
                     input.copyTo(output)
                 }
+                if (targetFile.exists() && targetFile.length() > 0L) {
+                    return true
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("SuperGoodViewer", "openInputStream failed for $uri, trying openFileDescriptor", e)
+        }
+
+        return try {
+            contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                FileInputStream(pfd.fileDescriptor).use { input ->
+                    FileOutputStream(targetFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            }
+            targetFile.exists() && targetFile.length() > 0L
+        } catch (e: Exception) {
+            android.util.Log.e("SuperGoodViewer", "openFileDescriptor also failed for $uri", e)
+            false
+        }
+    }
+
+    private fun resolveContentUri(uri: Uri, intentType: String?): String? {
+        try {
+            var displayName: String? = null
+            try {
+                val cursor = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                cursor?.use {
+                    if (it.moveToFirst()) {
+                        val index = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (index != -1) {
+                            displayName = it.getString(index)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("SuperGoodViewer", "DISPLAY_NAME query failed for $uri", e)
             }
 
-            // Magic-byte sniff for extensionless or octet-stream files
+            if (displayName.isNullOrBlank()) {
+                val lastSeg = uri.lastPathSegment
+                if (!lastSeg.isNullOrBlank()) {
+                    val leaf = lastSeg.substringAfterLast('/')
+                    if (leaf.isNotBlank()) {
+                        displayName = leaf
+                    }
+                }
+            }
+
+            val providerMime = try {
+                contentResolver.getType(uri)?.lowercase()
+            } catch (_: Exception) {
+                null
+            }
+            val effectiveMime = providerMime ?: intentType?.lowercase()
+
+            val rawName = if (displayName.isNullOrBlank()) "document" else File(displayName!!).name
+            val sanitizedName = rawName
+                .replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001F]"), "_")
+                .trim()
+                .ifEmpty { "document" }
+
+            val sessionDir = prepareInboxSessionDir()
+            var targetFile = File(sessionDir, sanitizedName)
+
+            if (!copyUriToFile(uri, targetFile)) {
+                return null
+            }
+
+            // Always inspect magic bytes in the first 1024 bytes so PDFs from WeChat
+            // (even with missing DISPLAY_NAME, octet-stream MIME, or cache filenames)
+            // are guaranteed to have a .pdf extension.
+            val isPdf = hasPdfMagicBytes(targetFile) || effectiveMime == "application/pdf"
             val lowerName = targetFile.name.lowercase()
-            val hasKnownExt = lowerName.endsWith(".pdf") ||
-                lowerName.endsWith(".md") ||
-                lowerName.endsWith(".markdown") ||
-                lowerName.endsWith(".mdown") ||
-                lowerName.endsWith(".mkd") ||
-                lowerName.endsWith(".mkdn")
-            if (!hasKnownExt && targetFile.exists()) {
-                val header = ByteArray(4)
-                val readBytes = FileInputStream(targetFile).use { it.read(header) }
-                val isPdfMagic = readBytes == 4 &&
-                    header[0] == 0x25.toByte() && // '%'
-                    header[1] == 0x50.toByte() && // 'P'
-                    header[2] == 0x44.toByte() && // 'D'
-                    header[3] == 0x46.toByte()    // 'F'
-                val inferredExt = if (isPdfMagic || mimeType == "application/pdf") ".pdf" else ".md"
-                val renamedFile = File(sessionDir, "${targetFile.name}$inferredExt")
-                if (targetFile.renameTo(renamedFile)) {
-                    targetFile = renamedFile
+            if (isPdf) {
+                if (!lowerName.endsWith(".pdf")) {
+                    val baseName = if (lowerName.endsWith(".md") || lowerName.endsWith(".bin") || lowerName.endsWith(".tmp")) {
+                        targetFile.nameWithoutExtension.ifEmpty { "document" }
+                    } else {
+                        targetFile.name
+                    }
+                    val renamedFile = File(sessionDir, "$baseName.pdf")
+                    if (targetFile.renameTo(renamedFile)) {
+                        targetFile = renamedFile
+                    }
+                }
+            } else {
+                val hasMarkdownExt = lowerName.endsWith(".md") ||
+                    lowerName.endsWith(".markdown") ||
+                    lowerName.endsWith(".mdown") ||
+                    lowerName.endsWith(".mkd") ||
+                    lowerName.endsWith(".mkdn")
+                if (!hasMarkdownExt) {
+                    val renamedFile = File(sessionDir, "${targetFile.name}.md")
+                    if (targetFile.renameTo(renamedFile)) {
+                        targetFile = renamedFile
+                    }
                 }
             }
 
