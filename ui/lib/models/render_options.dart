@@ -69,6 +69,7 @@ class RenderOptions {
   final bool? showFooterRule;
   final bool? skipFirstPageHeaderFooter;
   final bool? marpEnabled;
+  final bool pdfCropMargins;
 
   const RenderOptions({
     this.mode = 'fluid',
@@ -89,6 +90,7 @@ class RenderOptions {
     this.showFooterRule,
     this.skipFirstPageHeaderFooter,
     this.marpEnabled,
+    this.pdfCropMargins = false,
   });
 
   String get effectivePageFormat {
@@ -143,6 +145,7 @@ class RenderOptions {
     bool? showFooterRule,
     bool? skipFirstPageHeaderFooter,
     bool? marpEnabled,
+    bool? pdfCropMargins,
   }) {
     return RenderOptions(
       mode: mode ?? this.mode,
@@ -164,6 +167,7 @@ class RenderOptions {
       skipFirstPageHeaderFooter:
           skipFirstPageHeaderFooter ?? this.skipFirstPageHeaderFooter,
       marpEnabled: marpEnabled ?? this.marpEnabled,
+      pdfCropMargins: pdfCropMargins ?? this.pdfCropMargins,
     );
   }
 
@@ -197,6 +201,7 @@ class RenderOptions {
       map['skip_first_page_header_footer'] = skipFirstPageHeaderFooter;
     }
     if (marpEnabled != null) map['marp_enabled'] = marpEnabled;
+    if (pdfCropMargins) map['pdf_crop_margins'] = pdfCropMargins;
 
     return jsonEncode(map);
   }
@@ -222,7 +227,8 @@ class RenderOptions {
           other.showHeaderRule == showHeaderRule &&
           other.showFooterRule == showFooterRule &&
           other.skipFirstPageHeaderFooter == skipFirstPageHeaderFooter &&
-          other.marpEnabled == marpEnabled;
+          other.marpEnabled == marpEnabled &&
+          other.pdfCropMargins == pdfCropMargins;
 
   @override
   int get hashCode => Object.hashAll([
@@ -244,5 +250,6 @@ class RenderOptions {
         showFooterRule,
         skipFirstPageHeaderFooter,
         marpEnabled,
+        pdfCropMargins,
       ]);
 }

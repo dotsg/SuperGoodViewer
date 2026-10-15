@@ -75,6 +75,10 @@ class ZhHansStrings implements AppStrings {
       ? '当前为双页对开，点击切换单页 ($shortcut)'
       : '当前为单页纵向，点击切换双页对开 ($shortcut)';
   @override
+  String toggleCropMarginsTooltip(bool isCropping, String shortcut) => isCropping
+      ? '智能切白边：已开启（自动裁剪空白页边距），点击还原 ($shortcut)'
+      : '智能切白边：已关闭，点击自动裁切空白边距放大正文 ($shortcut)';
+  @override
   String zoomInTooltip(String shortcut) => '放大页面 ($shortcut)';
   @override
   String zoomOutTooltip(String shortcut) => '缩小页面 ($shortcut)';
@@ -407,6 +411,8 @@ class ZhHansStrings implements AppStrings {
         return '切换明亮 / 暗黑模式';
       case 'toggleTwoPage':
         return '切换单页 / 双页对开';
+      case 'toggleCropMargins':
+        return '智能切白边';
       case 'toggleToolbar':
         return '显示 / 隐藏底部浮动栏';
       case 'findInDocument':
@@ -446,6 +452,8 @@ class ZhHansStrings implements AppStrings {
         return '在日间明亮和夜间暗黑阅读主题之间无缝切换';
       case 'toggleTwoPage':
         return '在 A4 出版模式下切换单页纵向与双页对开书籍排版';
+      case 'toggleCropMargins':
+        return '自动检测并裁切文档空白边距，最大化正文显示比例';
       case 'toggleToolbar':
         return '切换底部浮动工具栏显示状态，进入极致沉浸 Zen 模式';
       case 'findInDocument':
@@ -822,4 +830,28 @@ class ZhHansStrings implements AppStrings {
   String get openInNewTab => '新标签页';
   @override
   String get openReplaceCurrent => '替换当前文档';
+
+  // --- Mobile Reader Navigation & Typography ---
+  @override
+  String get mobileCropActive => '已切边';
+  @override
+  String get mobileCropInactive => '切白边';
+  @override
+  String get mobileLayoutFluid => '流式';
+  @override
+  String get mobileLayoutPaged => '分页';
+  @override
+  String get mobileThemeLight => '日间';
+  @override
+  String get mobileThemeDark => '夜间';
+  @override
+  String get mobileTypography => 'Aa 排版';
+  @override
+  String get mobileCropMarginsTitle => '智能切白边';
+  @override
+  String get mobileCropMarginsActiveTitle => '已开启切白边';
+  @override
+  String get mobileCropMarginsDesc => '自动裁剪页面四周空白边距，放大正文便于手机阅读';
+  @override
+  String get reloadDocument => '刷新文档';
 }

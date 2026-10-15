@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../controllers/reader_controller.dart';
 import '../i18n/locales.dart';
 import '../models/render_options.dart';
+import '../services/form_factor.dart';
 import '../services/document_cache_service.dart';
 import '../services/linux_desktop_integration.dart';
 import '../services/native_cli_service.dart';
@@ -241,7 +242,17 @@ class _SettingsDialogState extends State<SettingsDialog> {
   @override
   void initState() {
     super.initState();
-    _currentTab = widget.initialTab;
+    final mobileTabs = [
+      SettingsTab.general,
+      SettingsTab.layout,
+      SettingsTab.typography,
+      SettingsTab.about,
+    ];
+    if (FormFactor.isMobilePlatform() && !mobileTabs.contains(widget.initialTab)) {
+      _currentTab = SettingsTab.general;
+    } else {
+      _currentTab = widget.initialTab;
+    }
     if (LinuxDesktopIntegration.isSupported) {
       _desktopEntryStatus = LinuxDesktopIntegration.instance.status();
     }
@@ -411,6 +422,91 @@ class _SettingsDialogState extends State<SettingsDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final isMobile = FormFactor.isMobilePlatform(context);
+
+    if (isMobile) {
+      final mobileTabs = [
+        SettingsTab.general,
+        SettingsTab.layout,
+        SettingsTab.typography,
+        SettingsTab.about,
+      ];
+
+      return Dialog.fullscreen(
+        backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        child: SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Mobile Top Navigation Bar
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      widget.controller.strings.settingsTitle,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Mobile Horizontal Tab Chips
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                child: Row(
+                  children: mobileTabs.map((tab) {
+                    final isSelected = _currentTab == tab;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: FilterChip(
+                        selected: isSelected,
+                        label: Text(_getTabTitle(tab)),
+                        onSelected: (_) => setState(() => _currentTab = tab),
+                        selectedColor: theme.colorScheme.primary.withValues(alpha: 0.18),
+                        checkmarkColor: theme.colorScheme.primary,
+                        labelStyle: TextStyle(
+                          fontSize: 13,
+                          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                          color: isSelected
+                              ? theme.colorScheme.primary
+                              : (isDark ? Colors.white70 : Colors.black87),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+              Divider(
+                height: 1,
+                thickness: 1,
+                color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+              ),
+
+              // Tab Body (Full Width on mobile)
+              Expanded(
+                child: ListenableBuilder(
+                  listenable: widget.controller,
+                  builder: (context, _) => SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: _buildActiveTabBody(theme, isDark),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
     return Dialog(
       backgroundColor: isDark ? const Color(0xFF222222) : Colors.white,
@@ -1184,6 +1280,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
   Widget _buildGeneralTab(ThemeData theme, bool isDark) {
     final controller = widget.controller;
     final strings = controller.strings;
+    final isMobile = FormFactor.isMobilePlatform(context);
+    final isCompact = isMobile || FormFactor.isCompact(context);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1200,59 +1298,111 @@ class _SettingsDialogState extends State<SettingsDialog> {
               color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
             ),
           ),
-          child: Row(
-            children: [
-              Icon(Icons.translate_rounded, size: 22, color: theme.colorScheme.primary),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
+          child: isCompact
+              ? Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      strings.displayLanguage,
-                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                    Row(
+                      children: [
+                        Icon(Icons.translate_rounded, size: 20, color: theme.colorScheme.primary),
+                        const SizedBox(width: 8),
+                        Text(
+                          strings.displayLanguage,
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 3),
-                    Text(
-                      strings.displayLanguageDesc,
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF202020) : Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: isDark ? const Color(0xFF383838) : const Color(0xFFDCDCE0),
+                        ),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          isExpanded: true,
+                          value: controller.language,
+                          borderRadius: BorderRadius.circular(8),
+                          items: AppLanguage.values.map((lang) {
+                            return DropdownMenuItem<String>(
+                              value: lang.code,
+                              child: Row(
+                                children: [
+                                  Icon(lang.icon, size: 16, color: theme.colorScheme.primary),
+                                  const SizedBox(width: 8),
+                                  Text(lang.nativeLabel, style: const TextStyle(fontSize: 13)),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                          onChanged: (val) {
+                            if (val != null) {
+                              controller.setLanguage(val);
+                              setState(() {});
+                            }
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Icon(Icons.translate_rounded, size: 22, color: theme.colorScheme.primary),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            strings.displayLanguage,
+                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            strings.displayLanguageDesc,
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: isDark ? const Color(0xFF888888) : const Color(0xFF666666),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: controller.language,
+                        borderRadius: BorderRadius.circular(8),
+                        items: AppLanguage.values.map((lang) {
+                          return DropdownMenuItem<String>(
+                            value: lang.code,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(lang.icon, size: 16, color: theme.colorScheme.primary),
+                                const SizedBox(width: 8),
+                                Text(
+                                  lang.nativeLabel,
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            controller.setLanguage(val);
+                            setState(() {});
+                          }
+                        },
                       ),
                     ),
                   ],
                 ),
-              ),
-              DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  value: controller.language,
-                  borderRadius: BorderRadius.circular(8),
-                  items: AppLanguage.values.map((lang) {
-                    return DropdownMenuItem<String>(
-                      value: lang.code,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(lang.icon, size: 16, color: theme.colorScheme.primary),
-                          const SizedBox(width: 8),
-                          Text(
-                            lang.nativeLabel,
-                            style: const TextStyle(fontSize: 13),
-                          ),
-                        ],
-                      ),
-                    );
-                  }).toList(),
-                  onChanged: (val) {
-                    if (val != null) {
-                      controller.setLanguage(val);
-                      setState(() {});
-                    }
-                  },
-                ),
-              ),
-            ],
-          ),
         ),
         const SizedBox(height: 18),
 
@@ -1303,18 +1453,18 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   segments: [
                     ButtonSegment<String>(
                       value: ThemePreference.system,
-                      icon: const Icon(Icons.brightness_auto_outlined, size: 15),
-                      label: Text(strings.themeSystem, style: const TextStyle(fontSize: 12)),
+                      icon: isMobile ? null : const Icon(Icons.brightness_auto_outlined, size: 15),
+                      label: Text(strings.themeSystem, style: TextStyle(fontSize: isMobile ? 11 : 12)),
                     ),
                     ButtonSegment<String>(
                       value: ThemePreference.light,
-                      icon: const Icon(Icons.light_mode_outlined, size: 15),
-                      label: Text(strings.themeLight, style: const TextStyle(fontSize: 12)),
+                      icon: isMobile ? null : const Icon(Icons.light_mode_outlined, size: 15),
+                      label: Text(strings.themeLight, style: TextStyle(fontSize: isMobile ? 11 : 12)),
                     ),
                     ButtonSegment<String>(
                       value: ThemePreference.dark,
-                      icon: const Icon(Icons.dark_mode_outlined, size: 15),
-                      label: Text(strings.themeDark, style: const TextStyle(fontSize: 12)),
+                      icon: isMobile ? null : const Icon(Icons.dark_mode_outlined, size: 15),
+                      label: Text(strings.themeDark, style: TextStyle(fontSize: isMobile ? 11 : 12)),
                     ),
                   ],
                   selected: {controller.themePreference},
@@ -1322,9 +1472,14 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     controller.setThemePreference(newSelection.first);
                     setState(() {});
                   },
-                  style: const ButtonStyle(
+                  style: ButtonStyle(
                     visualDensity: VisualDensity.compact,
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding: isMobile
+                        ? WidgetStateProperty.all(
+                            const EdgeInsets.symmetric(horizontal: 4),
+                          )
+                        : null,
                   ),
                 ),
               ),

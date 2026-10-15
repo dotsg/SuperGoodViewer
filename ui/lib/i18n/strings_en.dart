@@ -78,6 +78,10 @@ class EnStrings implements AppStrings {
       ? 'Current: Two-Page Spread. Click for Single Page ($shortcut)'
       : 'Current: Single Page. Click for Two-Page Spread ($shortcut)';
   @override
+  String toggleCropMarginsTooltip(bool isCropping, String shortcut) => isCropping
+      ? 'Smart Margin Crop: ON (Cropping blank margins). Click to reset ($shortcut)'
+      : 'Smart Margin Crop: OFF. Click to crop whitespace margins and magnify text ($shortcut)';
+  @override
   String zoomInTooltip(String shortcut) => 'Zoom In ($shortcut)';
   @override
   String zoomOutTooltip(String shortcut) => 'Zoom Out ($shortcut)';
@@ -450,6 +454,8 @@ class EnStrings implements AppStrings {
         return 'Toggle Light / Dark Mode';
       case 'toggleTwoPage':
         return 'Toggle Single / Two-Page Spread';
+      case 'toggleCropMargins':
+        return 'Smart Margin Crop';
       case 'toggleToolbar':
         return 'Toggle Floating Toolbar';
       case 'findInDocument':
@@ -505,6 +511,8 @@ class EnStrings implements AppStrings {
         return 'Seamlessly switch between daylight and dark reading themes';
       case 'toggleTwoPage':
         return 'Toggle between single page and two-page facing spread in A4 mode';
+      case 'toggleCropMargins':
+        return 'Automatically detect and crop empty margins to maximize readable text width';
       case 'toggleToolbar':
         return 'Toggle bottom floating toolbar visibility for immersive Zen reading';
       case 'findInDocument':
@@ -890,4 +898,29 @@ class EnStrings implements AppStrings {
   String get openInNewTab => 'New Tab';
   @override
   String get openReplaceCurrent => 'Replace Current';
+
+  // --- Mobile Reader Navigation & Typography ---
+  @override
+  String get mobileCropActive => 'Cropped';
+  @override
+  String get mobileCropInactive => 'Crop';
+  @override
+  String get mobileLayoutFluid => 'Fluid';
+  @override
+  String get mobileLayoutPaged => 'Paged';
+  @override
+  String get mobileThemeLight => 'Day';
+  @override
+  String get mobileThemeDark => 'Night';
+  @override
+  String get mobileTypography => 'Aa Typeset';
+  @override
+  String get mobileCropMarginsTitle => 'Auto-crop Margins';
+  @override
+  String get mobileCropMarginsActiveTitle => 'Margins Cropped';
+  @override
+  String get mobileCropMarginsDesc =>
+      'Crops excess white margins to enlarge content for mobile reading';
+  @override
+  String get reloadDocument => 'Reload Document';
 }

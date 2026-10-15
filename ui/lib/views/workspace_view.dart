@@ -21,6 +21,8 @@ import 'sidebar_view.dart';
 import 'tab_strip.dart';
 import 'update_dialog.dart';
 import '../services/update_service.dart';
+import '../services/form_factor.dart';
+import 'mobile_workspace_chrome.dart';
 
 class WorkspaceView extends StatefulWidget {
   final ReaderController controller;
@@ -45,7 +47,8 @@ class WorkspaceView extends StatefulWidget {
   @visibleForTesting
   static bool defaultEnableSystemIntegration = !Platform.environment.containsKey('FLUTTER_TEST');
 
-  // Floating HUD bottom tier metrics (in logical pixels)
+  // Floating HUD metrics (in logical pixels)
+  static const double mobileTitleBarHeight = 48.0;
   static const double toolbarBottom = 24.0;
   static const double zoomHudBottom = 84.0;
   static const double bannerTierZen = toolbarBottom;
@@ -85,6 +88,10 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     // Keep the tabs reachable once there is more than one document.
     if (widget.controller.sessions.length > 1) return true;
     if (_isHoveringTitleBar) return true;
+    final isMobile = FormFactor.isMobilePlatform(mounted ? context : null);
+    if (isMobile) {
+      return _isToolbarVisible;
+    }
     return _isAtTop && _isTitleBarVisible;
   }
 
@@ -100,6 +107,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
   int _currentPage = 1;
   int _pageCount = 1;
+  int? _scrubbingPage;
 
   double _currentZoom = 1.0;
   bool _isZoomHudVisible = false;
@@ -111,6 +119,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   bool _dismissedDegradedWarning = false;
   int _lastSeenCompileGeneration = 0;
   static const _windowChannel = MethodChannel('com.sogoodviewer.window');
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   @override
   void initState() {
@@ -389,6 +398,10 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _setSidebarOpen(bool open) {
+    if (FormFactor.isMobilePlatform(mounted ? context : null)) {
+      MobileWorkspaceChrome.setDrawerOpen(_scaffoldKey, open);
+      return;
+    }
     if (_isSidebarOpen != open) {
       if (!open && !_isAtTop && !_isHoveringTitleBar) {
         setState(() {
@@ -401,6 +414,13 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _toggleSidebar() {
+    if (FormFactor.isMobilePlatform(mounted ? context : null)) {
+      MobileWorkspaceChrome.toggleDrawer(
+        _scaffoldKey,
+        isRight: widget.controller.isSidebarOnRight,
+      );
+      return;
+    }
     _setSidebarOpen(!_isSidebarOpen);
   }
 
@@ -711,6 +731,13 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     _pdfCanvasKey.currentState?.scrollScreenUp();
   }
 
+  void _jumpToPage(int page) {
+    final isMobile = FormFactor.isMobilePlatform(mounted ? context : null);
+    final topPadding = MediaQuery.paddingOf(context).top;
+    final customInset = isMobile ? (topPadding + (_shouldShowTitleBar ? WorkspaceView.mobileTitleBarHeight : 0.0)) : null;
+    _pdfCanvasKey.currentState?.goToPageNumber(page, customTopInset: customInset);
+  }
+
   void _handleFirstPage() {
     if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
     if (widget.controller.isPresentationMode) {
@@ -722,7 +749,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       _isTitleBarVisible = true;
     });
     _updateTrafficLights();
-    _pdfCanvasKey.currentState?.goToPageNumber(1);
+    _jumpToPage(1);
   }
 
   void _handleLastPage() {
@@ -738,7 +765,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       });
       _updateTrafficLights();
     }
-    _pdfCanvasKey.currentState?.goToPageNumber(_pageCount);
+    _jumpToPage(_pageCount);
   }
 
   void _handleToggleTwoPage() {
@@ -752,6 +779,14 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       widget.controller.toggleTwoPage();
       _showZoomHud(widget.controller.isTwoPage ? widget.controller.strings.hudTwoPage : widget.controller.strings.hudSinglePage);
     }
+  }
+
+  void _handleTogglePdfCropMargins() {
+    widget.controller.togglePdfCropMargins();
+    _showZoomHud(widget.controller.strings.toggleCropMarginsTooltip(
+      widget.controller.pdfCropMargins,
+      widget.controller.shortcutService.getShortcutLabel('toggleCropMargins'),
+    ));
   }
 
   Future<void> _toggleFullScreen() async {
@@ -856,6 +891,11 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final controller = widget.controller;
+    final isMobile = FormFactor.isMobilePlatform(context);
+    final topPadding = isMobile ? MediaQuery.paddingOf(context).top : 0.0;
+    final barHeight = isMobile ? 48.0 : 32.0;
+    final totalTopBarHeight = topPadding + barHeight;
+    final bottomPadding = isMobile ? MediaQuery.paddingOf(context).bottom : 0.0;
 
     return ListenableBuilder(
       listenable: controller,
@@ -870,6 +910,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               onCompileDocument: controller.refreshDocument,
               onToggleTheme: controller.toggleTheme,
               onToggleTwoPage: _handleToggleTwoPage,
+              onToggleCropMargins: _handleTogglePdfCropMargins,
               onZoomIn: _handleZoomIn,
               onZoomOut: _handleZoomOut,
               onResetZoom: _handleResetZoom,
@@ -975,12 +1016,31 @@ class _WorkspaceViewState extends State<WorkspaceView> {
           focusNode: _workspaceFocusNode,
           autofocus: true,
           child: Scaffold(
+            key: _scaffoldKey,
+            drawerEnableOpenDragGesture: false,
+            endDrawerEnableOpenDragGesture: false,
+            drawer: isMobile && !controller.isSidebarOnRight
+                ? MobileWorkspaceChrome.buildDrawer(
+                    context,
+                    controller: controller,
+                    onJumpToOutline: (item) =>
+                        _pdfCanvasKey.currentState?.jumpToOutline(item),
+                  )
+                : null,
+            endDrawer: isMobile && controller.isSidebarOnRight
+                ? MobileWorkspaceChrome.buildDrawer(
+                    context,
+                    controller: controller,
+                    onJumpToOutline: (item) =>
+                        _pdfCanvasKey.currentState?.jumpToOutline(item),
+                  )
+                : null,
             body: Stack(
               children: [
                 Row(
             children: [
               // Collapsible Left Sidebar (Outline & Recents)
-              if (_isSidebarOpen && !controller.isSidebarOnRight)
+              if (!isMobile && _isSidebarOpen && !controller.isSidebarOnRight)
                 SidebarView(
                   controller: controller,
                   onClose: () => _setSidebarOpen(false),
@@ -994,7 +1054,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                     // Pure Edge-to-Edge PDF Canvas (always fills 100% of workspace, zero layout shifting)
                     PdfCanvasView(
                       key: _pdfCanvasKey,
-                      topInset: _shouldShowTitleBar ? 32.0 : 0.0,
+                      topInset: isMobile ? topPadding : (_shouldShowTitleBar ? totalTopBarHeight : 0.0),
                       pdfBytes: controller.currentPdfBytes,
                       documentTitle: controller.documentTitle,
                       documentId: controller.activeSession.id,
@@ -1033,89 +1093,111 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                       ),
 
                     // Top Hover Zone: moving mouse to the very top edge gracefully brings up titlebar and floating controls
-                    Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      height: 32,
-                      child: MouseRegion(
-                        hitTestBehavior: HitTestBehavior.translucent,
-                        onEnter: (_) {
-                          _titleBarHoverTimer?.cancel();
-                          if (!_isHoveringTitleBar) {
-                            setState(() => _isHoveringTitleBar = true);
-                            _updateTrafficLights();
-                          }
-                          _showToolbarTemporarily();
-                        },
-                        onExit: (_) {
-                          _titleBarHoverTimer?.cancel();
-                          _titleBarHoverTimer = Timer(const Duration(milliseconds: 800), () {
-                            if (mounted) {
-                              setState(() => _isHoveringTitleBar = false);
+                    if (!isMobile)
+                      Positioned(
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        height: 32,
+                        child: MouseRegion(
+                          hitTestBehavior: HitTestBehavior.translucent,
+                          onEnter: (_) {
+                            _titleBarHoverTimer?.cancel();
+                            if (!_isHoveringTitleBar) {
+                              setState(() => _isHoveringTitleBar = true);
                               _updateTrafficLights();
                             }
-                          });
-                        },
-                      ),
-                    ),
-
-                    // Bottom Hover Zone: moving mouse to the bottom edge brings up the floating reading toolbar
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      height: 32,
-                      child: MouseRegion(
-                        hitTestBehavior: HitTestBehavior.translucent,
-                        onEnter: (_) {
-                          _showToolbarTemporarily();
-                        },
-                      ),
-                    ),
-
-                    // Zen Floating Frosted Glass Pill Toolbar (Bottom Reading HUD)
-                    Positioned(
-                      bottom: WorkspaceView.toolbarBottom,
-                      left: 0,
-                      right: 0,
-                      child: Center(
-                        child: IgnorePointer(
-                          ignoring: !_isToolbarVisible,
-                          child: MouseRegion(
-                            onEnter: (_) {
-                              _isHoveringToolbar = true;
-                              _toolbarTimer?.cancel();
-                            },
-                            onExit: (_) {
-                              _isHoveringToolbar = false;
-                              _startToolbarTimer();
-                            },
-                            child: AnimatedSlide(
-                              duration: const Duration(milliseconds: 220),
-                              curve: Curves.easeOutCubic,
-                              offset: _isToolbarVisible
-                                  ? Offset.zero
-                                  : const Offset(0, 1.4),
-                              child: AnimatedOpacity(
-                                duration: const Duration(milliseconds: 200),
-                                opacity: _isToolbarVisible ? 1.0 : 0.0,
-                                child: _buildFloatingPill(context, isDark, controller),
-                              ),
-                            ),
-                          ),
+                            _showToolbarTemporarily();
+                          },
+                          onExit: (_) {
+                            _titleBarHoverTimer?.cancel();
+                            _titleBarHoverTimer = Timer(const Duration(milliseconds: 800), () {
+                              if (mounted) {
+                                setState(() => _isHoveringTitleBar = false);
+                                _updateTrafficLights();
+                              }
+                            });
+                          },
                         ),
                       ),
+
+                    // Bottom Hover Zone: moving mouse to the bottom edge brings up the floating reading toolbar
+                    if (!isMobile)
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        height: 32,
+                        child: MouseRegion(
+                          hitTestBehavior: HitTestBehavior.translucent,
+                          onEnter: (_) {
+                            _showToolbarTemporarily();
+                          },
+                        ),
+                      ),
+
+                    // Bottom Reading HUD: Mobile Bottom Reading Bar vs Desktop Zen Pill
+                    Positioned(
+                      bottom: isMobile ? 0 : (WorkspaceView.toolbarBottom + bottomPadding),
+                      left: isMobile ? 0 : 12,
+                      right: isMobile ? 0 : 12,
+                      child: isMobile
+                          ? MobileWorkspaceChrome.buildBottomHud(
+                              context,
+                              visible: _isToolbarVisible,
+                              isDark: isDark,
+                              controller: controller,
+                              bottomPadding: bottomPadding,
+                              currentPage: _currentPage,
+                              pageCount: _pageCount,
+                              scrubbingPage: _scrubbingPage,
+                              onScrubbingChanged: (val) =>
+                                  setState(() => _scrubbingPage = val),
+                              onCancelToolbarTimer: () => _toolbarTimer?.cancel(),
+                              onRestartToolbarTimer: _startToolbarTimer,
+                              onPrevPage: _handlePrevPage,
+                              onNextPage: _handleNextPage,
+                              onJumpToPage: _jumpToPage,
+                              onToggleSidebar: _toggleSidebar,
+                              onToggleCropMargins: _handleTogglePdfCropMargins,
+                            )
+                          : Center(
+                              child: IgnorePointer(
+                                ignoring: !_isToolbarVisible,
+                                child: MouseRegion(
+                                  onEnter: (_) {
+                                    _isHoveringToolbar = true;
+                                    _toolbarTimer?.cancel();
+                                  },
+                                  onExit: (_) {
+                                    _isHoveringToolbar = false;
+                                    _startToolbarTimer();
+                                  },
+                                  child: AnimatedSlide(
+                                    duration: const Duration(milliseconds: 220),
+                                    curve: Curves.easeOutCubic,
+                                    offset: _isToolbarVisible
+                                        ? Offset.zero
+                                        : const Offset(0, 1.4),
+                                    child: AnimatedOpacity(
+                                      duration: const Duration(milliseconds: 200),
+                                      opacity: _isToolbarVisible ? 1.0 : 0.0,
+                                      child: _buildFloatingPill(context, isDark, controller),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
                     ),
 
                     // Floating Degraded Equations Warning Banner
-                    _buildDegradedWarningBanner(theme, isDark, controller),
+                    _buildDegradedWarningBanner(theme, isDark, controller, bottomPadding),
 
                     // Transient Zoom HUD Capsule (Floats above the bottom pill toolbar)
                     // Placed after the degraded warning banner in the Stack to guarantee top z-index.
                     if (_isZoomHudVisible)
                       Positioned(
-                        bottom: WorkspaceView.zoomHudBottom,
+                        bottom: _computeZoomHudBottom(bottomPadding),
                         left: 0,
                         right: 0,
                         child: Center(
@@ -1241,8 +1323,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 ),
               ),
 
-              // Collapsible Right Sidebar (Outline & Recents)
-              if (_isSidebarOpen && controller.isSidebarOnRight)
+              // Collapsible Right Sidebar (Outline & Recents) - desktop only
+              if (!isMobile && _isSidebarOpen && controller.isSidebarOnRight)
                 SidebarView(
                   controller: controller,
                   onClose: () => _setSidebarOpen(false),
@@ -1262,18 +1344,34 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     );
   }
 
-  double get _degradedBannerBottom {
-    if (_isZoomHudVisible) {
-      return WorkspaceView.bannerTierZoomHud;
-    }
-    return _isToolbarVisible ? WorkspaceView.bannerTierToolbar : WorkspaceView.bannerTierZen;
+  double _computeZoomHudBottom([double bottomPadding = 0.0]) {
+    return MobileWorkspaceChrome.computeZoomHudBottom(
+      isMobile: FormFactor.isMobilePlatform(mounted ? context : null),
+      isToolbarVisible: _isToolbarVisible,
+      bottomPadding: bottomPadding,
+      desktopDefault: WorkspaceView.zoomHudBottom,
+    );
+  }
+
+  double _computeDegradedBannerBottom([double bottomPadding = 0.0]) {
+    final desktopTier = _isZoomHudVisible
+        ? WorkspaceView.bannerTierZoomHud
+        : (_isToolbarVisible ? WorkspaceView.bannerTierToolbar : WorkspaceView.bannerTierZen);
+    return MobileWorkspaceChrome.computeDegradedBannerBottom(
+      isMobile: FormFactor.isMobilePlatform(mounted ? context : null),
+      isToolbarVisible: _isToolbarVisible,
+      isZoomHudVisible: _isZoomHudVisible,
+      bottomPadding: bottomPadding,
+      desktopDefault: desktopTier,
+    );
   }
 
   Widget _buildDegradedWarningBanner(
     ThemeData theme,
     bool isDark,
-    ReaderController controller,
-  ) {
+    ReaderController controller, [
+    double bottomPadding = 0.0,
+  ]) {
     final showDegradedWarning = controller.hasDegradedEquations &&
         controller.errorMessage == null &&
         !_dismissedDegradedWarning;
@@ -1282,7 +1380,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       key: const ValueKey('degraded_warning_positioned'),
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
-      bottom: _degradedBannerBottom,
+      bottom: _computeDegradedBannerBottom(bottomPadding),
       left: 24,
       right: 24,
       child: Center(
@@ -1440,6 +1538,19 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     ReaderController controller,
   ) {
     final show = _shouldShowTitleBar;
+    if (FormFactor.isMobilePlatform(context)) {
+      return MobileWorkspaceChrome.buildTitleBar(
+        context,
+        show: show,
+        isDark: isDark,
+        controller: controller,
+        onToggleSidebar: _toggleSidebar,
+        onOpenSearch: () => _pdfCanvasKey.currentState?.openSearch(),
+        onOpenFile: _pickAndOpenFile,
+        onExportPdf: _handleExportPdf,
+      );
+    }
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       curve: Curves.easeInOutCubic,
@@ -1709,6 +1820,19 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                   onPressed: _handleToggleTwoPage,
                 ),
                 _PillDivider(isDark: isDark),
+                _PillIconButton(
+                  icon: controller.pdfCropMargins
+                      ? Icons.crop_rounded
+                      : Icons.crop_free_rounded,
+                  tooltip: controller.strings.toggleCropMarginsTooltip(
+                    controller.pdfCropMargins,
+                    controller.shortcutService.getShortcutLabel('toggleCropMargins'),
+                  ),
+                  isSelected: controller.pdfCropMargins,
+                  iconSize: 17,
+                  onPressed: _handleTogglePdfCropMargins,
+                ),
+                _PillDivider(isDark: isDark),
                 _PageNavPill(
                   currentPage: _currentPage,
                   pageCount: _pageCount,
@@ -1717,7 +1841,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                   strings: controller.strings,
                   onPrev: _handlePrevPage,
                   onNext: _handleNextPage,
-                  onJumpToPage: (p) => _pdfCanvasKey.currentState?.goToPageNumber(p),
+                  onJumpToPage: (p) => _jumpToPage(p),
                 ),
                 _PillDivider(isDark: isDark),
               ],

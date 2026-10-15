@@ -36,6 +36,7 @@ abstract class AppStrings {
   String toggleModeTooltip(String shortcut);
   String togglePresentationTooltip(String shortcut);
   String toggleTwoPageTooltip(bool isTwoPage, String shortcut);
+  String toggleCropMarginsTooltip(bool isCropping, String shortcut);
   String zoomInTooltip(String shortcut);
   String zoomOutTooltip(String shortcut);
   String resetZoomTooltip(String shortcut);
@@ -386,4 +387,17 @@ abstract class AppStrings {
   String get openBehaviorDesc;
   String get openInNewTab;
   String get openReplaceCurrent;
+
+  // --- Mobile Reader Navigation & Typography ---
+  String get mobileCropActive;
+  String get mobileCropInactive;
+  String get mobileLayoutFluid;
+  String get mobileLayoutPaged;
+  String get mobileThemeLight;
+  String get mobileThemeDark;
+  String get mobileTypography;
+  String get mobileCropMarginsTitle;
+  String get mobileCropMarginsActiveTitle;
+  String get mobileCropMarginsDesc;
+  String get reloadDocument;
 }

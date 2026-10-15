@@ -75,6 +75,10 @@ class ZhHantStrings extends ZhHansStrings {
       ? '目前為雙頁對開，點擊切換單頁 ($shortcut)'
       : '目前為單頁縱向，點擊切換雙頁對開 ($shortcut)';
   @override
+  String toggleCropMarginsTooltip(bool isCropping, String shortcut) => isCropping
+      ? '智慧切白邊：已開啟（自動裁切空白頁邊距），點擊還原 ($shortcut)'
+      : '智慧切白邊：已關閉，點擊自動裁切空白邊距放大正文 ($shortcut)';
+  @override
   String zoomInTooltip(String shortcut) => '放大頁面 ($shortcut)';
   @override
   String zoomOutTooltip(String shortcut) => '縮小頁面 ($shortcut)';
@@ -438,6 +442,8 @@ class ZhHantStrings extends ZhHansStrings {
         return '切換明亮 / 暗黑模式';
       case 'toggleTwoPage':
         return '切換單頁 / 雙頁對開';
+      case 'toggleCropMargins':
+        return '智慧切白邊';
       case 'toggleToolbar':
         return '顯示 / 隱藏底部浮動列';
       case 'findInDocument':
@@ -493,6 +499,8 @@ class ZhHantStrings extends ZhHansStrings {
         return '在日間明亮和夜間暗黑閱讀主題之間無縫切換';
       case 'toggleTwoPage':
         return '在 A4 出版模式下切換單頁縱向與雙頁對開書籍排版';
+      case 'toggleCropMargins':
+        return '自動偵測並裁切文件空白邊距，最大化正文顯示比例';
       case 'toggleToolbar':
         return '切換底部浮動工具列顯示狀態，進入極致沉浸 Zen 模式';
       case 'findInDocument':
@@ -869,4 +877,28 @@ class ZhHantStrings extends ZhHansStrings {
   String get openInNewTab => '新分頁';
   @override
   String get openReplaceCurrent => '取代目前文件';
+
+  // --- Mobile Reader Navigation & Typography ---
+  @override
+  String get mobileCropActive => '已切邊';
+  @override
+  String get mobileCropInactive => '切白邊';
+  @override
+  String get mobileLayoutFluid => '流式';
+  @override
+  String get mobileLayoutPaged => '分頁';
+  @override
+  String get mobileThemeLight => '日間';
+  @override
+  String get mobileThemeDark => '夜間';
+  @override
+  String get mobileTypography => 'Aa 排版';
+  @override
+  String get mobileCropMarginsTitle => '智慧切白邊';
+  @override
+  String get mobileCropMarginsActiveTitle => '已開啟切白邊';
+  @override
+  String get mobileCropMarginsDesc => '自動裁剪頁面四周空白邊距，放大正文便於手機閱讀';
+  @override
+  String get reloadDocument => '重新整理文件';
 }

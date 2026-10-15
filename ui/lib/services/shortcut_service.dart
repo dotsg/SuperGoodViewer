@@ -69,6 +69,14 @@ class ShortcutService extends ChangeNotifier {
       defaultKey: LogicalKeyboardKey.keyD,
     ),
     AppShortcutAction(
+      id: 'toggleCropMargins',
+      name: '智能切白边',
+      category: '视图模式',
+      description: '自动检测并裁切文档空白边距，最大化正文显示比例',
+      defaultKey: LogicalKeyboardKey.keyC,
+      hasShift: true,
+    ),
+    AppShortcutAction(
       id: 'toggleToolbar',
       name: '显示 / 隐藏底部浮动栏',
       category: '视图模式',
@@ -476,6 +484,7 @@ class ShortcutService extends ChangeNotifier {
     required VoidCallback onToggleToolbar,
     required VoidCallback onFontSettings,
     VoidCallback? onTogglePresentation,
+    VoidCallback? onToggleCropMargins,
     VoidCallback? onFindInDocument,
     VoidCallback? onPreferences,
     VoidCallback? onKeyboardShortcuts,
@@ -510,6 +519,7 @@ class ShortcutService extends ChangeNotifier {
     addAction('compileDocument', onCompileDocument);
     addAction('toggleTheme', onToggleTheme);
     addAction('toggleTwoPage', onToggleTwoPage);
+    addAction('toggleCropMargins', onToggleCropMargins);
     addAction('zoomIn', onZoomIn);
     addAction('zoomOut', onZoomOut);
     addAction('resetZoom', onResetZoom);

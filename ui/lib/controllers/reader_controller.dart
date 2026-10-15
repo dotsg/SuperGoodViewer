@@ -559,6 +559,21 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
+  bool get pdfCropMargins => _renderOptions.pdfCropMargins;
+
+  void togglePdfCropMargins() {
+    setPdfCropMargins(!_renderOptions.pdfCropMargins);
+  }
+
+  void setPdfCropMargins(bool value) {
+    if (_renderOptions.pdfCropMargins != value) {
+      renderOptionsChanged = true;
+      _renderOptions = _renderOptions.copyWith(pdfCropMargins: value);
+      _persistPreferences();
+      notifyListeners();
+    }
+  }
+
   void toggleSidebar() {
     setSidebarOpen(!_isSidebarOpen);
   }
@@ -662,6 +677,7 @@ class ReaderController extends ChangeNotifier {
       final savedShowFooterRule = prefs['showFooterRule'] as bool?;
       final savedSkipFirstPage = prefs['skipFirstPageHeaderFooter'] as bool?;
       final savedMarpEnabled = prefs['marpEnabled'] as bool?;
+      final savedPdfCropMargins = prefs['pdfCropMargins'] as bool?;
 
       if (recent != null && recent.isNotEmpty) {
         _recentFiles.clear();
@@ -693,7 +709,8 @@ class ReaderController extends ChangeNotifier {
           savedShowHeaderRule != null ||
           savedShowFooterRule != null ||
           savedSkipFirstPage != null ||
-          savedMarpEnabled != null) {
+          savedMarpEnabled != null ||
+          savedPdfCropMargins != null) {
         _renderOptions = _renderOptions.copyWith(
           theme: _resolveTheme(),
           mode: savedMode ?? _renderOptions.mode,
@@ -711,6 +728,7 @@ class ReaderController extends ChangeNotifier {
           showFooterRule: savedShowFooterRule ?? _renderOptions.showFooterRule,
           skipFirstPageHeaderFooter: savedSkipFirstPage ?? _renderOptions.skipFirstPageHeaderFooter,
           marpEnabled: savedMarpEnabled ?? _renderOptions.marpEnabled,
+          pdfCropMargins: savedPdfCropMargins ?? _renderOptions.pdfCropMargins,
           imageCacheDir: RemoteImageService.instance.getCacheDirectory().path,
         );
         if (savedLastPagedFormat != null) {
@@ -859,6 +877,7 @@ class ReaderController extends ChangeNotifier {
       'showFooterRule': _renderOptions.showFooterRule,
       'skipFirstPageHeaderFooter': _renderOptions.skipFirstPageHeaderFooter,
       'marpEnabled': _renderOptions.marpEnabled,
+      'pdfCropMargins': _renderOptions.pdfCropMargins,
       'lastScrollRatio': _doc.scrollRatio,
       'lastScrollOffset': _doc.scrollOffset,
       'lastPageNumber': _doc.pageNumber,

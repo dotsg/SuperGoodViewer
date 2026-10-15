@@ -13,6 +13,8 @@ import 'package:vector_math/vector_math_64.dart' as vec;
 import '../controllers/reader_controller.dart';
 import '../services/startup_metrics.dart';
 import '../models/render_options.dart';
+import '../services/pdf_page_analysis_service.dart';
+import '../services/form_factor.dart';
 
 const List<double> kZoomLadder = [
   0.25, 0.33, 0.50, 0.67, 0.75, 0.80, 0.90, 1.00,
@@ -109,6 +111,7 @@ class SuperGoodSizeDelegateProvider extends PdfViewerSizeDelegateProvider {
   final ReaderController readerController;
   final bool isFluid;
   final bool isTwoPage;
+  final bool pdfCropMargins;
   final double minScale;
   final double maxScale;
   final double topInset;
@@ -117,6 +120,7 @@ class SuperGoodSizeDelegateProvider extends PdfViewerSizeDelegateProvider {
     required this.readerController,
     required this.isFluid,
     required this.isTwoPage,
+    this.pdfCropMargins = false,
     this.minScale = 0.35,
     this.maxScale = 5.0,
     this.topInset = 0.0,
@@ -127,6 +131,7 @@ class SuperGoodSizeDelegateProvider extends PdfViewerSizeDelegateProvider {
         readerController: readerController,
         isFluid: isFluid,
         isTwoPage: isTwoPage,
+        pdfCropMargins: pdfCropMargins,
         minScale: minScale,
         maxScale: maxScale,
         topInset: topInset,
@@ -139,12 +144,13 @@ class SuperGoodSizeDelegateProvider extends PdfViewerSizeDelegateProvider {
           other.readerController == readerController &&
           other.isFluid == isFluid &&
           other.isTwoPage == isTwoPage &&
+          other.pdfCropMargins == pdfCropMargins &&
           other.minScale == minScale &&
           other.maxScale == maxScale &&
           other.topInset == topInset;
 
   @override
-  int get hashCode => Object.hash(readerController, isFluid, isTwoPage, minScale, maxScale, topInset);
+  int get hashCode => Object.hash(readerController, isFluid, isTwoPage, pdfCropMargins, minScale, maxScale, topInset);
 }
 
 typedef SoGoodSizeDelegateProvider = SuperGoodSizeDelegateProvider;
@@ -154,6 +160,7 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
   final ReaderController readerController;
   final bool isFluid;
   final bool isTwoPage;
+  final bool pdfCropMargins;
   final double minScale;
   final double maxScale;
   final double topInset;
@@ -164,6 +171,7 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
     required this.readerController,
     required this.isFluid,
     required this.isTwoPage,
+    this.pdfCropMargins = false,
     required this.minScale,
     required this.maxScale,
     this.topInset = 0.0,
@@ -241,7 +249,13 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
         final page = (pageNumber != null && pageNumber >= 1 && pageNumber <= layout.pageLayouts.length)
             ? layout.pageLayouts[pageNumber - 1]
             : layout.pageLayouts.first;
-        final sX = (viewSize.width - bmh - pageMargin * 2) / page.width;
+        final effectiveWidth = PdfPageAnalysisService.resolveEffectivePageWidth(
+          readerController,
+          layout,
+          pageNumber,
+          pdfCropMargins: pdfCropMargins,
+        );
+        final sX = (viewSize.width - bmh - pageMargin * 2) / effectiveWidth;
         final sY = (viewSize.height - bmv - pageMargin * 2) / page.height;
         final fitPage = math.min(sX, sY).clamp(0.2, maxScale);
         final fitWidth = sX.clamp(0.2, maxScale);
@@ -1101,6 +1115,19 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     if (oldWidget.topInset != widget.topInset) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _onPdfViewerChanged(_activeSlot);
+      });
+    }
+
+    if (widget.renderOptions.pdfCropMargins != oldWidget.renderOptions.pdfCropMargins) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          PdfPageAnalysisService.applyMarginCrop(
+            _pdfController,
+            widget.controller,
+            widget.renderOptions.pdfCropMargins,
+            isMounted: () => mounted,
+          );
+        }
       });
     }
 
@@ -2056,6 +2083,15 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             },
           ),
         );
+        items.add(
+          ContextMenuButtonItem(
+            label: s.toggleCropMarginsTooltip(widget.controller.pdfCropMargins, widget.controller.shortcutService.getShortcutLabel('toggleCropMargins')),
+            onPressed: () {
+              params.dismissContextMenu();
+              widget.controller.togglePdfCropMargins();
+            },
+          ),
+        );
       }
       if (!widget.controller.isPdfDocument) {
         items.add(
@@ -2315,6 +2351,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           readerController: widget.controller,
           isFluid: effectiveFluid,
           isTwoPage: widget.isTwoPage,
+          pdfCropMargins: widget.controller.pdfCropMargins,
           minScale: effectiveFluid ? 0.35 : 0.2,
           maxScale: 5.0,
           topInset: widget.topInset,
@@ -2342,6 +2379,14 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         },
         onViewerReady: (document, controller) {
           if (!isCurrentSlot()) return;
+          PdfPageAnalysisService.warmupFirstPage(
+            document,
+            widget.controller,
+            isMobile: FormFactor.isMobilePlatform(context),
+            onCroppedReady: () {
+              if (mounted) setState(() {});
+            },
+          );
           // Startup probe: the first frame after the viewer is ready is the first
           // frame that actually shows a document. No-op after the first call, and
           // silent in release builds.
@@ -2427,10 +2472,26 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           final pNum = _pdfController.pageNumber ?? 1;
           final pCnt = _pdfController.pageCount;
           widget.onPageChanged?.call(pNum, pCnt);
+          PdfPageAnalysisService.preloadPageIfNeeded(
+            _pdfController,
+            widget.controller,
+            pNum,
+            isMobile: FormFactor.isMobilePlatform(context),
+          );
         },
         onGeneralTap: (context, controller, details) {
           if (details.type == PdfViewerGeneralTapType.doubleTap) {
-            controller.textSelectionDelegate.selectWord(details.documentPosition);
+            if (FormFactor.isMobilePlatform(context)) {
+              PdfPageAnalysisService.handleSmartDoubleTap(
+                controller,
+                details,
+                widget.controller,
+                topInset: widget.topInset,
+                isMounted: () => mounted,
+              );
+            } else {
+              controller.textSelectionDelegate.selectWord(details.documentPosition);
+            }
             return true;
           }
           if (details.type == PdfViewerGeneralTapType.secondaryTap) {

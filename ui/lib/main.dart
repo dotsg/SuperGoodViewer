@@ -5,12 +5,15 @@ import 'controllers/reader_controller.dart';
 import 'i18n/app_localizations.dart';
 import 'i18n/locales.dart';
 import 'views/workspace_view.dart';
+import 'services/form_factor.dart';
 import 'services/startup_metrics.dart';
 import 'services/update_service.dart';
 
-void main(List<String> args) {
+void main(List<String> args) async {
   StartupMetrics.begin();
   WidgetsFlutterBinding.ensureInitialized();
+  await FormFactor.initMobileDirectoriesIfNeeded();
+
   String? targetFile;
   for (final arg in args) {
     if (arg != '--args' && !arg.startsWith('-')) {
