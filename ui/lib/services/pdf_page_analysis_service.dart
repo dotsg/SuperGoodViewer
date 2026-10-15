@@ -345,7 +345,7 @@ class PdfPageAnalysisService {
     final targetZoom = (availableWidth / colWidth).clamp(0.4, 5.0);
 
     final currentZoom = controller.currentZoom;
-    final normalScale = controller.alternativeFitScale ?? controller.coverScale;
+    final normalScale = controller.coverScale;
 
     if (currentZoom >= targetZoom * 0.88) {
       final topDocOffset = normalScale > 0 ? topInset / normalScale : 0.0;

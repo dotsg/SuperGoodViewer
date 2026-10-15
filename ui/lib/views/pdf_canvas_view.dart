@@ -283,13 +283,18 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
     if (controller == null) return;
 
     final fitMode = readerController.autoFitMode;
+    final isMobile = FormFactor.isMobilePlatform();
+    final hasCustomZoom = readerController.lastZoom > 0.1 &&
+        (!isMobile || (readerController.lastZoom - 1.0).abs() > 0.01);
     final double initialZoom;
     if (fitMode == AutoFitMode.fitWidth) {
       initialZoom = coverScale.clamp(minScale, maxScale);
     } else if (fitMode == AutoFitMode.fitPage) {
       initialZoom = (alternativeFitScale ?? coverScale).clamp(minScale, maxScale);
-    } else if (readerController.lastZoom > 0.1) {
+    } else if (hasCustomZoom) {
       initialZoom = readerController.lastZoom.clamp(minScale, maxScale);
+    } else if (isMobile) {
+      initialZoom = coverScale.clamp(isFluid ? minScale : 0.2, maxScale);
     } else if (isFluid) {
       final docWidth = layout.documentSize.width > 0 ? layout.documentSize.width : 800.0;
       final rawFitWidth = state.viewSize.width / docWidth;
@@ -825,6 +830,7 @@ class PdfCanvasView extends StatefulWidget {
   final ReaderController controller;
   final VoidCallback? onUserScrolled;
   final VoidCallback? onCanvasTapped;
+  final void Function(Offset localPosition, Size viewSize)? onMobileTap;
   final VoidCallback? onOpenFile;
   final VoidCallback? onToggleSidebar;
   final VoidCallback? onExportPdf;
@@ -845,6 +851,7 @@ class PdfCanvasView extends StatefulWidget {
     required this.controller,
     this.onUserScrolled,
     this.onCanvasTapped,
+    this.onMobileTap,
     this.onOpenFile,
     this.onToggleSidebar,
     this.onExportPdf,
@@ -915,6 +922,30 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   int get pageNumber => _pdfController.isReady ? (_pdfController.pageNumber ?? 1) : 1;
   int get pageCount => _pdfController.isReady ? _pdfController.pageCount : 1;
 
+  double get fluidScrollProgress {
+    if (!_pdfController.isReady) {
+      return widget.controller.lastScrollRatio.clamp(0.0, 1.0);
+    }
+    final docHeight = _pdfController.documentSize.height;
+    final viewHeight = _pdfController.visibleRect.height;
+    final maxScroll = math.max(0.0, docHeight - viewHeight);
+    if (maxScroll <= 1.0) return 0.0;
+    return (_pdfController.visibleRect.top / maxScroll).clamp(0.0, 1.0);
+  }
+
+  Future<void> scrollToRatio(double ratio) async {
+    if (!_pdfController.isReady) return;
+    final docHeight = _pdfController.documentSize.height;
+    final viewHeight = _pdfController.visibleRect.height;
+    final maxScroll = math.max(0.0, docHeight - viewHeight);
+    final targetY = (ratio.clamp(0.0, 1.0) * maxScroll).clamp(0.0, maxScroll);
+    final currentPos = _pdfController.visibleRect.topLeft;
+    await _pdfController.goToPosition(
+      documentOffset: Offset(currentPos.dx, targetY),
+      duration: Duration.zero,
+    );
+  }
+
   final List<PdfTextSearcher?> _textSearchers = [null, null];
   bool _isSearchOpen = false;
   late final TextEditingController _searchFieldController;
@@ -927,11 +958,16 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   bool get isSearchOpen => _isSearchOpen;
   bool get isSearchFocused => _isSearchOpen && _searchFocusNode.hasFocus;
 
+  void _onMobilePrefsChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
     _searchFieldController = TextEditingController();
     _searchFocusNode = FocusNode(onKeyEvent: _handleSearchKeyEvent);
+    MobileReadingPrefs.instance.addListener(_onMobilePrefsChanged);
 
     _slotBytes[0] = widget.pdfBytes;
     _slotDocHash[0] = widget.pdfBytes?.hashCode ?? 0;
@@ -961,6 +997,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
   @override
   void dispose() {
+    MobileReadingPrefs.instance.removeListener(_onMobilePrefsChanged);
     _cleanupTimer?.cancel();
     _pendingWatchdogTimer?.cancel();
     _directReloadWatchdogTimer?.cancel();
@@ -2384,7 +2421,16 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             widget.controller,
             isMobile: FormFactor.isMobilePlatform(context),
             onCroppedReady: () {
-              if (mounted) setState(() {});
+              if (!mounted) return;
+              if (widget.controller.pdfCropMargins) {
+                PdfPageAnalysisService.applyMarginCrop(
+                  controller,
+                  widget.controller,
+                  true,
+                  isMounted: () => mounted,
+                );
+              }
+              setState(() {});
             },
           );
           // Startup probe: the first frame after the viewer is ready is the first
@@ -2500,7 +2546,18 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             }
           }
           if (details.type == PdfViewerGeneralTapType.tap) {
-            if (details.tapOn == PdfViewerPart.background) {
+            final isMobile = FormFactor.isMobilePlatform(context);
+            if (isMobile) {
+              if (!controller.textSelectionDelegate.hasSelectedText &&
+                  (details.tapOn == PdfViewerPart.background ||
+                      details.tapOn == PdfViewerPart.nonSelectedText)) {
+                if (widget.onMobileTap != null) {
+                  widget.onMobileTap!(details.localPosition, controller.viewSize);
+                } else {
+                  widget.onCanvasTapped?.call();
+                }
+              }
+            } else if (details.tapOn == PdfViewerPart.background) {
               widget.onCanvasTapped?.call();
             }
           }
@@ -2606,7 +2663,25 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
     final isDark = widget.renderOptions.isDark;
     final isFluid = widget.controller.isFluidLayout;
-    final canvasBg = isDark ? const Color(0xFF141414) : const Color(0xFFEBEBEB);
+    final isMobile = FormFactor.isMobilePlatform(context);
+    final mobilePrefs = MobileReadingPrefs.instance;
+    final colorFilter = isMobile
+        ? mobilePrefs.resolveCanvasColorFilter(
+            isDark: isDark,
+            isPdfDocument: widget.controller.isPdfDocument,
+            isMobile: isMobile,
+          )
+        : null;
+    final canvasBg = isDark
+        ? const Color(0xFF141414)
+        : (isMobile && mobilePrefs.isSepia
+            ? const Color(0xFFEFE6D5)
+            : const Color(0xFFEBEBEB));
+
+    Widget wrapColorFilter(Widget child) {
+      if (colorFilter == null) return child;
+      return ColorFiltered(colorFilter: colorFilter, child: child);
+    }
 
     final children = <Widget>[];
     final inactiveSlot = 1 - _activeSlot;
@@ -2618,12 +2693,14 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           key: ValueKey('slot_container_$inactiveSlot'),
           child: IgnorePointer(
             ignoring: true,
-            child: _buildPdfViewer(
-              inactiveSlot,
-              _slotBytes[inactiveSlot]!,
-              isDark,
-              isFluid,
-              canvasBg,
+            child: wrapColorFilter(
+              _buildPdfViewer(
+                inactiveSlot,
+                _slotBytes[inactiveSlot]!,
+                isDark,
+                isFluid,
+                canvasBg,
+              ),
             ),
           ),
         ),
@@ -2637,12 +2714,14 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           key: ValueKey('slot_container_$_activeSlot'),
           child: IgnorePointer(
             ignoring: false,
-            child: _buildPdfViewer(
-              _activeSlot,
-              _slotBytes[_activeSlot]!,
-              isDark,
-              isFluid,
-              canvasBg,
+            child: wrapColorFilter(
+              _buildPdfViewer(
+                _activeSlot,
+                _slotBytes[_activeSlot]!,
+                isDark,
+                isFluid,
+                canvasBg,
+              ),
             ),
           ),
         ),
@@ -2676,9 +2755,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
               ...children,
               if (_isSearchOpen)
                 Positioned(
-                  top: 52,
-                  right: 24,
-                  child: _buildSearchBar(context, isDark),
+                  top: isMobile ? math.max(56.0, widget.topInset + 56.0) : 52,
+                  left: isMobile ? 12 : null,
+                  right: isMobile ? 12 : 24,
+                  child: _buildSearchBar(context, isDark, isMobile: isMobile),
                 ),
             ],
           ),
@@ -2790,7 +2870,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     return KeyEventResult.skipRemainingHandlers;
   }
 
-  Widget _buildSearchBar(BuildContext context, bool isDark) {
+  Widget _buildSearchBar(BuildContext context, bool isDark, {bool isMobile = false}) {
     final bgColor = isDark ? const Color(0xEE242424) : const Color(0xEEF6F6F6);
     final textColor = isDark ? Colors.white : Colors.black87;
     final hintColor = isDark ? Colors.white38 : Colors.black45;
@@ -2808,6 +2888,21 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     } else {
       matchInfo = s.matchCount(_searchMatchIndex, _searchTotalMatches);
     }
+
+    final textField = TextField(
+      controller: _searchFieldController,
+      focusNode: _searchFocusNode,
+      style: TextStyle(fontSize: 13, color: textColor),
+      decoration: InputDecoration(
+        hintText: s.searchPlaceholder,
+        hintStyle: TextStyle(fontSize: 12.5, color: hintColor),
+        isDense: true,
+        border: InputBorder.none,
+        contentPadding: const EdgeInsets.symmetric(vertical: 6),
+      ),
+      onChanged: _onSearchQueryChanged,
+      onSubmitted: (_) => searchNext(),
+    );
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(10),
@@ -2828,27 +2923,14 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             ],
           ),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
+            mainAxisSize: isMobile ? MainAxisSize.max : MainAxisSize.min,
             children: [
               Icon(Icons.search, size: 16, color: hintColor),
               const SizedBox(width: 6),
-              SizedBox(
-                width: 170,
-                child: TextField(
-                  controller: _searchFieldController,
-                  focusNode: _searchFocusNode,
-                  style: TextStyle(fontSize: 13, color: textColor),
-                  decoration: InputDecoration(
-                    hintText: s.searchPlaceholder,
-                    hintStyle: TextStyle(fontSize: 12.5, color: hintColor),
-                    isDense: true,
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(vertical: 6),
-                  ),
-                  onChanged: _onSearchQueryChanged,
-                  onSubmitted: (_) => searchNext(),
-                ),
-              ),
+              if (isMobile)
+                Expanded(child: textField)
+              else
+                SizedBox(width: 170, child: textField),
               if (matchInfo.isNotEmpty) ...[
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),

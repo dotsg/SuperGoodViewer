@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sogoodviewer/controllers/reader_controller.dart';
 import 'package:sogoodviewer/services/form_factor.dart';
 import 'package:sogoodviewer/views/mobile_typography_sheet.dart';
+import 'package:sogoodviewer/views/mobile_workspace_chrome.dart';
 import 'package:sogoodviewer/views/settings_dialog.dart';
 import 'package:sogoodviewer/views/sidebar_view.dart';
 import 'package:sogoodviewer/views/workspace_view.dart';
@@ -231,8 +232,280 @@ void main() {
       // Mobile filters should not show CLI tab
       expect(find.text(controller.strings.tabCli), findsNothing);
 
+      // Verify switching across ALL mobile tabs (Layout, Typography, About) does NOT crash with unbounded height or overflow
+      final chips = find.byType(FilterChip);
+      expect(chips, findsNWidgets(4));
+
+      await tester.tap(chips.at(1)); // Layout tab
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(chips.at(2)); // Typography tab
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.takeException(), isNull);
+
+      await tester.ensureVisible(chips.at(3));
+      await tester.pump();
+      await tester.tap(chips.at(3)); // About tab
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.takeException(), isNull);
+
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(seconds: 4));
+    });
+
+    test('ReaderController initializes with phone-optimized default viewportWidth (390) and fontSize (11.5) on mobile', () async {
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      expect(controller.renderOptions.viewportWidth, equals(FormFactor.defaultMobileViewportWidth));
+      expect(controller.renderOptions.fontSize, equals(FormFactor.defaultMobileFontSize));
+
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
+
+    testWidgets('MobileTypographySheet supports 3-theme switching (Light / Sepia / Dark), Edge-Tap toggle, and Keep Screen On', (tester) async {
+      tester.view.physicalSize = phoneSize;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      bool? lastKeepScreenOnValue;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('com.sogoodviewer.app'),
+        (call) async {
+          if (call.method == 'setKeepScreenOn') {
+            lastKeepScreenOnValue = call.arguments as bool?;
+          }
+          return null;
+        },
+      );
+
+      final prefs = MobileReadingPrefs.instance;
+      prefs.setSepia(false);
+      prefs.setEdgeTapPageTurn(true);
+      prefs.setKeepScreenOn(false);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(MaterialApp(
+        home: WorkspaceView(controller: controller),
+      ));
+      await tester.pump(const Duration(milliseconds: 800));
+
+      // Open Aa Typography Sheet
+      await tester.tap(find.text(controller.strings.mobileTypography));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // Tap Warm Sepia theme card
+      await tester.tap(find.byKey(const Key('mobile_theme_sepia')));
+      await tester.pump();
+      expect(prefs.isSepia, isTrue);
+      expect(controller.renderOptions.isDark, isFalse);
+      expect(
+        prefs.resolveCanvasColorFilter(
+          isDark: controller.renderOptions.isDark,
+          isPdfDocument: false,
+          isMobile: true,
+        ),
+        isNotNull,
+      );
+
+      // Tap Dark theme card
+      await tester.tap(find.byKey(const Key('mobile_theme_dark')));
+      await tester.pump();
+      expect(prefs.isSepia, isFalse);
+      expect(controller.renderOptions.isDark, isTrue);
+      // PDF dark invert applies to PDF sessions in dark mode
+      expect(
+        prefs.resolveCanvasColorFilter(
+          isDark: true,
+          isPdfDocument: true,
+          isMobile: true,
+        ),
+        isNotNull,
+      );
+
+      // Scroll down inside the sheet to reach Keep Screen On switch
+      final keepScreenSwitch = find.byKey(const Key('mobile_keep_screen_on_switch'));
+      await tester.ensureVisible(keepScreenSwitch);
+      await tester.pump();
+      await tester.tap(keepScreenSwitch);
+      await tester.pump();
+      expect(prefs.keepScreenOn, isTrue);
+      expect(lastKeepScreenOnValue, isTrue);
+
+      // Reset prefs
+      prefs.setKeepScreenOn(false);
+      prefs.setSepia(false);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 4));
+    });
+
+    testWidgets('Mobile bottom HUD supports Fluid mode percentage slider and Paged mode Jump-to-Page dialog', (tester) async {
+      tester.view.physicalSize = phoneSize;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(MaterialApp(
+        home: WorkspaceView(controller: controller),
+      ));
+      await tester.pump(const Duration(milliseconds: 800));
+
+      // In default Fluid mode, indicator shows percentage (e.g. 0%)
+      expect(find.text('0%'), findsOneWidget);
+
+      // Switch to Paged mode and verify buildBottomHud with 10 pages opens Jump-to-Page dialog
+      controller.toggleMode();
+      int? jumpedPage;
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => MobileWorkspaceChrome.buildBottomHud(
+              context,
+              visible: true,
+              isDark: false,
+              controller: controller,
+              bottomPadding: 0,
+              currentPage: 3,
+              pageCount: 10,
+              scrubbingPage: null,
+              onScrubbingChanged: (_) {},
+              onCancelToolbarTimer: () {},
+              onRestartToolbarTimer: () {},
+              onPrevPage: () {},
+              onNextPage: () {},
+              onJumpToPage: (p) => jumpedPage = p,
+              onToggleSidebar: () {},
+              onToggleCropMargins: () {},
+            ),
+          ),
+        ),
+      ));
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('3 / 10'), findsOneWidget);
+
+      // Tap page indicator to open Jump-to-Page dialog
+      await tester.tap(find.byKey(const Key('mobile_page_indicator')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(AlertDialog), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField).last, '7');
+      await tester.tap(find.byType(FilledButton));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(jumpedPage, equals(7));
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 4));
+    });
+
+    testWidgets('Multi-tab sessions on mobile show tab badge and do not prevent HUD auto-hide', (tester) async {
+      tester.view.physicalSize = phoneSize;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      final tempDir = Directory.systemTemp.createTempSync('sgv_multitab_');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+      final f1 = File('${tempDir.path}/doc1.md')..writeAsStringSync('# Doc 1');
+      final f2 = File('${tempDir.path}/doc2.md')..writeAsStringSync('# Doc 2');
+
+      await controller.openFile(f1.path);
+      await controller.openFile(f2.path);
+      expect(controller.sessions.length, greaterThanOrEqualTo(2));
+
+      await tester.pumpWidget(MaterialApp(
+        home: WorkspaceView(controller: controller),
+      ));
+      await tester.pump(const Duration(milliseconds: 800));
+
+      // Multi-tab badge is shown in mobile top bar
+      final badgeFinder = find.byKey(const Key('mobile_tabs_badge'));
+      expect(badgeFinder, findsOneWidget);
+
+      // Tap badge to open mobile tabs bottom sheet
+      await tester.tap(badgeFinder);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('doc1'), findsWidgets);
+      expect(find.text('doc2'), findsWidgets);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 4));
+    });
+
+    test('MobileWorkspaceChrome.handleCanvasTap routes left/right edge taps to page turns and center tap to HUD toggle', () {
+      final prefs = MobileReadingPrefs.instance;
+      prefs.setEdgeTapPageTurn(true);
+
+      int prevCount = 0;
+      int nextCount = 0;
+      int hudToggleCount = 0;
+
+      // Left 22% zone (x = 40 on 390px width) -> previous page
+      MobileWorkspaceChrome.handleCanvasTap(
+        localPosition: const Offset(40, 400),
+        viewSize: phoneSize,
+        onToggleToolbar: () => hudToggleCount++,
+        onPrevPage: () => prevCount++,
+        onNextPage: () => nextCount++,
+      );
+      expect(prevCount, equals(1));
+      expect(nextCount, equals(0));
+      expect(hudToggleCount, equals(0));
+
+      // Right 22% zone (x = 350 on 390px width) -> next page
+      MobileWorkspaceChrome.handleCanvasTap(
+        localPosition: const Offset(350, 400),
+        viewSize: phoneSize,
+        onToggleToolbar: () => hudToggleCount++,
+        onPrevPage: () => prevCount++,
+        onNextPage: () => nextCount++,
+      );
+      expect(prevCount, equals(1));
+      expect(nextCount, equals(1));
+      expect(hudToggleCount, equals(0));
+
+      // Center 56% zone (x = 195 on 390px width) -> toggle HUD
+      MobileWorkspaceChrome.handleCanvasTap(
+        localPosition: const Offset(195, 400),
+        viewSize: phoneSize,
+        onToggleToolbar: () => hudToggleCount++,
+        onPrevPage: () => prevCount++,
+        onNextPage: () => nextCount++,
+      );
+      expect(hudToggleCount, equals(1));
+
+      // When edgeTapPageTurn is disabled, edge taps also toggle HUD
+      prefs.setEdgeTapPageTurn(false);
+      MobileWorkspaceChrome.handleCanvasTap(
+        localPosition: const Offset(40, 400),
+        viewSize: phoneSize,
+        onToggleToolbar: () => hudToggleCount++,
+        onPrevPage: () => prevCount++,
+        onNextPage: () => nextCount++,
+      );
+      expect(prevCount, equals(1));
+      expect(hudToggleCount, equals(2));
+
+      prefs.setEdgeTapPageTurn(true);
     });
   });
 

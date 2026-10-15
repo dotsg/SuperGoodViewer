@@ -854,4 +854,34 @@ class ZhHansStrings implements AppStrings {
   String get mobileCropMarginsDesc => '自动裁剪页面四周空白边距，放大正文便于手机阅读';
   @override
   String get reloadDocument => '刷新文档';
+  @override
+  String mobileOpenTabsMenu(int count) => '已打开文档 ($count)';
+  @override
+  String get mobileSharePdf => '分享 PDF';
+  @override
+  String get mobileShareFailed => '分享失败：当前文档尚未就绪';
+  @override
+  String get mobilePresentationMode => '演示模式';
+  @override
+  String mobileOpenDocumentsSheetTitle(int count) => '已打开文档 ($count)';
+  @override
+  String get mobileUnsavedDoc => '未保存文档';
+  @override
+  String get mobileThemeSepia => '护眼';
+  @override
+  String get mobileThemeSepiaCard => '护眼羊皮纸';
+  @override
+  String get mobileFitWidth => '适应屏宽';
+  @override
+  String get mobilePdfDarkInvertTitle => 'PDF 夜间智能反色';
+  @override
+  String get mobilePdfDarkInvertDesc => '将白底 PDF 转为柔和深灰底色，夜间阅读不刺眼';
+  @override
+  String get mobileEdgeTapTitle => '屏幕左右边缘轻触翻页';
+  @override
+  String get mobileEdgeTapDesc => '轻触左右边缘单手翻页，轻触中央呼出菜单';
+  @override
+  String get mobileKeepScreenOnTitle => '阅读时屏幕常亮';
+  @override
+  String get mobileKeepScreenOnDesc => '专注长文与论文阅读时防止自动息屏';
 }

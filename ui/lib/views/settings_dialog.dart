@@ -466,11 +466,29 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 child: Row(
                   children: mobileTabs.map((tab) {
                     final isSelected = _currentTab == tab;
+                    final s = widget.controller.strings;
+                    final String chipLabel;
+                    switch (tab) {
+                      case SettingsTab.general:
+                        chipLabel = s.tabGeneral;
+                        break;
+                      case SettingsTab.layout:
+                        chipLabel = s.tabLayout;
+                        break;
+                      case SettingsTab.typography:
+                        chipLabel = s.tabTypography;
+                        break;
+                      case SettingsTab.about:
+                        chipLabel = s.tabAbout;
+                        break;
+                      default:
+                        chipLabel = _getTabTitle(tab);
+                    }
                     return Padding(
                       padding: const EdgeInsets.only(right: 8),
                       child: FilterChip(
                         selected: isSelected,
-                        label: Text(_getTabTitle(tab)),
+                        label: Text(chipLabel),
                         onSelected: (_) => setState(() => _currentTab = tab),
                         selectedColor: theme.colorScheme.primary.withValues(alpha: 0.18),
                         checkmarkColor: theme.colorScheme.primary,
@@ -496,10 +514,20 @@ class _SettingsDialogState extends State<SettingsDialog> {
               Expanded(
                 child: ListenableBuilder(
                   listenable: widget.controller,
-                  builder: (context, _) => SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    child: _buildActiveTabBody(theme, isDark),
-                  ),
+                  builder: (context, _) => _currentTab == SettingsTab.typography
+                      ? Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                          child: _buildTypographyTab(theme, isDark),
+                        )
+                      : _currentTab == SettingsTab.layout
+                          ? Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                              child: _buildLayoutTab(theme, isDark),
+                            )
+                          : SingleChildScrollView(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              child: _buildActiveTabBody(theme, isDark),
+                            ),
                 ),
               ),
             ],
@@ -1826,26 +1854,28 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       ],
                     ),
                   ),
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.folder_open_outlined, size: 15),
-                    label: Text(strings.openCacheDirectory, style: const TextStyle(fontSize: 12)),
-                    onPressed: () async {
-                      final ok = await DocumentCacheService.openCacheDirectory();
-                      if (!ok && mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(strings.openCacheDirectoryFailed),
-                            duration: const Duration(seconds: 3),
-                            behavior: SnackBarBehavior.floating,
-                          ),
-                        );
-                      }
-                    },
-                    style: OutlinedButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
+                  if (!isMobile) ...[
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.folder_open_outlined, size: 15),
+                      label: Text(strings.openCacheDirectory, style: const TextStyle(fontSize: 12)),
+                      onPressed: () async {
+                        final ok = await DocumentCacheService.openCacheDirectory();
+                        if (!ok && mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(strings.openCacheDirectoryFailed),
+                              duration: const Duration(seconds: 3),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                        }
+                      },
+                      style: OutlinedButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
+                    const SizedBox(width: 8),
+                  ],
                   OutlinedButton.icon(
                     icon: _isClearingCache
                         ? const SizedBox(width: 13, height: 13, child: CircularProgressIndicator(strokeWidth: 2))
@@ -1895,6 +1925,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final report = controller.fontReport;
     final hasCjkMono = report['has_cjk_monospace'] == true;
     final mapleInstalled = report['maple_mono_installed'] == true;
+    final isMobile = FormFactor.isMobilePlatform(context);
 
     final bodyFontOptions = <Map<String, String?>>[
       {'label': widget.controller.strings.fontOptionSystemRecommended, 'value': null},
@@ -1947,254 +1978,269 @@ class _SettingsDialogState extends State<SettingsDialog> {
       });
     }
 
-    return Column(
+    final controlsColumn = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Two-column side-by-side main area
-        Expanded(
+        if (controller.isPdfDocument) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0x2838BDF8) : const Color(0x1A0284C7),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: isDark ? const Color(0x6038BDF8) : const Color(0x400284C7),
+                width: 1,
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.info_outline_rounded,
+                  color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7),
+                  size: 16,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    widget.controller.strings.pdfTypographyInlineNotice,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: isDark ? const Color(0xFFBAE6FD) : const Color(0xFF0369A1),
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        // Maple Mono / CJK Monospace Health Banner (compact)
+        _buildMapleHealthBanner(theme, isDark, hasCjkMono, mapleInstalled),
+        const SizedBox(height: 12),
+
+        // Body Font Dropdown
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Flexible(
+              child: Text(
+                widget.controller.strings.bodyTypographyTitle,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (_selectedBodyFont != null)
+              TextButton(
+                onPressed: () => setState(() => _selectedBodyFont = null),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                ),
+                child: Text(widget.controller.strings.useRecommended, style: const TextStyle(fontSize: 11)),
+              ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        _buildDropdown(
+          value: _selectedBodyFont,
+          items: bodyFontOptions,
+          onChanged: (val) => setState(() => _selectedBodyFont = val),
+          isDark: isDark,
+        ),
+        const SizedBox(height: 12),
+
+        // Code Font Dropdown
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Flexible(
+              child: Text(
+                widget.controller.strings.monoTypographyTitle,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (_selectedCodeFont != null)
+              TextButton(
+                onPressed: () => setState(() => _selectedCodeFont = null),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                ),
+                child: Text(widget.controller.strings.restoreDefault, style: const TextStyle(fontSize: 11)),
+              ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        _buildDropdown(
+          value: _selectedCodeFont,
+          items: codeFontOptions,
+          onChanged: (val) => setState(() => _selectedCodeFont = val),
+          isDark: isDark,
+        ),
+        const SizedBox(height: 12),
+
+        // Font Size Stepper & Slider
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Flexible(
+              child: Text(
+                widget.controller.strings.baseFontSizeTitle,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            TextButton(
+              onPressed: () => setState(() => _selectedFontSize = 10.5),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+              ),
+              child: Text(widget.controller.strings.restoreDefaultFontSize('10.5'), style: const TextStyle(fontSize: 11)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F5),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isDark ? const Color(0xFF333333) : const Color(0xFFE0E0E0),
+            ),
+          ),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Left Column: Controls (fixed width, internally scrollable)
-              SizedBox(
-                width: 280,
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (controller.isPdfDocument) ...[
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                          margin: const EdgeInsets.only(bottom: 12),
-                          decoration: BoxDecoration(
-                            color: isDark ? const Color(0x2838BDF8) : const Color(0x1A0284C7),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: isDark ? const Color(0x6038BDF8) : const Color(0x400284C7),
-                              width: 1,
-                            ),
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Icon(
-                                Icons.info_outline_rounded,
-                                color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7),
-                                size: 16,
-                              ),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Text(
-                                  widget.controller.strings.pdfTypographyInlineNotice,
-                                  style: TextStyle(
-                                    fontSize: 11.5,
-                                    color: isDark ? const Color(0xFFBAE6FD) : const Color(0xFF0369A1),
-                                    height: 1.35,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                      // Maple Mono / CJK Monospace Health Banner (compact)
-                      _buildMapleHealthBanner(theme, isDark, hasCjkMono, mapleInstalled),
-                      const SizedBox(height: 12),
-
-                      // Body Font Dropdown
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Flexible(
-                            child: Text(
-                              widget.controller.strings.bodyTypographyTitle,
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (_selectedBodyFont != null)
-                            TextButton(
-                              onPressed: () => setState(() => _selectedBodyFont = null),
-                              style: TextButton.styleFrom(
-                                visualDensity: VisualDensity.compact,
-                                padding: const EdgeInsets.symmetric(horizontal: 4),
-                              ),
-                              child: Text(widget.controller.strings.useRecommended, style: const TextStyle(fontSize: 11)),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      _buildDropdown(
-                        value: _selectedBodyFont,
-                        items: bodyFontOptions,
-                        onChanged: (val) => setState(() => _selectedBodyFont = val),
-                        isDark: isDark,
-                      ),
-                      const SizedBox(height: 12),
-
-                      // Code Font Dropdown
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Flexible(
-                            child: Text(
-                              widget.controller.strings.monoTypographyTitle,
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (_selectedCodeFont != null)
-                            TextButton(
-                              onPressed: () => setState(() => _selectedCodeFont = null),
-                              style: TextButton.styleFrom(
-                                visualDensity: VisualDensity.compact,
-                                padding: const EdgeInsets.symmetric(horizontal: 4),
-                              ),
-                              child: Text(widget.controller.strings.restoreDefault, style: const TextStyle(fontSize: 11)),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      _buildDropdown(
-                        value: _selectedCodeFont,
-                        items: codeFontOptions,
-                        onChanged: (val) => setState(() => _selectedCodeFont = val),
-                        isDark: isDark,
-                      ),
-                      const SizedBox(height: 12),
-
-                      // Font Size Stepper & Slider
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Flexible(
-                            child: Text(
-                              widget.controller.strings.baseFontSizeTitle,
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          TextButton(
-                            onPressed: () => setState(() => _selectedFontSize = 10.5),
-                            style: TextButton.styleFrom(
-                              visualDensity: VisualDensity.compact,
-                              padding: const EdgeInsets.symmetric(horizontal: 4),
-                            ),
-                            child: Text(widget.controller.strings.restoreDefaultFontSize('10.5'), style: const TextStyle(fontSize: 11)),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F5),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: isDark ? const Color(0xFF333333) : const Color(0xFFE0E0E0),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.remove_rounded, size: 16),
-                              tooltip: widget.controller.strings.decreaseFontSize,
-                              visualDensity: VisualDensity.compact,
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                              onPressed: () {
-                                setState(() {
-                                  _selectedFontSize = (_selectedFontSize - 0.5).clamp(8.0, 24.0);
-                                });
-                              },
-                            ),
-                            Expanded(
-                              child: SliderTheme(
-                                data: SliderTheme.of(context).copyWith(
-                                  trackHeight: 3,
-                                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
-                                ),
-                                child: Slider(
-                                  value: _selectedFontSize.clamp(8.0, 24.0),
-                                  min: 8.0,
-                                  max: 24.0,
-                                  divisions: 32,
-                                  label: '${_selectedFontSize.toStringAsFixed(1)} pt',
-                                  onChanged: (val) {
-                                    setState(() => _selectedFontSize = val);
-                                  },
-                                ),
-                              ),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.add_rounded, size: 16),
-                              tooltip: widget.controller.strings.increaseFontSize,
-                              visualDensity: VisualDensity.compact,
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                              onPressed: () {
-                                setState(() {
-                                  _selectedFontSize = (_selectedFontSize + 0.5).clamp(8.0, 24.0);
-                                });
-                              },
-                            ),
-                            Container(
-                              width: 50,
-                              alignment: Alignment.centerRight,
-                              padding: const EdgeInsets.only(right: 4),
-                              child: Text(
-                                '${_selectedFontSize.toStringAsFixed(1)} pt',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 11.5,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-
-                      // Reset Defaults Button
-                      Row(
-                        children: [
-                          OutlinedButton.icon(
-                            onPressed: () {
-                              setState(() {
-                                _selectedBodyFont = null;
-                                _selectedCodeFont = null;
-                                _selectedFontSize = 10.5;
-                              });
-                            },
-                            icon: const Icon(Icons.refresh_rounded, size: 13),
-                            label: Text(widget.controller.strings.restoreDefaultFonts, style: const TextStyle(fontSize: 11.5)),
-                            style: OutlinedButton.styleFrom(
-                              visualDensity: VisualDensity.compact,
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+              IconButton(
+                icon: const Icon(Icons.remove_rounded, size: 16),
+                tooltip: widget.controller.strings.decreaseFontSize,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                onPressed: () {
+                  setState(() {
+                    _selectedFontSize = (_selectedFontSize - 0.5).clamp(8.0, 24.0);
+                  });
+                },
+              ),
+              Expanded(
+                child: SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 3,
+                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                  ),
+                  child: Slider(
+                    value: _selectedFontSize.clamp(8.0, 24.0),
+                    min: 8.0,
+                    max: 24.0,
+                    divisions: 32,
+                    label: '${_selectedFontSize.toStringAsFixed(1)} pt',
+                    onChanged: (val) {
+                      setState(() => _selectedFontSize = val);
+                    },
                   ),
                 ),
               ),
-
-              const SizedBox(width: 14),
-              VerticalDivider(
-                width: 1,
-                thickness: 1,
-                color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+              IconButton(
+                icon: const Icon(Icons.add_rounded, size: 16),
+                tooltip: widget.controller.strings.increaseFontSize,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                onPressed: () {
+                  setState(() {
+                    _selectedFontSize = (_selectedFontSize + 0.5).clamp(8.0, 24.0);
+                  });
+                },
               ),
-              const SizedBox(width: 14),
-
-              // Right Column: Live Typography Preview Card (Expanded)
-              Expanded(
-                child: _buildTypographyPreviewCard(theme, isDark),
+              Container(
+                width: 50,
+                alignment: Alignment.centerRight,
+                padding: const EdgeInsets.only(right: 4),
+                child: Text(
+                  '${_selectedFontSize.toStringAsFixed(1)} pt',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 11.5,
+                  ),
+                ),
               ),
             ],
           ),
+        ),
+        const SizedBox(height: 12),
+
+        // Reset Defaults Button
+        Row(
+          children: [
+            OutlinedButton.icon(
+              onPressed: () {
+                setState(() {
+                  _selectedBodyFont = null;
+                  _selectedCodeFont = null;
+                  _selectedFontSize = 10.5;
+                });
+              },
+              icon: const Icon(Icons.refresh_rounded, size: 13),
+              label: Text(widget.controller.strings.restoreDefaultFonts, style: const TextStyle(fontSize: 11.5)),
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: isMobile
+              ? SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      controlsColumn,
+                      const SizedBox(height: 14),
+                      SizedBox(
+                        height: 240,
+                        child: _buildTypographyPreviewCard(theme, isDark),
+                      ),
+                    ],
+                  ),
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Left Column: Controls (fixed width, internally scrollable)
+                    SizedBox(
+                      width: 280,
+                      child: SingleChildScrollView(
+                        child: controlsColumn,
+                      ),
+                    ),
+
+                    const SizedBox(width: 14),
+                    VerticalDivider(
+                      width: 1,
+                      thickness: 1,
+                      color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+                    ),
+                    const SizedBox(width: 14),
+
+                    // Right Column: Live Typography Preview Card (Expanded)
+                    Expanded(
+                      child: _buildTypographyPreviewCard(theme, isDark),
+                    ),
+                  ],
+                ),
         ),
 
         const SizedBox(height: 10),
@@ -3152,17 +3198,20 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 ),
               ),
               const SizedBox(height: 4),
-              Row(
-                mainAxisSize: MainAxisSize.min,
+              Wrap(
+                alignment: WrapAlignment.center,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 10,
+                runSpacing: 4,
                 children: [
                   Text(
                     s.aboutVersion(SettingsDialog.appVersion),
+                    textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 12,
                       color: isDark ? Colors.white54 : Colors.black45,
                     ),
                   ),
-                  const SizedBox(width: 10),
                   if (_isCheckingUpdate)
                     const SizedBox(
                       width: 13,
@@ -3207,12 +3256,16 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       children: [
                         Icon(Icons.open_in_new_rounded, size: 13, color: theme.colorScheme.primary),
                         const SizedBox(width: 4),
-                        Text(
-                          SettingsDialog.projectHomepage.replaceFirst('https://', ''),
-                          style: TextStyle(
-                            fontSize: 11.5,
-                            color: theme.colorScheme.primary,
-                            fontWeight: FontWeight.w600,
+                        Flexible(
+                          child: Text(
+                            SettingsDialog.projectHomepage.replaceFirst('https://', ''),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: theme.colorScheme.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                       ],

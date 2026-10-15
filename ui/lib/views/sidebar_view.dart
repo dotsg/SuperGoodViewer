@@ -99,6 +99,9 @@ class _SidebarViewState extends State<SidebarView> {
 
       if (file != null && file.path != null) {
         await widget.controller.openFile(file.path!);
+        if (!widget.showResizeHandle && mounted) {
+          widget.onClose?.call();
+        }
       }
     } catch (e) {
       debugPrint('[SidebarView] FilePicker.pickFile failed: $e');
@@ -458,7 +461,12 @@ class _SidebarViewState extends State<SidebarView> {
                         OutlinedButton.icon(
                           icon: const Icon(Icons.auto_awesome, size: 14),
                           label: Text(widget.controller.strings.loadSampleDoc, style: const TextStyle(fontSize: 11.5)),
-                          onPressed: widget.controller.loadSampleDocument,
+                          onPressed: () {
+                            widget.controller.loadSampleDocument();
+                            if (!widget.showResizeHandle) {
+                              widget.onClose?.call();
+                            }
+                          },
                           style: OutlinedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                             visualDensity: VisualDensity.compact,
@@ -504,7 +512,12 @@ class _SidebarViewState extends State<SidebarView> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      onTap: () => widget.controller.openFile(path),
+                      onTap: () {
+                        widget.controller.openFile(path);
+                        if (!widget.showResizeHandle) {
+                          widget.onClose?.call();
+                        }
+                      },
                     );
                   },
                 ),
@@ -519,6 +532,9 @@ class _SidebarViewState extends State<SidebarView> {
     final isDark = theme.brightness == Brightness.dark;
     final controller = widget.controller;
     final effectiveWidth = widget.width ?? widget.controller.sidebarWidth;
+    final isMobileDrawer = !widget.showResizeHandle;
+    final headerButtonSize = isMobileDrawer ? 36.0 : 24.0;
+    final headerIconSize = isMobileDrawer ? 19.0 : 16.0;
 
     return SizedBox(
       width: effectiveWidth,
@@ -549,7 +565,7 @@ class _SidebarViewState extends State<SidebarView> {
                 children: [
                   // Sidebar Top Header (Aligned with macOS Traffic Lights)
                   Container(
-                    height: 32,
+                    height: isMobileDrawer ? 44 : 32,
                     padding: const EdgeInsets.only(right: 8),
                     decoration: BoxDecoration(
                       border: Border(
@@ -581,32 +597,32 @@ class _SidebarViewState extends State<SidebarView> {
                         ),
                         // One-click quick toggle side button
                         SizedBox(
-                          width: 24,
-                          height: 24,
+                          width: headerButtonSize,
+                          height: headerButtonSize,
                           child: IconButton(
                             tooltip: controller.isSidebarOnRight
                                 ? controller.strings.moveSidebarToLeft
                                 : controller.strings.moveSidebarToRight,
-                            icon: const Icon(Icons.swap_horiz_rounded, size: 16),
+                            icon: Icon(Icons.swap_horiz_rounded, size: headerIconSize),
                             onPressed: () => controller.toggleSidebarPosition(),
                             style: IconButton.styleFrom(
                               padding: EdgeInsets.zero,
-                              minimumSize: const Size(24, 24),
+                              minimumSize: Size(headerButtonSize, headerButtonSize),
                               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             ),
                           ),
                         ),
                         const SizedBox(width: 4),
                         SizedBox(
-                          width: 24,
-                          height: 24,
+                          width: headerButtonSize,
+                          height: headerButtonSize,
                           child: IconButton(
                             tooltip: '${controller.strings.openDocument} (${controller.shortcutService.getShortcutLabel('openFile')})',
-                            icon: const Icon(Icons.folder_open_rounded, size: 16),
+                            icon: Icon(Icons.folder_open_rounded, size: headerIconSize),
                             onPressed: () => _pickAndOpenFile(context),
                             style: IconButton.styleFrom(
                               padding: EdgeInsets.zero,
-                              minimumSize: const Size(24, 24),
+                              minimumSize: Size(headerButtonSize, headerButtonSize),
                               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             ),
                           ),
@@ -614,15 +630,15 @@ class _SidebarViewState extends State<SidebarView> {
                         if (widget.onClose != null) ...[
                           const SizedBox(width: 4),
                           SizedBox(
-                            width: 24,
-                            height: 24,
+                            width: headerButtonSize,
+                            height: headerButtonSize,
                             child: IconButton(
                               tooltip: controller.strings.sidebarCloseTooltip(controller.shortcutService.getShortcutLabel('toggleSidebar')),
-                              icon: const Icon(Icons.close_rounded, size: 16),
+                              icon: Icon(Icons.close_rounded, size: headerIconSize),
                               onPressed: widget.onClose,
                               style: IconButton.styleFrom(
                                 padding: EdgeInsets.zero,
-                                minimumSize: const Size(24, 24),
+                                minimumSize: Size(headerButtonSize, headerButtonSize),
                                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                               ),
                             ),

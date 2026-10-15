@@ -84,14 +84,14 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
   bool get _shouldShowTitleBar {
     if (_isFullScreen) return false;
-    if (_isSidebarOpen) return true;
-    // Keep the tabs reachable once there is more than one document.
-    if (widget.controller.sessions.length > 1) return true;
-    if (_isHoveringTitleBar) return true;
     final isMobile = FormFactor.isMobilePlatform(mounted ? context : null);
     if (isMobile) {
       return _isToolbarVisible;
     }
+    if (_isSidebarOpen) return true;
+    // Keep the tabs reachable once there is more than one document.
+    if (widget.controller.sessions.length > 1) return true;
+    if (_isHoveringTitleBar) return true;
     return _isAtTop && _isTitleBarVisible;
   }
 
@@ -327,6 +327,15 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handleScrollChanged({required double deltaY, required bool isAtTop}) {
+    final isMobile = FormFactor.isMobilePlatform(mounted ? context : null);
+    if (isMobile) {
+      if (!isAtTop && deltaY.abs() > 2.5 && _isToolbarVisible) {
+        _hideToolbar();
+      } else if (_isToolbarVisible && widget.controller.isFluidLayout) {
+        setState(() {});
+      }
+    }
+
     if (isAtTop) {
       _titleBarHoverTimer?.cancel();
       if (!_isAtTop || !_isTitleBarVisible) {
@@ -395,6 +404,22 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     if (_isToolbarVisible) {
       _startToolbarTimer();
     }
+  }
+
+  void _handleMobileTap(Offset localPosition, Size viewSize) {
+    MobileWorkspaceChrome.handleCanvasTap(
+      localPosition: localPosition,
+      viewSize: viewSize,
+      onPrevPage: () {
+        _hideToolbar();
+        _handlePrevPage();
+      },
+      onNextPage: () {
+        _hideToolbar();
+        _handleNextPage();
+      },
+      onToggleToolbar: _toggleToolbar,
+    );
   }
 
   void _setSidebarOpen(bool open) {
@@ -1015,7 +1040,20 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         child: Focus(
           focusNode: _workspaceFocusNode,
           autofocus: true,
-          child: Scaffold(
+          child: PopScope(
+            canPop: !isMobile ||
+                (_pdfCanvasKey.currentState?.isSearchOpen != true &&
+                    !controller.isPresentationMode),
+            onPopInvokedWithResult: (didPop, _) {
+              if (didPop) return;
+              if (_pdfCanvasKey.currentState?.isSearchOpen == true) {
+                _pdfCanvasKey.currentState?.closeSearch();
+                if (mounted) setState(() {});
+              } else if (controller.isPresentationMode) {
+                _exitPresentationMode();
+              }
+            },
+            child: Scaffold(
             key: _scaffoldKey,
             drawerEnableOpenDragGesture: false,
             endDrawerEnableOpenDragGesture: false,
@@ -1064,6 +1102,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                       onUserScrolled: _hideToolbar,
                       onScrollChanged: _handleScrollChanged,
                       onCanvasTapped: _toggleToolbar,
+                      onMobileTap: _handleMobileTap,
                       onOpenFile: _pickAndOpenFile,
                       onToggleSidebar: _toggleSidebar,
                       onExportPdf: _handleExportPdf,
@@ -1160,6 +1199,12 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                               onJumpToPage: _jumpToPage,
                               onToggleSidebar: _toggleSidebar,
                               onToggleCropMargins: _handleTogglePdfCropMargins,
+                              fluidScrollProgress:
+                                  _pdfCanvasKey.currentState?.fluidScrollProgress ??
+                                      controller.lastScrollRatio,
+                              onJumpToFluidRatio: (ratio) =>
+                                  _pdfCanvasKey.currentState?.scrollToRatio(ratio),
+                              onFitWidth: _handleFitWidth,
                             )
                           : Center(
                               child: IgnorePointer(
@@ -1338,6 +1383,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       ),
     ),
   ),
+),
 ),
 );
       },
@@ -1545,7 +1591,10 @@ class _WorkspaceViewState extends State<WorkspaceView> {
         isDark: isDark,
         controller: controller,
         onToggleSidebar: _toggleSidebar,
-        onOpenSearch: () => _pdfCanvasKey.currentState?.openSearch(),
+        onOpenSearch: () {
+          _pdfCanvasKey.currentState?.openSearch();
+          if (mounted) setState(() {});
+        },
         onOpenFile: _pickAndOpenFile,
         onExportPdf: _handleExportPdf,
       );

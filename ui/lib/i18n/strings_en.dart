@@ -923,4 +923,37 @@ class EnStrings implements AppStrings {
       'Crops excess white margins to enlarge content for mobile reading';
   @override
   String get reloadDocument => 'Reload Document';
+  @override
+  String mobileOpenTabsMenu(int count) => 'Open Tabs ($count)';
+  @override
+  String get mobileSharePdf => 'Share PDF';
+  @override
+  String get mobileShareFailed => 'Share failed: Document is not ready yet';
+  @override
+  String get mobilePresentationMode => 'Presentation Mode';
+  @override
+  String mobileOpenDocumentsSheetTitle(int count) => 'Open Documents ($count)';
+  @override
+  String get mobileUnsavedDoc => 'Unsaved Document';
+  @override
+  String get mobileThemeSepia => 'Sepia';
+  @override
+  String get mobileThemeSepiaCard => 'Warm Sepia';
+  @override
+  String get mobileFitWidth => 'Fit Width';
+  @override
+  String get mobilePdfDarkInvertTitle => 'Smart PDF Dark Mode';
+  @override
+  String get mobilePdfDarkInvertDesc =>
+      'Convert white PDF pages to soft dark gray at night';
+  @override
+  String get mobileEdgeTapTitle => 'Edge-Tap Page Turn';
+  @override
+  String get mobileEdgeTapDesc =>
+      'Tap left/right edges to turn page, center for menu';
+  @override
+  String get mobileKeepScreenOnTitle => 'Keep Screen On';
+  @override
+  String get mobileKeepScreenOnDesc =>
+      'Prevent screen from sleeping while reading';
 }

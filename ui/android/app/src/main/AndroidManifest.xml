@@ -30,9 +30,11 @@
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="content" android:mimeType="text/plain" />
                 <data android:scheme="content" android:mimeType="text/markdown" />
                 <data android:scheme="content" android:mimeType="text/x-markdown" />
+                <data android:scheme="content" android:mimeType="application/octet-stream" />
             </intent-filter>
 
             <!-- 关联打开 Markdown 文档 (File Scheme) -->
@@ -44,12 +46,16 @@
                 <data android:host="*" />
                 <data android:pathPattern=".*\\.md" />
                 <data android:pathPattern=".*\\.markdown" />
+                <data android:pathPattern=".*\\.mdown" />
+                <data android:pathPattern=".*\\.mkd" />
+                <data android:pathPattern=".*\\.mkdn" />
             </intent-filter>
 
             <!-- 关联打开 原生 PDF 文档 (Content Scheme) -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="content" android:mimeType="application/pdf" />
             </intent-filter>
 
@@ -62,7 +68,25 @@
                 <data android:host="*" />
                 <data android:pathPattern=".*\\.pdf" />
             </intent-filter>
+
+            <!-- 系统分享菜单接入：支持从微信/QQ/AI助手分享 PDF 文件或 Markdown 文本到超好读 -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/markdown" />
+                <data android:mimeType="text/x-markdown" />
+            </intent-filter>
         </activity>
+
+        <!-- 导出 PDF 分享 Provider -->
+        <provider
+            android:name=".ShareFileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

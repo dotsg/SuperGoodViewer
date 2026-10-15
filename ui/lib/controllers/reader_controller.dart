@@ -14,6 +14,7 @@ import '../i18n/app_strings.dart';
 import '../i18n/locales.dart';
 import '../models/render_options.dart';
 import '../services/document_cache_service.dart';
+import '../services/form_factor.dart';
 import '../services/preferences_service.dart';
 import '../services/remote_image_service.dart';
 import '../services/shortcut_service.dart';
@@ -626,7 +627,16 @@ class ReaderController extends ChangeNotifier {
     if (defaultLanguage != null) {
       _language = defaultLanguage;
     }
-    _renderOptions = _renderOptions.copyWith(theme: _resolveTheme());
+    final isMobile = FormFactor.isMobilePlatform();
+    _renderOptions = _renderOptions.copyWith(
+      theme: _resolveTheme(),
+      viewportWidth: isMobile
+          ? FormFactor.defaultMobileViewportWidth
+          : _renderOptions.viewportWidth,
+      fontSize: isMobile
+          ? FormFactor.defaultMobileFontSize
+          : _renderOptions.fontSize,
+    );
     unawaited(refreshFontReport());
     _setSampleDocumentContent();
     if (initialFilePath != null && initialFilePath.isNotEmpty && File(initialFilePath).existsSync()) {

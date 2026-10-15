@@ -901,4 +901,34 @@ class ZhHantStrings extends ZhHansStrings {
   String get mobileCropMarginsDesc => '自動裁剪頁面四周空白邊距，放大正文便於手機閱讀';
   @override
   String get reloadDocument => '重新整理文件';
+  @override
+  String mobileOpenTabsMenu(int count) => '已開啟文件 ($count)';
+  @override
+  String get mobileSharePdf => '分享 PDF';
+  @override
+  String get mobileShareFailed => '分享失敗：目前文件尚未就緒';
+  @override
+  String get mobilePresentationMode => '簡報模式';
+  @override
+  String mobileOpenDocumentsSheetTitle(int count) => '已開啟文件 ($count)';
+  @override
+  String get mobileUnsavedDoc => '未儲存文件';
+  @override
+  String get mobileThemeSepia => '護眼';
+  @override
+  String get mobileThemeSepiaCard => '護眼羊皮紙';
+  @override
+  String get mobileFitWidth => '適應螢幕寬度';
+  @override
+  String get mobilePdfDarkInvertTitle => 'PDF 夜間智慧反色';
+  @override
+  String get mobilePdfDarkInvertDesc => '將白底 PDF 轉為柔和深灰底色，夜間閱讀不刺眼';
+  @override
+  String get mobileEdgeTapTitle => '螢幕左右邊緣輕觸翻頁';
+  @override
+  String get mobileEdgeTapDesc => '輕觸左右邊緣單手翻頁，輕觸中央呼叫選單';
+  @override
+  String get mobileKeepScreenOnTitle => '閱讀時螢幕恆亮';
+  @override
+  String get mobileKeepScreenOnDesc => '專注長文與論文閱讀時防止自動關閉螢幕';
 }

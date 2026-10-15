@@ -400,4 +400,19 @@ abstract class AppStrings {
   String get mobileCropMarginsActiveTitle;
   String get mobileCropMarginsDesc;
   String get reloadDocument;
+  String mobileOpenTabsMenu(int count);
+  String get mobileSharePdf;
+  String get mobileShareFailed;
+  String get mobilePresentationMode;
+  String mobileOpenDocumentsSheetTitle(int count);
+  String get mobileUnsavedDoc;
+  String get mobileThemeSepia;
+  String get mobileThemeSepiaCard;
+  String get mobileFitWidth;
+  String get mobilePdfDarkInvertTitle;
+  String get mobilePdfDarkInvertDesc;
+  String get mobileEdgeTapTitle;
+  String get mobileEdgeTapDesc;
+  String get mobileKeepScreenOnTitle;
+  String get mobileKeepScreenOnDesc;
 }
