@@ -30,3 +30,7 @@ ui/packages/**/pubspec.lock
 *.dmg
 dist/
 build/
+
+# PDF reflow temporary preview artifacts
+docs/samples/preview_*/
+docs/samples/*_unified_assets/
