@@ -17,7 +17,7 @@ else
   endif
 endif
 
-.PHONY: all build build-universal build-core build-core-universal build-app build-windows build-windows-arm64 build-linux test test-core test-app test-release-local bench bench-json benchmark clean run-macos run-windows run-linux dmg dmg-arm64 dmg-x64 dmg-universal package-windows package-windows-arm64 package-linux
+.PHONY: all build build-universal build-core build-core-universal build-app build-windows build-windows-arm64 build-linux build-android-core build-android-apk run-android test test-core test-app test-release-local bench bench-json benchmark clean run-macos run-windows run-linux dmg dmg-arm64 dmg-x64 dmg-universal package-windows package-windows-arm64 package-linux
 
 all: build test
 
@@ -159,6 +159,7 @@ package-linux: build-linux
 	@tar -czvf dist/SuperGoodViewer-linux-$(LINUX_PACKAGE_ARCH).tar.gz -C ui/build/linux/$(LINUX_BUILD_DIR)/release/bundle .
 	@echo "==> Package created: dist/SuperGoodViewer-linux-$(LINUX_PACKAGE_ARCH).tar.gz"
 
+
 clean:
 	@echo "==> Cleaning artifacts..."
 	@cd core && cargo clean
@@ -221,5 +222,28 @@ dmg-x64: $(DMG_X64_DEP)
 dmg-universal: build-universal
 	@echo "==> Packaging Universal macOS DMG..."
 	@./scripts/package-macos-dmg.sh universal dist
+
+ANDROID_NDK_HOME ?= $(shell ls -d $(HOME)/Library/Android/sdk/ndk/* 2>/dev/null | tail -n 1)
+
+build-android-core:
+	@echo "==> Building Rust sogood_core for Android (arm64-v8a & x86_64)..."
+	@rustup target add aarch64-linux-android x86_64-linux-android
+	@mkdir -p ui/android/app/src/main/jniLibs/arm64-v8a ui/android/app/src/main/jniLibs/x86_64
+	@cd core && ANDROID_NDK_HOME=$(ANDROID_NDK_HOME) cargo ndk -t arm64-v8a build --release --lib
+	@cp core/target/aarch64-linux-android/release/libsogood_core.so ui/android/app/src/main/jniLibs/arm64-v8a/
+	@cd core && ANDROID_NDK_HOME=$(ANDROID_NDK_HOME) cargo ndk -t x86_64 build --release --lib
+	@cp core/target/x86_64-linux-android/release/libsogood_core.so ui/android/app/src/main/jniLibs/x86_64/
+	@echo "==> Android core dynamic libraries built successfully!"
+
+build-android-apk: build-android-core
+	@echo "==> Building Android APK..."
+	@cd ui && $(FLUTTER) build apk --release --split-per-abi
+	@mkdir -p dist
+	@cp ui/build/app/outputs/flutter-apk/*.apk dist/ 2>/dev/null || true
+	@echo "==> Android APK build complete! Output in dist/"
+
+run-android: build-android-core
+	@echo "==> Launching SuperGoodViewer in dev mode (Android)..."
+	@cd ui && $(FLUTTER) run -d android
 
 
