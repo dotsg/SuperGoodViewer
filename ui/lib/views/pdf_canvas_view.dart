@@ -276,6 +276,44 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
     }
   }
 
+  /// Resolves the pan axis for mobile touch interaction:
+  /// - At or below fit-width (`coverScale * 1.03`), strictly locks to [PanAxis.vertical]
+  ///   so single-finger reading swipes never drift horizontally.
+  /// - When zoomed in (`currentZoom > coverScale * 1.03`), uses [PanAxis.aligned]
+  ///   so vertical reading swipes remain axis-locked while deliberate horizontal pans work.
+  static PanAxis resolveMobilePanAxis({
+    required bool isMobile,
+    required double currentZoom,
+    required double coverScale,
+  }) {
+    if (!isMobile) return PanAxis.free;
+    final effectiveCover = coverScale > 0 ? coverScale : 1.0;
+    return currentZoom > effectiveCover * 1.03 ? PanAxis.aligned : PanAxis.vertical;
+  }
+
+  /// Normalizes a clamped transformation matrix on mobile so that whenever the viewer
+  /// is at or below fit-width (`coverScale * 1.03`) and margin cropping is not shifting X,
+  /// the document remains horizontally centered with zero horizontal drift.
+  static Matrix4 normalizeMobileMatrix({
+    required Matrix4 clampedMatrix,
+    required Size viewSize,
+    required Size documentSize,
+    required double coverScale,
+    required bool pdfCropMargins,
+  }) {
+    if (!pdfCropMargins &&
+        coverScale > 0 &&
+        clampedMatrix.zoom <= coverScale * 1.03 &&
+        documentSize.width > 0 &&
+        viewSize.width > 0) {
+      final result = clampedMatrix.clone();
+      final centerX = documentSize.width / 2;
+      result.xZoomed = viewSize.width / 2 - centerX * result.zoom;
+      return result;
+    }
+    return clampedMatrix;
+  }
+
   @override
   void onLayoutInitialized({
     required PdfViewerLayoutSnapshot state,
@@ -290,8 +328,9 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
 
     final fitMode = readerController.autoFitMode;
     final isMobile = FormFactor.isMobilePlatform();
-    final hasCustomZoom = readerController.lastZoom > 0.1 &&
-        (!isMobile || (readerController.lastZoom - 1.0).abs() > 0.01);
+    // On mobile, `_doc.zoom` stores the previous layout's `coverScale` (e.g. Fluid 0.655),
+    // which would over-zoom Paged/PDF layouts (~0.595) by ~10% and cause horizontal drift.
+    final hasCustomZoom = !isMobile && readerController.lastZoom > 0.1;
     final double initialZoom;
     if (fitMode == AutoFitMode.fitWidth) {
       initialZoom = coverScale.clamp(minScale, maxScale);
@@ -380,8 +419,9 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
         final clampedPage = pageNum.clamp(1, newLayout.pageLayouts.length);
         final newRect = newLayout.pageLayouts[clampedPage - 1];
         final fitMode = readerController.autoFitMode;
+        final isMobile = FormFactor.isMobilePlatform();
         final double targetZoom;
-        if (fitMode == AutoFitMode.fitWidth) {
+        if (fitMode == AutoFitMode.fitWidth || (isMobile && fitMode == AutoFitMode.none)) {
           targetZoom = newState.coverScale;
         } else if (fitMode == AutoFitMode.fitPage) {
           targetZoom = newState.alternativeFitScale ?? newState.coverScale;
@@ -399,8 +439,9 @@ class SuperGoodSizeDelegate implements PdfViewerSizeDelegate {
       if (oldSize.width <= 0 || newSize.width <= 0) return;
 
       final fitMode = readerController.autoFitMode;
+      final isMobile = FormFactor.isMobilePlatform();
       final double targetZoom;
-      if (fitMode == AutoFitMode.fitWidth) {
+      if (fitMode == AutoFitMode.fitWidth || (isMobile && fitMode == AutoFitMode.none)) {
         targetZoom = newState.coverScale;
       } else if (fitMode == AutoFitMode.fitPage) {
         targetZoom = (newState.alternativeFitScale ?? newState.coverScale);
@@ -1266,7 +1307,12 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     if (ctrl.isReady) {
       final zoom = ctrl.currentZoom;
       if ((zoom - _currentZoom).abs() > 0.005) {
+        final wasZoomedIn = ctrl.coverScale > 0 && _currentZoom > ctrl.coverScale * 1.03;
+        final nowZoomedIn = ctrl.coverScale > 0 && zoom > ctrl.coverScale * 1.03;
         _currentZoom = zoom;
+        if (wasZoomedIn != nowZoomedIn && FormFactor.isMobilePlatform() && mounted) {
+          setState(() {});
+        }
         widget.controller.updateZoom(zoom);
         widget.onZoomChanged?.call(_currentZoom);
 
@@ -2370,6 +2416,49 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         interactionDelegateProvider: SuperGoodScrollInteractionDelegateProvider(
           onDelegateCreated: (delegate) => _scrollDelegates[slotIndex] = delegate,
         ),
+        panAxis: SuperGoodSizeDelegate.resolveMobilePanAxis(
+          isMobile: FormFactor.isMobilePlatform(context),
+          currentZoom: _currentZoom,
+          coverScale: ctrl.isReady ? ctrl.coverScale : _currentZoom,
+        ),
+        normalizeMatrix: FormFactor.isMobilePlatform(context)
+            ? (matrix, viewSize, layout, controller) {
+                if (controller == null) return matrix;
+                final clamped = controller.calcMatrixForClampedToNearestBoundary(
+                  matrix,
+                  viewSize: viewSize,
+                );
+                return SuperGoodSizeDelegate.normalizeMobileMatrix(
+                  clampedMatrix: clamped,
+                  viewSize: viewSize,
+                  documentSize: layout.documentSize,
+                  coverScale: controller.coverScale,
+                  pdfCropMargins: widget.controller.pdfCropMargins,
+                );
+              }
+            : null,
+        onInteractionEnd: FormFactor.isMobilePlatform(context)
+            ? (details) {
+                if (!ctrl.isReady || widget.controller.pdfCropMargins) return;
+                final zoom = ctrl.currentZoom;
+                final fitWidthZoom = ctrl.coverScale;
+                if (fitWidthZoom <= 0) return;
+                final isUnderZoomedFluid = effectiveFluid && zoom < fitWidthZoom * 0.995;
+                final isNearFitWidth = (zoom - fitWidthZoom).abs() <= fitWidthZoom * 0.05 &&
+                    (zoom - fitWidthZoom).abs() > 0.002;
+                if (isUnderZoomedFluid || isNearFitWidth) {
+                  final docCenter = Offset(
+                    ctrl.documentSize.width / 2,
+                    ctrl.centerPosition.dy,
+                  );
+                  ctrl.setZoom(
+                    docCenter,
+                    fitWidthZoom,
+                    duration: const Duration(milliseconds: 150),
+                  );
+                }
+              }
+            : null,
         margin: effectiveFluid ? 0.0 : 10.0,
         boundaryMargin: effectiveFluid
             ? EdgeInsets.only(

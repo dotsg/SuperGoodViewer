@@ -3,11 +3,13 @@ import 'package:archive/archive.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pdfrx/pdfrx.dart';
 import 'package:sogoodviewer/controllers/reader_controller.dart';
 import 'package:sogoodviewer/services/font_download_service.dart';
 import 'package:sogoodviewer/services/form_factor.dart';
 import 'package:sogoodviewer/views/mobile_typography_sheet.dart';
 import 'package:sogoodviewer/views/mobile_workspace_chrome.dart';
+import 'package:sogoodviewer/views/pdf_canvas_view.dart';
 import 'package:sogoodviewer/views/settings_dialog.dart';
 import 'package:sogoodviewer/views/sidebar_view.dart';
 import 'package:sogoodviewer/views/workspace_view.dart';
@@ -634,6 +636,72 @@ void main() {
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(seconds: 4));
+    });
+
+    test('SuperGoodSizeDelegate locks mobile panAxis to vertical at fit-width and normalizes horizontal drift to zero', () {
+      // 1. At or below fit-width (coverScale), mobile uses PanAxis.vertical
+      expect(
+        SuperGoodSizeDelegate.resolveMobilePanAxis(
+          isMobile: true,
+          currentZoom: 0.65,
+          coverScale: 0.65,
+        ),
+        equals(PanAxis.vertical),
+      );
+
+      // 2. When zoomed in past coverScale * 1.03, mobile uses PanAxis.aligned (preventing diagonal drift while allowing horizontal pan)
+      expect(
+        SuperGoodSizeDelegate.resolveMobilePanAxis(
+          isMobile: true,
+          currentZoom: 1.2,
+          coverScale: 0.65,
+        ),
+        equals(PanAxis.aligned),
+      );
+
+      // 3. Desktop always keeps PanAxis.free
+      expect(
+        SuperGoodSizeDelegate.resolveMobilePanAxis(
+          isMobile: false,
+          currentZoom: 0.65,
+          coverScale: 0.65,
+        ),
+        equals(PanAxis.free),
+      );
+
+      // 4. normalizeMobileMatrix centers X and eliminates horizontal drift when at/below fit-width
+      const viewSize = Size(390, 844);
+      const docSize = Size(615, 2000);
+      const coverScale = 0.595;
+      final driftedMatrix = Matrix4.diagonal3Values(coverScale, coverScale, coverScale)
+        ..setTranslationRaw(-85.0, -320.0, 0.0); // drifted X, scrolled Y
+
+      final normalized = SuperGoodSizeDelegate.normalizeMobileMatrix(
+        clampedMatrix: driftedMatrix,
+        viewSize: viewSize,
+        documentSize: docSize,
+        coverScale: coverScale,
+        pdfCropMargins: false,
+      );
+
+      final expectedXZoomed = viewSize.width / 2 - (docSize.width / 2) * coverScale;
+      expect(normalized.xZoomed, closeTo(expectedXZoomed, 0.001));
+      expect(normalized.yZoomed, closeTo(-320.0, 0.001));
+
+      // 5. When zoomed in (> coverScale * 1.03), horizontal pan position is preserved
+      const zoomedScale = 1.25;
+      final zoomedMatrix = Matrix4.diagonal3Values(zoomedScale, zoomedScale, zoomedScale)
+        ..setTranslationRaw(-140.0, -320.0, 0.0);
+
+      final zoomedNormalized = SuperGoodSizeDelegate.normalizeMobileMatrix(
+        clampedMatrix: zoomedMatrix,
+        viewSize: viewSize,
+        documentSize: docSize,
+        coverScale: coverScale,
+        pdfCropMargins: false,
+      );
+      expect(zoomedNormalized.xZoomed, closeTo(-140.0, 0.001));
+      expect(zoomedNormalized.yZoomed, closeTo(-320.0, 0.001));
     });
   });
 
