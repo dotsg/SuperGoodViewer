@@ -703,6 +703,56 @@ void main() {
       expect(zoomedNormalized.xZoomed, closeTo(-140.0, 0.001));
       expect(zoomedNormalized.yZoomed, closeTo(-320.0, 0.001));
     });
+
+    testWidgets('Mobile PDF reading exposes Smart Reflow entry points in Top Bar, Bottom HUD, and Aa Typography Sheet', (tester) async {
+      tester.view.physicalSize = phoneSize;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      final tempDir = Directory.systemTemp.createTempSync('sgv_mobile_reflow_');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+      final pdfFile = File('${tempDir.path}/paper.pdf')
+        ..writeAsBytesSync(<int>[
+          0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x37, 0x0A,
+          ...List<int>.filled(64, 0x20),
+        ]);
+
+      await controller.openFile(pdfFile.path);
+      expect(controller.isSourcePdfDocument, isTrue);
+      expect(controller.isPdfDocument, isTrue);
+
+      await tester.pumpWidget(MaterialApp(
+        home: WorkspaceView(controller: controller),
+      ));
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(tester.takeException(), isNull);
+
+      // 1. Mobile Top Bar has the PDF Smart Reflow icon button
+      expect(find.byKey(const Key('mobile_top_pdf_reflow_btn')), findsOneWidget);
+
+      // 2. Mobile Bottom HUD has the PDF Smart Reflow action button ("重排")
+      expect(find.byKey(const Key('mobile_hud_pdf_reflow_btn')), findsOneWidget);
+
+      // 3. Open the Aa Typography Sheet and verify the PDF Smart Reflow switch card is shown at the top
+      await tester.tap(find.text(controller.strings.mobileTypography));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const Key('mobile_pdf_reflow_switch')), findsOneWidget);
+
+      // Simulate active PDF Reflow state and verify Font Size slider ("A-" / "A+") unlocks inside Aa Sheet
+      controller.activeSession.isPdfReflowed = true;
+      controller.notifyListeners();
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.text('A-'), findsOneWidget);
+      expect(find.text('A+'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 4));
+    });
   });
 
   group('Desktop Narrow Viewport Tests', () {

@@ -973,4 +973,20 @@ class EnStrings implements AppStrings {
   String fontInstallFailed(String error) => 'Font installation failed: $error';
   @override
   String get mobileSharedDocumentLocation => 'Shared from external app';
+  @override
+  String get mobilePdfReflowShort => 'Reflow';
+  @override
+  String get mobilePdfReflowActiveShort => 'Original';
+  @override
+  String get mobilePdfReflowTitle => 'PDF Smart Reflow';
+  @override
+  String get mobilePdfReflowActiveTitle => 'PDF Smart Reflow Active';
+  @override
+  String get mobilePdfReflowDesc =>
+      'Unwind multi-column & fixed-layout PDFs into fluid mobile typography with adjustable font size';
+  @override
+  String get mobilePdfReflowing => 'Reflowing PDF...';
+  @override
+  String get mobilePdfReflowScannedFallback =>
+      'This PDF is a scanned image without selectable text; Auto-crop Margins has been enabled instead';
 }

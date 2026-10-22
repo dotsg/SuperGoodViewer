@@ -137,6 +137,95 @@ class _MobileTypographySheetState extends State<MobileTypographySheet> {
                     ),
                     const SizedBox(height: 14),
 
+                    // PDF Smart Reflow Card (available for any source PDF document)
+                    if (controller.isSourcePdfDocument) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: controller.isPdfReflowed
+                              ? theme.colorScheme.primary.withValues(alpha: isDark ? 0.16 : 0.08)
+                              : (isDark ? const Color(0xFF2A2A2E) : const Color(0xFFF3F3F6)),
+                          borderRadius: BorderRadius.circular(16),
+                          border: controller.isPdfReflowed
+                              ? Border.all(
+                                  color: theme.colorScheme.primary.withValues(alpha: 0.4),
+                                  width: 1,
+                                )
+                              : null,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.auto_stories_rounded,
+                                  size: 22,
+                                  color: theme.colorScheme.primary,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        controller.isPdfReflowed
+                                            ? strings.mobilePdfReflowActiveTitle
+                                            : strings.mobilePdfReflowTitle,
+                                        style: const TextStyle(
+                                          fontSize: 13.5,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                         controller.isReflowingPdf
+                                            ? strings.mobilePdfReflowing
+                                            : strings.mobilePdfReflowDesc,
+                                        style: TextStyle(
+                                          fontSize: 11.5,
+                                          color: isDark ? Colors.white60 : Colors.black54,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                if (controller.isReflowingPdf)
+                                  SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.2,
+                                      color: theme.colorScheme.primary,
+                                    ),
+                                  )
+                                else
+                                  Switch(
+                                    key: const ValueKey('mobile_pdf_reflow_switch'),
+                                    value: controller.isPdfReflowed,
+                                    onChanged: (val) async {
+                                      final ok = await controller.setPdfReflowMode(val);
+                                      if (!ok && val && context.mounted) {
+                                        controller.setPdfCropMargins(true);
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: Text(strings.mobilePdfReflowScannedFallback),
+                                            duration: const Duration(seconds: 3),
+                                            behavior: SnackBarBehavior.floating,
+                                          ),
+                                        );
+                                      }
+                                    },
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                    ],
+
                     // Font Size Stepper & Slider (Markdown / Typst documents)
                     if (!controller.isPdfDocument) ...[
                       Container(

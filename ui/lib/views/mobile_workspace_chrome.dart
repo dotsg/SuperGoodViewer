@@ -14,6 +14,25 @@ import 'sidebar_view.dart';
 class MobileWorkspaceChrome {
   static const double titleBarHeight = 48.0;
 
+  static Future<void> triggerPdfReflowToggle(
+    BuildContext context,
+    ReaderController controller,
+  ) async {
+    if (controller.isReflowingPdf) return;
+    final targetEnable = !controller.isPdfReflowed;
+    final ok = await controller.setPdfReflowMode(targetEnable);
+    if (!ok && targetEnable && context.mounted) {
+      controller.setPdfCropMargins(true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(controller.strings.mobilePdfReflowScannedFallback),
+          duration: const Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
   static void handleCanvasTap({
     required Offset localPosition,
     required Size viewSize,
@@ -249,6 +268,30 @@ class MobileWorkspaceChrome {
                           ),
                         ),
                       ),
+                      if (controller.isSourcePdfDocument)
+                        IconButton(
+                          key: const ValueKey('mobile_top_pdf_reflow_btn'),
+                          icon: controller.isReflowingPdf
+                              ? SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Theme.of(context).colorScheme.primary,
+                                  ),
+                                )
+                              : Icon(
+                                  Icons.auto_stories_rounded,
+                                  color: controller.isPdfReflowed
+                                      ? Theme.of(context).colorScheme.primary
+                                      : null,
+                                ),
+                          iconSize: 21,
+                          tooltip: controller.isPdfReflowed
+                              ? controller.strings.mobilePdfReflowActiveTitle
+                              : controller.strings.mobilePdfReflowTitle,
+                          onPressed: () => triggerPdfReflowToggle(context, controller),
+                        ),
                       IconButton(
                         icon: const Icon(Icons.search_rounded),
                         iconSize: 22,
@@ -797,75 +840,100 @@ class MobileWorkspaceChrome {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceAround,
                             children: [
-                              _MobileActionButton(
-                                icon: Icons.format_list_bulleted_rounded,
-                                label: strings.sidebarTabOutline,
-                                onTap: () {
-                                  onToggleSidebar();
-                                  onRestartToolbarTimer();
-                                },
-                                isDark: isDark,
-                              ),
-                              if (controller.isPdfDocument)
-                                _MobileActionButton(
-                                  icon: controller.pdfCropMargins
-                                      ? Icons.crop_rounded
-                                      : Icons.crop_free_rounded,
-                                  label: controller.pdfCropMargins
-                                      ? strings.mobileCropActive
-                                      : strings.mobileCropInactive,
-                                  isSelected: controller.pdfCropMargins,
+                              Expanded(
+                                child: _MobileActionButton(
+                                  icon: Icons.format_list_bulleted_rounded,
+                                  label: strings.sidebarTabOutline,
                                   onTap: () {
-                                    onToggleCropMargins();
-                                    onRestartToolbarTimer();
-                                  },
-                                  isDark: isDark,
-                                )
-                              else
-                                _MobileActionButton(
-                                  icon: controller.renderOptions.isFluid
-                                      ? Icons.view_headline_rounded
-                                      : Icons.description_outlined,
-                                  label: controller.renderOptions.isFluid
-                                      ? strings.mobileLayoutFluid
-                                      : strings.mobileLayoutPaged,
-                                  isSelected: controller.renderOptions.isFluid,
-                                  onTap: () {
-                                    controller.toggleMode();
+                                    onToggleSidebar();
                                     onRestartToolbarTimer();
                                   },
                                   isDark: isDark,
                                 ),
-                              _MobileActionButton(
-                                icon: themeIcon,
-                                label: themeLabel,
-                                isSelected: isSepia,
-                                onTap: () {
-                                  if (controller.renderOptions.isDark) {
-                                    mobilePrefs.setSepia(false);
-                                    controller.setThemePreference(ThemePreference.light);
-                                  } else if (isSepia) {
-                                    mobilePrefs.setSepia(false);
-                                    controller.setThemePreference(ThemePreference.dark);
-                                  } else {
-                                    mobilePrefs.setSepia(true);
-                                  }
-                                  onRestartToolbarTimer();
-                                },
-                                isDark: isDark,
                               ),
-                              _MobileActionButton(
-                                icon: Icons.text_fields_rounded,
-                                label: strings.mobileTypography,
-                                onTap: () {
-                                  onRestartToolbarTimer();
-                                  showMobileTypographySheet(
-                                    context,
-                                    controller,
-                                    onFitWidth: onFitWidth,
-                                  );
-                                },
-                                isDark: isDark,
+                              if (controller.isSourcePdfDocument)
+                                Expanded(
+                                  child: _MobileActionButton(
+                                    key: const ValueKey('mobile_hud_pdf_reflow_btn'),
+                                    icon: Icons.auto_stories_rounded,
+                                    label: strings.mobilePdfReflowShort,
+                                    isSelected: controller.isPdfReflowed,
+                                    isBusy: controller.isReflowingPdf,
+                                    onTap: () {
+                                      onRestartToolbarTimer();
+                                      triggerPdfReflowToggle(context, controller);
+                                    },
+                                    isDark: isDark,
+                                  ),
+                                ),
+                              if (controller.isPdfDocument)
+                                Expanded(
+                                  child: _MobileActionButton(
+                                    icon: controller.pdfCropMargins
+                                        ? Icons.crop_rounded
+                                        : Icons.crop_free_rounded,
+                                    label: controller.pdfCropMargins
+                                        ? strings.mobileCropActive
+                                        : strings.mobileCropInactive,
+                                    isSelected: controller.pdfCropMargins,
+                                    onTap: () {
+                                      onToggleCropMargins();
+                                      onRestartToolbarTimer();
+                                    },
+                                    isDark: isDark,
+                                  ),
+                                )
+                              else
+                                Expanded(
+                                  child: _MobileActionButton(
+                                    icon: controller.renderOptions.isFluid
+                                        ? Icons.view_headline_rounded
+                                        : Icons.description_outlined,
+                                    label: controller.renderOptions.isFluid
+                                        ? strings.mobileLayoutFluid
+                                        : strings.mobileLayoutPaged,
+                                    isSelected: controller.renderOptions.isFluid,
+                                    onTap: () {
+                                      controller.toggleMode();
+                                      onRestartToolbarTimer();
+                                    },
+                                    isDark: isDark,
+                                  ),
+                                ),
+                              Expanded(
+                                child: _MobileActionButton(
+                                  icon: themeIcon,
+                                  label: themeLabel,
+                                  isSelected: isSepia,
+                                  onTap: () {
+                                    if (controller.renderOptions.isDark) {
+                                      mobilePrefs.setSepia(false);
+                                      controller.setThemePreference(ThemePreference.light);
+                                    } else if (isSepia) {
+                                      mobilePrefs.setSepia(false);
+                                      controller.setThemePreference(ThemePreference.dark);
+                                    } else {
+                                      mobilePrefs.setSepia(true);
+                                    }
+                                    onRestartToolbarTimer();
+                                  },
+                                  isDark: isDark,
+                                ),
+                              ),
+                              Expanded(
+                                child: _MobileActionButton(
+                                  icon: Icons.text_fields_rounded,
+                                  label: strings.mobileTypography,
+                                  onTap: () {
+                                    onRestartToolbarTimer();
+                                    showMobileTypographySheet(
+                                      context,
+                                      controller,
+                                      onFitWidth: onFitWidth,
+                                    );
+                                  },
+                                  isDark: isDark,
+                                ),
                               ),
                             ],
                           ),
@@ -889,13 +957,16 @@ class _MobileActionButton extends StatelessWidget {
   final VoidCallback onTap;
   final bool isDark;
   final bool isSelected;
+  final bool isBusy;
 
   const _MobileActionButton({
+    super.key,
     required this.icon,
     required this.label,
     required this.onTap,
     required this.isDark,
     this.isSelected = false,
+    this.isBusy = false,
   });
 
   @override
@@ -908,14 +979,14 @@ class _MobileActionButton extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(14),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             AnimatedContainer(
               duration: const Duration(milliseconds: 180),
               curve: Curves.easeOutCubic,
-              width: 52,
+              width: 48,
               height: 28,
               alignment: Alignment.center,
               decoration: BoxDecoration(
@@ -924,15 +995,26 @@ class _MobileActionButton extends StatelessWidget {
                     : Colors.transparent,
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: Icon(
-                icon,
-                size: 21,
-                color: isSelected ? activeColor : defaultColor,
-              ),
+              child: isBusy
+                  ? SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: activeColor,
+                      ),
+                    )
+                  : Icon(
+                      icon,
+                      size: 21,
+                      color: isSelected ? activeColor : defaultColor,
+                    ),
             ),
             const SizedBox(height: 2),
             Text(
               label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,

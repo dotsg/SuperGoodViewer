@@ -88,6 +88,11 @@ class DocumentSession {
   String title = 'Welcome';
   Uint8List? pdfBytes;
   bool isRawPdf = false;
+  Uint8List? originalPdfBytes;
+  List<OutlineItem> originalPdfOutlines = [];
+  bool isPdfReflowed = false;
+  bool isReflowingPdf = false;
+  String reflowMarkdownCache = '';
 
   bool isCompiling = false;
   int compileGeneration = 0;

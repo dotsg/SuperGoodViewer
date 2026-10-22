@@ -422,4 +422,11 @@ abstract class AppStrings {
   String fontInstallSuccess(String name);
   String fontInstallFailed(String error);
   String get mobileSharedDocumentLocation;
+  String get mobilePdfReflowShort;
+  String get mobilePdfReflowActiveShort;
+  String get mobilePdfReflowTitle;
+  String get mobilePdfReflowActiveTitle;
+  String get mobilePdfReflowDesc;
+  String get mobilePdfReflowing;
+  String get mobilePdfReflowScannedFallback;
 }

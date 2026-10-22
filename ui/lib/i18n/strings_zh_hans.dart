@@ -898,4 +898,19 @@ class ZhHansStrings implements AppStrings {
   String fontInstallFailed(String error) => '字体安装失败：$error';
   @override
   String get mobileSharedDocumentLocation => '来自外部应用分享';
+  @override
+  String get mobilePdfReflowShort => '重排';
+  @override
+  String get mobilePdfReflowActiveShort => '原版';
+  @override
+  String get mobilePdfReflowTitle => 'PDF 智能重排';
+  @override
+  String get mobilePdfReflowActiveTitle => '已开启 PDF 智能重排';
+  @override
+  String get mobilePdfReflowDesc => '解构双栏与小字版式，转为自适应流式排版并支持自由调节字号与字体';
+  @override
+  String get mobilePdfReflowing => '正在智能重排 PDF...';
+  @override
+  String get mobilePdfReflowScannedFallback =>
+      '当前 PDF 为纯扫描图片或无文本层，已为您自动开启智能切白边';
 }

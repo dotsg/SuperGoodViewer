@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:pdfrx/pdfrx.dart';
 import 'package:sogoodviewer/models/render_options.dart';
 import 'package:sogoodviewer/services/pdf_page_analysis_service.dart';
+import 'package:sogoodviewer/services/pdf_reflow_service.dart';
 import 'package:sogoodviewer/controllers/reader_controller.dart';
 import 'package:sogoodviewer/services/preferences_service.dart';
 
@@ -213,6 +214,60 @@ void main() {
       expect(PdfPageAnalysisService.getCachedAnalysis('doc_10', 1), isNotNull);
 
       await doc.dispose();
+    });
+  });
+
+  group('PdfReflowService & ReaderController Client-Side PDF Reflow Tests', () {
+    test('Reflows single-column academic PDF (Attention Is All You Need) into semantic Markdown', () async {
+      final bytes = File(attentionPdfPath).readAsBytesSync();
+      final result = await PdfReflowService.reflowPdfBytes(
+        bytes,
+        documentTitle: 'Attention Is All You Need',
+      );
+
+      expect(result.hasContent, isTrue);
+      expect(result.pageCount, equals(11));
+      expect(result.elements.length, greaterThan(30));
+      expect(result.markdown, contains('Attention Is All You Need'));
+      expect(result.markdown, contains('Introduction'));
+      expect(result.markdown, contains('#'));
+    });
+
+    test('Uncurls multi-column academic PDF (ResNet CVPR 2016) and toggles ReaderController reflow mode', () async {
+      final bytes = File(resnetPdfPath).readAsBytesSync();
+      final result = await PdfReflowService.reflowPdfBytes(
+        bytes,
+        documentTitle: 'Deep Residual Learning',
+      );
+
+      expect(result.hasContent, isTrue);
+      expect(result.pageCount, equals(12));
+      expect(result.elements.length, greaterThan(40));
+      expect(result.markdown, contains('Deep Residual Learning'));
+
+      final controller = ReaderController();
+      addTearDown(controller.dispose);
+
+      await controller.openFile(resnetPdfPath);
+      expect(controller.isSourcePdfDocument, isTrue);
+      expect(controller.isPdfDocument, isTrue);
+      expect(controller.isPdfReflowed, isFalse);
+
+      final enabled = await controller.setPdfReflowMode(true);
+      expect(enabled, isTrue);
+      expect(controller.isSourcePdfDocument, isTrue);
+      expect(controller.isPdfReflowed, isTrue);
+      expect(controller.isPdfDocument, isFalse);
+      expect(controller.isFluidLayout, isTrue);
+      expect(controller.currentMarkdown, isNotEmpty);
+      expect(controller.outlineItems, isNotEmpty);
+
+      final disabled = await controller.setPdfReflowMode(false);
+      expect(disabled, isTrue);
+      expect(controller.isSourcePdfDocument, isTrue);
+      expect(controller.isPdfReflowed, isFalse);
+      expect(controller.isPdfDocument, isTrue);
+      expect(controller.currentPdfBytes?.length, equals(bytes.length));
     });
   });
 }

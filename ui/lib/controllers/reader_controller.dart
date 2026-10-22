@@ -15,6 +15,7 @@ import '../i18n/locales.dart';
 import '../models/render_options.dart';
 import '../services/document_cache_service.dart';
 import '../services/form_factor.dart';
+import '../services/pdf_reflow_service.dart';
 import '../services/preferences_service.dart';
 import '../services/remote_image_service.dart';
 import '../services/shortcut_service.dart';
@@ -298,10 +299,18 @@ class ReaderController extends ChangeNotifier {
   List<OutlineItem> get outlineItems => _doc.outlineItems;
   int get activeOutlineIndex => _doc.activeOutlineIndex;
   OutlineItem? get requestedJumpItem => _doc.requestedJumpItem;
+  bool get isSourcePdfDocument => _isSourcePdf(_doc);
+  bool get isPdfReflowed => _doc.isPdfReflowed;
+  bool get isReflowingPdf => _doc.isReflowingPdf;
   bool get isPdfDocument => _isPdf(_doc);
 
+  static bool _isSourcePdf(DocumentSession doc) =>
+      doc.isRawPdf ||
+      doc.originalPdfBytes != null ||
+      (doc.filePath?.toLowerCase().endsWith('.pdf') ?? false);
+
   static bool _isPdf(DocumentSession doc) =>
-      doc.isRawPdf || (doc.filePath?.toLowerCase().endsWith('.pdf') ?? false);
+      !doc.isPdfReflowed && _isSourcePdf(doc);
 
   /// Native PDFs always use paged navigation, regardless of the saved Markdown layout preference.
   bool get isFluidLayout => renderOptions.isFluid && !isPdfDocument;
@@ -528,9 +537,84 @@ class ReaderController extends ChangeNotifier {
   void setPdfOutlines(List<OutlineItem> items, {String? targetFilePath}) {
     if (!isPdfDocument) return;
     if (targetFilePath != null && _doc.filePath != targetFilePath) return;
-    _doc.outlineItems = List.unmodifiable(items);
+    final unmodifiable = List<OutlineItem>.unmodifiable(items);
+    _doc.outlineItems = unmodifiable;
+    _doc.originalPdfOutlines = unmodifiable;
     updateActiveOutline();
     notifyListeners();
+  }
+
+  Future<bool> togglePdfReflowMode() => setPdfReflowMode(!_doc.isPdfReflowed);
+
+  Future<bool> setPdfReflowMode(bool enable) async {
+    final doc = _doc;
+    if (!_isSourcePdf(doc)) return false;
+    if (doc.isPdfReflowed == enable && !doc.isReflowingPdf) return enable;
+
+    if (!enable) {
+      doc.compileGeneration++;
+      doc.hasPendingCompile = false;
+      doc.isCompiling = false;
+      doc.isReflowingPdf = false;
+      doc.isPdfReflowed = false;
+      doc.pdfBytes = doc.originalPdfBytes;
+      doc.outlineItems = doc.originalPdfOutlines;
+      doc.errorMessage = null;
+      doc.degradedEquationCount = 0;
+      doc.degradedEquations = const [];
+      doc.scrollRatio = 0.0;
+      doc.scrollOffset = 0.0;
+      doc.pageNumber = 1;
+      renderOptionsChanged = true;
+      _startReloading(doc);
+      updateActiveOutline();
+      notifyListeners();
+      return true;
+    }
+
+    return _reflowPdfSession(doc);
+  }
+
+  Future<bool> _reflowPdfSession(DocumentSession doc) async {
+    final sourceBytes = doc.originalPdfBytes ?? doc.pdfBytes;
+    if (sourceBytes == null || sourceBytes.isEmpty) return false;
+
+    if (doc.reflowMarkdownCache.isEmpty) {
+      doc.isReflowingPdf = true;
+      doc.errorMessage = null;
+      notifyListeners();
+
+      final result = await PdfReflowService.reflowPdfBytes(
+        sourceBytes,
+        documentTitle: doc.title,
+      );
+      if (_isDisposed || !_isOpen(doc)) return false;
+
+      if (!result.hasContent) {
+        doc.isReflowingPdf = false;
+        doc.isPdfReflowed = false;
+        notifyListeners();
+        return false;
+      }
+      doc.reflowMarkdownCache = result.markdown;
+    }
+
+    doc.originalPdfBytes ??= sourceBytes;
+    doc.markdown = doc.reflowMarkdownCache;
+    doc.isReflowingPdf = false;
+    doc.isPdfReflowed = true;
+    if (!_optionsFor(doc).isFluid) {
+      doc.pageFormat = PageFormat.fluid;
+    }
+    doc.scrollRatio = 0.0;
+    doc.scrollOffset = 0.0;
+    doc.pageNumber = 1;
+    renderOptionsChanged = true;
+    _startReloading(doc);
+    _extractOutline(doc);
+    notifyListeners();
+    await _compile(doc);
+    return true;
   }
 
   @visibleForTesting
@@ -991,6 +1075,11 @@ class ReaderController extends ChangeNotifier {
       _doc.markdown = '';
       _doc.attachmentFingerprint = '';
       _doc.isRawPdf = false;
+      _doc.originalPdfBytes = null;
+      _doc.originalPdfOutlines = [];
+      _doc.isPdfReflowed = false;
+      _doc.isReflowingPdf = false;
+      _doc.reflowMarkdownCache = '';
       _doc.errorMessage = 'File not found: $filePath';
       _doc.degradedEquationCount = 0;
       _doc.degradedEquations = const [];
@@ -1013,6 +1102,11 @@ class ReaderController extends ChangeNotifier {
         _doc.hasPendingCompile = false;
         _doc.isCompiling = false;
         _doc.isRawPdf = true;
+        _doc.originalPdfBytes = null;
+        _doc.originalPdfOutlines = [];
+        _doc.isPdfReflowed = false;
+        _doc.isReflowingPdf = false;
+        _doc.reflowMarkdownCache = '';
         _doc.markdown = '';
         _doc.attachmentFingerprint = '';
         _doc.outlineItems = [];
@@ -1028,6 +1122,7 @@ class ReaderController extends ChangeNotifier {
         }
 
         _doc.pdfBytes = bytes;
+        _doc.originalPdfBytes = bytes;
         _doc.errorMessage = null;
 
         if (!preservePosition) {
@@ -1063,6 +1158,11 @@ class ReaderController extends ChangeNotifier {
       }
 
       _doc.isRawPdf = false;
+      _doc.originalPdfBytes = null;
+      _doc.originalPdfOutlines = [];
+      _doc.isPdfReflowed = false;
+      _doc.isReflowingPdf = false;
+      _doc.reflowMarkdownCache = '';
       String content;
       try {
         content = utf8.decode(bytes);
@@ -1186,8 +1286,8 @@ class ReaderController extends ChangeNotifier {
         return false;
       }
       final bytes = File(filePath).readAsBytesSync();
-      if (_doc.isRawPdf) {
-        final pdf = _doc.pdfBytes;
+      if (_isSourcePdf(_doc)) {
+        final pdf = _doc.originalPdfBytes ?? _doc.pdfBytes;
         return pdf != null && listEquals(pdf, bytes);
       }
       final text = utf8.decode(bytes, allowMalformed: true);
@@ -1345,13 +1445,20 @@ class ReaderController extends ChangeNotifier {
       final file = File(doc.filePath!);
       if (await file.exists()) {
         try {
-          if (_isPdf(doc)) {
+          if (_isSourcePdf(doc)) {
             final bytes = await file.readAsBytes();
             if (!isValidPdfBytes(bytes)) {
               debugPrint('[ReaderController] PDF reload skipped: incomplete file (in-flight write)');
               return;
             }
-            if (doc.pdfBytes != null && listEquals(bytes, doc.pdfBytes)) {
+            final existingBytes = doc.originalPdfBytes ?? doc.pdfBytes;
+            if (existingBytes != null && listEquals(bytes, existingBytes)) {
+              return;
+            }
+            doc.originalPdfBytes = bytes;
+            doc.reflowMarkdownCache = '';
+            if (doc.isPdfReflowed) {
+              await _reflowPdfSession(doc);
               return;
             }
             doc.pdfBytes = bytes;
@@ -1391,12 +1498,18 @@ class ReaderController extends ChangeNotifier {
   /// Manually refreshes the current document, clearing negative image cache and re-triggering downloads.
   Future<void> refreshDocument() async {
     final doc = _doc;
-    if (_isPdf(doc)) {
+    if (_isSourcePdf(doc)) {
       if (doc.filePath != null) {
         final file = File(doc.filePath!);
         try {
           if (await file.exists()) {
             final bytes = await file.readAsBytes();
+            doc.originalPdfBytes = bytes;
+            doc.reflowMarkdownCache = '';
+            if (doc.isPdfReflowed) {
+              await _reflowPdfSession(doc);
+              return;
+            }
             doc.pdfBytes = bytes;
             doc.errorMessage = null;
             _startReloading(doc);
@@ -2006,6 +2119,12 @@ graph LR
 
   void _setSampleDocumentContent() {
     _doc.filePath = null;
+    _doc.isRawPdf = false;
+    _doc.originalPdfBytes = null;
+    _doc.originalPdfOutlines = [];
+    _doc.isPdfReflowed = false;
+    _doc.isReflowingPdf = false;
+    _doc.reflowMarkdownCache = '';
     _doc.title = 'SuperGoodViewer Demo';
     _doc.markdown = _sampleMarkdown;
     _extractOutline(_doc);

@@ -945,4 +945,19 @@ class ZhHantStrings extends ZhHansStrings {
   String fontInstallFailed(String error) => '字型安裝失敗：$error';
   @override
   String get mobileSharedDocumentLocation => '來自外部應用分享';
+  @override
+  String get mobilePdfReflowShort => '重排';
+  @override
+  String get mobilePdfReflowActiveShort => '原版';
+  @override
+  String get mobilePdfReflowTitle => 'PDF 智慧重排';
+  @override
+  String get mobilePdfReflowActiveTitle => '已開啟 PDF 智慧重排';
+  @override
+  String get mobilePdfReflowDesc => '解構雙欄與小字版式，轉為自適應流式排版並支援自由調節字級與字型';
+  @override
+  String get mobilePdfReflowing => '正在智慧重排 PDF...';
+  @override
+  String get mobilePdfReflowScannedFallback =>
+      '目前 PDF 為純掃描圖片或無文字層，已為您自動開啟智慧切白邊';
 }
