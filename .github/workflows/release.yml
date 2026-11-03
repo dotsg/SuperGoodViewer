@@ -496,76 +496,11 @@ jobs:
           if-no-files-found: error
 
   # =============================================================
-  # Android Build & Package (arm64-v8a & x86_64 APK)
-  # =============================================================
-  build-android:
-    name: Build Android (APK)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v7
-
-      - name: Setup Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Setup Android NDK
-        run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;27.2.12479018"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> $GITHUB_ENV
-          echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> $GITHUB_ENV
-
-      - name: Setup Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: aarch64-linux-android,x86_64-linux-android
-
-      - name: Install cargo-ndk
-        run: cargo install cargo-ndk
-
-      - name: Setup Flutter SDK
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - name: Build Android Rust Core (.so)
-        run: |
-          mkdir -p ui/android/app/src/main/jniLibs/arm64-v8a ui/android/app/src/main/jniLibs/x86_64
-          cd core
-          cargo ndk -t arm64-v8a build --release --lib
-          cp target/aarch64-linux-android/release/libsogood_core.so ../ui/android/app/src/main/jniLibs/arm64-v8a/
-          cargo ndk -t x86_64 build --release --lib
-          cp target/x86_64-linux-android/release/libsogood_core.so ../ui/android/app/src/main/jniLibs/x86_64/
-
-      - name: Build Android APK
-        run: |
-          cd ui
-          flutter build apk --release --split-per-abi
-
-      - name: Prepare Android Artifacts
-        run: |
-          mkdir -p release-android
-          cp ui/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk release-android/SuperGoodViewer-${{ env.RELEASE_VERSION }}-android-arm64.apk 2>/dev/null || true
-          cp ui/build/app/outputs/flutter-apk/app-x86_64-release.apk release-android/SuperGoodViewer-${{ env.RELEASE_VERSION }}-android-x86_64.apk 2>/dev/null || true
-
-      - name: Upload Android Artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: android-binaries
-          path: release-android/*
-          if-no-files-found: error
-
-  # =============================================================
   # Publish Release
   # =============================================================
   publish-release:
     name: Publish GitHub Release
-    needs: [build-macos, build-windows-x64, build-windows-arm64, build-linux-amd64, build-linux-arm64, build-android]
+    needs: [build-macos, build-windows-x64, build-windows-arm64, build-linux-amd64, build-linux-arm64]
     runs-on: ubuntu-latest
 
     steps:
@@ -623,9 +558,3 @@ jobs:
             - **ARM64 Linux（树莓派 4/5、Apple Silicon Linux 虚拟机、ARM 云服务器等）**：下载 `SuperGoodViewer-${{ env.RELEASE_VERSION }}-linux-arm64.tar.gz`（纯原生 ARM64 极致体验）
             - **系统要求**：glibc ≥ 2.35（Ubuntu 22.04+、Debian 12+ / Raspberry Pi OS Bookworm、Fedora、Arch Linux 等主流 64 位发行版，需安装 GTK 3 环境）
             - **使用方式**：解压 tar.gz 归档至任意目录，运行 `./supergoodviewer` 即可直接启动（绿色免安装）；亦可将解压目录中的 `bin/sgv` 脚本软链接至 `~/.local/bin/sgv`，在终端随时以命令行唤起。
-
-            #### 🤖 Android 用户
-            - **主流手机 / 平板（ARM64）**：下载 `SuperGoodViewer-${{ env.RELEASE_VERSION }}-android-arm64.apk`
-            - **x86_64 模拟器 / ChromeOS**：下载 `SuperGoodViewer-${{ env.RELEASE_VERSION }}-android-x86_64.apk`
-            - **系统要求**：Android 8.0+ (API Level 26+)，全面适配 Android 15 16KB 内存页规范。
-            - **使用方式**：安装 APK 即可，支持在文件管理器或微信中直接调用「超好读」打开 `.md` 和 `.pdf` 文件。
