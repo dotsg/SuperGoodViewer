@@ -92,7 +92,10 @@ package_universal() {
   # Re-signing
   echo "  -> Re-signing app bundle (ad-hoc)..."
   codesign --force --deep --sign - "$staging_dir/SuperGoodViewer.app"
-  # --deep drops the entitlements Xcode applied, so re-apply them to the top-level bundle.
+  # --deep drops the entitlements Xcode applied, so re-apply them to the extension and top-level bundle.
+  if [ -d "$staging_dir/SuperGoodViewer.app/Contents/PlugIns/QuickLookExtension.appex" ]; then
+    codesign --force --sign - --entitlements "$ROOT_DIR/ui/macos/QuickLookExtension/QuickLookExtension.entitlements" "$staging_dir/SuperGoodViewer.app/Contents/PlugIns/QuickLookExtension.appex"
+  fi
   codesign --force --sign - --entitlements "$ROOT_DIR/ui/macos/Runner/Release.entitlements" "$staging_dir/SuperGoodViewer.app"
   codesign --verify --deep --strict "$staging_dir/SuperGoodViewer.app"
   echo "     Codesign validation passed."
@@ -219,7 +222,10 @@ package_arch() {
   # Re-signing
   echo "  -> Re-signing app bundle (ad-hoc)..."
   codesign --force --deep --sign - "$staging_dir/SuperGoodViewer.app"
-  # --deep drops the entitlements Xcode applied, so re-apply them to the top-level bundle.
+  # --deep drops the entitlements Xcode applied, so re-apply them to the extension and top-level bundle.
+  if [ -d "$staging_dir/SuperGoodViewer.app/Contents/PlugIns/QuickLookExtension.appex" ]; then
+    codesign --force --sign - --entitlements "$ROOT_DIR/ui/macos/QuickLookExtension/QuickLookExtension.entitlements" "$staging_dir/SuperGoodViewer.app/Contents/PlugIns/QuickLookExtension.appex"
+  fi
   codesign --force --sign - --entitlements "$ROOT_DIR/ui/macos/Runner/Release.entitlements" "$staging_dir/SuperGoodViewer.app"
   codesign --verify --deep --strict "$staging_dir/SuperGoodViewer.app"
   echo "     Codesign validation passed."

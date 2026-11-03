@@ -107,9 +107,12 @@ jobs:
           cp core/target/universal/release/sgv-cli "$APP/Contents/Resources/bin/sgv-cli"
           chmod +x "$APP/Contents/Resources/bin/sgv"
           chmod +x "$APP/Contents/Resources/bin/sgv-cli"
-          # Re-sign app bundle after injecting dylib and CLI script so Gatekeeper doesn't reject modified code
+          chmod +x scripts/build-macos-quicklook.sh
+          ./scripts/build-macos-quicklook.sh universal "$APP"
+          # Re-sign app bundle after injecting dylib, CLI script, and Quick Look extension so Gatekeeper doesn't reject modified code
           codesign --force --deep --sign - "$APP"
-          # --deep drops the entitlements Xcode applied, so re-apply them to the top-level bundle.
+          # --deep drops the entitlements Xcode applied, so re-apply them to the extension and top-level bundle.
+          codesign --force --sign - --entitlements ui/macos/QuickLookExtension/QuickLookExtension.entitlements "$APP/Contents/PlugIns/QuickLookExtension.appex"
           codesign --force --sign - --entitlements ui/macos/Runner/Release.entitlements "$APP"
 
       - name: Create macOS DMG Packages (Apple Silicon arm64 & Intel x64)

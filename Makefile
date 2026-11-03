@@ -32,9 +32,11 @@ build: build-core build-app
 	@cp core/target/release/sgv-cli ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv-cli
 	@chmod +x ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv
 	@chmod +x ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv-cli
+	@./scripts/build-macos-quicklook.sh host ui/build/macos/Build/Products/Release/SuperGoodViewer.app
 	@echo "==> Re-signing macOS App Bundle..."
-# --deep drops the entitlements Xcode applied, so re-apply them to the top-level bundle.
+# --deep drops the entitlements Xcode applied, so re-apply them to the extension and top-level bundle.
 	@codesign --force --deep --sign - ui/build/macos/Build/Products/Release/SuperGoodViewer.app
+	@codesign --force --sign - --entitlements ui/macos/QuickLookExtension/QuickLookExtension.entitlements ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/PlugIns/QuickLookExtension.appex
 	@codesign --force --sign - --entitlements ui/macos/Runner/Release.entitlements ui/build/macos/Build/Products/Release/SuperGoodViewer.app
 	@echo "==> Build complete! Output: ui/build/macos/Build/Products/Release/SuperGoodViewer.app"
 
@@ -49,9 +51,11 @@ build-universal: build-core-universal build-app
 	@cp core/target/universal/release/sgv-cli ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv-cli
 	@chmod +x ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv
 	@chmod +x ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/Resources/bin/sgv-cli
+	@./scripts/build-macos-quicklook.sh universal ui/build/macos/Build/Products/Release/SuperGoodViewer.app
 	@echo "==> Re-signing macOS App Bundle..."
-# --deep drops the entitlements Xcode applied, so re-apply them to the top-level bundle.
+# --deep drops the entitlements Xcode applied, so re-apply them to the extension and top-level bundle.
 	@codesign --force --deep --sign - ui/build/macos/Build/Products/Release/SuperGoodViewer.app
+	@codesign --force --sign - --entitlements ui/macos/QuickLookExtension/QuickLookExtension.entitlements ui/build/macos/Build/Products/Release/SuperGoodViewer.app/Contents/PlugIns/QuickLookExtension.appex
 	@codesign --force --sign - --entitlements ui/macos/Runner/Release.entitlements ui/build/macos/Build/Products/Release/SuperGoodViewer.app
 	@echo "==> Universal build complete! Output: ui/build/macos/Build/Products/Release/SuperGoodViewer.app"
 

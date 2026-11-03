@@ -53,11 +53,45 @@ class AppDelegate: FlutterAppDelegate {
   override func applicationDidFinishLaunching(_ notification: Notification) {
     AppDelegate.shared = self
     setupMenuBar()
+    registerQuickLookExtensionIfNeeded()
 
     // Backup registration if MainFlutterWindow hasn't called registerMessenger yet
     if appChannel == nil,
        let flutterVC = mainFlutterWindow?.contentViewController as? FlutterViewController {
       registerMessenger(flutterVC.engine.binaryMessenger)
+    }
+  }
+
+  private func registerQuickLookExtensionIfNeeded() {
+    guard let plugInsURL = Bundle.main.builtInPlugInsURL else { return }
+    let appexURL = plugInsURL.appendingPathComponent("QuickLookExtension.appex", isDirectory: true)
+    guard FileManager.default.fileExists(atPath: appexURL.path) else { return }
+
+    DispatchQueue.global(qos: .utility).async {
+      let addProc = Process()
+      addProc.executableURL = URL(fileURLWithPath: "/usr/bin/pluginkit")
+      addProc.arguments = ["-a", appexURL.path]
+      try? addProc.run()
+      addProc.waitUntilExit()
+
+      let queryProc = Process()
+      let pipe = Pipe()
+      queryProc.executableURL = URL(fileURLWithPath: "/usr/bin/pluginkit")
+      queryProc.arguments = ["-m", "-i", "com.sogood.sogoodviewer.QuickLookExtension"]
+      queryProc.standardOutput = pipe
+      try? queryProc.run()
+      queryProc.waitUntilExit()
+
+      let outData = pipe.fileHandleForReading.readDataToEndOfFile()
+      let outStr = String(data: outData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+      // Only auto-enable if the user has not explicitly disabled it (prefix '-')
+      if !outStr.hasPrefix("-") && !outStr.hasPrefix("+") {
+        let enableProc = Process()
+        enableProc.executableURL = URL(fileURLWithPath: "/usr/bin/pluginkit")
+        enableProc.arguments = ["-e", "use", "-i", "com.sogood.sogoodviewer.QuickLookExtension"]
+        try? enableProc.run()
+        enableProc.waitUntilExit()
+      }
     }
   }
 
