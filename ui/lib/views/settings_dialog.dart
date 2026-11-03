@@ -3438,6 +3438,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   // ==================== 5. ABOUT TAB ====================
   Widget _buildAboutTab(ThemeData theme, bool isDark) {
     final s = widget.controller.strings;
+    final isMobile = FormFactor.isMobilePlatform(context);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3497,35 +3498,36 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       color: isDark ? Colors.white54 : Colors.black45,
                     ),
                   ),
-                  if (_isCheckingUpdate)
-                    const SizedBox(
-                      width: 13,
-                      height: 13,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  else
-                    InkWell(
-                      borderRadius: BorderRadius.circular(4),
-                      onTap: _handleManualCheckUpdate,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.refresh_rounded, size: 13, color: theme.colorScheme.primary),
-                            const SizedBox(width: 4),
-                            Text(
-                              s.checkForUpdates,
-                              style: TextStyle(
-                                fontSize: 11.5,
-                                color: theme.colorScheme.primary,
-                                fontWeight: FontWeight.w600,
+                  if (!isMobile)
+                    if (_isCheckingUpdate)
+                      const SizedBox(
+                        width: 13,
+                        height: 13,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    else
+                      InkWell(
+                        borderRadius: BorderRadius.circular(4),
+                        onTap: _handleManualCheckUpdate,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.refresh_rounded, size: 13, color: theme.colorScheme.primary),
+                              const SizedBox(width: 4),
+                              Text(
+                                s.checkForUpdates,
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: theme.colorScheme.primary,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
-                    ),
                 ],
               ),
               const SizedBox(height: 6),
@@ -3558,7 +3560,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                 ),
               ),
-              if (_updateStatusMessage != null) ...[
+              if (!isMobile && _updateStatusMessage != null) ...[
                 const SizedBox(height: 6),
                 Text(
                   _updateStatusMessage!,
@@ -3574,40 +3576,42 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ),
         const SizedBox(height: 18),
 
-        // Auto check updates toggle card
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF9F9F9),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+        // Auto check updates toggle card (Desktop only; mobile updates via App Store / Google Play)
+        if (!isMobile) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF9F9F9),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.system_update_alt_rounded, size: 18, color: theme.colorScheme.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    s.autoCheckUpdates,
+                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500),
+                  ),
+                ),
+                Transform.scale(
+                  scale: 0.8,
+                  child: Switch.adaptive(
+                    value: _autoCheckUpdates,
+                    onChanged: (val) {
+                      setState(() => _autoCheckUpdates = val);
+                      PreferencesService.saveKey(UpdateService.prefAutoCheck, val);
+                    },
+                  ),
+                ),
+              ],
             ),
           ),
-          child: Row(
-            children: [
-              Icon(Icons.system_update_alt_rounded, size: 18, color: theme.colorScheme.primary),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  s.autoCheckUpdates,
-                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500),
-                ),
-              ),
-              Transform.scale(
-                scale: 0.8,
-                child: Switch.adaptive(
-                  value: _autoCheckUpdates,
-                  onChanged: (val) {
-                    setState(() => _autoCheckUpdates = val);
-                    PreferencesService.saveKey(UpdateService.prefAutoCheck, val);
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 14),
+          const SizedBox(height: 14),
+        ],
 
         // Engine highlights card
         Container(
@@ -3722,7 +3726,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 
   Future<void> _handleManualCheckUpdate() async {
-    if (_isCheckingUpdate) return;
+    if (_isCheckingUpdate || FormFactor.isMobilePlatform(context)) return;
     setState(() {
       _isCheckingUpdate = true;
       _updateStatusMessage = widget.controller.strings.checkingForUpdates;

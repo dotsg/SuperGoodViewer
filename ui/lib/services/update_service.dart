@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import '../i18n/app_strings.dart';
 import '../models/update_info.dart';
+import 'form_factor.dart';
 import 'preferences_service.dart';
 
 enum ArchitectureIssue { missingExecutable, unreadableExecutable, mismatch }
@@ -314,6 +315,17 @@ class UpdateService {
     required String currentVersion,
     bool isManual = false,
   }) async {
+    if (FormFactor.isMobilePlatform()) {
+      return UpdateInfo(
+        currentVersion: currentVersion,
+        latestVersion: currentVersion,
+        title: '',
+        releaseNotes: '',
+        htmlUrl: '',
+        hasUpdate: false,
+      );
+    }
+
     final prefs = PreferencesService.loadSync();
     final autoCheck = prefs[prefAutoCheck] as bool? ?? true;
     final lastCheckMs = (prefs[prefLastCheckTime] as num?)?.toInt() ?? 0;

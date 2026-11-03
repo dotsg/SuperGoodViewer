@@ -753,6 +753,43 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(seconds: 4));
     });
+
+    testWidgets('Mobile About tab hides desktop update check controls', (tester) async {
+      tester.view.physicalSize = phoneSize;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: ElevatedButton(
+              onPressed: () => showSettingsDialog(
+                context,
+                controller,
+                initialTab: SettingsTab.about,
+              ),
+              child: const Text('Open About'),
+            ),
+          ),
+        ),
+      ));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tester.tap(find.text('Open About'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.text('SuperGoodViewer'), findsOneWidget);
+      expect(find.text(controller.strings.checkForUpdates), findsNothing);
+      expect(find.text(controller.strings.autoCheckUpdates), findsNothing);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 4));
+    });
   });
 
   group('Desktop Narrow Viewport Tests', () {
