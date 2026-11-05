@@ -108,6 +108,7 @@ const MACROS: &[(&str, &str, bool)] = &[
     // Length 8
     ("vartheta", "θ", true),
     ("subseteq", "⊆", false),
+    ("setminus", "∖", false),
     // Length 7
     ("epsilon", "ε", true),
     ("upsilon", "υ", true),
@@ -118,6 +119,7 @@ const MACROS: &[(&str, &str, bool)] = &[
     ("rangle", "⟩", false),
     ("langle", "⟨", false),
     ("approx", "≈", false),
+    ("lminus", "−", true),
     // Length 5
     ("Delta", "Δ", true),
     ("Gamma", "Γ", true),
@@ -149,6 +151,8 @@ const MACROS: &[(&str, &str, bool)] = &[
     ("prod", "∏", false),
     ("quad", " ", false),
     ("vert", "|", false),
+    ("lnot", "¬", true),
+    ("land", "∧", false),
     // Length 3
     ("Phi", "Φ", true),
     ("Psi", "Ψ", true),
@@ -158,6 +162,9 @@ const MACROS: &[(&str, &str, bool)] = &[
     ("phi", "ϕ", true),
     ("chi", "χ", true),
     ("psi", "ψ", true),
+    ("cap", "∩", false),
+    ("cup", "∪", false),
+    ("lor", "∨", false),
     ("pm", "±", false),
     ("mp", "∓", false),
     ("div", "÷", false),

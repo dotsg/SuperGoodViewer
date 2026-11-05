@@ -393,7 +393,7 @@ pub(crate) fn compile_typst_to_document_with_raw_equations(
     raw_equations: &[String],
 ) -> Result<CompilationResult, CompileError> {
     let mut current_source = typst_source.to_string();
-    let max_degrade_passes = 3;
+    let max_degrade_passes = 32;
     let virtual_files_arc = std::sync::Arc::new(virtual_files);
 
     for _ in 0..=max_degrade_passes {

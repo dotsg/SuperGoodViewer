@@ -1666,6 +1666,43 @@ pub fn convert_markdown_to_typst(
 #let pmod(n) = $(mod #n)$
 #let pod(n) = $(#n)$
 #let odot = sym.dot.o
+#let sect = sym.inter
+#let lminus = math.class("unary", sym.minus)
+#let rminus = sym.minus
+#let smallint = $script(integral)$
+#let thickapprox = sym.approx
+#let thicksim = sym.tilde.op
+#let TeX = math.upright("TeX")
+#let LaTeX = math.upright("LaTeX")
+#let KaTeX = math.upright("KaTeX")
+
+// Slanted uppercase Greek letters (amsmath \varGamma .. \varOmega)
+#let varGamma = math.italic(sym.Gamma)
+#let varDelta = math.italic(sym.Delta)
+#let varTheta = math.italic(sym.Theta)
+#let varLambda = math.italic(sym.Lambda)
+#let varXi = math.italic(sym.Xi)
+#let varPi = math.italic(sym.Pi)
+#let varSigma = math.italic(sym.Sigma)
+#let varUpsilon = math.italic(sym.Upsilon)
+#let varPhi = math.italic(sym.Phi)
+#let varPsi = math.italic(sym.Psi)
+#let varOmega = math.italic(sym.Omega)
+
+// Additional standard math operators
+#let argmax = math.op("arg max", limits: true)
+#let argmin = math.op("arg min", limits: true)
+#let injlim = math.op("inj lim", limits: true)
+#let projlim = math.op("proj lim", limits: true)
+#let plim = math.op("plim", limits: true)
+#let arcctg = math.op("arcctg")
+#let arctg = math.op("arctg")
+#let cosec = math.op("cosec")
+#let cotg = math.op("cotg")
+#let ch = math.op("ch")
+#let sh = math.op("sh")
+#let th = math.op("th")
+#let cth = math.op("cth")
 
 // TeX math atom classes
 #let mathord(it) = it
@@ -1703,6 +1740,22 @@ pub fn convert_markdown_to_typst(
 #let xrightarrow(it) = $limits(stretch(arrow.r)^#it)$
 #let xleftarrow(it) = $limits(stretch(arrow.l)^#it)$
 #let xleftrightarrow(it) = $limits(stretch(arrow.l.r)^#it)$
+#let xLeftarrow(it) = $limits(stretch(arrow.l.double)^#it)$
+#let xRightarrow(it) = $limits(stretch(arrow.r.double)^#it)$
+#let xLeftrightarrow(it) = $limits(stretch(arrow.l.r.double)^#it)$
+#let xhookleftarrow(it) = $limits(stretch(arrow.l.hook)^#it)$
+#let xhookrightarrow(it) = $limits(stretch(arrow.r.hook)^#it)$
+#let xleftharpoondown(it) = $limits(stretch(harpoon.lb)^#it)$
+#let xleftharpoonup(it) = $limits(stretch(harpoon.lt)^#it)$
+#let xleftrightharpoons(it) = $limits(stretch(harpoons.ltrb)^#it)$
+#let xlongequal(it) = $limits(stretch(=)^#it)$
+#let xmapsto(it) = $limits(stretch(arrow.r.bar)^#it)$
+#let xrightharpoondown(it) = $limits(stretch(harpoon.rb)^#it)$
+#let xrightharpoonup(it) = $limits(stretch(harpoon.rt)^#it)$
+#let xrightleftharpoons(it) = $limits(stretch(harpoons.rtlb)^#it)$
+#let xtofrom(it) = $limits(stretch(arrows.rl)^#it)$
+#let xtwoheadleftarrow(it) = $limits(stretch(arrow.l.twohead)^#it)$
+#let xtwoheadrightarrow(it) = $limits(stretch(arrow.r.twohead)^#it)$
 #let overleftrightarrow(it) = $accent(it, \u{{20e1}})$
 #let overleftharpoon(it) = $accent(it, \u{{20d0}})$
 #let overrightharpoon(it) = $accent(it, \u{{20d1}})$
@@ -1774,7 +1827,19 @@ pub fn convert_markdown_to_typst(
   }}
   text(fill: clr, it)
 }}
-#let mitexcolor = colortext
+#let mitexcolor(c, ..rest) = if rest.pos().len() == 0 {{ none }} else {{ colortext(c, rest.pos().join()) }}
+#let colorbox(c, it) = {{
+  let c-str = lower(mitexstr(c).replace(" ", "").trim())
+  let is-hex = c-str.starts-with("#") and (c-str.len() == 4 or c-str.len() == 7 or c-str.len() == 9) and c-str.slice(1).clusters().all(ch => ch in ("0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f","A","B","C","D","E","F"))
+  let clr = if c-str in mitex-color-map {{
+    mitex-color-map.at(c-str)
+  }} else if is-hex {{
+    rgb(c-str)
+  }} else {{
+    none
+  }}
+  box(fill: clr, inset: (x: 3pt, y: 2pt), baseline: 0%, $it$)
+}}
 
 #let mitexlen(it, default: 0pt) = {{
   if type(it) == length or type(it) == relative or type(it) == ratio {{
@@ -1865,6 +1930,11 @@ pub fn convert_markdown_to_typst(
 #let baselineskip = 1.2em
 #let hspace(it) = h(mitexlen(it, default: 1em))
 #let vspace(it) = v(mitexlen(it, default: 1em))
+#let enspace = h(0.5em)
+#let negthinspace = h(-3em / 18)
+#let negthinmedspace = h(-3.5em / 18)
+#let negmedspace = h(-4em / 18)
+#let negthickspace = h(-5em / 18)
 #let smash(it) = box(height: 0pt, $it$)
 #let raisebox(sp, it) = {{
   let dy = mitexlen(sp, default: 0pt)
@@ -1945,6 +2015,8 @@ pub fn convert_markdown_to_typst(
 }}
 #let mitexdisplay(it) = math.display(it)
 #let mitexinline(it) = math.inline(it)
+#let mitexscript(it) = math.script(it)
+#let mitexsscript(it) = math.sscript(it)
 #let mitexmathbf(it) = math.bold(math.upright(it))
 #let mitexmathit(it) = math.italic(it)
 #let mitexmathrm(it) = math.upright(it)

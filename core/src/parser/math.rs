@@ -5,10 +5,44 @@ use super::markdown::escape_typst_string;
 /// Converts a LaTeX math string to Typst math syntax.
 /// If transpilation succeeds, returns the Typst math code.
 /// If it fails, falls back gracefully to the original input (or raw text) to prevent compilation breakage.
-/// Helper to preprocess \mathllap and \mathrlap using MiTeX's native `\iftypst ... \fi` pass-through,
-/// avoiding any pollution of TeX commands like \mathinner or \mathpunct.
+/// Maps 0-argument LaTeX math commands that are absent from `mitex`'s prebuilt `DEFAULT_SPEC`
+/// to their corresponding Typst math expressions.
+fn missing_spec_symbol_typst(cmd_name: &str) -> Option<&'static str> {
+    match cmd_name {
+        "lminus" => Some("class(\"unary\", minus)"),
+        "rminus" => Some("minus"),
+        "bigsqcap" => Some("inter.sq.big"),
+        "gtrapprox" => Some("gt.approx"),
+        "gtreqqless" => Some("gt.eq.lt"),
+        "nleqslant" => Some("lt.eq.not"),
+        "nsubseteqq" => Some("subset.eq.not"),
+        "nsupseteqq" => Some("supset.eq.not"),
+        "lvertneqq" => Some("subset.neq"),
+        "gvertneqq" => Some("supset.neq"),
+        "nequiv" => Some("equiv.not"),
+        "napprox" => Some("approx.not"),
+        "nsimeq" => Some("tilde.eq.not"),
+        "smallfrown" => Some("frown"),
+        "shortmid" => Some("divides"),
+        "nshortmid" => Some("divides.not"),
+        "nshortparallel" => Some("parallel.not"),
+        "iddots" => Some("dots.up"),
+        "Colon" => Some("colon.double"),
+        "Bbbk" => Some("bb(\"k\")"),
+        "triangleup" => Some("triangle.stroked.t"),
+        "blacktriangleup" => Some("triangle.filled.t"),
+        "leftsquigarrow" => Some("arrow.l.squiggly"),
+        "copyleft" => Some("copyleft"),
+        "dotminus" => Some("minus.dot"),
+        _ => None,
+    }
+}
+
+/// Helper to preprocess commands absent from or incompatible with MiTeX's `DEFAULT_SPEC`
+/// (such as `\mathllap`, `\mathrlap`, `\smash`, `\lminus`, `\bigsqcap`, etc.) using MiTeX's
+/// native `\iftypst ... \fi` pass-through, avoiding any pollution of TeX commands.
 fn preprocess_laps(input: &str) -> String {
-    if !input.contains(r"\mathllap") && !input.contains(r"\mathrlap") && !input.contains(r"\smash") {
+    if !input.contains('\\') {
         return input.to_string();
     }
 
@@ -18,63 +52,78 @@ fn preprocess_laps(input: &str) -> String {
     let len = bytes.len();
 
     while i < len {
-        let is_llap = input[i..].starts_with(r"\mathllap");
-        let is_rlap = input[i..].starts_with(r"\mathrlap");
-        let is_smash = input[i..].starts_with(r"\smash");
-
-        if is_llap || is_rlap || is_smash {
-            let cmd_name = if is_llap {
-                "mathllap"
-            } else if is_rlap {
-                "mathrlap"
-            } else {
-                "smash"
-            };
-            let cmd_len = cmd_name.len() + 1; // +1 for leading '\'
-            let after_cmd = i + cmd_len;
-
-            // Preceded by an odd number of backslashes means it is truly escaped (e.g. \\mathllap)
+        if bytes[i] == b'\\' {
+            // Preceded by an odd number of backslashes means it is an escaped backslash (e.g. \\)
             let num_backslashes = input[..i].chars().rev().take_while(|&c| c == '\\').count();
             let is_escaped = num_backslashes % 2 == 1;
-            let is_boundary = after_cmd >= len || !bytes[after_cmd].is_ascii_alphabetic();
 
-            if !is_escaped && is_boundary {
-                let mut brace_start = after_cmd;
-                while brace_start < len && bytes[brace_start].is_ascii_whitespace() {
-                    brace_start += 1;
+            if !is_escaped {
+                let cmd_start = i + 1;
+                let mut after_cmd = cmd_start;
+                while after_cmd < len && bytes[after_cmd].is_ascii_alphabetic() {
+                    after_cmd += 1;
                 }
+                let cmd_name = &input[cmd_start..after_cmd];
+                let is_boundary = after_cmd >= len || (!bytes[after_cmd].is_ascii_alphabetic() && bytes[after_cmd] != b'@');
 
-                if brace_start < len && bytes[brace_start] == b'{' {
-                    let mut depth = 1;
-                    let mut j = brace_start + 1;
-                    while j < len && depth > 0 {
-                        match bytes[j] {
-                            b'\\' => {
-                                j += 1; // Skip escaped character like \{ or \}
-                            }
-                            b'{' => depth += 1,
-                            b'}' => depth -= 1,
-                            _ => {}
-                        }
-                        j += 1;
+                if is_boundary && matches!(cmd_name, "mathllap" | "mathrlap" | "smash") {
+                    let mut brace_start = after_cmd;
+                    while brace_start < len && bytes[brace_start].is_ascii_whitespace() {
+                        brace_start += 1;
                     }
 
-                    if depth == 0 {
-                        let inner = &input[brace_start + 1..j - 1];
-                        let processed_inner = preprocess_laps(inner);
-                        if let Ok(inner_typst) = mitex::convert_math(&processed_inner, None) {
-                            let trimmed_typst = inner_typst.trim();
-                            result.push_str(&format!(r"\iftypst {}({}) \fi", cmd_name, trimmed_typst));
-                            i = j;
-                            continue;
-                        } else {
-                            // If inner conversion failed, do NOT rewrite to \iftypst!
-                            // Leave \mathllap{...} / \mathrlap{...} as raw input so outer mitex fails
-                            // and triggers transpile_latex_math's graceful fallback.
-                            result.push_str(&input[i..j]);
-                            i = j;
-                            continue;
+                    // Skip optional [t] / [b] argument on \smash[...]{...}
+                    if cmd_name == "smash" && brace_start < len && bytes[brace_start] == b'[' {
+                        let mut bracket_end = brace_start + 1;
+                        while bracket_end < len && bytes[bracket_end] != b']' && bytes[bracket_end] != b'{' {
+                            bracket_end += 1;
                         }
+                        if bracket_end < len && bytes[bracket_end] == b']' {
+                            brace_start = bracket_end + 1;
+                            while brace_start < len && bytes[brace_start].is_ascii_whitespace() {
+                                brace_start += 1;
+                            }
+                        }
+                    }
+
+                    if brace_start < len && bytes[brace_start] == b'{' {
+                        let mut depth = 1;
+                        let mut j = brace_start + 1;
+                        while j < len && depth > 0 {
+                            match bytes[j] {
+                                b'\\' => {
+                                    j += 1; // Skip escaped character like \{ or \}
+                                }
+                                b'{' => depth += 1,
+                                b'}' => depth -= 1,
+                                _ => {}
+                            }
+                            j += 1;
+                        }
+
+                        if depth == 0 {
+                            let inner = &input[brace_start + 1..j - 1];
+                            let processed_inner = preprocess_laps(inner);
+                            if let Ok(inner_typst) = mitex::convert_math(&processed_inner, None) {
+                                let trimmed_typst = inner_typst.trim();
+                                result.push_str(&format!(r"\iftypst {}({}) \fi", cmd_name, trimmed_typst));
+                                i = j;
+                                continue;
+                            } else {
+                                // If inner conversion failed, do NOT rewrite to \iftypst!
+                                // Leave \mathllap{...} / \mathrlap{...} as raw input so outer mitex fails
+                                // and triggers transpile_latex_math's graceful fallback.
+                                result.push_str(&input[i..j]);
+                                i = j;
+                                continue;
+                            }
+                        }
+                    }
+                } else if is_boundary {
+                    if let Some(typst_sym) = missing_spec_symbol_typst(cmd_name) {
+                        result.push_str(&format!(r"\iftypst {} \fi", typst_sym));
+                        i = after_cmd;
+                        continue;
                     }
                 }
             }
@@ -86,6 +135,78 @@ fn preprocess_laps(input: &str) -> String {
     }
 
     result
+}
+
+fn is_typst_sym_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'.' || b == b'_'
+}
+
+/// Replaces complete Typst symbol tokens (respecting identifier/dot boundaries) so that
+/// symbol renames between MiTeX 0.2.4 (Typst 0.11) and Typst 0.15.1 never corrupt substrings.
+fn replace_sym_token(input: &str, from: &str, to: &str) -> String {
+    if !input.contains(from) {
+        return input.to_string();
+    }
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut cursor = 0;
+    while let Some(rel_pos) = input[cursor..].find(from) {
+        let start = cursor + rel_pos;
+        let end = start + from.len();
+        let prev_ok = start == 0 || !is_typst_sym_char(bytes[start - 1]);
+        let next_ok = end == bytes.len() || !is_typst_sym_char(bytes[end]);
+        if prev_ok && next_ok {
+            out.push_str(&input[cursor..start]);
+            out.push_str(to);
+            cursor = end;
+        } else {
+            let ch = input[start..].chars().next().unwrap();
+            let step = start + ch.len_utf8();
+            out.push_str(&input[cursor..step]);
+            cursor = step;
+        }
+    }
+    out.push_str(&input[cursor..]);
+    out
+}
+
+fn normalize_mitex_typst_symbols(typst_math: &str) -> String {
+    const TOKEN_REPLACEMENTS: &[(&str, &str)] = &[
+        ("mitexsqrt", "sqrt"),
+        ("mitexdisplay", "display"),
+        ("mitextag", "tag"),
+        ("planck.reduce", "planck"),
+        ("angle.l", "chevron.l"),
+        ("angle.r", "chevron.r"),
+        ("dot.circle.big", "dot.o.big"),
+        ("dot.circle", "dot.o"),
+        ("times.circle.big", "times.o.big"),
+        ("times.circle", "times.o"),
+        ("plus.circle.big", "plus.o.big"),
+        ("plus.circle", "plus.o"),
+        ("minus.circle", "minus.o"),
+        ("ast.circle", "ast.op.o"),
+        ("circle.nested", "compose.o"),
+        ("dash.circle", "dash.o"),
+        ("arrow.l.dash", "arrow.l.dashed"),
+        ("arrow.r.dash", "arrow.r.dashed"),
+        ("bracket.l.double", "bracket.l.stroked"),
+        ("bracket.r.double", "bracket.r.stroked"),
+        ("ohm.inv", "Omega.inv"),
+        ("sect.double", "inter.double"),
+        ("sect.big", "inter.big"),
+        ("sect.sq", "inter.sq"),
+        ("sect", "inter"),
+        ("set", "Set"),
+    ];
+
+    let mut clean = typst_math.trim().to_string();
+    for &(from, to) in TOKEN_REPLACEMENTS {
+        if clean.contains(from) {
+            clean = replace_sym_token(&clean, from, to);
+        }
+    }
+    clean
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -123,16 +244,7 @@ pub fn transpile_latex_math_with_index(latex: &str, is_block: bool, eq_idx: Opti
 
     match mitex::convert_math(&preprocessed, None) {
         Ok(typst_math) => {
-            let clean = typst_math
-                .trim()
-                .replace("mitexsqrt", "sqrt")
-                .replace("mitexdisplay", "display")
-                .replace("mitextag", "tag")
-                .replace("planck.reduce", "planck")
-                .replace("angle.l", "chevron.l")
-                .replace("angle.r", "chevron.r")
-                .replace("dot.circle", "dot.o")
-                .replace("times.circle", "times.o");
+            let clean = normalize_mitex_typst_symbols(&typst_math);
             let marker = match eq_idx {
                 Some(idx) => idx.to_string(),
                 None => hex_encode(trimmed.as_bytes()),
@@ -739,5 +851,170 @@ $$\unknownlatexcommand{42}$$
         assert!(compiled.degraded_equations.iter().any(|e| e.contains(r"\genfrac{(}{)}{0pt}{}{n}{k}")));
         assert!(compiled.degraded_equations.iter().any(|e| e.contains(r"\sideset{_a^b}{_c^d}\sum")));
         assert!(compiled.degraded_equations.iter().any(|e| e.contains(r"\unknownlatexcommand{42}")));
+    }
+
+    #[test]
+    fn test_issue_29_cap_and_lminus_authentic_rendering() {
+        let md = r#"# Minimal reproduction
+
+## A. Formulas that previously degraded to raw LaTeX
+
+$\lminus A + B$
+
+$[\alpha] \cap [\beta]$
+
+$$
+\lminus\alpha \pm \beta
+$$
+
+## B. Control group
+
+$\cup$
+
+$\setminus$
+
+$\lnot$
+
+$-\alpha$
+"#;
+        let doc = crate::parser::markdown::convert_markdown_to_typst(
+            md,
+            "Issue29",
+            &crate::compiler::engine::RenderOptions::default(),
+        );
+        let compiled = crate::compiler::engine::compile_typst_to_document_with_raw_equations(
+            &doc.typst_source,
+            ".",
+            std::collections::HashMap::new(),
+            None,
+            &doc.raw_equations,
+        )
+        .expect("Issue 29 reproduction must compile cleanly");
+
+        assert_eq!(
+            compiled.degraded_equation_count, 0,
+            "Issue 29 equations must render authentically without degradation, got: {:?}",
+            compiled.degraded_equations
+        );
+        assert!(
+            !compiled.final_typst_source.contains("mitexdegraded(\""),
+            "Final Typst source must not contain degraded equation calls"
+        );
+
+        let mut runs = Vec::new();
+        for page in compiled.pages() {
+            find_text_runs(&page.frame, Point::zero(), &mut runs);
+        }
+        let texts: Vec<&str> = runs.iter().map(|r| r.text.as_str()).collect();
+
+        assert!(texts.contains(&"∩"), "Must render intersection glyph ∩ (U+2229): {:?}", texts);
+        assert!(texts.contains(&"∪"), "Must render union glyph ∪ (U+222A): {:?}", texts);
+        assert!(texts.contains(&"∖"), "Must render setminus glyph ∖ (U+2216): {:?}", texts);
+        assert!(texts.contains(&"¬"), "Must render lnot glyph ¬ (U+00AC): {:?}", texts);
+        assert!(texts.contains(&"−"), "Must render mathematical minus glyph − (U+2212): {:?}", texts);
+        assert!(
+            !texts.iter().any(|t| t.contains("lminus") || t.contains("cap") || t.contains("sect")),
+            "Must not leak literal command names into rendered text runs: {:?}",
+            texts
+        );
+
+        // Verify unary spacing of \lminus matches unary -\alpha (tighter than binary A - B)
+        let md_spacing = "$$\\lminus X$$\n\n$$-Y$$\n\n$$Z - W$$\n";
+        let doc_sp = crate::parser::markdown::convert_markdown_to_typst(
+            md_spacing,
+            "Spacing",
+            &crate::compiler::engine::RenderOptions::default(),
+        );
+        let compiled_sp = crate::compiler::engine::compile_typst_to_document_with_raw_equations(
+            &doc_sp.typst_source,
+            ".",
+            std::collections::HashMap::new(),
+            None,
+            &doc_sp.raw_equations,
+        )
+        .unwrap();
+        let mut sp_runs = Vec::new();
+        find_text_runs(&compiled_sp.pages()[0].frame, Point::zero(), &mut sp_runs);
+        let minus_runs: Vec<&TextRun> = sp_runs.iter().filter(|r| r.text == "−").collect();
+        assert_eq!(minus_runs.len(), 3);
+        let x_run = sp_runs.iter().find(|r| r.text == "𝑋").unwrap();
+        let y_run = sp_runs.iter().find(|r| r.text == "𝑌").unwrap();
+        let w_run = sp_runs.iter().find(|r| r.text == "𝑊").unwrap();
+
+        let gap_lminus = (x_run.pos.x - minus_runs[0].pos.x).to_pt();
+        let gap_unary = (y_run.pos.x - minus_runs[1].pos.x).to_pt();
+        let gap_binary = (w_run.pos.x - minus_runs[2].pos.x).to_pt();
+        assert!(
+            (gap_lminus - gap_unary).abs() < 0.1,
+            "\\lminus must have exact unary prefix spacing: lminus={:.2}pt vs unary={:.2}pt",
+            gap_lminus,
+            gap_unary
+        );
+        assert!(
+            gap_lminus < gap_binary - 1.5,
+            "\\lminus ({:.2}pt) must be tighter than binary minus ({:.2}pt)",
+            gap_lminus,
+            gap_binary
+        );
+    }
+
+    #[test]
+    fn test_typst_015_symbol_and_macro_coverage() {
+        let equations = [
+            // Renamed symbols between MiTeX 0.2.4 and Typst 0.15.1
+            r"A \cap B \cup C",
+            r"\bigcap_{i=1}^n A_i \cup \bigcup_{i=1}^n B_i",
+            r"A \sqcap B \sqcup C \bigsqcap D \bigsqcup E",
+            r"A \Cap B \Cup C \doublecap D \doublecup E",
+            r"A \oplus B \ominus C \otimes D \odot E",
+            r"\bigoplus_{i} V_i \oplus \bigotimes_{i} W_i \oplus \bigodot_{i} U_i",
+            r"\circledast + \circledcirc + \circleddash + \mho",
+            r"\dashleftarrow + \dashrightarrow + \llbracket x \rrbracket",
+            // Negative & en spacing
+            r"a \! b \negthinspace c \negmedspace d \negthickspace e \negthinmedspace f \enspace g",
+            // Script styles & colors
+            r"{\scriptstyle x + y} + {\scriptscriptstyle z}",
+            r"{\color{red} x + y} + \colorbox{yellow}{z}",
+            // Set, logos, operators, slanted Greek
+            r"\set{x \mid x > 0} + \TeX + \LaTeX + \KaTeX",
+            r"\argmax_x f(x) + \argmin_x g(x) + \injlim A_i + \projlim B_i + \plim X_n",
+            r"\arcctg x + \arctg y + \cosec z + \cotg w + \ch a + \sh b + \th c + \cth d",
+            r"\varGamma \varDelta \varTheta \varLambda \varXi \varPi \varSigma \varUpsilon \varPhi \varPsi \varOmega",
+            r"\smallint f(x) dx \thickapprox y \thicksim z",
+            // Extensible arrows
+            r"\xLeftarrow{a} \xRightarrow{b} \xLeftrightarrow{c} \xhookleftarrow{d} \xhookrightarrow{e}",
+            r"\xleftharpoondown{a} \xleftharpoonup{b} \xleftrightharpoons{c} \xlongequal{d} \xmapsto{e}",
+            r"\xrightharpoondown{a} \xrightharpoonup{b} \xrightleftharpoons{c} \xtofrom{d} \xtwoheadleftarrow{e} \xtwoheadrightarrow{f}",
+            // Additional missing amssymb / mathtools symbols
+            r"\lminus A + \rminus B + \dotminus C",
+            r"a \gtrapprox b \gtreqqless c \nleqslant d \nsubseteqq e \nsupseteqq f \lvertneqq g \gvertneqq h",
+            r"a \nequiv b \napprox c \nsimeq d \smallfrown e \shortmid f \nshortmid g \nshortparallel h",
+            r"\iddots + \Colon + \Bbbk + \triangleup + \blacktriangleup + \leftsquigarrow + \copyleft",
+        ];
+
+        let mut md = String::from("# Comprehensive Symbol Coverage\n\n");
+        for eq in equations {
+            md.push_str(&format!("$$\n{}\n$$\n\n", eq));
+        }
+
+        let doc = crate::parser::markdown::convert_markdown_to_typst(
+            &md,
+            "Coverage",
+            &crate::compiler::engine::RenderOptions::default(),
+        );
+        let compiled = crate::compiler::engine::compile_typst_to_document_with_raw_equations(
+            &doc.typst_source,
+            ".",
+            std::collections::HashMap::new(),
+            None,
+            &doc.raw_equations,
+        )
+        .expect("All coverage equations must compile cleanly");
+
+        assert_eq!(
+            compiled.degraded_equation_count, 0,
+            "Zero equations should degrade, but got: {:?}",
+            compiled.degraded_equations
+        );
     }
 }
