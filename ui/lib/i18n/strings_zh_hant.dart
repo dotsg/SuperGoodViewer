@@ -670,9 +670,7 @@ class ZhHantStrings extends ZhHansStrings {
   @override
   String get restoreSession => '啟動時恢復上次工作階段';
   @override
-  String get restoreSessionDesc => '重新啟動應用程式時自動還原上次瀏覽的文件與閱讀進度';
-  @override
-  String get enabledBadge => '已啟用';
+  String get restoreSessionDesc => '啟動應用程式時自動重新開啟上次瀏覽的文件與分頁';
 
   // --- Settings Dialog - Layout Tab (cont.) ---
   @override
@@ -960,4 +958,14 @@ class ZhHantStrings extends ZhHansStrings {
   @override
   String get mobilePdfReflowScannedFallback =>
       '目前 PDF 為純掃描圖片或無文字層，已為您自動開啟智慧切白邊';
+  @override
+  String get lineSpacingTitle => '內文行距';
+  @override
+  String get paragraphSpacingTitle => '段落間距';
+  @override
+  String restoreDefaultSpacing(String em) => '恢復預設 ($em em)';
+  @override
+  String get decreaseSpacing => '減小間距';
+  @override
+  String get increaseSpacing => '增大間距';
 }

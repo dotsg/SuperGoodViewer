@@ -691,9 +691,7 @@ class EnStrings implements AppStrings {
   @override
   String get restoreSession => 'Restore Last Session on Launch';
   @override
-  String get restoreSessionDesc => 'Reopens the last document at your reading position when the app restarts';
-  @override
-  String get enabledBadge => 'Enabled';
+  String get restoreSessionDesc => 'Automatically reopens your previously open documents and tabs when the app launches';
 
   // --- Settings Dialog - Layout Tab (cont.) ---
   @override
@@ -989,4 +987,14 @@ class EnStrings implements AppStrings {
   @override
   String get mobilePdfReflowScannedFallback =>
       'This PDF is a scanned image without selectable text; Auto-crop Margins has been enabled instead';
+  @override
+  String get lineSpacingTitle => 'Line Spacing';
+  @override
+  String get paragraphSpacingTitle => 'Paragraph Spacing';
+  @override
+  String restoreDefaultSpacing(String em) => 'Restore default ($em em)';
+  @override
+  String get decreaseSpacing => 'Decrease spacing';
+  @override
+  String get increaseSpacing => 'Increase spacing';
 }

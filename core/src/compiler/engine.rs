@@ -37,6 +37,10 @@ pub struct RenderOptions {
     #[serde(default)]
     pub code_font: Option<String>,
     #[serde(default)]
+    pub line_spacing: Option<f32>,
+    #[serde(default)]
+    pub paragraph_spacing: Option<f32>,
+    #[serde(default)]
     pub image_cache_dir: Option<String>,
     #[serde(default)]
     pub page_format: Option<String>,
@@ -121,6 +125,8 @@ impl Default for RenderOptions {
             font_size: default_font_size(),
             body_font: None,
             code_font: None,
+            line_spacing: None,
+            paragraph_spacing: None,
             image_cache_dir: None,
             page_format: None,
             header_left: None,

@@ -1607,6 +1607,16 @@ pub fn convert_markdown_to_typst(
             .join(", ")
     );
     let degraded_math_macro_str = crate::compiler::engine::default_degraded_math_macro(is_dark, Some(&code_font_str));
+    let line_spacing_em = options
+        .line_spacing
+        .filter(|v| v.is_finite())
+        .map(|v| v.clamp(0.4, 3.0))
+        .unwrap_or(0.85);
+    let paragraph_spacing_em = options
+        .paragraph_spacing
+        .filter(|v| v.is_finite())
+        .map(|v| v.clamp(0.5, 4.0))
+        .unwrap_or(1.35);
 
     out.push_str(&format!(
         r##")
@@ -1620,8 +1630,8 @@ pub fn convert_markdown_to_typst(
 
 #set par(
   justify: false,
-  leading: 0.78em,
-  spacing: 1.15em
+  leading: {line_spacing_em:.2}em,
+  spacing: {paragraph_spacing_em:.2}em
 )
 
 #show raw: set text(font: {code_font_str}, size: 0.9em)
@@ -2259,7 +2269,7 @@ pub fn convert_markdown_to_typst(
                             Alignment::Left => "left",
                             Alignment::Center => "center",
                             Alignment::Right => "right",
-                            Alignment::None => "auto",
+                            Alignment::None => "left",
                         })
                         .collect();
                     out.push_str(&format!(
@@ -3910,6 +3920,55 @@ HTML 图片与多行属性：
             center_close4 < after_pos4,
             "</div> must close #align(center) BEFORE subsequent paragraph even with unclosed quote, got:\n{body4}"
         );
+    }
+
+    #[test]
+    fn test_issue_28_table_default_left_alignment_and_spacing_options() {
+        let md = r#"
+| 默认列 | 显式左对齐 | 显式居中 | 显式右对齐 |
+| --- | :--- | :---: | ---: |
+| A | B | C | D |
+"#;
+        // 1. Default options: Alignment::None -> left, leading: 0.85em, spacing: 1.35em
+        let default_opts = RenderOptions::default();
+        let parsed_default = convert_markdown_to_typst(md, "Issue 28 Table", &default_opts);
+        assert!(
+            parsed_default
+                .typst_source
+                .contains("align: (left, left, center, right)"),
+            "Unaligned Markdown table columns must default to left alignment, got:\n{}",
+            parsed_default.typst_source
+        );
+        assert!(
+            parsed_default
+                .typst_source
+                .contains("leading: 0.85em,\n  spacing: 1.35em"),
+            "Default paragraph settings should use leading: 0.85em, spacing: 1.35em, got:\n{}",
+            parsed_default.typst_source
+        );
+
+        // 2. Custom line_spacing and paragraph_spacing options
+        let custom_opts = RenderOptions {
+            line_spacing: Some(1.10),
+            paragraph_spacing: Some(1.75),
+            ..RenderOptions::default()
+        };
+        let parsed_custom = convert_markdown_to_typst(md, "Issue 28 Custom Spacing", &custom_opts);
+        assert!(
+            parsed_custom
+                .typst_source
+                .contains("leading: 1.10em,\n  spacing: 1.75em"),
+            "Custom line_spacing and paragraph_spacing must be emitted into #set par(...), got:\n{}",
+            parsed_custom.typst_source
+        );
+
+        let pdf = crate::compiler::engine::compile_typst_to_pdf(
+            &parsed_custom.typst_source,
+            ".",
+            parsed_custom.virtual_files,
+        )
+        .expect("Custom spacing + left-aligned table should compile cleanly");
+        assert!(pdf.starts_with(b"%PDF-"));
     }
 }
 

@@ -476,9 +476,9 @@ fn main() {
             // Dynamic slicing should produce ~7837pt per page rather than a fixed 14,000pt
             assert!(*h < 10000.0, "Page {i} height {h}pt should be dynamically sliced (~7837pt), not fixed 14000pt");
         }
-        // Verify blank tail elimination: total canvas must closely match natural height (~15674pt)
+        // Verify blank tail elimination: total canvas must closely match natural height (~17225pt)
         let total_canvas: f64 = heights.iter().sum();
-        assert!(total_canvas < 16500.0, "Total canvas {total_canvas}pt must not leave large blank tail (was 28,000pt)");
+        assert!(total_canvas < 18500.0, "Total canvas {total_canvas}pt must not leave large blank tail (was 28,000pt)");
     }
 
     #[test]

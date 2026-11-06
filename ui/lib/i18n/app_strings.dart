@@ -274,7 +274,6 @@ abstract class AppStrings {
   // --- Settings Dialog - General Tab (cont.) ---
   String get restoreSession;
   String get restoreSessionDesc;
-  String get enabledBadge;
 
   // --- Settings Dialog - Layout Tab (cont.) ---
   String get pageFormatSection;
@@ -429,4 +428,9 @@ abstract class AppStrings {
   String get mobilePdfReflowDesc;
   String get mobilePdfReflowing;
   String get mobilePdfReflowScannedFallback;
+  String get lineSpacingTitle;
+  String get paragraphSpacingTitle;
+  String restoreDefaultSpacing(String em);
+  String get decreaseSpacing;
+  String get increaseSpacing;
 }

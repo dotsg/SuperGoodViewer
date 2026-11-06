@@ -42,6 +42,8 @@ class MobileTypographySheet extends StatefulWidget {
 
 class _MobileTypographySheetState extends State<MobileTypographySheet> {
   double? _scrubbingFontSize;
+  double? _scrubbingLineSpacing;
+  double? _scrubbingParagraphSpacing;
 
   @override
   Widget build(BuildContext context) {
@@ -58,6 +60,11 @@ class _MobileTypographySheetState extends State<MobileTypographySheet> {
         final options = controller.renderOptions;
         final currentFontSize = options.fontSize;
         final displayFontSize = _scrubbingFontSize ?? currentFontSize;
+        final currentLineSpacing = options.lineSpacing;
+        final displayLineSpacing = _scrubbingLineSpacing ?? currentLineSpacing;
+        final currentParagraphSpacing = options.paragraphSpacing;
+        final displayParagraphSpacing =
+            _scrubbingParagraphSpacing ?? currentParagraphSpacing;
         final isSepia = !options.isDark && mobilePrefs.isSepia;
         final hasMapleMono = controller.fontReport['has_maple_mono'] == true;
 
@@ -289,9 +296,12 @@ class _MobileTypographySheetState extends State<MobileTypographySheet> {
                                       overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
                                     ),
                                     child: Slider(
-                                      value: displayFontSize.clamp(8.0, 24.0),
-                                      min: 8.0,
-                                      max: 24.0,
+                                      value: displayFontSize.clamp(
+                                        RenderOptions.minFontSize,
+                                        RenderOptions.maxFontSize,
+                                      ),
+                                      min: RenderOptions.minFontSize,
+                                      max: RenderOptions.maxFontSize,
                                       divisions: 32,
                                       onChanged: (val) {
                                         setState(() {
@@ -320,6 +330,123 @@ class _MobileTypographySheetState extends State<MobileTypographySheet> {
                                       : null,
                                 ),
                               ],
+                            ),
+                            const Divider(height: 16),
+                            // Line Spacing Slider
+                            Row(
+                              children: [
+                                Text(
+                                  strings.lineSpacingTitle,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: isDark ? Colors.white70 : Colors.black54,
+                                  ),
+                                ),
+                                const Spacer(),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: theme.colorScheme.primary.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    '${displayLineSpacing.toStringAsFixed(2)} em',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                      color: theme.colorScheme.primary,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            SliderTheme(
+                              data: SliderTheme.of(context).copyWith(
+                                trackHeight: 3.5,
+                                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+                                overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                              ),
+                              child: Slider(
+                                key: const ValueKey('mobile_line_spacing_slider'),
+                                value: displayLineSpacing.clamp(
+                                  RenderOptions.minLineSpacing,
+                                  RenderOptions.maxLineSpacing,
+                                ),
+                                min: RenderOptions.minLineSpacing,
+                                max: RenderOptions.maxLineSpacing,
+                                divisions: 30,
+                                onChanged: (val) {
+                                  setState(() {
+                                    _scrubbingLineSpacing = (val * 20).round() / 20.0;
+                                  });
+                                },
+                                onChangeEnd: (val) {
+                                  final rounded = (val * 20).round() / 20.0;
+                                  setState(() {
+                                    _scrubbingLineSpacing = null;
+                                  });
+                                  controller.setLineSpacing(rounded);
+                                },
+                              ),
+                            ),
+                            // Paragraph Spacing Slider
+                            Row(
+                              children: [
+                                Text(
+                                  strings.paragraphSpacingTitle,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: isDark ? Colors.white70 : Colors.black54,
+                                  ),
+                                ),
+                                const Spacer(),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: theme.colorScheme.primary.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    '${displayParagraphSpacing.toStringAsFixed(2)} em',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                      color: theme.colorScheme.primary,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            SliderTheme(
+                              data: SliderTheme.of(context).copyWith(
+                                trackHeight: 3.5,
+                                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+                                overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                              ),
+                              child: Slider(
+                                key: const ValueKey('mobile_paragraph_spacing_slider'),
+                                value: displayParagraphSpacing.clamp(
+                                  RenderOptions.minParagraphSpacing,
+                                  RenderOptions.maxParagraphSpacing,
+                                ),
+                                min: RenderOptions.minParagraphSpacing,
+                                max: RenderOptions.maxParagraphSpacing,
+                                divisions: 34,
+                                onChanged: (val) {
+                                  setState(() {
+                                    _scrubbingParagraphSpacing = (val * 20).round() / 20.0;
+                                  });
+                                },
+                                onChangeEnd: (val) {
+                                  final rounded = (val * 20).round() / 20.0;
+                                  setState(() {
+                                    _scrubbingParagraphSpacing = null;
+                                  });
+                                  controller.setParagraphSpacing(rounded);
+                                },
+                              ),
                             ),
                           ],
                         ),

@@ -623,9 +623,7 @@ class ZhHansStrings implements AppStrings {
   @override
   String get restoreSession => '启动恢复上次会话';
   @override
-  String get restoreSessionDesc => '重新启动应用时自动还原上次浏览文档与阅读进度';
-  @override
-  String get enabledBadge => '已启用';
+  String get restoreSessionDesc => '启动应用时自动重新打开上次浏览的文档与标签页';
 
   // --- Settings Dialog - Layout Tab (cont.) ---
   @override
@@ -913,4 +911,14 @@ class ZhHansStrings implements AppStrings {
   @override
   String get mobilePdfReflowScannedFallback =>
       '当前 PDF 为纯扫描图片或无文本层，已为您自动开启智能切白边';
+  @override
+  String get lineSpacingTitle => '正文行间距';
+  @override
+  String get paragraphSpacingTitle => '段落间距';
+  @override
+  String restoreDefaultSpacing(String em) => '恢复默认 ($em em)';
+  @override
+  String get decreaseSpacing => '减小间距';
+  @override
+  String get increaseSpacing => '增大间距';
 }

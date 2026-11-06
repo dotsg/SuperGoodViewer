@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:sogoodviewer/controllers/reader_controller.dart';
 import 'package:sogoodviewer/models/render_options.dart';
 import 'package:sogoodviewer/services/document_cache_service.dart';
+import 'package:sogoodviewer/services/preferences_service.dart';
 import 'package:sogoodviewer/views/settings_dialog.dart';
 import 'package:url_launcher_platform_interface/link.dart';
 import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
@@ -191,20 +192,32 @@ void main() {
         ),
       );
 
-      // Toggle auto reload switch
+      // Toggle auto reload switch and restore session switch
       final initialReload = controller.autoReload;
-      final reloadSwitch = find.byType(Switch);
-      expect(reloadSwitch, findsOneWidget);
-      await tester.ensureVisible(reloadSwitch);
+      final autoReloadSwitch = find.byKey(const ValueKey('auto_reload_switch'));
+      expect(autoReloadSwitch, findsOneWidget);
+      await tester.ensureVisible(autoReloadSwitch);
       await tester.pumpAndSettle();
-      await tester.tap(reloadSwitch);
+      await tester.tap(autoReloadSwitch);
       await tester.pumpAndSettle();
 
       expect(controller.autoReload, !initialReload);
 
-      // Switch to typography tab and increase font size
+      final initialRestoreSession = controller.restoreSession;
+      final restoreSwitch = find.byKey(const ValueKey('restore_session_switch'));
+      expect(restoreSwitch, findsOneWidget);
+      await tester.ensureVisible(restoreSwitch);
+      await tester.pumpAndSettle();
+      await tester.tap(restoreSwitch);
+      await tester.pumpAndSettle();
+      expect(controller.restoreSession, !initialRestoreSession);
+
+      // Switch to typography tab and increase font size + line/paragraph spacing
       await tester.tap(find.text('排版与字体'));
       await tester.pumpAndSettle();
+
+      expect(find.text('正文行间距'), findsOneWidget);
+      expect(find.text('段落间距'), findsOneWidget);
 
       final initialSize = controller.renderOptions.fontSize;
       final addBtn = find.byTooltip('放大字号');
@@ -212,8 +225,21 @@ void main() {
       await tester.tap(addBtn);
       await tester.pumpAndSettle();
 
+      final increaseSpacingBtns = find.byTooltip('增大间距');
+      expect(increaseSpacingBtns, findsNWidgets(2));
+      await tester.ensureVisible(increaseSpacingBtns.first);
+      await tester.pumpAndSettle();
+      await tester.tap(increaseSpacingBtns.first);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(increaseSpacingBtns.last);
+      await tester.pumpAndSettle();
+      await tester.tap(increaseSpacingBtns.last);
+      await tester.pumpAndSettle();
+
       // Controller should NOT update until Save is clicked
       expect(controller.renderOptions.fontSize, initialSize);
+      expect(controller.renderOptions.lineSpacing, closeTo(0.85, 0.001));
+      expect(controller.renderOptions.paragraphSpacing, closeTo(1.35, 0.001));
       expect(find.textContaining('${(initialSize + 0.5).toStringAsFixed(1)} pt'), findsWidgets);
 
       // Save button should apply changes to controller
@@ -223,13 +249,30 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(controller.renderOptions.fontSize, initialSize + 0.5);
+      expect(controller.renderOptions.lineSpacing, closeTo(0.90, 0.001));
+      expect(controller.renderOptions.paragraphSpacing, closeTo(1.40, 0.001));
 
-      // Tap reset font size and save
-      await tester.tap(find.text('恢复默认 (10.5 pt)'));
+      // Tap reset font size & spacing and save
+      final resetFontBtn = find.text('恢复默认 (10.5 pt)');
+      await tester.ensureVisible(resetFontBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(resetFontBtn);
+      await tester.pumpAndSettle();
+      final resetLineBtn = find.text('恢复默认 (0.85 em)');
+      await tester.ensureVisible(resetLineBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(resetLineBtn);
+      await tester.pumpAndSettle();
+      final resetParBtn = find.text('恢复默认 (1.35 em)');
+      await tester.ensureVisible(resetParBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(resetParBtn);
       await tester.pumpAndSettle();
       await tester.tap(saveBtn);
       await tester.pumpAndSettle();
       expect(controller.renderOptions.fontSize, 10.5);
+      expect(controller.renderOptions.lineSpacing, closeTo(0.85, 0.001));
+      expect(controller.renderOptions.paragraphSpacing, closeTo(1.35, 0.001));
       expect(find.textContaining('10.5 pt'), findsWidgets);
     });
 
@@ -521,6 +564,45 @@ void main() {
       await tester.pump();
 
       expect(find.text('已取消授权操作'), findsOneWidget);
+    });
+
+    test('disabling restoreSession skips reopening lastOpenedFile on launch while preserving spacing preferences', () async {
+      final tempDir = Directory.systemTemp.createTempSync('sgv_restore_session_test_');
+      final prefFile = File(p.join(tempDir.path, 'preferences.json'));
+      final sampleMd = File(p.join(tempDir.path, 'prev_doc.md'));
+      sampleMd.writeAsStringSync('# Previous Session Doc\n\nBody text.');
+      PreferencesService.setConfigFileForTesting(prefFile);
+
+      try {
+        await PreferencesService.save({
+          'lastOpenedFile': sampleMd.path,
+          'openTabs': [sampleMd.path],
+          'restoreSession': false,
+          'lineSpacing': 1.15,
+          'paragraphSpacing': 1.80,
+        });
+
+        final controllerDisabled = ReaderController(autoRestorePreferences: true);
+        expect(controllerDisabled.restoreSession, isFalse);
+        expect(controllerDisabled.currentFilePath, isNull);
+        expect(controllerDisabled.renderOptions.lineSpacing, closeTo(1.15, 0.001));
+        expect(controllerDisabled.renderOptions.paragraphSpacing, closeTo(1.80, 0.001));
+        controllerDisabled.dispose();
+
+        // Re-enable restoreSession and verify lastOpenedFile is restored
+        await PreferencesService.save({
+          'lastOpenedFile': sampleMd.path,
+          'openTabs': [sampleMd.path],
+          'restoreSession': true,
+        });
+        final controllerEnabled = ReaderController(autoRestorePreferences: true);
+        expect(controllerEnabled.restoreSession, isTrue);
+        expect(controllerEnabled.currentFilePath, sampleMd.path);
+        controllerEnabled.dispose();
+      } finally {
+        PreferencesService.setConfigFileForTesting(null);
+        tempDir.deleteSync(recursive: true);
+      }
     });
   });
 }

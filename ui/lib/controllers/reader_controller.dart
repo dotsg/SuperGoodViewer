@@ -51,6 +51,7 @@ class ReaderController extends ChangeNotifier {
   );
   AutoFitMode _autoFitMode = AutoFitMode.none;
   bool _autoReload = true;
+  bool _restoreSession = true;
   Timer? _persistDebounceTimer;
   bool _isDisposed = false;
 
@@ -288,6 +289,7 @@ class ReaderController extends ChangeNotifier {
   AutoFitMode get autoFitMode => _autoFitMode;
   bool get isReloading => _doc.isReloading;
   bool get autoReload => _autoReload;
+  bool get restoreSession => _restoreSession;
   List<String> get recentFiles => List.unmodifiable(_recentFiles);
   Map<String, dynamic> get fontReport => _fontReport;
   bool get isTwoPage => _isTwoPage;
@@ -747,6 +749,12 @@ class ReaderController extends ChangeNotifier {
       final savedAutoFit = prefs['autoFitMode'] as String?;
       final recent = (prefs['recentFiles'] as List<dynamic>?)?.cast<String>();
       final savedFontSize = (prefs['fontSize'] as num?)?.toDouble();
+      final savedLineSpacing = (prefs['lineSpacing'] as num?)
+          ?.toDouble()
+          .clamp(RenderOptions.minLineSpacing, RenderOptions.maxLineSpacing);
+      final savedParagraphSpacing = (prefs['paragraphSpacing'] as num?)
+          ?.toDouble()
+          .clamp(RenderOptions.minParagraphSpacing, RenderOptions.maxParagraphSpacing);
       final savedBodyFont = prefs['bodyFont'] as String?;
       final savedCodeFont = prefs['codeFont'] as String?;
       final savedZoom = (prefs['lastZoom'] as num?)?.toDouble();
@@ -790,6 +798,8 @@ class ReaderController extends ChangeNotifier {
           rawThemeMode != null ||
           savedMode != null ||
           savedFontSize != null ||
+          savedLineSpacing != null ||
+          savedParagraphSpacing != null ||
           savedBodyFont != null ||
           savedCodeFont != null ||
           savedPageFormat != null ||
@@ -810,6 +820,8 @@ class ReaderController extends ChangeNotifier {
           mode: savedMode ?? _renderOptions.mode,
           pageFormat: savedPageFormat ?? _renderOptions.pageFormat,
           fontSize: savedFontSize ?? _renderOptions.fontSize,
+          lineSpacing: savedLineSpacing ?? _renderOptions.lineSpacing,
+          paragraphSpacing: savedParagraphSpacing ?? _renderOptions.paragraphSpacing,
           bodyFont: savedBodyFont ?? _renderOptions.bodyFont,
           codeFont: savedCodeFont ?? _renderOptions.codeFont,
           headerLeft: savedHeaderLeft ?? _renderOptions.headerLeft,
@@ -854,6 +866,10 @@ class ReaderController extends ChangeNotifier {
           orElse: () => AutoFitMode.none,
         );
       }
+      final savedRestoreSession = prefs['restoreSession'] as bool?;
+      if (savedRestoreSession != null) {
+        _restoreSession = savedRestoreSession;
+      }
       if (savedZoom != null && savedZoom > 0.1) {
         _doc.zoom = savedZoom;
       }
@@ -881,39 +897,41 @@ class ReaderController extends ChangeNotifier {
   void _initSession() {
     try {
       _initPreferencesOnly();
-      final prefs = PreferencesService.loadSync();
-      final lastFile = prefs['lastOpenedFile'] as String?;
+      if (_restoreSession) {
+        final prefs = PreferencesService.loadSync();
+        final lastFile = prefs['lastOpenedFile'] as String?;
 
-      if (lastFile != null && lastFile.isNotEmpty) {
-        final file = File(lastFile);
-        if (file.existsSync()) {
-          final history = _fileHistory[lastFile];
-          final savedScroll = (history?['scrollRatio'] as num?)?.toDouble() ??
-              (prefs['lastScrollRatio'] as num?)?.toDouble() ??
-              0.0;
-          final savedOffset = (history?['scrollOffset'] as num?)?.toDouble() ??
-              (prefs['lastScrollOffset'] as num?)?.toDouble() ??
-              0.0;
-          final savedPage = (history?['pageNumber'] as num?)?.toInt() ??
-              (prefs['lastPageNumber'] as num?)?.toInt() ??
-              1;
-          final savedZoom = (history?['zoom'] as num?)?.toDouble() ??
-              (prefs['lastZoom'] as num?)?.toDouble() ??
-              _doc.zoom;
+        if (lastFile != null && lastFile.isNotEmpty) {
+          final file = File(lastFile);
+          if (file.existsSync()) {
+            final history = _fileHistory[lastFile];
+            final savedScroll = (history?['scrollRatio'] as num?)?.toDouble() ??
+                (prefs['lastScrollRatio'] as num?)?.toDouble() ??
+                0.0;
+            final savedOffset = (history?['scrollOffset'] as num?)?.toDouble() ??
+                (prefs['lastScrollOffset'] as num?)?.toDouble() ??
+                0.0;
+            final savedPage = (history?['pageNumber'] as num?)?.toInt() ??
+                (prefs['lastPageNumber'] as num?)?.toInt() ??
+                1;
+            final savedZoom = (history?['zoom'] as num?)?.toDouble() ??
+                (prefs['lastZoom'] as num?)?.toDouble() ??
+                _doc.zoom;
 
-          _doc.scrollRatio = savedScroll;
-          _doc.scrollOffset = savedOffset;
-          _doc.pageNumber = savedPage;
-          _doc.zoom = savedZoom;
-          _restoreBackgroundTabs(prefs['openTabs'], activePath: lastFile);
-          _openFileInternal(lastFile, preservePosition: true);
-          return;
+            _doc.scrollRatio = savedScroll;
+            _doc.scrollOffset = savedOffset;
+            _doc.pageNumber = savedPage;
+            _doc.zoom = savedZoom;
+            _restoreBackgroundTabs(prefs['openTabs'], activePath: lastFile);
+            _openFileInternal(lastFile, preservePosition: true);
+            return;
+          }
         }
       }
     } catch (e) {
       debugPrint('Error restoring last session: $e');
     }
-    // Only compile sample document if no valid previous file exists
+    // Only compile sample document if no valid previous file exists or session restore is disabled
     compileDocument();
   }
 
@@ -947,6 +965,7 @@ class ReaderController extends ChangeNotifier {
       'lastOpenedFile': _doc.filePath,
       'openTabs': [for (final doc in _sessions) if (doc.filePath != null) doc.filePath],
       'openFilesInNewTab': _openInNewTab,
+      'restoreSession': _restoreSession,
       'recentFiles': List<String>.from(_recentFiles),
       'theme': _renderOptions.theme,
       'themeMode': _themePreference,
@@ -959,6 +978,8 @@ class ReaderController extends ChangeNotifier {
       'sidebarWidth': _sidebarWidth,
       'autoFitMode': _autoFitMode.name,
       'fontSize': _renderOptions.fontSize,
+      'lineSpacing': _renderOptions.lineSpacing,
+      'paragraphSpacing': _renderOptions.paragraphSpacing,
       'bodyFont': _renderOptions.bodyFont,
       'codeFont': _renderOptions.codeFont,
       'headerLeft': _renderOptions.headerLeft,
@@ -1862,7 +1883,9 @@ class ReaderController extends ChangeNotifier {
   }
 
   void setFontSize(double size) {
-    _renderOptions = _renderOptions.copyWith(fontSize: size.clamp(8.0, 24.0));
+    _renderOptions = _renderOptions.copyWith(
+      fontSize: size.clamp(RenderOptions.minFontSize, RenderOptions.maxFontSize),
+    );
     _persistPreferences();
     if (isPdfDocument) {
       notifyListeners();
@@ -1907,11 +1930,60 @@ class ReaderController extends ChangeNotifier {
     compileDocument();
   }
 
-  void setTypography({String? bodyFont, String? codeFont, double? fontSize}) {
+  void setLineSpacing(double spacing) {
+    final clamped = spacing.clamp(
+      RenderOptions.minLineSpacing,
+      RenderOptions.maxLineSpacing,
+    );
+    _renderOptions = _renderOptions.copyWith(lineSpacing: clamped);
+    _persistPreferences();
+    if (isPdfDocument) {
+      notifyListeners();
+      return;
+    }
+    renderOptionsChanged = true;
+    startReloading();
+    compileDocument();
+  }
+
+  void setParagraphSpacing(double spacing) {
+    final clamped = spacing.clamp(
+      RenderOptions.minParagraphSpacing,
+      RenderOptions.maxParagraphSpacing,
+    );
+    _renderOptions = _renderOptions.copyWith(paragraphSpacing: clamped);
+    _persistPreferences();
+    if (isPdfDocument) {
+      notifyListeners();
+      return;
+    }
+    renderOptionsChanged = true;
+    startReloading();
+    compileDocument();
+  }
+
+  void setTypography({
+    String? bodyFont,
+    String? codeFont,
+    double? fontSize,
+    double? lineSpacing,
+    double? paragraphSpacing,
+  }) {
     _renderOptions = _renderOptions.copyWith(
       bodyFont: bodyFont,
       codeFont: codeFont,
-      fontSize: fontSize?.clamp(8.0, 24.0),
+      fontSize: fontSize?.clamp(
+        RenderOptions.minFontSize,
+        RenderOptions.maxFontSize,
+      ),
+      lineSpacing: lineSpacing?.clamp(
+        RenderOptions.minLineSpacing,
+        RenderOptions.maxLineSpacing,
+      ),
+      paragraphSpacing: paragraphSpacing?.clamp(
+        RenderOptions.minParagraphSpacing,
+        RenderOptions.maxParagraphSpacing,
+      ),
     );
     _persistPreferences();
     if (isPdfDocument) {
@@ -1921,6 +1993,13 @@ class ReaderController extends ChangeNotifier {
     renderOptionsChanged = true;
     startReloading();
     compileDocument();
+  }
+
+  void setRestoreSession(bool enabled) {
+    if (_restoreSession == enabled) return;
+    _restoreSession = enabled;
+    _persistPreferences();
+    notifyListeners();
   }
 
   void setAutoReload(bool enabled) {

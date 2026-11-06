@@ -47,10 +47,24 @@ class ThemePreference {
 
 /// Represents rendering configuration for SuperGoodViewer.
 class RenderOptions {
+  static const double defaultFontSize = 10.5;
+  static const double minFontSize = 8.0;
+  static const double maxFontSize = 24.0;
+
+  static const double defaultLineSpacing = 0.85;
+  static const double minLineSpacing = 0.50;
+  static const double maxLineSpacing = 2.00;
+
+  static const double defaultParagraphSpacing = 1.35;
+  static const double minParagraphSpacing = 0.80;
+  static const double maxParagraphSpacing = 2.50;
+
   final String mode; // "fluid" (continuous auto-height) or "paged" (paginated)
   final String theme; // "light" or "dark"
   final double viewportWidth; // in points
   final double fontSize; // in points
+  final double lineSpacing; // Typst par leading in em
+  final double paragraphSpacing; // Typst par spacing in em
   final String? bodyFont; // custom proportional font
   final String? codeFont; // custom monospace font
   final String? imageCacheDir; // custom remote image cache directory
@@ -75,7 +89,9 @@ class RenderOptions {
     this.mode = 'fluid',
     this.theme = 'light',
     this.viewportWidth = 850.0,
-    this.fontSize = 10.5,
+    this.fontSize = defaultFontSize,
+    this.lineSpacing = defaultLineSpacing,
+    this.paragraphSpacing = defaultParagraphSpacing,
     this.bodyFont,
     this.codeFont,
     this.imageCacheDir,
@@ -131,6 +147,8 @@ class RenderOptions {
     String? theme,
     double? viewportWidth,
     double? fontSize,
+    double? lineSpacing,
+    double? paragraphSpacing,
     Object? bodyFont = _undefined,
     Object? codeFont = _undefined,
     Object? imageCacheDir = _undefined,
@@ -152,6 +170,8 @@ class RenderOptions {
       theme: theme ?? this.theme,
       viewportWidth: viewportWidth ?? this.viewportWidth,
       fontSize: fontSize ?? this.fontSize,
+      lineSpacing: lineSpacing ?? this.lineSpacing,
+      paragraphSpacing: paragraphSpacing ?? this.paragraphSpacing,
       bodyFont: identical(bodyFont, _undefined) ? this.bodyFont : bodyFont as String?,
       codeFont: identical(codeFont, _undefined) ? this.codeFont : codeFont as String?,
       imageCacheDir: identical(imageCacheDir, _undefined) ? this.imageCacheDir : imageCacheDir as String?,
@@ -178,6 +198,8 @@ class RenderOptions {
       'theme': theme,
       'viewport_width': viewportWidth,
       'font_size': fontSize,
+      'line_spacing': lineSpacing,
+      'paragraph_spacing': paragraphSpacing,
       'page_format': effectiveFmt,
     };
     if (bodyFont != null && bodyFont!.isNotEmpty) {
@@ -214,6 +236,8 @@ class RenderOptions {
           other.theme == theme &&
           other.viewportWidth == viewportWidth &&
           other.fontSize == fontSize &&
+          other.lineSpacing == lineSpacing &&
+          other.paragraphSpacing == paragraphSpacing &&
           other.bodyFont == bodyFont &&
           other.codeFont == codeFont &&
           other.imageCacheDir == imageCacheDir &&
@@ -236,6 +260,8 @@ class RenderOptions {
         theme,
         viewportWidth,
         fontSize,
+        lineSpacing,
+        paragraphSpacing,
         bodyFont,
         codeFont,
         imageCacheDir,

@@ -65,6 +65,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late String? _selectedBodyFont;
   late String? _selectedCodeFont;
   late double _selectedFontSize;
+  late double _selectedLineSpacing;
+  late double _selectedParagraphSpacing;
   bool _isScanningFonts = false;
 
   // Linux desktop integration state
@@ -117,7 +119,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final opts = widget.controller.renderOptions;
     return _selectedBodyFont != opts.bodyFont ||
         _selectedCodeFont != opts.codeFont ||
-        (_selectedFontSize - opts.fontSize).abs() > 0.01;
+        (_selectedFontSize - opts.fontSize).abs() > 0.01 ||
+        (_selectedLineSpacing - opts.lineSpacing).abs() > 0.01 ||
+        (_selectedParagraphSpacing - opts.paragraphSpacing).abs() > 0.01;
   }
 
   void _saveTypography() {
@@ -125,6 +129,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
       bodyFont: _selectedBodyFont,
       codeFont: _selectedCodeFont,
       fontSize: _selectedFontSize,
+      lineSpacing: _selectedLineSpacing,
+      paragraphSpacing: _selectedParagraphSpacing,
     );
     setState(() {});
     try {
@@ -214,6 +220,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
       _selectedBodyFont = widget.controller.renderOptions.bodyFont;
       _selectedCodeFont = widget.controller.renderOptions.codeFont;
       _selectedFontSize = widget.controller.renderOptions.fontSize;
+      _selectedLineSpacing = widget.controller.renderOptions.lineSpacing;
+      _selectedParagraphSpacing = widget.controller.renderOptions.paragraphSpacing;
     });
   }
 
@@ -261,6 +269,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _selectedBodyFont = opts.bodyFont;
     _selectedCodeFont = opts.codeFont;
     _selectedFontSize = opts.fontSize;
+    _selectedLineSpacing = opts.lineSpacing;
+    _selectedParagraphSpacing = opts.paragraphSpacing;
     _selectedPageFormat = opts.effectivePageFormat;
     _headerLeftController = TextEditingController(text: opts.headerLeft ?? '');
     _headerCenterController = TextEditingController(text: opts.headerCenter ?? '');
@@ -1802,8 +1812,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 ),
               ),
               Switch(
+                key: const ValueKey('auto_reload_switch'),
                 value: controller.autoReload,
-                onChanged: (val) => controller.setAutoReload(val),
+                onChanged: (val) {
+                  controller.setAutoReload(val);
+                  setState(() {});
+                },
               ),
             ],
           ),
@@ -1900,20 +1914,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       ],
                     ),
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.primary.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      widget.controller.strings.enabledBadge,
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w600,
-                        color: theme.colorScheme.primary,
-                      ),
-                    ),
+                  Switch(
+                    key: const ValueKey('restore_session_switch'),
+                    value: controller.restoreSession,
+                    onChanged: (val) {
+                      controller.setRestoreSession(val);
+                      setState(() {});
+                    },
                   ),
                 ],
               ),
@@ -2250,7 +2257,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                 onPressed: () {
                   setState(() {
-                    _selectedFontSize = (_selectedFontSize - 0.5).clamp(8.0, 24.0);
+                    _selectedFontSize = (_selectedFontSize - 0.5).clamp(
+                      RenderOptions.minFontSize,
+                      RenderOptions.maxFontSize,
+                    );
                   });
                 },
               ),
@@ -2262,9 +2272,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
                   ),
                   child: Slider(
-                    value: _selectedFontSize.clamp(8.0, 24.0),
-                    min: 8.0,
-                    max: 24.0,
+                    value: _selectedFontSize.clamp(
+                      RenderOptions.minFontSize,
+                      RenderOptions.maxFontSize,
+                    ),
+                    min: RenderOptions.minFontSize,
+                    max: RenderOptions.maxFontSize,
                     divisions: 32,
                     label: '${_selectedFontSize.toStringAsFixed(1)} pt',
                     onChanged: (val) {
@@ -2281,7 +2294,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                 onPressed: () {
                   setState(() {
-                    _selectedFontSize = (_selectedFontSize + 0.5).clamp(8.0, 24.0);
+                    _selectedFontSize = (_selectedFontSize + 0.5).clamp(
+                      RenderOptions.minFontSize,
+                      RenderOptions.maxFontSize,
+                    );
                   });
                 },
               ),
@@ -2302,6 +2318,239 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ),
         const SizedBox(height: 12),
 
+        // Line Spacing Stepper & Slider
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Flexible(
+              child: Text(
+                widget.controller.strings.lineSpacingTitle,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            TextButton(
+              onPressed: () => setState(
+                () => _selectedLineSpacing = RenderOptions.defaultLineSpacing,
+              ),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+              ),
+              child: Text(
+                widget.controller.strings.restoreDefaultSpacing(
+                  RenderOptions.defaultLineSpacing.toStringAsFixed(2),
+                ),
+                style: const TextStyle(fontSize: 11),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F5),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isDark ? const Color(0xFF333333) : const Color(0xFFE0E0E0),
+            ),
+          ),
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.remove_rounded, size: 16),
+                tooltip: widget.controller.strings.decreaseSpacing,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                onPressed: () {
+                  setState(() {
+                    _selectedLineSpacing =
+                        (((_selectedLineSpacing * 20).round() - 1) / 20.0)
+                            .clamp(
+                              RenderOptions.minLineSpacing,
+                              RenderOptions.maxLineSpacing,
+                            );
+                  });
+                },
+              ),
+              Expanded(
+                child: SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 3,
+                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                  ),
+                  child: Slider(
+                    key: const ValueKey('line_spacing_slider'),
+                    value: _selectedLineSpacing.clamp(
+                      RenderOptions.minLineSpacing,
+                      RenderOptions.maxLineSpacing,
+                    ),
+                    min: RenderOptions.minLineSpacing,
+                    max: RenderOptions.maxLineSpacing,
+                    divisions: 30,
+                    label: '${_selectedLineSpacing.toStringAsFixed(2)} em',
+                    onChanged: (val) {
+                      setState(() {
+                        _selectedLineSpacing = (val * 20).round() / 20.0;
+                      });
+                    },
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.add_rounded, size: 16),
+                tooltip: widget.controller.strings.increaseSpacing,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                onPressed: () {
+                  setState(() {
+                    _selectedLineSpacing =
+                        (((_selectedLineSpacing * 20).round() + 1) / 20.0)
+                            .clamp(
+                              RenderOptions.minLineSpacing,
+                              RenderOptions.maxLineSpacing,
+                            );
+                  });
+                },
+              ),
+              Container(
+                width: 54,
+                alignment: Alignment.centerRight,
+                padding: const EdgeInsets.only(right: 4),
+                child: Text(
+                  '${_selectedLineSpacing.toStringAsFixed(2)} em',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 11.5,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Paragraph Spacing Stepper & Slider
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Flexible(
+              child: Text(
+                widget.controller.strings.paragraphSpacingTitle,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            TextButton(
+              onPressed: () => setState(
+                () => _selectedParagraphSpacing =
+                    RenderOptions.defaultParagraphSpacing,
+              ),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+              ),
+              child: Text(
+                widget.controller.strings.restoreDefaultSpacing(
+                  RenderOptions.defaultParagraphSpacing.toStringAsFixed(2),
+                ),
+                style: const TextStyle(fontSize: 11),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F5),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isDark ? const Color(0xFF333333) : const Color(0xFFE0E0E0),
+            ),
+          ),
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.remove_rounded, size: 16),
+                tooltip: widget.controller.strings.decreaseSpacing,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                onPressed: () {
+                  setState(() {
+                    _selectedParagraphSpacing =
+                        (((_selectedParagraphSpacing * 20).round() - 1) / 20.0)
+                            .clamp(
+                              RenderOptions.minParagraphSpacing,
+                              RenderOptions.maxParagraphSpacing,
+                            );
+                  });
+                },
+              ),
+              Expanded(
+                child: SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 3,
+                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                  ),
+                  child: Slider(
+                    key: const ValueKey('paragraph_spacing_slider'),
+                    value: _selectedParagraphSpacing.clamp(
+                      RenderOptions.minParagraphSpacing,
+                      RenderOptions.maxParagraphSpacing,
+                    ),
+                    min: RenderOptions.minParagraphSpacing,
+                    max: RenderOptions.maxParagraphSpacing,
+                    divisions: 34,
+                    label: '${_selectedParagraphSpacing.toStringAsFixed(2)} em',
+                    onChanged: (val) {
+                      setState(() {
+                        _selectedParagraphSpacing = (val * 20).round() / 20.0;
+                      });
+                    },
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.add_rounded, size: 16),
+                tooltip: widget.controller.strings.increaseSpacing,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                onPressed: () {
+                  setState(() {
+                    _selectedParagraphSpacing =
+                        (((_selectedParagraphSpacing * 20).round() + 1) / 20.0)
+                            .clamp(
+                              RenderOptions.minParagraphSpacing,
+                              RenderOptions.maxParagraphSpacing,
+                            );
+                  });
+                },
+              ),
+              Container(
+                width: 54,
+                alignment: Alignment.centerRight,
+                padding: const EdgeInsets.only(right: 4),
+                child: Text(
+                  '${_selectedParagraphSpacing.toStringAsFixed(2)} em',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 11.5,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+
         // Reset Defaults Button
         Row(
           children: [
@@ -2310,7 +2559,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 setState(() {
                   _selectedBodyFont = null;
                   _selectedCodeFont = null;
-                  _selectedFontSize = 10.5;
+                  _selectedFontSize = RenderOptions.defaultFontSize;
+                  _selectedLineSpacing = RenderOptions.defaultLineSpacing;
+                  _selectedParagraphSpacing =
+                      RenderOptions.defaultParagraphSpacing;
                 });
               },
               icon: const Icon(Icons.refresh_rounded, size: 13),
@@ -2771,11 +3023,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
               'sans-serif',
             ],
             fontSize: fontSize,
-            height: 1.45,
+            height: (0.7 + _selectedLineSpacing).clamp(1.1, 2.8),
             color: isDark ? const Color(0xFFCCCCCC) : const Color(0xFF333333),
           ),
         ),
-        const SizedBox(height: 10),
+        SizedBox(
+          height: (fontSize * _selectedParagraphSpacing * 0.75).clamp(6.0, 28.0),
+        ),
 
         // 2. Monospace Code Sample (Pure English/ASCII to immediately exhibit monospace font switch)
         Row(
