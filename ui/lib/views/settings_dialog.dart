@@ -42,7 +42,7 @@ void showSettingsDialog(
 }
 
 class SettingsDialog extends StatefulWidget {
-  static const String appVersion = '1.1.1';
+  static const String appVersion = '1.1.2';
   static const String projectHomepage = 'https://github.com/dotsg/SuperGoodViewer';
 
   final ReaderController controller;
@@ -148,7 +148,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 
   void _saveLayout() {
-    widget.controller.setPageFormat(_selectedPageFormat);
+    widget.controller.setPageFormat(_selectedPageFormat, updateGlobalDefault: true);
     widget.controller.setHeaderFooterOptions(
       headerLeft: _headerLeftController.text.trim().isEmpty ? null : _headerLeftController.text.trim(),
       headerCenter: _headerCenterController.text.trim().isEmpty ? null : _headerCenterController.text.trim(),
@@ -177,7 +177,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 
   bool get _hasUnsavedLayoutChanges {
-    final opts = widget.controller.renderOptions;
+    final opts = widget.controller.isOfficeDocument
+        ? widget.controller.globalRenderOptions
+        : widget.controller.renderOptions;
     if (_selectedPageFormat != opts.effectivePageFormat) return true;
     final hL = _headerLeftController.text.trim().isEmpty ? null : _headerLeftController.text.trim();
     if (hL != opts.headerLeft) return true;
@@ -199,7 +201,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 
   void _revertLayout() {
-    final opts = widget.controller.renderOptions;
+    final opts = widget.controller.isOfficeDocument
+        ? widget.controller.globalRenderOptions
+        : widget.controller.renderOptions;
     setState(() {
       _selectedPageFormat = opts.effectivePageFormat;
       _headerLeftController.text = opts.headerLeft ?? '';
@@ -266,12 +270,15 @@ class _SettingsDialogState extends State<SettingsDialog> {
       _desktopEntryStatus = LinuxDesktopIntegration.instance.status();
     }
     final opts = widget.controller.renderOptions;
+    final layoutOpts = widget.controller.isOfficeDocument
+        ? widget.controller.globalRenderOptions
+        : opts;
     _selectedBodyFont = opts.bodyFont;
     _selectedCodeFont = opts.codeFont;
     _selectedFontSize = opts.fontSize;
     _selectedLineSpacing = opts.lineSpacing;
     _selectedParagraphSpacing = opts.paragraphSpacing;
-    _selectedPageFormat = opts.effectivePageFormat;
+    _selectedPageFormat = layoutOpts.effectivePageFormat;
     _headerLeftController = TextEditingController(text: opts.headerLeft ?? '');
     _headerCenterController = TextEditingController(text: opts.headerCenter ?? '');
     _headerRightController = TextEditingController(text: opts.headerRight ?? '');

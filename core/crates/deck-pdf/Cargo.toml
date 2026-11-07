@@ -1,0 +1,25 @@
+[package]
+name = "deckcraft-pdf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DeckCraft PDF export (craft-pdf/Krilla): slides, notes pages and handouts with a selectable text layer, links and bookmarks"
+
+[lints]
+workspace = true
+
+[dependencies]
+deckcraft-model = { workspace = true }
+deckcraft-fonts = { workspace = true }
+deckcraft-text = { workspace = true }
+deckcraft-render = { workspace = true }
+krilla = { workspace = true }
+kurbo = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+# Off the web build, krilla compresses each slide's artwork on a background thread while the next
+# slide renders (the same bytes, in parallel).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+krilla = { workspace = true, features = ["rayon"] }

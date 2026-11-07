@@ -129,6 +129,10 @@ class ZhHansStrings implements AppStrings {
         return '16:9';
       case 'slide4x3':
         return '4:3';
+      case 'pptSlides':
+        return '幻灯片';
+      case 'pptNotes':
+        return '备注页';
       default:
         return 'A4';
     }
@@ -317,6 +321,10 @@ class ZhHansStrings implements AppStrings {
   String get layoutModeSlide169 => '16:9 宽屏幻灯片';
   @override
   String get layoutModeSlide43 => '4:3 传统幻灯片';
+  @override
+  String get layoutModePptSlides => '幻灯片视图 (Slides)';
+  @override
+  String get layoutModePptNotes => '备注讲稿视图 (Notes)';
   @override
   String get twoPageSpreadDesc => '在分页视图中左右并排展示两页，呈现书籍与画册级对开阅读体验';
   @override

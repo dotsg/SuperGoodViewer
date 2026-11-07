@@ -136,8 +136,8 @@ class ReaderController extends ChangeNotifier {
     _startReloading(doc);
     _persistDebounced();
     notifyListeners();
-    final options = _optionsFor(doc);
-    final fingerprint = (!_isPdf(doc) && doc.markdown.isNotEmpty && doc.filePath != null)
+    final options = _compileOptionsFor(doc);
+    final fingerprint = (!_isPdf(doc) && !_isOffice(doc) && doc.markdown.isNotEmpty && doc.filePath != null)
         ? DocumentCacheService.computeAttachmentFingerprint(doc.filePath!, doc.markdown, options)
         : '';
     if (_needsRerender(doc, currentOptions: options, currentFingerprint: fingerprint)) {
@@ -166,11 +166,12 @@ class ReaderController extends ChangeNotifier {
     RenderOptions? currentOptions,
     String? currentFingerprint,
   }) {
-    if (_isPdf(doc) || doc.markdown.isEmpty) return false;
+    if (_isPdf(doc)) return false;
+    if (!_isOffice(doc) && doc.markdown.isEmpty) return false;
     final rendered = doc.renderedWith;
     if (rendered == null) return doc.pdfBytes == null;
-    final current = currentOptions ?? _optionsFor(doc);
-    if (doc.filePath != null) {
+    final current = currentOptions ?? _compileOptionsFor(doc);
+    if (doc.filePath != null && !_isOffice(doc)) {
       final fp = currentFingerprint ??
           DocumentCacheService.computeAttachmentFingerprint(
             doc.filePath!,
@@ -268,13 +269,61 @@ class ReaderController extends ChangeNotifier {
   /// document's own page format, if it has one.
   RenderOptions get renderOptions => _optionsFor(_doc);
 
+  /// The global default render options (ignoring per-document overrides).
+  RenderOptions get globalRenderOptions => _renderOptions;
+
   RenderOptions _optionsFor(DocumentSession doc) {
     final format = doc.pageFormat;
+    if (_isWord(doc)) {
+      final effectiveFormat = (format ?? _renderOptions.effectivePageFormat) == PageFormat.fluid
+          ? PageFormat.fluid
+          : PageFormat.a4Portrait;
+      return _renderOptions.copyWith(
+        pageFormat: effectiveFormat,
+        mode: effectiveFormat == PageFormat.fluid ? 'fluid' : 'paged',
+      );
+    }
+    if (_isPpt(doc)) {
+      final effectiveFormat = format == PageFormat.pptNotes
+          ? PageFormat.pptNotes
+          : PageFormat.pptSlides;
+      return _renderOptions.copyWith(
+        pageFormat: effectiveFormat,
+        mode: 'paged',
+      );
+    }
     if (format == null) return _renderOptions;
     return _renderOptions.copyWith(
       pageFormat: format,
       mode: format == PageFormat.fluid ? 'fluid' : 'paged',
     );
+  }
+
+  /// Effective options for native compilation and PDF cache keys.
+  /// Word and PowerPoint documents use their own embedded styles/fonts/page setup
+  /// and only depend on their active layout mode (`paged`/`fluid` for Word;
+  /// `pptSlides`/`pptNotes` for PowerPoint).
+  RenderOptions _compileOptionsFor(DocumentSession doc) {
+    final base = _optionsFor(doc);
+    if (_isWord(doc)) {
+      final isFluid = base.isFluid;
+      return RenderOptions(
+        theme: 'light',
+        mode: isFluid ? 'fluid' : 'paged',
+        pageFormat: isFluid ? PageFormat.fluid : PageFormat.a4Portrait,
+        viewportWidth: isFluid ? base.viewportWidth : 800.0,
+      );
+    }
+    if (_isPpt(doc)) {
+      final isNotes = base.effectivePageFormat == PageFormat.pptNotes;
+      return RenderOptions(
+        theme: 'light',
+        mode: 'paged',
+        pageFormat: isNotes ? PageFormat.pptNotes : PageFormat.pptSlides,
+        viewportWidth: 800.0,
+      );
+    }
+    return base;
   }
   bool get isCompiling => _doc.isCompiling;
   int get compileGeneration => _doc.compileGeneration;
@@ -292,7 +341,7 @@ class ReaderController extends ChangeNotifier {
   bool get restoreSession => _restoreSession;
   List<String> get recentFiles => List.unmodifiable(_recentFiles);
   Map<String, dynamic> get fontReport => _fontReport;
-  bool get isTwoPage => _isTwoPage;
+  bool get isTwoPage => _isTwoPage && !isPptDocument;
   bool get isSidebarOpen => _isSidebarOpen;
   String get sidebarPosition => _sidebarPosition;
   bool get isSidebarOnRight => _sidebarPosition == 'right';
@@ -305,6 +354,72 @@ class ReaderController extends ChangeNotifier {
   bool get isPdfReflowed => _doc.isPdfReflowed;
   bool get isReflowingPdf => _doc.isReflowingPdf;
   bool get isPdfDocument => _isPdf(_doc);
+  bool get isWordDocument => _isWord(_doc);
+  bool get isPptDocument => _isPpt(_doc);
+  bool get isOfficeDocument => _isOffice(_doc);
+  bool get isPptNotesView =>
+      isPptDocument && renderOptions.effectivePageFormat == PageFormat.pptNotes;
+  bool get supportsCropMargins => isPdfDocument;
+  bool get effectivePdfCropMargins =>
+      supportsCropMargins && _renderOptions.pdfCropMargins;
+  bool get supportsTwoPage =>
+      !isPptDocument && (isPdfDocument || !isFluidLayout);
+  bool get supportsPresentationMode => !isWordDocument;
+
+  static const Set<String> wordExtensions = {
+    '.docx',
+    '.doc',
+    '.docm',
+    '.dotx',
+    '.dotm',
+  };
+
+  static const Set<String> pptExtensions = {
+    '.pptx',
+    '.pptm',
+    '.potx',
+    '.potm',
+    '.ppsx',
+    '.ppsm',
+  };
+
+  static const List<String> filePickerAllowedExtensions = [
+    'md',
+    'markdown',
+    'txt',
+    'pdf',
+    'docx',
+    'doc',
+    'docm',
+    'dotx',
+    'dotm',
+    'pptx',
+    'pptm',
+    'potx',
+    'potm',
+    'ppsx',
+    'ppsm',
+  ];
+
+  static bool isWordFilePath(String? path) {
+    if (path == null || path.isEmpty) return false;
+    final ext = p.extension(path).toLowerCase();
+    return wordExtensions.contains(ext);
+  }
+
+  static bool isPptFilePath(String? path) {
+    if (path == null || path.isEmpty) return false;
+    final ext = p.extension(path).toLowerCase();
+    return pptExtensions.contains(ext);
+  }
+
+  static bool _isWord(DocumentSession doc) =>
+      doc.isWordDoc || isWordFilePath(doc.filePath);
+
+  static bool _isPpt(DocumentSession doc) =>
+      doc.isPptDoc || isPptFilePath(doc.filePath);
+
+  static bool _isOffice(DocumentSession doc) => _isWord(doc) || _isPpt(doc);
 
   static bool _isSourcePdf(DocumentSession doc) =>
       doc.isRawPdf ||
@@ -537,7 +652,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void setPdfOutlines(List<OutlineItem> items, {String? targetFilePath}) {
-    if (!isPdfDocument) return;
+    if (!isPdfDocument && !isOfficeDocument) return;
     if (targetFilePath != null && _doc.filePath != targetFilePath) return;
     final unmodifiable = List<OutlineItem>.unmodifiable(items);
     _doc.outlineItems = unmodifiable;
@@ -631,6 +746,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void toggleTwoPage() {
+    if (isPptDocument) return;
     renderOptionsChanged = true;
     _isTwoPage = !_isTwoPage;
     _persistPreferences();
@@ -1096,6 +1212,10 @@ class ReaderController extends ChangeNotifier {
       _doc.markdown = '';
       _doc.attachmentFingerprint = '';
       _doc.isRawPdf = false;
+      _doc.isWordDoc = false;
+      _doc.isPptDoc = false;
+      _doc.officeFileModifiedMicros = null;
+      _doc.officeFileSize = null;
       _doc.originalPdfBytes = null;
       _doc.originalPdfOutlines = [];
       _doc.isPdfReflowed = false;
@@ -1110,13 +1230,97 @@ class ReaderController extends ChangeNotifier {
     }
 
     try {
+      if (isWordFilePath(filePath) || isPptFilePath(filePath)) {
+        final stat = file.statSync();
+        _doc.filePath = filePath;
+        _doc.title = p.basenameWithoutExtension(filePath);
+        _doc.isRawPdf = false;
+        _doc.isWordDoc = isWordFilePath(filePath);
+        _doc.isPptDoc = isPptFilePath(filePath);
+        _doc.officeFileModifiedMicros = stat.modified.microsecondsSinceEpoch;
+        _doc.officeFileSize = stat.size;
+        _doc.originalPdfBytes = null;
+        _doc.originalPdfOutlines = [];
+        _doc.pdfBytes = null;
+        _doc.renderedWith = null;
+        _doc.isPdfReflowed = false;
+        _doc.isReflowingPdf = false;
+        _doc.reflowMarkdownCache = '';
+        _doc.markdown = '';
+        _doc.attachmentFingerprint = '';
+        _doc.outlineItems = [];
+        _doc.degradedEquationCount = 0;
+        _doc.degradedEquations = const [];
+
+        if (!preservePosition) {
+          final history = _fileHistory[filePath];
+          if (history != null) {
+            _doc.scrollRatio = (history['scrollRatio'] as num?)?.toDouble() ?? 0.0;
+            _doc.scrollOffset = (history['scrollOffset'] as num?)?.toDouble() ?? 0.0;
+            _doc.pageNumber = (history['pageNumber'] as num?)?.toInt() ?? 1;
+            _doc.zoom = (history['zoom'] as num?)?.toDouble() ?? _doc.zoom;
+            startReloading();
+          } else {
+            _doc.scrollRatio = 0.0;
+            _doc.scrollOffset = 0.0;
+            _doc.pageNumber = 1;
+            finishReloading();
+          }
+        } else {
+          startReloading();
+        }
+
+        _recentFiles.remove(filePath);
+        _recentFiles.insert(0, filePath);
+        if (_recentFiles.length > 10) {
+          _recentFiles.removeLast();
+        }
+
+        final options = _compileOptionsFor(_doc);
+        RemoteImageService.instance.clearNegativeCache();
+        _persistDebounced();
+        _setupFileWatcher(_doc);
+
+        final cachedPdf = DocumentCacheService.getCachedPdf(
+          filePath,
+          options,
+          markdown: '',
+          attachmentFingerprint: '',
+        );
+        if (cachedPdf != null && cachedPdf.isNotEmpty) {
+          _doc.pdfBytes = cachedPdf;
+          _doc.renderedWith = options;
+          _doc.errorMessage = null;
+          notifyListeners();
+          return;
+        }
+
+        compileDocument();
+        return;
+      }
+
       final bytes = file.readAsBytesSync();
-      final isPdf = filePath.toLowerCase().endsWith('.pdf') ||
+      final ext = p.extension(filePath).toLowerCase();
+      const markdownExtensions = {
+        '.md',
+        '.markdown',
+        '.mdown',
+        '.mkd',
+        '.mkdn',
+        '.mdx',
+        '.txt',
+        '.typ',
+      };
+      final isPdf = ext == '.pdf' ||
           startsWithPdfHeader(bytes) ||
-          hasPdfHeader(bytes);
+          (!markdownExtensions.contains(ext) && hasPdfHeader(bytes));
 
       _doc.filePath = filePath;
       _doc.title = p.basenameWithoutExtension(filePath);
+      _doc.isWordDoc = false;
+      _doc.isPptDoc = false;
+      _doc.officeFileModifiedMicros = null;
+      _doc.officeFileSize = null;
 
       if (isPdf) {
         _doc.compileGeneration++;
@@ -1125,6 +1329,8 @@ class ReaderController extends ChangeNotifier {
         _doc.isRawPdf = true;
         _doc.originalPdfBytes = null;
         _doc.originalPdfOutlines = [];
+        _doc.pdfBytes = null;
+        _doc.renderedWith = null;
         _doc.isPdfReflowed = false;
         _doc.isReflowingPdf = false;
         _doc.reflowMarkdownCache = '';
@@ -1305,6 +1511,11 @@ class ReaderController extends ChangeNotifier {
     try {
       if (File(filePath).resolveSymbolicLinksSync() != File(current).resolveSymbolicLinksSync()) {
         return false;
+      }
+      if (_isOffice(_doc)) {
+        final stat = File(filePath).statSync();
+        return _doc.officeFileModifiedMicros == stat.modified.microsecondsSinceEpoch &&
+            _doc.officeFileSize == stat.size;
       }
       final bytes = File(filePath).readAsBytesSync();
       if (_isSourcePdf(_doc)) {
@@ -1488,6 +1699,28 @@ class ReaderController extends ChangeNotifier {
             notifyListeners();
             return;
           }
+          if (_isOffice(doc)) {
+            final stat1 = await file.stat();
+            if (stat1.size == 0) return;
+            await Future<void>.delayed(const Duration(milliseconds: 200));
+            if (!_isOpen(doc) || !await file.exists()) return;
+            final stat = await file.stat();
+            if (stat.size == 0 ||
+                stat.size != stat1.size ||
+                stat.modified != stat1.modified) {
+              _onExternalFileModified(doc);
+              return;
+            }
+            if (doc.officeFileModifiedMicros == stat.modified.microsecondsSinceEpoch &&
+                doc.officeFileSize == stat.size) {
+              return;
+            }
+            doc.officeFileModifiedMicros = stat.modified.microsecondsSinceEpoch;
+            doc.officeFileSize = stat.size;
+            _startReloading(doc);
+            await _compile(doc, precomputedFingerprint: '', isHotReload: true);
+            return;
+          }
           final bytes = await file.readAsBytes();
           final text = utf8.decode(bytes, allowMalformed: true);
           final options = _optionsFor(doc);
@@ -1544,6 +1777,11 @@ class ReaderController extends ChangeNotifier {
       }
       return;
     }
+    if (_isOffice(doc)) {
+      _startReloading(doc);
+      await _compile(doc, precomputedFingerprint: '');
+      return;
+    }
     RemoteImageService.instance.clearNegativeCache();
     _triggerRemoteImageDownloads(doc);
     await _compile(doc);
@@ -1570,9 +1808,14 @@ class ReaderController extends ChangeNotifier {
   Future<void> _compile(
     DocumentSession doc, {
     String? precomputedFingerprint,
+    bool isHotReload = false,
   }) async {
     if (_isPdf(doc)) return;
-    if (doc.markdown.isEmpty) return;
+    final isWord = _isWord(doc);
+    final isPpt = _isPpt(doc);
+    final isOffice = isWord || isPpt;
+    if (!isOffice && doc.markdown.isEmpty) return;
+    if (isOffice && (doc.filePath == null || doc.filePath!.isEmpty)) return;
 
     final int generation = ++doc.compileGeneration;
     if (doc.isCompiling) {
@@ -1585,7 +1828,12 @@ class ReaderController extends ChangeNotifier {
     doc.errorMessage = null;
     doc.degradedEquationCount = 0;
     doc.degradedEquations = const [];
-    debugPrint('[ReaderController] compileDocument: starting gen $generation for "${doc.title}" (${doc.markdown.length} chars)');
+    final kindLabel = isWord
+        ? 'word'
+        : isPpt
+            ? 'ppt'
+            : '${doc.markdown.length} chars';
+    debugPrint('[ReaderController] compileDocument: starting gen $generation for "${doc.title}" ($kindLabel)');
     notifyListeners();
 
     try {
@@ -1601,11 +1849,11 @@ class ReaderController extends ChangeNotifier {
           ? p.dirname(filePathSnapshot)
           : Directory.current.path;
 
-      final options = _optionsFor(doc);
+      final options = _compileOptionsFor(doc);
       // Snapshot attachment fingerprint BEFORE starting async compilation so that if an
       // attachment is modified on disk while compilation is in flight, the old PDF is not
       // saved under the new attachment's fingerprint.
-      final fingerprintSnapshot = filePathSnapshot != null
+      final fingerprintSnapshot = (!isOffice && filePathSnapshot != null)
           ? (precomputedFingerprint ??
               DocumentCacheService.computeAttachmentFingerprint(
                 filePathSnapshot,
@@ -1614,12 +1862,24 @@ class ReaderController extends ChangeNotifier {
               ))
           : '';
 
-      final result = await NativeEngine.instance.compileMarkdownResultAsync(
-        markdownSnapshot,
-        title: doc.title,
-        docDir: docDir,
-        options: options,
-      );
+      final result = isWord
+          ? await NativeEngine.instance.compileWordFileResultAsync(
+              filePathSnapshot!,
+              title: doc.title,
+              options: options,
+            )
+          : isPpt
+              ? await NativeEngine.instance.compilePptFileResultAsync(
+                  filePathSnapshot!,
+                  title: doc.title,
+                  options: options,
+                )
+              : await NativeEngine.instance.compileMarkdownResultAsync(
+                  markdownSnapshot,
+                  title: doc.title,
+                  docDir: docDir,
+                  options: options,
+                );
 
       if (generation == doc.compileGeneration && !_isPdf(doc)) {
         if (result.isSuccess) {
@@ -1649,15 +1909,22 @@ class ReaderController extends ChangeNotifier {
             );
           }
         } else {
-          doc.degradedEquationCount = 0;
-          doc.degradedEquations = const [];
-          doc.errorMessage = result.errorMessage ?? NativeEngine.instance.getLastError() ?? 'Compilation failed';
-          debugPrint('[ReaderController] compileDocument: FAILED gen $generation (${doc.errorMessage})');
+          final err = result.errorMessage ?? NativeEngine.instance.getLastError() ?? 'Compilation failed';
+          if (isHotReload && isOffice && doc.pdfBytes != null) {
+            debugPrint('[ReaderController] compileDocument: Office hot-reload failed, keeping previous PDF ($err)');
+          } else {
+            doc.degradedEquationCount = 0;
+            doc.degradedEquations = const [];
+            doc.errorMessage = err;
+            debugPrint('[ReaderController] compileDocument: FAILED gen $generation (${doc.errorMessage})');
+          }
         }
       }
     } catch (e, st) {
       if (generation == doc.compileGeneration && !_isPdf(doc)) {
-        doc.errorMessage = 'Compilation error: $e';
+        if (!(isHotReload && isOffice && doc.pdfBytes != null)) {
+          doc.errorMessage = 'Compilation error: $e';
+        }
         debugPrint('[ReaderController] compileDocument: EXCEPTION gen $generation ($e)\n$st');
       }
     } finally {
@@ -1673,31 +1940,85 @@ class ReaderController extends ChangeNotifier {
 
   String _lastPagedFormat = PageFormat.a4Portrait;
 
-  void setPageFormat(String format) {
+  void _setOfficePageFormat(String officeFormat, String kindLabel) {
+    if (renderOptions.effectivePageFormat == officeFormat) return;
+    renderOptionsChanged = true;
+    startReloading();
+    _doc.pageFormat = officeFormat;
+    _persistDebounced();
+    notifyListeners();
+    if (_doc.filePath != null) {
+      final options = _compileOptionsFor(_doc);
+      final cached = DocumentCacheService.getCachedPdf(
+        _doc.filePath!,
+        options,
+        markdown: '',
+        attachmentFingerprint: '',
+      );
+      if (cached != null && cached.isNotEmpty) {
+        _doc.pdfBytes = cached;
+        _doc.renderedWith = options;
+        _doc.attachmentFingerprint = '';
+        _doc.errorMessage = null;
+        debugPrint('[ReaderController] $kindLabel PageFormat change cache hit: instant PDF loaded');
+        notifyListeners();
+        return;
+      }
+    }
+    compileDocument();
+  }
+
+  void setPageFormat(String format, {bool updateGlobalDefault = false}) {
     if (isPdfDocument) return;
+    if (isWordDocument && !updateGlobalDefault) {
+      final wordFormat = format == PageFormat.fluid
+          ? PageFormat.fluid
+          : PageFormat.a4Portrait;
+      _setOfficePageFormat(wordFormat, 'Word');
+      return;
+    }
+
+    if (isPptDocument && !updateGlobalDefault) {
+      final pptFormat = format == PageFormat.pptNotes
+          ? PageFormat.pptNotes
+          : PageFormat.pptSlides;
+      _setOfficePageFormat(pptFormat, 'PPT');
+      return;
+    }
+
+    // Never allow Office-only formats (e.g. pptSlides / pptNotes) to be written
+    // into the global Markdown layout defaults.
+    if (!PageFormat.all.contains(format)) return;
+
     if (format != PageFormat.fluid) {
       _lastPagedFormat = format;
     }
-    if (renderOptions.effectivePageFormat == format) return;
-    renderOptionsChanged = true;
-    startReloading();
-    // The choice applies to this document and becomes the default for
-    // documents without a format of their own.
-    _doc.pageFormat = format;
+    final prevEffective = renderOptions.effectivePageFormat;
     final nextMode = format == PageFormat.fluid ? 'fluid' : 'paged';
     _renderOptions = _renderOptions.copyWith(
       mode: nextMode,
       pageFormat: format,
     );
+    if (!isOfficeDocument) {
+      _doc.pageFormat = format;
+    }
     _persistDebounced();
+    if (renderOptions.effectivePageFormat == prevEffective) {
+      notifyListeners();
+      return;
+    }
+    renderOptionsChanged = true;
+    startReloading();
     notifyListeners();
     if (_doc.filePath != null) {
-      final options = _optionsFor(_doc);
-      final fingerprint = DocumentCacheService.computeAttachmentFingerprint(
-        _doc.filePath!,
-        _doc.markdown,
-        options,
-      );
+      final options = _compileOptionsFor(_doc);
+      final fingerprint = isOfficeDocument
+          ? ''
+          : DocumentCacheService.computeAttachmentFingerprint(
+              _doc.filePath!,
+              _doc.markdown,
+              options,
+            );
       final cached = DocumentCacheService.getCachedPdf(
         _doc.filePath!,
         options,
@@ -1719,6 +2040,10 @@ class ReaderController extends ChangeNotifier {
 
   void cyclePageFormat() {
     if (isPdfDocument) return;
+    if (isOfficeDocument) {
+      toggleMode();
+      return;
+    }
     final current = renderOptions.effectivePageFormat;
     final formats = PageFormat.all;
     final idx = formats.indexOf(current);
@@ -1728,30 +2053,74 @@ class ReaderController extends ChangeNotifier {
 
   void toggleMode() {
     if (isPdfDocument) return;
+    if (isPptDocument) {
+      final nextPptFormat = renderOptions.effectivePageFormat == PageFormat.pptNotes
+          ? PageFormat.pptSlides
+          : PageFormat.pptNotes;
+      setPageFormat(nextPptFormat);
+      return;
+    }
     if (renderOptions.isFluid) {
-      setPageFormat(_lastPagedFormat);
+      setPageFormat(isWordDocument ? PageFormat.a4Portrait : _lastPagedFormat);
     } else {
       setPageFormat(PageFormat.fluid);
     }
   }
 
-  String? _formatBeforePresentation;
+  DocumentSession? _presentationSession;
+  String? _globalFormatBeforePresentation;
 
   void setPresentationMode(bool value) {
+    if (value && !supportsPresentationMode) return;
     if (_isPresentationMode != value) {
       _isPresentationMode = value;
       if (value) {
-        if (!isPdfDocument && renderOptions.isFluid) {
-          _formatBeforePresentation = renderOptions.effectivePageFormat;
+        for (final s in _sessions) {
+          s.formatBeforePresentation = null;
+        }
+        _presentationSession = _doc;
+        _globalFormatBeforePresentation = null;
+        if (isPptDocument && renderOptions.effectivePageFormat == PageFormat.pptNotes) {
+          _doc.formatBeforePresentation = PageFormat.pptNotes;
+          setPageFormat(PageFormat.pptSlides);
+        } else if (!isPdfDocument && renderOptions.isFluid) {
+          _doc.formatBeforePresentation = renderOptions.effectivePageFormat;
+          if (!isOfficeDocument) {
+            _globalFormatBeforePresentation = _renderOptions.effectivePageFormat;
+          }
           final savedLastPaged = _lastPagedFormat;
           setPageFormat(PageFormat.slide16x9);
           _lastPagedFormat = savedLastPaged;
         }
       } else {
-        if (_formatBeforePresentation != null) {
-          final restore = _formatBeforePresentation!;
-          _formatBeforePresentation = null;
-          setPageFormat(restore);
+        final targetDoc = (_presentationSession != null && _isOpen(_presentationSession!))
+            ? _presentationSession!
+            : _doc;
+        final savedGlobalFormat = _globalFormatBeforePresentation;
+        _presentationSession = null;
+        _globalFormatBeforePresentation = null;
+        final restore = targetDoc.formatBeforePresentation;
+        for (final s in _sessions) {
+          s.formatBeforePresentation = null;
+        }
+        if (restore != null) {
+          if (identical(targetDoc, _doc)) {
+            setPageFormat(restore);
+          } else {
+            targetDoc.pageFormat = restore;
+            if (savedGlobalFormat != null) {
+              _renderOptions = _renderOptions.copyWith(
+                mode: savedGlobalFormat == PageFormat.fluid ? 'fluid' : 'paged',
+                pageFormat: savedGlobalFormat,
+              );
+              _persistDebounced();
+              if (_doc.pageFormat == null && !isPdfDocument && !isOfficeDocument) {
+                renderOptionsChanged = true;
+                startReloading();
+                compileDocument();
+              }
+            }
+          }
         }
       }
       notifyListeners();
@@ -1777,8 +2146,6 @@ class ReaderController extends ChangeNotifier {
     bool? marpEnabled,
   }) {
     if (isPdfDocument) return;
-    renderOptionsChanged = true;
-    startReloading();
     _renderOptions = _renderOptions.copyWith(
       headerLeft: headerLeft,
       headerCenter: headerCenter,
@@ -1792,6 +2159,12 @@ class ReaderController extends ChangeNotifier {
       marpEnabled: marpEnabled,
     );
     _persistDebounced();
+    if (isOfficeDocument) {
+      notifyListeners();
+      return;
+    }
+    renderOptionsChanged = true;
+    startReloading();
     notifyListeners();
     compileDocument();
   }
@@ -1829,7 +2202,7 @@ class ReaderController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (isPdfDocument) {
+    if (isPdfDocument || isOfficeDocument) {
       _renderOptions = _renderOptions.copyWith(theme: nextTheme);
       _persistDebounced();
       notifyListeners();
@@ -1887,7 +2260,7 @@ class ReaderController extends ChangeNotifier {
       fontSize: size.clamp(RenderOptions.minFontSize, RenderOptions.maxFontSize),
     );
     _persistPreferences();
-    if (isPdfDocument) {
+    if (isPdfDocument || isOfficeDocument) {
       notifyListeners();
       return;
     }
@@ -1909,7 +2282,7 @@ class ReaderController extends ChangeNotifier {
   void setBodyFont(String? font) {
     _renderOptions = _renderOptions.copyWith(bodyFont: font);
     _persistPreferences();
-    if (isPdfDocument) {
+    if (isPdfDocument || isOfficeDocument) {
       notifyListeners();
       return;
     }
@@ -1921,7 +2294,7 @@ class ReaderController extends ChangeNotifier {
   void setCodeFont(String? font) {
     _renderOptions = _renderOptions.copyWith(codeFont: font);
     _persistPreferences();
-    if (isPdfDocument) {
+    if (isPdfDocument || isOfficeDocument) {
       notifyListeners();
       return;
     }
@@ -1937,7 +2310,7 @@ class ReaderController extends ChangeNotifier {
     );
     _renderOptions = _renderOptions.copyWith(lineSpacing: clamped);
     _persistPreferences();
-    if (isPdfDocument) {
+    if (isPdfDocument || isOfficeDocument) {
       notifyListeners();
       return;
     }
@@ -1953,7 +2326,7 @@ class ReaderController extends ChangeNotifier {
     );
     _renderOptions = _renderOptions.copyWith(paragraphSpacing: clamped);
     _persistPreferences();
-    if (isPdfDocument) {
+    if (isPdfDocument || isOfficeDocument) {
       notifyListeners();
       return;
     }
@@ -1986,7 +2359,7 @@ class ReaderController extends ChangeNotifier {
       ),
     );
     _persistPreferences();
-    if (isPdfDocument) {
+    if (isPdfDocument || isOfficeDocument) {
       notifyListeners();
       return;
     }
@@ -2024,8 +2397,99 @@ class ReaderController extends ChangeNotifier {
     if (doc.pdfBytes == null) return null;
     try {
       final options = _optionsFor(doc);
-      if (_isPdf(doc) || options.theme == 'light') {
-        // Direct PDF or light mode: use current in-memory PDF immediately (0ms fast path)
+      if (_isPdf(doc)) {
+        return doc.pdfBytes;
+      }
+      if (_isPpt(doc)) {
+        if (doc.filePath != null) {
+          final exportOptions = RenderOptions(
+            theme: 'light',
+            mode: 'paged',
+            pageFormat: options.effectivePageFormat == PageFormat.pptNotes
+                ? PageFormat.pptNotes
+                : PageFormat.pptSlides,
+            viewportWidth: 800.0,
+            exportQuality: true,
+          );
+          final cached = DocumentCacheService.getCachedPdf(
+            doc.filePath!,
+            exportOptions,
+            markdown: '',
+            attachmentFingerprint: '',
+          );
+          if (cached != null && cached.isNotEmpty) {
+            return cached;
+          }
+          if (NativeEngine.instance.isAvailable) {
+            final exportResult = await NativeEngine.instance.compilePptFileResultAsync(
+              doc.filePath!,
+              title: doc.title,
+              options: exportOptions,
+            );
+            final bytes = exportResult.pdfBytes;
+            if (bytes != null && bytes.isNotEmpty) {
+              unawaited(
+                DocumentCacheService.saveCachedPdf(
+                  doc.filePath!,
+                  exportOptions,
+                  bytes,
+                  markdown: '',
+                  attachmentFingerprint: '',
+                ),
+              );
+              return bytes;
+            }
+          }
+        }
+        return doc.pdfBytes;
+      }
+      if (_isWord(doc)) {
+        // If already in Paged (Print) layout, return in-memory PDF immediately.
+        if (!options.isFluid) {
+          return doc.pdfBytes;
+        }
+        // When viewing in Fluid mode, export publication-grade 1:1 Print layout PDF.
+        final exportOptions = const RenderOptions(
+          theme: 'light',
+          mode: 'paged',
+          pageFormat: PageFormat.a4Portrait,
+          viewportWidth: 800.0,
+        );
+        if (doc.filePath != null) {
+          final cached = DocumentCacheService.getCachedPdf(
+            doc.filePath!,
+            exportOptions,
+            markdown: '',
+            attachmentFingerprint: '',
+          );
+          if (cached != null && cached.isNotEmpty) {
+            return cached;
+          }
+          if (NativeEngine.instance.isAvailable) {
+            final exportResult = await NativeEngine.instance.compileWordFileResultAsync(
+              doc.filePath!,
+              title: doc.title,
+              options: exportOptions,
+            );
+            final bytes = exportResult.pdfBytes;
+            if (bytes != null && bytes.isNotEmpty) {
+              unawaited(
+                DocumentCacheService.saveCachedPdf(
+                  doc.filePath!,
+                  exportOptions,
+                  bytes,
+                  markdown: '',
+                  attachmentFingerprint: '',
+                ),
+              );
+              return bytes;
+            }
+          }
+        }
+        return doc.pdfBytes;
+      }
+      if (options.theme == 'light') {
+        // Light mode Markdown: use current in-memory PDF immediately (0ms fast path)
         return doc.pdfBytes;
       }
 
@@ -2199,6 +2663,10 @@ graph LR
   void _setSampleDocumentContent() {
     _doc.filePath = null;
     _doc.isRawPdf = false;
+    _doc.isWordDoc = false;
+    _doc.isPptDoc = false;
+    _doc.officeFileModifiedMicros = null;
+    _doc.officeFileSize = null;
     _doc.originalPdfBytes = null;
     _doc.originalPdfOutlines = [];
     _doc.isPdfReflowed = false;

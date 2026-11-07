@@ -1,9 +1,92 @@
 [workspace]
-members = ["cli"]
+members = [
+    "cli",
+    "crates/geom",
+    "crates/doc",
+    "crates/fonts",
+    "crates/metafile",
+    "crates/docx",
+    "crates/docbin",
+    "crates/layout",
+    "crates/pdf",
+    "crates/deck-geom",
+    "crates/deck-color",
+    "crates/deck-metafile",
+    "crates/deck-model",
+    "crates/deck-anim",
+    "crates/deck-fonts",
+    "crates/deck-text",
+    "crates/deck-pptx",
+    "crates/deck-render",
+    "crates/deck-pdf",
+]
+
+[workspace.package]
+version = "1.1.2"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+type_complexity = "allow"
+
+[workspace.dependencies]
+wordcraft-geom = { path = "crates/geom" }
+wordcraft-doc = { path = "crates/doc" }
+wordcraft-fonts = { path = "crates/fonts" }
+wordcraft-metafile = { path = "crates/metafile" }
+wordcraft-docx = { path = "crates/docx" }
+wordcraft-docbin = { path = "crates/docbin" }
+wordcraft-layout = { path = "crates/layout" }
+wordcraft-pdf = { path = "crates/pdf" }
+
+deckcraft-geom = { path = "crates/deck-geom" }
+deckcraft-color = { path = "crates/deck-color" }
+deckcraft-metafile = { path = "crates/deck-metafile" }
+deckcraft-model = { path = "crates/deck-model" }
+deckcraft-anim = { path = "crates/deck-anim" }
+deckcraft-fonts = { path = "crates/deck-fonts" }
+deckcraft-text = { path = "crates/deck-text" }
+deckcraft-pptx = { path = "crates/deck-pptx" }
+deckcraft-render = { path = "crates/deck-render" }
+deckcraft-pdf = { path = "crates/deck-pdf" }
+
+vello_cpu = "0.2"
+vello_common = "0.2"
+kurbo = { version = "0.13", features = ["serde"] }
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
+log = "0.4"
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+unicode-bidi = "0.3"
+unicode-segmentation = "1"
+unicode-linebreak = "0.1"
+unicode-script = "0.5"
+skrifa = "0.47"
+harfrust = "0.13"
+wuff = "0.2.9"
+brotli-decompressor = "5"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "tiff"] }
+krilla = "0.8.2"
+quick-xml = "0.41"
+zip = { version = "3", default-features = false, features = ["deflate"] }
+miniz_oxide = "0.9"
+cfb = "0.15"
+aes = "0.9"
+sha1 = "0.11"
+sha2 = "0.11"
+hmac = "0.13"
+base64 = "0.23"
+getrandom = "0.3"
+zeroize = "1"
+typst-assets = { version = "0.15.1", features = ["fonts"] }
 
 [package]
 name = "sogood_core"
-version = "1.1.1"
+version = "1.1.2"
 edition = "2024"
 
 [lib]
@@ -21,16 +104,28 @@ typst-pdf = "0.15.1"
 typst-syntax = "0.15.1"
 pulldown-cmark = { version = "0.13" }
 mitex = "0.2"
-mermaid-rs-renderer = { version = "0.3", default-features = false }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-sha2 = "0.10"
-typst-assets = { version = "0.15.1", features = ["fonts"] }
+zebra-mermaid = "0.1.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+typst-assets = { workspace = true }
 fontdb = "0.23"
 
 parking_lot = "0.12"
 memmap2 = "0.9"
-thiserror = "2.0"
+thiserror = { workspace = true }
+
+wordcraft-doc = { workspace = true }
+wordcraft-fonts = { workspace = true }
+wordcraft-docx = { workspace = true }
+wordcraft-docbin = { workspace = true }
+wordcraft-layout = { workspace = true }
+wordcraft-pdf = { workspace = true }
+
+deckcraft-model = { workspace = true }
+deckcraft-fonts = { workspace = true }
+deckcraft-pptx = { workspace = true }
+deckcraft-pdf = { workspace = true }
 
 [dev-dependencies]
 ttf-parser = "0.25"
@@ -39,5 +134,3 @@ ttf-parser = "0.25"
 opt-level = 3
 lto = "thin"
 strip = true
-
-

@@ -182,7 +182,7 @@ fn main() {
     println!();
 
     // ------------------------------------------------------------- 2. mermaid
-    println!("--- 2. Mermaid offline vector rendering (mermaid-rs-renderer) ---");
+    println!("--- 2. Mermaid offline vector rendering (zebra-mermaid) ---");
     let mermaid_template = r#"graph TD
     A[Markdown Source {ID}] --> B(AST Parser)
     B --> C{Formula / Chart?}

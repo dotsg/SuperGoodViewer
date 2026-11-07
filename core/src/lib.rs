@@ -257,6 +257,60 @@ pub fn compile_markdown_to_pdf(
     compile_markdown_to_pdf_result(markdown, title, doc_dir, options).map(|r| r.pdf_bytes)
 }
 
+pub use parser::ppt::{
+    PptRenderBackend, is_ppt_extension, parse_ppt_bytes, parse_ppt_file_cached,
+    render_ppt_document_to_pdf,
+};
+pub use parser::word::{
+    WordRenderBackend, is_word_extension, parse_word_bytes, parse_word_file_cached,
+    render_word_document_to_pdf,
+};
+
+/// High-level function: Compiles raw Word document bytes (`.docx`, `.doc`, `.docm`, `.dotx`, `.dotm`)
+/// into a PDF byte stream.
+pub fn compile_word_to_pdf(
+    bytes: &[u8],
+    title: &str,
+    file_path: Option<&Path>,
+    options: &RenderOptions,
+) -> Result<Vec<u8>, CompileError> {
+    let doc = parse_word_bytes(bytes)?;
+    render_word_document_to_pdf(&doc, title, file_path, options, WordRenderBackend::Native)
+}
+
+/// High-level function: Reads a Word document file from disk and compiles it into a PDF byte stream.
+pub fn compile_word_file_to_pdf(
+    file_path: impl AsRef<Path>,
+    title: &str,
+    options: &RenderOptions,
+) -> Result<Vec<u8>, CompileError> {
+    let path = file_path.as_ref();
+    let doc = parse_word_file_cached(path)?;
+    render_word_document_to_pdf(&doc, title, Some(path), options, WordRenderBackend::Native)
+}
+
+/// High-level function: Compiles raw PowerPoint presentation bytes
+/// (`.pptx`, `.pptm`, `.potx`, `.potm`, `.ppsx`, `.ppsm`) into a PDF byte stream.
+pub fn compile_ppt_to_pdf(
+    bytes: &[u8],
+    title: &str,
+    options: &RenderOptions,
+) -> Result<Vec<u8>, CompileError> {
+    let pres = parse_ppt_bytes(bytes)?;
+    render_ppt_document_to_pdf(&pres, title, options, PptRenderBackend::Native)
+}
+
+/// High-level function: Reads a PowerPoint presentation file from disk and compiles it into a PDF byte stream.
+pub fn compile_ppt_file_to_pdf(
+    file_path: impl AsRef<Path>,
+    title: &str,
+    options: &RenderOptions,
+) -> Result<Vec<u8>, CompileError> {
+    let path = file_path.as_ref();
+    let pres = parse_ppt_file_cached(path)?;
+    render_ppt_document_to_pdf(&pres, title, options, PptRenderBackend::Native)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1307,6 +1361,257 @@ Second index.
         let pdf = compile_markdown_to_pdf(md, "HTML Attribute E2E", &temp_dir, &opts)
             .expect("PDF compilation of HTML img attribute variants must succeed");
         assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn test_compile_word_docx_paged_and_fluid_e2e() {
+        assert!(is_word_extension("report.docx"));
+        assert!(is_word_extension("legacy.DOC"));
+        assert!(is_word_extension("macro.docm"));
+        assert!(is_word_extension("template.dotx"));
+        assert!(is_word_extension("template.dotm"));
+        assert!(!is_word_extension("readme.md"));
+        assert!(!is_word_extension("paper.pdf"));
+
+        let mut doc = wordcraft_doc::Document::new();
+        let mut h1 = wordcraft_doc::Paragraph::with_text(
+            "SuperGoodViewer Word Preview",
+            wordcraft_doc::CharProps::default(),
+        );
+        h1.props.style = Some("Heading1".into());
+        h1.props.outline_level = Some(0);
+        let body_para = wordcraft_doc::Paragraph::with_text(
+            "This paragraph is rendered by the embedded WordCraft engine in both 1:1 Print mode and mobile Fluid reflow mode.",
+            wordcraft_doc::CharProps::default(),
+        );
+        doc.body = vec![
+            std::sync::Arc::new(wordcraft_doc::Block::Para(h1)),
+            std::sync::Arc::new(wordcraft_doc::Block::Para(body_para)),
+        ];
+
+        let docx_bytes = wordcraft_docx::write(&doc).expect("write docx package");
+        let temp_dir = std::env::temp_dir().join(format!("sgv_word_test_{}", std::process::id()));
+        let _guard = TempDirGuard(temp_dir.clone());
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let docx_path = temp_dir.join("sample.docx");
+        std::fs::write(&docx_path, &docx_bytes).unwrap();
+
+        fn first_mediabox_width(pdf_bytes: &[u8]) -> Option<f64> {
+            let s = String::from_utf8_lossy(pdf_bytes);
+            let pos = s.find("/MediaBox")?;
+            let rest = &s[pos + "/MediaBox".len()..];
+            let start = rest.find('[')?;
+            let end = rest.find(']')?;
+            let numbers: Vec<&str> = rest[start + 1..end].split_whitespace().collect();
+            numbers.get(2)?.parse::<f64>().ok()
+        }
+
+        let paged_opts = RenderOptions {
+            mode: "paged".to_string(),
+            ..Default::default()
+        };
+        let paged_pdf = compile_word_file_to_pdf(&docx_path, "Sample Word", &paged_opts)
+            .expect("Paged Word compilation must succeed");
+        assert!(paged_pdf.starts_with(b"%PDF-"));
+        assert!(paged_pdf.len() > 500);
+        let paged_w = first_mediabox_width(&paged_pdf).expect("Paged PDF MediaBox width");
+        assert!(
+            (paged_w - 612.0).abs() < 1.0 || (paged_w - 595.28).abs() < 1.0,
+            "Paged mode should use standard Letter/A4 page width, got {paged_w}"
+        );
+
+        let fluid_opts = RenderOptions {
+            mode: "fluid".to_string(),
+            viewport_width: 390.0,
+            ..Default::default()
+        };
+        let fluid_pdf = compile_word_file_to_pdf(&docx_path, "Sample Word Fluid", &fluid_opts)
+            .expect("Fluid Word compilation must succeed");
+        assert!(fluid_pdf.starts_with(b"%PDF-"));
+        assert!(fluid_pdf.len() > 500);
+        let fluid_w = first_mediabox_width(&fluid_pdf).expect("Fluid PDF MediaBox width");
+        assert!(
+            (fluid_w - 390.0).abs() < 1.0,
+            "Fluid mode should reflow to viewport_width=390pt, got {fluid_w}"
+        );
+
+        // Empty 0-byte Word file must fail with a clear error instead of rendering a blank page
+        let empty_path = temp_dir.join("empty.docx");
+        std::fs::write(&empty_path, b"").unwrap();
+        let empty_err = compile_word_file_to_pdf(&empty_path, "Empty", &paged_opts)
+            .expect_err("0-byte Word file must return an error");
+        assert!(empty_err.to_string().contains("empty"));
+
+        // RTF file renamed to .doc must fail with a clear RTF unsupported error
+        let rtf_path = temp_dir.join("fake.doc");
+        std::fs::write(&rtf_path, br"{\rtf1\ansi\deff0 Hello RTF}").unwrap();
+        let rtf_err = compile_word_file_to_pdf(&rtf_path, "RTF", &paged_opts)
+            .expect_err("RTF file disguised as .doc must return an error");
+        assert!(rtf_err.to_string().contains("RTF"));
+
+        // Word 2003 XML with UTF-8 BOM must parse and compile cleanly
+        let bom_xml_path = temp_dir.join("bom_word2003.doc");
+        let mut bom_xml = vec![0xEF, 0xBB, 0xBF];
+        bom_xml.extend_from_slice(
+            br#"<?xml version="1.0" encoding="UTF-8"?><w:wordDocument xmlns:w="http://schemas.microsoft.com/office/word/2003/wordml"><w:body><w:p><w:r><w:t>BOM Word XML</w:t></w:r></w:p></w:body></w:wordDocument>"#,
+        );
+        std::fs::write(&bom_xml_path, &bom_xml).unwrap();
+        let bom_pdf = compile_word_file_to_pdf(&bom_xml_path, "BOM Word XML", &paged_opts)
+            .expect("UTF-8 BOM Word 2003 XML must compile");
+        assert!(bom_pdf.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn test_compile_ppt_pptx_slides_and_notes_e2e() {
+        assert!(is_ppt_extension("deck.pptx"));
+        assert!(is_ppt_extension("macro.PPTM"));
+        assert!(is_ppt_extension(".potx"));
+        assert!(is_ppt_extension("show.ppsx"));
+        assert!(!is_ppt_extension("legacy.ppt"));
+        assert!(!is_ppt_extension("notes.md"));
+
+        struct TempDirGuard(std::path::PathBuf);
+        impl Drop for TempDirGuard {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let mut pres = deckcraft_model::Presentation::default();
+        pres.props.title = "Quantum Deck".to_string();
+        if let Some(slide0) = pres.slides.first_mut() {
+            let sl = std::sync::Arc::make_mut(slide0);
+            sl.shapes.push(deckcraft_model::Shape {
+                id: deckcraft_model::ShapeId(101),
+                name: "TextBox 1".to_string(),
+                text_box: true,
+                text: Some(deckcraft_model::text::TextBody::from_text(
+                    "Slide 1: SuperGoodViewer PPTX",
+                )),
+                ..Default::default()
+            });
+            sl.notes = deckcraft_model::text::TextBody::from_text(
+                "Speaker notes for slide 1 — 演讲者备注第一页",
+            );
+        }
+
+        let pptx_bytes = deckcraft_pptx::export(&pres).expect("write pptx package");
+        let temp_dir = std::env::temp_dir().join(format!("sgv_ppt_test_{}", std::process::id()));
+        let _guard = TempDirGuard(temp_dir.clone());
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let pptx_path = temp_dir.join("sample.pptx");
+        std::fs::write(&pptx_path, &pptx_bytes).unwrap();
+
+        fn first_mediabox_wh(pdf_bytes: &[u8]) -> Option<(f64, f64)> {
+            let s = String::from_utf8_lossy(pdf_bytes);
+            let pos = s.find("/MediaBox")?;
+            let rest = &s[pos + "/MediaBox".len()..];
+            let start = rest.find('[')?;
+            let end = rest.find(']')?;
+            let numbers: Vec<&str> = rest[start + 1..end].split_whitespace().collect();
+            let w = numbers.get(2)?.parse::<f64>().ok()?;
+            let h = numbers.get(3)?.parse::<f64>().ok()?;
+            Some((w, h))
+        }
+
+        // 1. Slides view (16:9 landscape 960x540pt)
+        let slides_opts = RenderOptions {
+            mode: "paged".to_string(),
+            page_format: Some("pptSlides".to_string()),
+            ..Default::default()
+        };
+        let slides_pdf = compile_ppt_file_to_pdf(&pptx_path, "Sample Deck", &slides_opts)
+            .expect("Slides PPTX compilation must succeed");
+        assert!(slides_pdf.starts_with(b"%PDF-"));
+        assert!(slides_pdf.len() > 500);
+        let (sw, sh) = first_mediabox_wh(&slides_pdf).expect("Slides PDF MediaBox");
+        assert!(
+            sw > sh && (sw - 960.0).abs() < 1.0 && (sh - 540.0).abs() < 1.0,
+            "Slides mode should use 16:9 landscape slide dimensions (960x540pt), got {sw}x{sh}"
+        );
+
+        // 2. Notes view (A4 portrait 595.28x841.89pt with slide on top + speaker notes below)
+        let notes_opts = RenderOptions {
+            mode: "paged".to_string(),
+            page_format: Some("pptNotes".to_string()),
+            ..Default::default()
+        };
+        let notes_pdf = compile_ppt_file_to_pdf(&pptx_path, "Sample Deck Notes", &notes_opts)
+            .expect("Notes PPTX compilation must succeed");
+        assert!(notes_pdf.starts_with(b"%PDF-"));
+        assert!(notes_pdf.len() > 500);
+        let (nw, nh) = first_mediabox_wh(&notes_pdf).expect("Notes PDF MediaBox");
+        assert!(
+            nh > nw && (nw - 595.28).abs() < 1.0 && (nh - 841.89).abs() < 1.0,
+            "Notes mode should use A4 portrait page dimensions (595.28x841.89pt), got {nw}x{nh}"
+        );
+
+        // 3. 0-byte PPTX file must fail with a clear error
+        let empty_path = temp_dir.join("empty.pptx");
+        std::fs::write(&empty_path, b"").unwrap();
+        let empty_err = compile_ppt_file_to_pdf(&empty_path, "Empty", &slides_opts)
+            .expect_err("0-byte PPTX file must return an error");
+        assert!(empty_err.to_string().contains("empty"));
+
+        // 4. Legacy binary .ppt (OLE2 without EncryptionInfo/EncryptedPackage) must fail with a clear error
+        let build_ole2 = |names: &[&str]| -> Vec<u8> {
+            let mut b = vec![0u8; 512 * 3];
+            b[..8].copy_from_slice(b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1");
+            b[26..28].copy_from_slice(&3u16.to_le_bytes());
+            b[30..32].copy_from_slice(&9u16.to_le_bytes());
+            b[44..48].copy_from_slice(&1u32.to_le_bytes());
+            b[48..52].copy_from_slice(&1u32.to_le_bytes());
+            b[68..72].copy_from_slice(&0xFFFF_FFFEu32.to_le_bytes());
+            b[76..80].copy_from_slice(&0u32.to_le_bytes());
+            for f in b[80..512].chunks_exact_mut(4) {
+                f.copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+            }
+            for f in b[512..1024].chunks_exact_mut(4) {
+                f.copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+            }
+            b[512..516].copy_from_slice(&0xFFFF_FFFDu32.to_le_bytes());
+            b[516..520].copy_from_slice(&0xFFFF_FFFEu32.to_le_bytes());
+            let all: Vec<&str> = std::iter::once("Root Entry")
+                .chain(names.iter().copied())
+                .collect();
+            for (k, name) in all.iter().enumerate() {
+                let e = 1024 + k * 128;
+                let units: Vec<u16> = name.encode_utf16().collect();
+                for (i, u) in units.iter().enumerate() {
+                    b[e + i * 2..e + i * 2 + 2].copy_from_slice(&u.to_le_bytes());
+                }
+                b[e + 64..e + 66].copy_from_slice(&((units.len() as u16 + 1) * 2).to_le_bytes());
+                b[e + 66] = if k == 0 { 5 } else { 2 };
+            }
+            b
+        };
+
+        let legacy_ppt_path = temp_dir.join("legacy.pptx");
+        std::fs::write(
+            &legacy_ppt_path,
+            build_ole2(&["PowerPoint Document", "Current User"]),
+        )
+        .unwrap();
+        let legacy_err = compile_ppt_file_to_pdf(&legacy_ppt_path, "Legacy", &slides_opts)
+            .expect_err("Legacy OLE2 .ppt must return an error");
+        assert!(
+            legacy_err.to_string().contains("Legacy binary PowerPoint (.ppt)"),
+            "Unexpected legacy error: {legacy_err}"
+        );
+
+        // 5. Password-protected OLE2 .pptx must fail with a clear password-protected error
+        let encrypted_pptx_path = temp_dir.join("locked.pptx");
+        std::fs::write(
+            &encrypted_pptx_path,
+            build_ole2(&["EncryptionInfo", "EncryptedPackage"]),
+        )
+        .unwrap();
+        let encrypted_err = compile_ppt_file_to_pdf(&encrypted_pptx_path, "Locked", &slides_opts)
+            .expect_err("Password-protected .pptx must return an error");
+        assert!(
+            encrypted_err.to_string().contains("password-protected"),
+            "Unexpected encrypted error: {encrypted_err}"
+        );
     }
 }
 

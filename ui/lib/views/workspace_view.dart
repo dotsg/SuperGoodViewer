@@ -214,6 +214,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _focusCheckScheduled = false;
       if (!mounted || _workspaceFocusNode.hasFocus) return;
+      if (_pdfCanvasKey.currentState?.isSearchOpen == true) return;
       final focus = FocusManager.instance.primaryFocus;
       if (focus == null || _workspaceFocusNode.ancestors.contains(focus)) {
         _workspaceFocusNode.requestFocus();
@@ -453,7 +454,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     try {
       final file = await FilePicker.pickFile(
         type: FileType.custom,
-        allowedExtensions: ['md', 'markdown', 'txt', 'pdf'],
+        allowedExtensions: ReaderController.filePickerAllowedExtensions,
         dialogTitle: widget.controller.strings.openDocument,
       );
 
@@ -479,6 +480,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     '.mkd',
     '.mdx',
     '.pdf',
+    ...ReaderController.wordExtensions,
+    ...ReaderController.pptExtensions,
     '.typ',
     '.txt',
   };
@@ -488,7 +491,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     '.zip', '.tar', '.gz', '.7z', '.rar', '.bz2', '.xz',
     '.dmg', '.iso', '.pkg', '.app', '.exe', '.dll', '.so', '.dylib', '.bin',
     '.mp4', '.mov', '.avi', '.mkv', '.webm', '.mp3', '.wav', '.flac', '.aac',
-    '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+    '.xls', '.xlsx', '.ppt',
   };
 
   static Future<bool> _isFileSupported(File file) async {
@@ -670,6 +673,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   Future<void> _handleCopySelection() async {
+    if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
     final copied = await _pdfCanvasKey.currentState?.copyTextSelection() ?? false;
     if (!mounted) return;
     if (copied) {
@@ -794,6 +798,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handleToggleTwoPage() {
+    if (widget.controller.isPptDocument) return;
     if (widget.controller.isFluidLayout) {
       widget.controller.toggleMode();
       if (!widget.controller.isTwoPage) {
@@ -807,6 +812,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handleTogglePdfCropMargins() {
+    if (!widget.controller.supportsCropMargins) return;
     widget.controller.togglePdfCropMargins();
     _showZoomHud(widget.controller.strings.toggleCropMarginsTooltip(
       widget.controller.pdfCropMargins,
@@ -828,6 +834,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   Future<void> _handleTogglePresentation() async {
     final willEnter = !widget.controller.isPresentationMode;
     if (willEnter) {
+      if (!widget.controller.supportsPresentationMode) return;
       if (!_isFullScreen) {
         _enteredFullScreenForPresentation = true;
         await _toggleFullScreen();
@@ -990,10 +997,14 @@ class _WorkspaceViewState extends State<WorkspaceView> {
             const SingleActivator(LogicalKeyboardKey.pageDown): _handleNextPage,
 
             // Scrolling (Arrow keys = line scroll, Space = screen scroll)
-            const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
-                _pdfCanvasKey.currentState?.scrollByDelta(-120),
-            const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
-                _pdfCanvasKey.currentState?.scrollByDelta(120),
+            const SingleActivator(LogicalKeyboardKey.arrowUp): () {
+              if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
+              _pdfCanvasKey.currentState?.scrollByDelta(-120);
+            },
+            const SingleActivator(LogicalKeyboardKey.arrowDown): () {
+              if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
+              _pdfCanvasKey.currentState?.scrollByDelta(120);
+            },
             const SingleActivator(LogicalKeyboardKey.space): _handleScrollScreenDown,
             const SingleActivator(LogicalKeyboardKey.space, shift: true): _handleScrollScreenUp,
             const SingleActivator(LogicalKeyboardKey.home): _handleFirstPage,
@@ -1024,9 +1035,11 @@ class _WorkspaceViewState extends State<WorkspaceView> {
             const SingleActivator(LogicalKeyboardKey.keyC, control: true):
                 _handleCopySelection,
             const SingleActivator(LogicalKeyboardKey.keyA, meta: true): () async {
+              if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
               await _pdfCanvasKey.currentState?.selectAllText();
             },
             const SingleActivator(LogicalKeyboardKey.keyA, control: true): () async {
+              if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
               await _pdfCanvasKey.currentState?.selectAllText();
             },
           },
@@ -1834,10 +1847,12 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               ),
               _PillDivider(isDark: isDark),
 
-              // Mode & Layout switcher (Fluid, A4, 16:9, etc.) - Markdown only
+              // Mode & Layout switcher (Fluid, A4, 16:9, Slides/Notes, etc.) - Markdown, Word & PowerPoint
               if (!controller.isPdfDocument) ...[
                 _FormatSelectorPill(
                   format: controller.renderOptions.effectivePageFormat,
+                  isWordDocument: controller.isWordDocument,
+                  isPptDocument: controller.isPptDocument,
                   shortcutLabel: controller.shortcutService.getShortcutLabel('toggleMode'),
                   onSelectFormat: controller.setPageFormat,
                   onToggle: controller.toggleMode,
@@ -1847,41 +1862,47 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 _PillDivider(isDark: isDark),
               ],
 
-              // Full-screen Presentation Mode (PPT) - works for both Markdown and PDF
-              _PillIconButton(
-                icon: Icons.slideshow_rounded,
-                tooltip: controller.strings.togglePresentationTooltip(controller.shortcutService.getShortcutLabel('togglePresentation')),
-                isSelected: controller.isPresentationMode,
-                iconSize: 18,
-                onPressed: _handleTogglePresentation,
-              ),
-              _PillDivider(isDark: isDark),
+              // Full-screen Presentation Mode (PPT) - enabled for PPT, Markdown, and PDF
+              if (controller.supportsPresentationMode) ...[
+                _PillIconButton(
+                  icon: Icons.slideshow_rounded,
+                  tooltip: controller.strings.togglePresentationTooltip(controller.shortcutService.getShortcutLabel('togglePresentation')),
+                  isSelected: controller.isPresentationMode,
+                  iconSize: 18,
+                  onPressed: _handleTogglePresentation,
+                ),
+                _PillDivider(isDark: isDark),
+              ],
 
-              // When in A4 Paged mode or reading a PDF, show Two-Page Spread toggle and Page Navigation
+              // Paged navigation & document-specific page tools
               if (controller.isPdfDocument || !controller.renderOptions.isFluid) ...[
-                _PillIconButton(
-                  icon: controller.isTwoPage
-                      ? Icons.auto_stories_rounded
-                      : Icons.menu_book_outlined,
-                  tooltip: controller.strings.toggleTwoPageTooltip(controller.isTwoPage, controller.shortcutService.getShortcutLabel('toggleTwoPage')),
-                  isSelected: controller.isTwoPage,
-                  iconSize: 17,
-                  onPressed: _handleToggleTwoPage,
-                ),
-                _PillDivider(isDark: isDark),
-                _PillIconButton(
-                  icon: controller.pdfCropMargins
-                      ? Icons.crop_rounded
-                      : Icons.crop_free_rounded,
-                  tooltip: controller.strings.toggleCropMarginsTooltip(
-                    controller.pdfCropMargins,
-                    controller.shortcutService.getShortcutLabel('toggleCropMargins'),
+                if (controller.supportsTwoPage) ...[
+                  _PillIconButton(
+                    icon: controller.isTwoPage
+                        ? Icons.auto_stories_rounded
+                        : Icons.menu_book_outlined,
+                    tooltip: controller.strings.toggleTwoPageTooltip(controller.isTwoPage, controller.shortcutService.getShortcutLabel('toggleTwoPage')),
+                    isSelected: controller.isTwoPage,
+                    iconSize: 17,
+                    onPressed: _handleToggleTwoPage,
                   ),
-                  isSelected: controller.pdfCropMargins,
-                  iconSize: 17,
-                  onPressed: _handleTogglePdfCropMargins,
-                ),
-                _PillDivider(isDark: isDark),
+                  _PillDivider(isDark: isDark),
+                ],
+                if (controller.supportsCropMargins) ...[
+                  _PillIconButton(
+                    icon: controller.pdfCropMargins
+                        ? Icons.crop_rounded
+                        : Icons.crop_free_rounded,
+                    tooltip: controller.strings.toggleCropMarginsTooltip(
+                      controller.pdfCropMargins,
+                      controller.shortcutService.getShortcutLabel('toggleCropMargins'),
+                    ),
+                    isSelected: controller.pdfCropMargins,
+                    iconSize: 17,
+                    onPressed: _handleTogglePdfCropMargins,
+                  ),
+                  _PillDivider(isDark: isDark),
+                ],
                 _PageNavPill(
                   currentPage: _currentPage,
                   pageCount: _pageCount,
@@ -2015,6 +2036,8 @@ class _PillIconButton extends StatelessWidget {
 
 class _FormatSelectorPill extends StatelessWidget {
   final String format;
+  final bool isWordDocument;
+  final bool isPptDocument;
   final ValueChanged<String> onSelectFormat;
   final VoidCallback onToggle;
   final bool isDark;
@@ -2023,6 +2046,8 @@ class _FormatSelectorPill extends StatelessWidget {
 
   const _FormatSelectorPill({
     required this.format,
+    this.isWordDocument = false,
+    this.isPptDocument = false,
     required this.onSelectFormat,
     required this.onToggle,
     required this.isDark,
@@ -2039,7 +2064,10 @@ class _FormatSelectorPill extends StatelessWidget {
       case PageFormat.a4Landscape:
         return Icons.landscape_outlined;
       case PageFormat.slide16x9:
+      case PageFormat.pptSlides:
         return Icons.slideshow_rounded;
+      case PageFormat.pptNotes:
+        return Icons.speaker_notes_outlined;
       case PageFormat.slide4x3:
         return Icons.tv_rounded;
       default:
@@ -2107,56 +2135,81 @@ class _FormatSelectorPill extends StatelessWidget {
               color: theme.colorScheme.primary,
             ),
             itemBuilder: (context) => [
-              PopupMenuItem(
-                value: PageFormat.fluid,
-                child: Row(
-                  children: [
-                    const Icon(Icons.view_stream_rounded, size: 16),
-                    const SizedBox(width: 8),
-                    Text(strings.layoutModeFluid),
-                  ],
+              if (isPptDocument) ...[
+                PopupMenuItem(
+                  value: PageFormat.pptSlides,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.slideshow_rounded, size: 16),
+                      const SizedBox(width: 8),
+                      Text(strings.layoutModePptSlides),
+                    ],
+                  ),
                 ),
-              ),
-              PopupMenuItem(
-                value: PageFormat.a4Portrait,
-                child: Row(
-                  children: [
-                    const Icon(Icons.description_outlined, size: 16),
-                    const SizedBox(width: 8),
-                    Text(strings.layoutModeA4Portrait),
-                  ],
+                PopupMenuItem(
+                  value: PageFormat.pptNotes,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.speaker_notes_outlined, size: 16),
+                      const SizedBox(width: 8),
+                      Text(strings.layoutModePptNotes),
+                    ],
+                  ),
                 ),
-              ),
-              PopupMenuItem(
-                value: PageFormat.a4Landscape,
-                child: Row(
-                  children: [
-                    const Icon(Icons.landscape_outlined, size: 16),
-                    const SizedBox(width: 8),
-                    Text(strings.layoutModeA4Landscape),
-                  ],
+              ] else ...[
+                PopupMenuItem(
+                  value: PageFormat.fluid,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.view_stream_rounded, size: 16),
+                      const SizedBox(width: 8),
+                      Text(strings.layoutModeFluid),
+                    ],
+                  ),
                 ),
-              ),
-              PopupMenuItem(
-                value: PageFormat.slide16x9,
-                child: Row(
-                  children: [
-                    const Icon(Icons.slideshow_rounded, size: 16),
-                    const SizedBox(width: 8),
-                    Text(strings.layoutModeSlide169),
-                  ],
+                PopupMenuItem(
+                  value: PageFormat.a4Portrait,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.description_outlined, size: 16),
+                      const SizedBox(width: 8),
+                      Text(strings.layoutModeA4Portrait),
+                    ],
+                  ),
                 ),
-              ),
-              PopupMenuItem(
-                value: PageFormat.slide4x3,
-                child: Row(
-                  children: [
-                    const Icon(Icons.tv_rounded, size: 16),
-                    const SizedBox(width: 8),
-                    Text(strings.layoutModeSlide43),
-                  ],
-                ),
-              ),
+                if (!isWordDocument) ...[
+                  PopupMenuItem(
+                    value: PageFormat.a4Landscape,
+                    child: Row(
+                      children: [
+                        const Icon(Icons.landscape_outlined, size: 16),
+                        const SizedBox(width: 8),
+                        Text(strings.layoutModeA4Landscape),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: PageFormat.slide16x9,
+                    child: Row(
+                      children: [
+                        const Icon(Icons.slideshow_rounded, size: 16),
+                        const SizedBox(width: 8),
+                        Text(strings.layoutModeSlide169),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: PageFormat.slide4x3,
+                    child: Row(
+                      children: [
+                        const Icon(Icons.tv_rounded, size: 16),
+                        const SizedBox(width: 8),
+                        Text(strings.layoutModeSlide43),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
             ],
           ),
           const SizedBox(width: 2),

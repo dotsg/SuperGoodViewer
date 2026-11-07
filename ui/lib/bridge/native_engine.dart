@@ -44,6 +44,28 @@ typedef SogoodCompileMarkdownDart = Pointer<CSogoodBuffer> Function(
   Pointer<Utf8> optionsJson,
 );
 
+typedef SogoodCompileWordFileC = Pointer<CSogoodBuffer> Function(
+  Pointer<Utf8> filePath,
+  Pointer<Utf8> title,
+  Pointer<Utf8> optionsJson,
+);
+typedef SogoodCompileWordFileDart = Pointer<CSogoodBuffer> Function(
+  Pointer<Utf8> filePath,
+  Pointer<Utf8> title,
+  Pointer<Utf8> optionsJson,
+);
+
+typedef SogoodCompilePptFileC = Pointer<CSogoodBuffer> Function(
+  Pointer<Utf8> filePath,
+  Pointer<Utf8> title,
+  Pointer<Utf8> optionsJson,
+);
+typedef SogoodCompilePptFileDart = Pointer<CSogoodBuffer> Function(
+  Pointer<Utf8> filePath,
+  Pointer<Utf8> title,
+  Pointer<Utf8> optionsJson,
+);
+
 typedef SogoodDetectFontsC = Pointer<CSogoodBuffer> Function();
 typedef SogoodDetectFontsDart = Pointer<CSogoodBuffer> Function();
 
@@ -90,6 +112,8 @@ class NativeEngine {
   late final SogoodFreeBufferDart _freeBuffer;
   late final SogoodCompileMarkdownDart _compileMarkdown;
   late final SogoodDetectFontsDart _detectFonts;
+  SogoodCompileWordFileDart? _compileWordFile;
+  SogoodCompilePptFileDart? _compilePptFile;
   SogoodGetLastDegradedCountDart? _getLastDegradedCount;
   SogoodGetLastDegradedEquationsJsonDart? _getLastDegradedEquationsJson;
   SogoodExtractRemoteImageUrlsJsonDart? _extractRemoteImageUrlsJson;
@@ -151,6 +175,20 @@ class NativeEngine {
         SogoodDetectFontsC,
         SogoodDetectFontsDart
       >('sogood_detect_fonts');
+
+      try {
+        _compileWordFile = lib.lookupFunction<
+          SogoodCompileWordFileC,
+          SogoodCompileWordFileDart
+        >('sogood_compile_word_file');
+      } catch (_) {}
+
+      try {
+        _compilePptFile = lib.lookupFunction<
+          SogoodCompilePptFileC,
+          SogoodCompilePptFileDart
+        >('sogood_compile_ppt_file');
+      } catch (_) {}
 
       try {
         _getLastDegradedCount = lib.lookupFunction<
@@ -466,6 +504,148 @@ class NativeEngine {
       markdown,
       title: title,
       docDir: docDir,
+      options: options,
+    );
+    return result.pdfBytes;
+  }
+
+  NativeCompilationResult _compileOfficeFileResult(
+    String filePath, {
+    required String title,
+    required RenderOptions options,
+    required SogoodCompileWordFileDart? compileFn,
+    required String kindLabel,
+  }) {
+    if (!isAvailable || compileFn == null) {
+      return NativeCompilationResult(
+        errorMessage: _initError ?? 'Native engine $kindLabel compiler is not available',
+      );
+    }
+
+    final filePathPtr = filePath.toNativeUtf8();
+    final titlePtr = title.toNativeUtf8();
+    final optionsPtr = options.toJsonString().toNativeUtf8();
+
+    Pointer<CSogoodBuffer> bufferPtr = nullptr;
+
+    try {
+      bufferPtr = compileFn(
+        filePathPtr,
+        titlePtr,
+        optionsPtr,
+      );
+
+      if (bufferPtr.address == 0) {
+        final err = getLastError() ?? 'Unknown $kindLabel compilation error';
+        debugPrint('[NativeEngine] $kindLabel compilation failed: $err');
+        return NativeCompilationResult(errorMessage: err);
+      }
+
+      final buffer = bufferPtr.ref;
+      if (buffer.len == 0 || buffer.data.address == 0) {
+        return NativeCompilationResult(
+          errorMessage: 'Empty PDF buffer returned from $kindLabel engine',
+        );
+      }
+
+      final result = Uint8List(buffer.len);
+      result.setAll(0, buffer.data.asTypedList(buffer.len));
+      return NativeCompilationResult(pdfBytes: result);
+    } finally {
+      calloc.free(filePathPtr);
+      calloc.free(titlePtr);
+      calloc.free(optionsPtr);
+      if (bufferPtr.address != 0) {
+        _freeBuffer(bufferPtr);
+      }
+    }
+  }
+
+  /// Compiles a Word document file (`.docx`, `.doc`, `.docm`, `.dotx`, `.dotm`)
+  /// into a PDF byte stream and returns structured compilation result.
+  NativeCompilationResult compileWordFileResult(
+    String filePath, {
+    String title = 'Document',
+    RenderOptions options = const RenderOptions(),
+  }) {
+    return _compileOfficeFileResult(
+      filePath,
+      title: title,
+      options: options,
+      compileFn: _compileWordFile,
+      kindLabel: 'Word',
+    );
+  }
+
+  /// Compiles a Word document file in a background Dart isolate.
+  Future<NativeCompilationResult> compileWordFileResultAsync(
+    String filePath, {
+    String title = 'Document',
+    RenderOptions options = const RenderOptions(),
+  }) {
+    return Isolate.run(() {
+      return NativeEngine.instance.compileWordFileResult(
+        filePath,
+        title: title,
+        options: options,
+      );
+    });
+  }
+
+  /// Compiles a Word document file in a background Dart isolate and returns PDF bytes.
+  Future<Uint8List?> compileWordFileAsync(
+    String filePath, {
+    String title = 'Document',
+    RenderOptions options = const RenderOptions(),
+  }) async {
+    final result = await compileWordFileResultAsync(
+      filePath,
+      title: title,
+      options: options,
+    );
+    return result.pdfBytes;
+  }
+
+  /// Compiles a PowerPoint presentation file (`.pptx`, `.pptm`, `.potx`, `.potm`, `.ppsx`, `.ppsm`)
+  /// into a PDF byte stream and returns structured compilation result.
+  NativeCompilationResult compilePptFileResult(
+    String filePath, {
+    String title = 'Presentation',
+    RenderOptions options = const RenderOptions(),
+  }) {
+    return _compileOfficeFileResult(
+      filePath,
+      title: title,
+      options: options,
+      compileFn: _compilePptFile,
+      kindLabel: 'PowerPoint',
+    );
+  }
+
+  /// Compiles a PowerPoint presentation file in a background Dart isolate.
+  Future<NativeCompilationResult> compilePptFileResultAsync(
+    String filePath, {
+    String title = 'Presentation',
+    RenderOptions options = const RenderOptions(),
+  }) {
+    return Isolate.run(() {
+      return NativeEngine.instance.compilePptFileResult(
+        filePath,
+        title: title,
+        options: options,
+      );
+    });
+  }
+
+  /// Compiles a PowerPoint presentation file in a background Dart isolate and returns PDF bytes.
+  Future<Uint8List?> compilePptFileAsync(
+    String filePath, {
+    String title = 'Presentation',
+    RenderOptions options = const RenderOptions(),
+  }) async {
+    final result = await compilePptFileResultAsync(
+      filePath,
+      title: title,
       options: options,
     );
     return result.pdfBytes;

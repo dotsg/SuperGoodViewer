@@ -401,7 +401,7 @@ class MobileWorkspaceChrome {
                               ],
                             ),
                           ),
-                          if (controller.currentPdfBytes != null)
+                          if (controller.supportsPresentationMode && controller.currentPdfBytes != null)
                             PopupMenuItem(
                               value: 'presentation',
                               height: 46,
@@ -527,6 +527,8 @@ class MobileWorkspaceChrome {
                           final isActive = index == controller.activeSessionIndex;
                           final isPdfSession =
                               session.filePath?.toLowerCase().endsWith('.pdf') == true;
+                          final isPptSession =
+                              ReaderController.isPptFilePath(session.filePath);
                           return ListTile(
                             dense: true,
                             shape: RoundedRectangleBorder(
@@ -540,7 +542,9 @@ class MobileWorkspaceChrome {
                             leading: Icon(
                               isPdfSession
                                   ? Icons.picture_as_pdf_outlined
-                                  : Icons.description_outlined,
+                                  : isPptSession
+                                      ? Icons.slideshow_rounded
+                                      : Icons.description_outlined,
                               size: 20,
                             ),
                             title: Text(
@@ -878,6 +882,23 @@ class MobileWorkspaceChrome {
                                     isSelected: controller.pdfCropMargins,
                                     onTap: () {
                                       onToggleCropMargins();
+                                      onRestartToolbarTimer();
+                                    },
+                                    isDark: isDark,
+                                  ),
+                                )
+                              else if (controller.isPptDocument)
+                                Expanded(
+                                  child: _MobileActionButton(
+                                    icon: controller.isPptNotesView
+                                        ? Icons.speaker_notes_outlined
+                                        : Icons.slideshow_rounded,
+                                    label: strings.layoutModeShortName(
+                                      controller.renderOptions.effectivePageFormat,
+                                    ),
+                                    isSelected: controller.isPptNotesView,
+                                    onTap: () {
+                                      controller.toggleMode();
                                       onRestartToolbarTimer();
                                     },
                                     isDark: isDark,

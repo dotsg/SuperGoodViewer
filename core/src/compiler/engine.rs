@@ -75,6 +75,10 @@ pub struct RenderOptions {
     /// even if exceeding the 14,400pt PDF 1.7 limit.
     #[serde(default)]
     pub disable_fluid_slice: Option<bool>,
+    /// When true, renders rasterized office slides (e.g. PowerPoint) at high publication export DPI (240 DPI)
+    /// instead of interactive preview DPI (144 DPI desktop / 120 DPI mobile).
+    #[serde(default)]
+    pub export_quality: Option<bool>,
 }
 
 /// PDF 默认用户单位（1/72 英寸）下页面尺寸上限为 14,400pt，PDFium 超限会裁切或拒绝渲染。
@@ -141,6 +145,7 @@ impl Default for RenderOptions {
             marp_enabled: None,
             fluid_page_height: None,
             disable_fluid_slice: None,
+            export_quality: None,
         }
     }
 }
@@ -151,6 +156,10 @@ pub enum CompileError {
     Typst(String),
     #[error("PDF export error: {0}")]
     Pdf(String),
+    #[error("Word document error: {0}")]
+    Word(String),
+    #[error("PowerPoint document error: {0}")]
+    Ppt(String),
 }
 
 #[derive(Debug)]

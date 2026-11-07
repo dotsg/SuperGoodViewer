@@ -165,11 +165,150 @@ class _UpdateDialogState extends State<UpdateDialog> {
     }
   }
 
+  TextSpan _buildInlineSpans(
+    String text, {
+    required TextStyle baseStyle,
+    required bool isDark,
+    required Color primaryColor,
+  }) {
+    final spans = <InlineSpan>[];
+    final pattern = RegExp(r'\*\*(.+?)\*\*|`([^`]+)`|(#\d+)\b');
+    int lastEnd = 0;
+
+    for (final match in pattern.allMatches(text)) {
+      if (match.start > lastEnd) {
+        spans.add(TextSpan(text: text.substring(lastEnd, match.start), style: baseStyle));
+      }
+      if (match.group(1) != null) {
+        spans.add(
+          TextSpan(
+            text: match.group(1),
+            style: baseStyle.copyWith(fontWeight: FontWeight.w700),
+          ),
+        );
+      } else if (match.group(2) != null) {
+        spans.add(
+          TextSpan(
+            text: match.group(2),
+            style: baseStyle.copyWith(
+              fontFamily: 'monospace',
+              fontSize: (baseStyle.fontSize ?? 12.5) - 0.5,
+              color: isDark ? const Color(0xFF93C5FD) : const Color(0xFF1D4ED8),
+              backgroundColor: isDark
+                  ? Colors.white.withValues(alpha: 0.08)
+                  : Colors.black.withValues(alpha: 0.05),
+            ),
+          ),
+        );
+      } else if (match.group(3) != null) {
+        spans.add(
+          TextSpan(
+            text: match.group(3),
+            style: baseStyle.copyWith(
+              color: primaryColor,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        );
+      }
+      lastEnd = match.end;
+    }
+
+    if (lastEnd < text.length) {
+      spans.add(TextSpan(text: text.substring(lastEnd), style: baseStyle));
+    }
+
+    return TextSpan(children: spans, style: baseStyle);
+  }
+
+  TextSpan _buildReleaseNotesSpan(
+    String rawNotes, {
+    required bool isDark,
+    required Color primaryColor,
+  }) {
+    final baseColor = isDark ? const Color(0xFFE2E8F0) : const Color(0xFF334155);
+    final baseStyle = TextStyle(
+      fontSize: 12.5,
+      height: 1.55,
+      color: baseColor,
+    );
+    final headerStyle = baseStyle.copyWith(
+      fontSize: 13,
+      fontWeight: FontWeight.w700,
+      color: isDark ? Colors.white : const Color(0xFF0F172A),
+    );
+
+    final lines = rawNotes.split('\n');
+    final children = <InlineSpan>[];
+    bool hasEmittedLine = false;
+
+    for (int i = 0; i < lines.length; i++) {
+      final trimmed = lines[i].trim();
+      if (trimmed.isEmpty) continue;
+
+      final isMarkdownHeading = RegExp(r'^#{1,4}\s+').hasMatch(trimmed);
+      final isEmojiHeading = !trimmed.startsWith('-') &&
+          !trimmed.startsWith('*') &&
+          !trimmed.startsWith('•') &&
+          RegExp(r'^(?:✨|🛠️|🛠|🚀|🐛|📦|🎉|⚡)\s*\S+').hasMatch(trimmed) &&
+          trimmed.length <= 36;
+
+      if (isMarkdownHeading || isEmojiHeading) {
+        final headingText = trimmed.replaceFirst(RegExp(r'^#{1,4}\s+'), '');
+        if (hasEmittedLine) {
+          children.add(const TextSpan(text: '\n\n'));
+        }
+        children.add(TextSpan(text: headingText, style: headerStyle));
+        hasEmittedLine = true;
+        continue;
+      }
+
+      if (hasEmittedLine) {
+        children.add(const TextSpan(text: '\n'));
+      }
+
+      final bulletMatch = RegExp(r'^(?:[-*•])\s+(.+)$').firstMatch(trimmed);
+      if (bulletMatch != null) {
+        children.add(
+          TextSpan(
+            text: '• ',
+            style: baseStyle.copyWith(
+              color: primaryColor,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        );
+        children.add(
+          _buildInlineSpans(
+            bulletMatch.group(1)!,
+            baseStyle: baseStyle,
+            isDark: isDark,
+            primaryColor: primaryColor,
+          ),
+        );
+      } else {
+        children.add(
+          _buildInlineSpans(
+            trimmed,
+            baseStyle: baseStyle,
+            isDark: isDark,
+            primaryColor: primaryColor,
+          ),
+        );
+      }
+      hasEmittedLine = true;
+    }
+
+    return TextSpan(children: children, style: baseStyle);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final s = widget.controller.strings;
+    final cleanNotes = widget.info.displayReleaseNotes;
+    final versionSummary = widget.info.versionSummary;
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -250,6 +389,19 @@ class _UpdateDialogState extends State<UpdateDialog> {
                           ),
                         ],
                       ),
+                      if (versionSummary.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          versionSummary,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            color: isDark ? Colors.white.withValues(alpha: 0.85) : Colors.black87,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
                       const SizedBox(height: 4),
                       Text(
                         '${s.updateCurrentVersion(widget.info.currentVersion)}${widget.info.formattedSize.isNotEmpty ? '  •  ${s.updateSize(widget.info.formattedSize)}' : ''}',
@@ -275,7 +427,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
 
             Expanded(
               child: Container(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
                   color: isDark ? const Color(0xFF262626) : const Color(0xFFF7F8FA),
                   borderRadius: BorderRadius.circular(10),
@@ -284,14 +436,11 @@ class _UpdateDialogState extends State<UpdateDialog> {
                   ),
                 ),
                 child: SingleChildScrollView(
-                  child: SelectableText(
-                    widget.info.releaseNotes.isNotEmpty
-                        ? widget.info.releaseNotes
-                        : s.releaseNotesFallback,
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.5,
-                      color: isDark ? const Color(0xFFE2E8F0) : const Color(0xFF334155),
+                  child: SelectableText.rich(
+                    _buildReleaseNotesSpan(
+                      cleanNotes.isNotEmpty ? cleanNotes : s.releaseNotesFallback,
+                      isDark: isDark,
+                      primaryColor: theme.colorScheme.primary,
                     ),
                   ),
                 ),

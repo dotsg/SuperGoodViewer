@@ -258,6 +258,66 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun detectOfficeExtension(file: File, effectiveMime: String?): String? {
+        when (effectiveMime) {
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> return ".docx"
+            "application/vnd.ms-word.document.macroenabled.12" -> return ".docm"
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.template" -> return ".dotx"
+            "application/vnd.ms-word.template.macroenabled.12" -> return ".dotm"
+            "application/msword" -> return ".doc"
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation" -> return ".pptx"
+            "application/vnd.ms-powerpoint.presentation.macroenabled.12" -> return ".pptm"
+            "application/vnd.openxmlformats-officedocument.presentationml.template" -> return ".potx"
+            "application/vnd.ms-powerpoint.template.macroenabled.12" -> return ".potm"
+            "application/vnd.openxmlformats-officedocument.presentationml.slideshow" -> return ".ppsx"
+            "application/vnd.ms-powerpoint.slideshow.macroenabled.12" -> return ".ppsm"
+        }
+        return try {
+            val buf = ByteArray(8)
+            val readLen = FileInputStream(file).use { it.read(buf) }
+            if (readLen >= 8 &&
+                buf[0] == 0xD0.toByte() &&
+                buf[1] == 0xCF.toByte() &&
+                buf[2] == 0x11.toByte() &&
+                buf[3] == 0xE0.toByte() &&
+                buf[4] == 0xA1.toByte() &&
+                buf[5] == 0xB1.toByte() &&
+                buf[6] == 0x1A.toByte() &&
+                buf[7] == 0xE1.toByte()
+            ) {
+                ".doc"
+            } else if (readLen >= 4 &&
+                buf[0] == 0x50.toByte() &&
+                buf[1] == 0x4B.toByte() &&
+                buf[2] == 0x03.toByte() &&
+                buf[3] == 0x04.toByte()
+            ) {
+                var detectedExt: String? = null
+                java.util.zip.ZipInputStream(FileInputStream(file)).use { zis ->
+                    var count = 0
+                    while (count < 64) {
+                        val entry = zis.nextEntry ?: break
+                        val name = entry.name.replace('\\', '/')
+                        if (name == "word" || name.startsWith("word/")) {
+                            detectedExt = ".docx"
+                            break
+                        }
+                        if (name == "ppt" || name.startsWith("ppt/")) {
+                            detectedExt = ".pptx"
+                            break
+                        }
+                        count++
+                    }
+                }
+                detectedExt
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun copyUriToFile(uri: Uri, targetFile: File): Boolean {
         try {
             contentResolver.openInputStream(uri)?.use { input ->
@@ -339,6 +399,17 @@ class MainActivity : FlutterActivity() {
             // are guaranteed to have a .pdf extension.
             val isPdf = hasPdfMagicBytes(targetFile) || effectiveMime == "application/pdf"
             val lowerName = targetFile.name.lowercase()
+            val hasOfficeExt = lowerName.endsWith(".docx") ||
+                lowerName.endsWith(".doc") ||
+                lowerName.endsWith(".docm") ||
+                lowerName.endsWith(".dotx") ||
+                lowerName.endsWith(".dotm") ||
+                lowerName.endsWith(".pptx") ||
+                lowerName.endsWith(".pptm") ||
+                lowerName.endsWith(".potx") ||
+                lowerName.endsWith(".potm") ||
+                lowerName.endsWith(".ppsx") ||
+                lowerName.endsWith(".ppsm")
             if (isPdf) {
                 if (!lowerName.endsWith(".pdf")) {
                     val baseName = if (lowerName.endsWith(".md") || lowerName.endsWith(".bin") || lowerName.endsWith(".tmp")) {
@@ -351,16 +422,31 @@ class MainActivity : FlutterActivity() {
                         targetFile = renamedFile
                     }
                 }
+            } else if (hasOfficeExt) {
+                // Keep existing Word / PowerPoint extension untouched
             } else {
-                val hasMarkdownExt = lowerName.endsWith(".md") ||
-                    lowerName.endsWith(".markdown") ||
-                    lowerName.endsWith(".mdown") ||
-                    lowerName.endsWith(".mkd") ||
-                    lowerName.endsWith(".mkdn")
-                if (!hasMarkdownExt) {
-                    val renamedFile = File(sessionDir, "${targetFile.name}.md")
+                val officeExt = detectOfficeExtension(targetFile, effectiveMime)
+                if (officeExt != null) {
+                    val baseName = if (lowerName.endsWith(".md") || lowerName.endsWith(".bin") || lowerName.endsWith(".tmp")) {
+                        targetFile.nameWithoutExtension.ifEmpty { "document" }
+                    } else {
+                        targetFile.name
+                    }
+                    val renamedFile = File(sessionDir, "$baseName$officeExt")
                     if (targetFile.renameTo(renamedFile)) {
                         targetFile = renamedFile
+                    }
+                } else {
+                    val hasMarkdownExt = lowerName.endsWith(".md") ||
+                        lowerName.endsWith(".markdown") ||
+                        lowerName.endsWith(".mdown") ||
+                        lowerName.endsWith(".mkd") ||
+                        lowerName.endsWith(".mkdn")
+                    if (!hasMarkdownExt) {
+                        val renamedFile = File(sessionDir, "${targetFile.name}.md")
+                        if (targetFile.renameTo(renamedFile)) {
+                            targetFile = renamedFile
+                        }
                     }
                 }
             }

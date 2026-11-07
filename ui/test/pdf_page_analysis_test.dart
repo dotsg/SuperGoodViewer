@@ -156,7 +156,7 @@ void main() {
     });
 
     test('keyFor reflects path and identity of currentPdfBytes', () {
-      final controller = ReaderController();
+      final controller = ReaderController(autoRestorePreferences: false);
       final key1 = PdfPageAnalysisService.keyFor(controller);
       expect(key1, contains('untitled#'));
 
@@ -169,7 +169,7 @@ void main() {
     });
 
     test('keyFor matches delegate lookup when cached analysis is present', () async {
-      final controller = ReaderController();
+      final controller = ReaderController(autoRestorePreferences: false);
       controller.setPdfCropMargins(true);
       final docKey = PdfPageAnalysisService.keyFor(controller);
 
@@ -245,7 +245,7 @@ void main() {
       expect(result.elements.length, greaterThan(40));
       expect(result.markdown, contains('Deep Residual Learning'));
 
-      final controller = ReaderController();
+      final controller = ReaderController(autoRestorePreferences: false);
       addTearDown(controller.dispose);
 
       await controller.openFile(resnetPdfPath);

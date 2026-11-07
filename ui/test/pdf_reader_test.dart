@@ -1,10 +1,13 @@
+import 'dart:convert';
 import 'dart:io';
+import 'package:archive/archive.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:pdfrx/pdfrx.dart';
 import 'package:sogoodviewer/controllers/reader_controller.dart';
+import 'package:sogoodviewer/models/render_options.dart';
 import 'package:sogoodviewer/services/preferences_service.dart';
 import 'package:sogoodviewer/views/settings_dialog.dart';
 import 'package:sogoodviewer/views/sidebar_view.dart';
@@ -455,6 +458,243 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('当前正在阅读独立 PDF 文档'), findsOneWidget);
+    });
+
+    test('Opening a Word (.docx) document compiles to PDF in both paged and fluid modes', () async {
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      expect(ReaderController.isWordFilePath('report.docx'), isTrue);
+      expect(ReaderController.isWordFilePath('legacy.DOC'), isTrue);
+      expect(ReaderController.isWordFilePath('macro.docm'), isTrue);
+      expect(ReaderController.isWordFilePath('template.dotx'), isTrue);
+      expect(ReaderController.isWordFilePath('readme.md'), isFalse);
+
+      // Word 2003 XML / Flat OPC XML is supported by parse_word_bytes without needing binary zip fixtures
+      const wordXml = '<?xml version="1.0" encoding="UTF-8"?>'
+          '<w:wordDocument xmlns:w="http://schemas.microsoft.com/office/word/2003/wordml">'
+          '<w:body>'
+          '<w:p><w:r><w:t>Hello SuperGoodViewer Word Preview</w:t></w:r></w:p>'
+          '</w:body>'
+          '</w:wordDocument>';
+      final sampleDocxFile = File(p.join(tempTestDir.path, 'sample_word.docx'));
+      sampleDocxFile.writeAsStringSync(wordXml);
+
+      // Set global default format to 16:9 before opening a Word document
+      controller.setPageFormat(PageFormat.slide16x9, updateGlobalDefault: true);
+      expect(controller.globalRenderOptions.effectivePageFormat, PageFormat.slide16x9);
+
+      await controller.openFile(sampleDocxFile.path);
+      for (int i = 0; i < 60 && controller.isCompiling; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+
+      expect(controller.isWordDocument, isTrue);
+      expect(controller.isPdfDocument, isFalse);
+      expect(controller.errorMessage, isNull);
+      expect(controller.currentPdfBytes, isNotNull);
+      expect(ReaderController.startsWithPdfHeader(controller.currentPdfBytes!), isTrue);
+      // Word document normalizes its own effective format to a4Portrait without clobbering global 16:9
+      expect(controller.renderOptions.effectivePageFormat, PageFormat.a4Portrait);
+      expect(controller.globalRenderOptions.effectivePageFormat, PageFormat.slide16x9);
+      expect(controller.supportsCropMargins, isFalse);
+      expect(controller.effectivePdfCropMargins, isFalse);
+      expect(controller.supportsTwoPage, isTrue);
+      expect(controller.supportsPresentationMode, isFalse);
+      controller.setPresentationMode(true);
+      expect(controller.isPresentationMode, isFalse);
+
+      // Toggle between fluid and paged mode and verify re-render succeeds while global format stays 16:9
+      controller.toggleMode();
+      for (int i = 0; i < 60 && controller.isCompiling; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+      expect(controller.errorMessage, isNull);
+      expect(controller.currentPdfBytes, isNotNull);
+      expect(ReaderController.startsWithPdfHeader(controller.currentPdfBytes!), isTrue);
+      expect(controller.renderOptions.effectivePageFormat, PageFormat.fluid);
+      expect(controller.globalRenderOptions.effectivePageFormat, PageFormat.slide16x9);
+      expect(controller.supportsTwoPage, isFalse);
+
+      // Theme and typography changes on a Word document must NOT trigger native recompilation
+      final genBeforeTheme = controller.compileGeneration;
+      controller.renderOptionsChanged = false;
+      controller.toggleTheme();
+      controller.setFontSize(18.0);
+      controller.setLineSpacing(1.8);
+      expect(controller.compileGeneration, genBeforeTheme);
+      expect(controller.renderOptionsChanged, isFalse);
+
+      // Empty 0-byte .docx file must report an error instead of silently rendering blank PDF
+      final emptyDocxFile = File(p.join(tempTestDir.path, 'empty_word.docx'));
+      emptyDocxFile.writeAsBytesSync(const []);
+      await controller.openFile(emptyDocxFile.path, newTab: false);
+      for (int i = 0; i < 60 && controller.isCompiling; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+      expect(controller.errorMessage, isNotNull);
+      expect(controller.errorMessage, contains('empty'));
+    });
+
+    test('Opening a PowerPoint (.pptx) presentation compiles to PDF in both Slides and Notes views', () async {
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      expect(ReaderController.isPptFilePath('deck.pptx'), isTrue);
+      expect(ReaderController.isPptFilePath('macro.PPTM'), isTrue);
+      expect(ReaderController.isPptFilePath('template.potx'), isTrue);
+      expect(ReaderController.isPptFilePath('show.ppsx'), isTrue);
+      expect(ReaderController.isPptFilePath('legacy.ppt'), isFalse);
+      expect(ReaderController.isPptFilePath('readme.md'), isFalse);
+
+      // Build a minimal valid .pptx zip package in memory
+      final archive = Archive();
+      const presXml = '<?xml version="1.0" encoding="UTF-8"?>'
+          '<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
+          'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+          '<p:sldSz cx="12192000" cy="6858000"/>'
+          '</p:presentation>';
+      final presBytes = utf8.encode(presXml);
+      archive.addFile(ArchiveFile('ppt/presentation.xml', presBytes.length, presBytes));
+      final pptxBytes = ZipEncoder().encode(archive);
+
+      final samplePptxFile = File(p.join(tempTestDir.path, 'sample_deck.pptx'));
+      samplePptxFile.writeAsBytesSync(pptxBytes);
+
+      // Set global default format to fluid and enable two-page/crop before opening a PPTX document
+      controller.setPageFormat(PageFormat.fluid, updateGlobalDefault: true);
+      controller.setTwoPage(true);
+      controller.setPdfCropMargins(true);
+      expect(controller.globalRenderOptions.effectivePageFormat, PageFormat.fluid);
+
+      await controller.openFile(samplePptxFile.path);
+      for (int i = 0; i < 80 && controller.isCompiling; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+
+      expect(controller.isPptDocument, isTrue);
+      expect(controller.isWordDocument, isFalse);
+      expect(controller.isPdfDocument, isFalse);
+      expect(controller.isFluidLayout, isFalse);
+      expect(controller.isPptNotesView, isFalse);
+      expect(controller.supportsCropMargins, isFalse);
+      expect(controller.effectivePdfCropMargins, isFalse);
+      expect(controller.supportsTwoPage, isFalse);
+      expect(controller.isTwoPage, isFalse);
+      controller.toggleTwoPage();
+      expect(controller.isTwoPage, isFalse);
+      expect(controller.supportsPresentationMode, isTrue);
+      expect(controller.errorMessage, isNull);
+      expect(controller.currentPdfBytes, isNotNull);
+      expect(ReaderController.startsWithPdfHeader(controller.currentPdfBytes!), isTrue);
+      expect(controller.renderOptions.effectivePageFormat, PageFormat.pptSlides);
+      expect(controller.globalRenderOptions.effectivePageFormat, PageFormat.fluid);
+
+      // Toggle from Slides view to Speaker Notes view (pptNotes)
+      controller.toggleMode();
+      for (int i = 0; i < 80 && controller.isCompiling; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+      expect(controller.errorMessage, isNull);
+      expect(controller.currentPdfBytes, isNotNull);
+      expect(ReaderController.startsWithPdfHeader(controller.currentPdfBytes!), isTrue);
+      expect(controller.renderOptions.effectivePageFormat, PageFormat.pptNotes);
+      expect(controller.isPptNotesView, isTrue);
+      expect(controller.globalRenderOptions.effectivePageFormat, PageFormat.fluid);
+
+      // Entering full-screen Presentation Mode from Notes view switches to Slides view, and restores Notes on exit
+      controller.setPresentationMode(true);
+      expect(controller.renderOptions.effectivePageFormat, PageFormat.pptSlides);
+      controller.setPresentationMode(false);
+      expect(controller.renderOptions.effectivePageFormat, PageFormat.pptNotes);
+
+      // Export options serialize export_quality: true and getPdfBytesForExport returns high-DPI PDF bytes
+      const exportOpts = RenderOptions(
+        mode: 'paged',
+        pageFormat: PageFormat.pptNotes,
+        exportQuality: true,
+      );
+      expect(exportOpts.toJsonString(), contains('"export_quality":true'));
+      expect(exportOpts.toJsonString(), contains('"page_format":"pptNotes"'));
+      final exportedPptPdf = await controller.getPdfBytesForExport();
+      expect(exportedPptPdf, isNotNull);
+      expect(ReaderController.startsWithPdfHeader(exportedPptPdf!), isTrue);
+
+      // Theme and typography changes on a PowerPoint presentation must NOT trigger native recompilation
+      final genBeforeTheme = controller.compileGeneration;
+      controller.renderOptionsChanged = false;
+      controller.toggleTheme();
+      controller.setFontSize(18.0);
+      expect(controller.compileGeneration, genBeforeTheme);
+      expect(controller.renderOptionsChanged, isFalse);
+
+      // Saving a global layout default while a PPTX is open must update globalRenderOptions,
+      // never overwriting globalRenderOptions with pptSlides/pptNotes
+      controller.setPageFormat(PageFormat.pptSlides, updateGlobalDefault: true);
+      expect(controller.globalRenderOptions.effectivePageFormat, PageFormat.fluid);
+      controller.setPageFormat(PageFormat.a4Landscape, updateGlobalDefault: true);
+      expect(controller.globalRenderOptions.effectivePageFormat, PageFormat.a4Landscape);
+      expect(controller.renderOptions.effectivePageFormat, PageFormat.pptNotes);
+
+      // Empty 0-byte .pptx file must report an error instead of silently rendering blank PDF
+      final emptyPptxFile = File(p.join(tempTestDir.path, 'empty_deck.pptx'));
+      emptyPptxFile.writeAsBytesSync(const []);
+      await controller.openFile(emptyPptxFile.path, newTab: false);
+      for (int i = 0; i < 60 && controller.isCompiling; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+      expect(controller.errorMessage, isNotNull);
+      expect(controller.errorMessage, contains('empty'));
+    });
+
+    testWidgets('SettingsDialog layout tab uses globalRenderOptions when a PowerPoint (.pptx) is open', (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1280, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+      controller.setPageFormat(PageFormat.a4Portrait, updateGlobalDefault: true);
+
+      final archive = Archive();
+      const presXml = '<?xml version="1.0" encoding="UTF-8"?>'
+          '<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
+          'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+          '<p:sldSz cx="12192000" cy="6858000"/>'
+          '</p:presentation>';
+      final presBytes = utf8.encode(presXml);
+      archive.addFile(ArchiveFile('ppt/presentation.xml', presBytes.length, presBytes));
+      final pptxBytes = ZipEncoder().encode(archive);
+
+      final samplePptxFile = File(p.join(tempTestDir.path, 'settings_deck.pptx'));
+      samplePptxFile.writeAsBytesSync(pptxBytes);
+      await tester.runAsync(() async {
+        await controller.openFile(samplePptxFile.path);
+        for (int i = 0; i < 80 && controller.isCompiling; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 25));
+        }
+      });
+
+      expect(controller.isPptDocument, isTrue);
+      expect(controller.isOfficeDocument, isTrue);
+      expect(controller.renderOptions.effectivePageFormat, PageFormat.pptSlides);
+      expect(controller.globalRenderOptions.effectivePageFormat, PageFormat.a4Portrait);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SettingsDialog(
+              controller: controller,
+              initialTab: SettingsTab.layout,
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(seconds: 1));
+
+      // Global default remains a4Portrait and PPT session remains pptSlides
+      expect(controller.globalRenderOptions.effectivePageFormat, PageFormat.a4Portrait);
+      expect(controller.renderOptions.effectivePageFormat, PageFormat.pptSlides);
     });
   });
 }

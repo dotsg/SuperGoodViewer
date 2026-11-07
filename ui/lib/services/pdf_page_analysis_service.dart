@@ -258,12 +258,12 @@ class PdfPageAnalysisService {
     required VoidCallback onCroppedReady,
   }) {
     if (document.pages.isEmpty) return;
-    if (!isMobile && !readerController.pdfCropMargins) return;
+    if (!isMobile && !readerController.effectivePdfCropMargins) return;
     analyzePage(
       document.pages.first,
       docKey: keyFor(readerController),
     ).then((_) {
-      if (readerController.pdfCropMargins) {
+      if (readerController.effectivePdfCropMargins) {
         onCroppedReady();
       }
     });
@@ -276,7 +276,7 @@ class PdfPageAnalysisService {
     int pageNum, {
     required bool isMobile,
   }) {
-    if (!isMobile && !readerController.pdfCropMargins) return;
+    if (!isMobile && !readerController.effectivePdfCropMargins) return;
     if (pdfController.pages.isNotEmpty && pageNum >= 1 && pageNum <= pdfController.pages.length) {
       analyzePage(
         pdfController.pages[pageNum - 1],

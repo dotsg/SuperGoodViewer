@@ -94,7 +94,7 @@ class _SidebarViewState extends State<SidebarView> {
     try {
       final file = await FilePicker.pickFile(
         type: FileType.custom,
-        allowedExtensions: ['md', 'markdown', 'txt', 'pdf'],
+        allowedExtensions: ReaderController.filePickerAllowedExtensions,
       );
 
       if (file != null && file.path != null) {
@@ -514,6 +514,7 @@ class _SidebarViewState extends State<SidebarView> {
                     final path = widget.controller.recentFiles[index];
                     final isSelected = path == widget.controller.currentFilePath;
                     final isPdf = path.toLowerCase().endsWith('.pdf');
+                    final isPpt = ReaderController.isPptFilePath(path);
                     return ListTile(
                       dense: !isMobileDrawer,
                       selected: isSelected,
@@ -521,9 +522,17 @@ class _SidebarViewState extends State<SidebarView> {
                         borderRadius: BorderRadius.circular(isMobileDrawer ? 10 : 6),
                       ),
                       leading: Icon(
-                        isPdf ? Icons.picture_as_pdf_outlined : Icons.article_outlined,
+                        isPdf
+                            ? Icons.picture_as_pdf_outlined
+                            : isPpt
+                                ? Icons.slideshow_rounded
+                                : Icons.article_outlined,
                         size: isMobileDrawer ? 20 : 16,
-                        color: isPdf ? Colors.redAccent.withValues(alpha: 0.8) : null,
+                        color: isPdf
+                            ? Colors.redAccent.withValues(alpha: 0.8)
+                            : isPpt
+                                ? Colors.deepOrangeAccent.withValues(alpha: 0.85)
+                                : null,
                       ),
                       title: Text(
                         p.basename(path),

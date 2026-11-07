@@ -132,6 +132,10 @@ class EnStrings implements AppStrings {
         return '16:9';
       case 'slide4x3':
         return '4:3';
+      case 'pptSlides':
+        return 'Slides';
+      case 'pptNotes':
+        return 'Notes';
       default:
         return 'A4';
     }
@@ -325,6 +329,10 @@ class EnStrings implements AppStrings {
   String get layoutModeSlide169 => '16:9 Widescreen Slides';
   @override
   String get layoutModeSlide43 => '4:3 Standard Slides';
+  @override
+  String get layoutModePptSlides => 'Slide View (Slides)';
+  @override
+  String get layoutModePptNotes => 'Speaker Notes (Notes)';
   @override
   String get twoPageSpreadDesc =>
       'Displays two facing pages side-by-side for a book-like reading experience';
