@@ -1038,12 +1038,23 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   void _onViewerChanged1() => _onPdfViewerChanged(1);
 
   void _onSearchUpdated() {
+    _syncSearchStateFromSearcher();
+  }
+
+  void _syncSearchStateFromSearcher([int? explicitIndex]) {
     if (!mounted) return;
     final searcher = _activeSearcher;
+    final total = searcher?.matches.length ?? 0;
+    final rawIdx = explicitIndex ??
+        searcher?.currentIndex ??
+        (_searchMatchIndex > 0 ? _searchMatchIndex - 1 : null);
+    final matchIdx = total > 0
+        ? ((rawIdx != null && rawIdx >= 0 && rawIdx < total) ? rawIdx + 1 : 1)
+        : 0;
     setState(() {
       _isSearchingText = searcher?.isSearching ?? false;
-      _searchTotalMatches = searcher?.matches.length ?? 0;
-      _searchMatchIndex = (searcher?.currentIndex != null) ? searcher!.currentIndex! + 1 : 0;
+      _searchTotalMatches = total;
+      _searchMatchIndex = matchIdx;
     });
   }
 
@@ -2939,7 +2950,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     });
   }
 
-  void searchNext() async {
+  Future<void> searchNext() async {
     final searcher = _activeSearcher;
     if (searcher == null) return;
     if (searcher.matches.isEmpty) {
@@ -2953,22 +2964,28 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       }
       return;
     }
-    final curr = searcher.currentIndex ?? -1;
-    if (curr + 1 >= searcher.matches.length) {
-      await searcher.goToMatchOfIndex(0);
-    } else {
-      await searcher.goToNextMatch();
-    }
+    final curr = searcher.currentIndex ?? (_searchMatchIndex > 0 ? _searchMatchIndex - 1 : -1);
+    final nextIdx = (curr + 1 >= searcher.matches.length || curr < 0) ? 0 : curr + 1;
+    _syncSearchStateFromSearcher(nextIdx);
+    await searcher.goToMatchOfIndex(nextIdx);
+    _syncSearchStateFromSearcher(searcher.currentIndex ?? nextIdx);
   }
 
-  void searchPrev() async {
+  Future<void> searchPrev() async {
     final searcher = _activeSearcher;
     if (searcher == null || searcher.matches.isEmpty) return;
-    final curr = searcher.currentIndex ?? 0;
-    if (curr <= 0) {
-      await searcher.goToMatchOfIndex(searcher.matches.length - 1);
-    } else {
-      await searcher.goToPrevMatch();
+    final curr = searcher.currentIndex ?? (_searchMatchIndex > 0 ? _searchMatchIndex - 1 : 0);
+    final prevIdx = (curr <= 0) ? searcher.matches.length - 1 : curr - 1;
+    _syncSearchStateFromSearcher(prevIdx);
+    await searcher.goToMatchOfIndex(prevIdx);
+    _syncSearchStateFromSearcher(searcher.currentIndex ?? prevIdx);
+  }
+
+  void _clearSearchQuery() {
+    _searchFieldController.clear();
+    _onSearchQueryChanged('');
+    if (_isSearchOpen && mounted) {
+      _searchFocusNode.requestFocus();
     }
   }
 
@@ -2984,6 +3001,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         _isSearchingText = false;
       });
     } else {
+      setState(() {
+        _searchMatchIndex = 0;
+      });
       _activeSearcher?.startTextSearch(
         trimmed,
         caseInsensitive: true,
@@ -2999,7 +3019,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         closeSearch();
         return KeyEventResult.handled;
       }
-      if (event.logicalKey == LogicalKeyboardKey.enter) {
+      if (event.logicalKey == LogicalKeyboardKey.enter ||
+          event.logicalKey == LogicalKeyboardKey.numpadEnter) {
         if (HardwareKeyboard.instance.isShiftPressed) {
           searchPrev();
         } else {
@@ -3008,9 +3029,23 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         return KeyEventResult.handled;
       }
     }
-    // Return skipRemainingHandlers so ancestor shortcuts (such as Space for next page,
-    // Arrow keys, Home/End) do not intercept keystrokes while the search box is active,
-    // while still allowing the TextField and IME to receive keystrokes and candidate selection.
+    // Must return ignored here so Flutter's DefaultTextEditingShortcuts (an ancestor of
+    // TextField's internal Focus node) can process Backspace, Delete, Arrow keys, Home/End,
+    // Select All (Cmd/Ctrl+A), Copy/Paste/Cut, etc.
+    return KeyEventResult.ignored;
+  }
+
+  KeyEventResult _handleSearchBarContainerKeyEvent(FocusNode node, KeyEvent event) {
+    if (!_searchFocusNode.hasFocus) return KeyEventResult.ignored;
+    final isMetaOrCtrl = HardwareKeyboard.instance.isMetaPressed ||
+        HardwareKeyboard.instance.isControlPressed;
+    if (isMetaOrCtrl &&
+        (event.logicalKey == LogicalKeyboardKey.keyF ||
+            event.logicalKey == LogicalKeyboardKey.keyG)) {
+      return KeyEventResult.ignored;
+    }
+    // Stop unhandled keys (e.g. Space, '[', ']', PageUp, PageDown) from bubbling up
+    // to WorkspaceView's document navigation CallbackShortcuts while typing in search.
     return KeyEventResult.skipRemainingHandlers;
   }
 
@@ -3033,98 +3068,121 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       matchInfo = s.matchCount(_searchMatchIndex, _searchTotalMatches);
     }
 
-    final textField = TextField(
-      controller: _searchFieldController,
-      focusNode: _searchFocusNode,
-      style: TextStyle(fontSize: isMobile ? 14.5 : 13, color: textColor),
-      decoration: InputDecoration(
-        hintText: s.searchPlaceholder,
-        hintStyle: TextStyle(fontSize: isMobile ? 14.0 : 12.5, color: hintColor),
-        isDense: true,
-        border: InputBorder.none,
-        contentPadding: EdgeInsets.symmetric(vertical: isMobile ? 8 : 6),
+    final textField = DefaultTextEditingShortcuts(
+      child: TextField(
+        controller: _searchFieldController,
+        focusNode: _searchFocusNode,
+        style: TextStyle(fontSize: isMobile ? 14.5 : 13, color: textColor),
+        decoration: InputDecoration(
+          hintText: s.searchPlaceholder,
+          hintStyle: TextStyle(fontSize: isMobile ? 14.0 : 12.5, color: hintColor),
+          isDense: true,
+          border: InputBorder.none,
+          contentPadding: EdgeInsets.symmetric(vertical: isMobile ? 8 : 6),
+        ),
+        onChanged: _onSearchQueryChanged,
+        onSubmitted: (_) => searchNext(),
       ),
-      onChanged: _onSearchQueryChanged,
-      onSubmitted: (_) => searchNext(),
     );
 
     final radius = BorderRadius.circular(isMobile ? 24 : 10);
     final btnMinSize = isMobile ? 38.0 : 26.0;
 
-    return ClipRRect(
-      borderRadius: radius,
-      child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-        child: Container(
-          padding: EdgeInsets.symmetric(
-            horizontal: isMobile ? 14 : 8,
-            vertical: isMobile ? 5 : 3,
-          ),
-          decoration: BoxDecoration(
-            color: bgColor,
-            borderRadius: radius,
-            border: Border.all(color: borderColor, width: 0.8),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: isDark ? 0.4 : 0.12),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Row(
-            mainAxisSize: isMobile ? MainAxisSize.max : MainAxisSize.min,
-            children: [
-              Icon(Icons.search_rounded, size: isMobile ? 20 : 16, color: hintColor),
-              SizedBox(width: isMobile ? 8 : 6),
-              if (isMobile)
-                Expanded(child: textField)
-              else
-                SizedBox(width: 170, child: textField),
-              if (matchInfo.isNotEmpty) ...[
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: Text(
-                    matchInfo,
-                    style: TextStyle(
-                      fontSize: isMobile ? 12.5 : 11.5,
-                      color: _searchTotalMatches == 0 && _searchFieldController.text.isNotEmpty
-                          ? Colors.redAccent
-                          : hintColor,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
+    return Focus(
+      canRequestFocus: false,
+      skipTraversal: true,
+      onKeyEvent: _handleSearchBarContainerKeyEvent,
+      child: ClipRRect(
+        borderRadius: radius,
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: isMobile ? 14 : 8,
+              vertical: isMobile ? 5 : 3,
+            ),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: radius,
+              border: Border.all(color: borderColor, width: 0.8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: isDark ? 0.4 : 0.12),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
                 ),
               ],
-              const SizedBox(width: 2),
-              IconButton(
-                icon: Icon(Icons.keyboard_arrow_up_rounded, size: isMobile ? 22 : 17, color: iconColor),
-                tooltip: s.searchPrevious,
-                splashRadius: isMobile ? 20 : 14,
-                padding: EdgeInsets.zero,
-                constraints: BoxConstraints(minWidth: btnMinSize, minHeight: btnMinSize),
-                onPressed: _searchTotalMatches > 0 ? searchPrev : null,
-              ),
-              IconButton(
-                icon: Icon(Icons.keyboard_arrow_down_rounded, size: isMobile ? 22 : 17, color: iconColor),
-                tooltip: s.searchNext,
-                splashRadius: isMobile ? 20 : 14,
-                padding: EdgeInsets.zero,
-                constraints: BoxConstraints(minWidth: btnMinSize, minHeight: btnMinSize),
-                onPressed: _searchTotalMatches > 0 ? searchNext : null,
-              ),
-              const SizedBox(width: 4),
-              Container(width: 1, height: isMobile ? 18 : 14, color: borderColor),
-              const SizedBox(width: 4),
-              IconButton(
-                icon: Icon(Icons.close_rounded, size: isMobile ? 19 : 15, color: iconColor),
-                tooltip: s.closeSearch,
-                splashRadius: isMobile ? 20 : 14,
-                padding: EdgeInsets.zero,
-                constraints: BoxConstraints(minWidth: btnMinSize, minHeight: btnMinSize),
-                onPressed: closeSearch,
-              ),
-            ],
+            ),
+            child: Row(
+              mainAxisSize: isMobile ? MainAxisSize.max : MainAxisSize.min,
+              children: [
+                Icon(Icons.search_rounded, size: isMobile ? 20 : 16, color: hintColor),
+                SizedBox(width: isMobile ? 8 : 6),
+                if (isMobile)
+                  Expanded(child: textField)
+                else
+                  SizedBox(width: 170, child: textField),
+                if (_searchFieldController.text.isNotEmpty)
+                  IconButton(
+                    key: const ValueKey('search_clear_button'),
+                    icon: Icon(Icons.cancel_rounded, size: isMobile ? 18 : 14, color: hintColor),
+                    splashRadius: isMobile ? 16 : 12,
+                    padding: EdgeInsets.zero,
+                    constraints: BoxConstraints(
+                      minWidth: isMobile ? 28.0 : 20.0,
+                      minHeight: isMobile ? 28.0 : 20.0,
+                    ),
+                    onPressed: _clearSearchQuery,
+                  ),
+                if (matchInfo.isNotEmpty) ...[
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Text(
+                      matchInfo,
+                      key: const ValueKey('search_match_count_text'),
+                      style: TextStyle(
+                        fontSize: isMobile ? 12.5 : 11.5,
+                        color: _searchTotalMatches == 0 && _searchFieldController.text.isNotEmpty
+                            ? Colors.redAccent
+                            : hintColor,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(width: 2),
+                IconButton(
+                  key: const ValueKey('search_prev_button'),
+                  icon: Icon(Icons.keyboard_arrow_up_rounded, size: isMobile ? 22 : 17, color: iconColor),
+                  tooltip: s.searchPrevious,
+                  splashRadius: isMobile ? 20 : 14,
+                  padding: EdgeInsets.zero,
+                  constraints: BoxConstraints(minWidth: btnMinSize, minHeight: btnMinSize),
+                  onPressed: _searchTotalMatches > 0 ? searchPrev : null,
+                ),
+                IconButton(
+                  key: const ValueKey('search_next_button'),
+                  icon: Icon(Icons.keyboard_arrow_down_rounded, size: isMobile ? 22 : 17, color: iconColor),
+                  tooltip: s.searchNext,
+                  splashRadius: isMobile ? 20 : 14,
+                  padding: EdgeInsets.zero,
+                  constraints: BoxConstraints(minWidth: btnMinSize, minHeight: btnMinSize),
+                  onPressed: _searchTotalMatches > 0 ? searchNext : null,
+                ),
+                const SizedBox(width: 4),
+                Container(width: 1, height: isMobile ? 18 : 14, color: borderColor),
+                const SizedBox(width: 4),
+                IconButton(
+                  key: const ValueKey('search_close_button'),
+                  icon: Icon(Icons.close_rounded, size: isMobile ? 19 : 15, color: iconColor),
+                  tooltip: s.closeSearch,
+                  splashRadius: isMobile ? 20 : 14,
+                  padding: EdgeInsets.zero,
+                  constraints: BoxConstraints(minWidth: btnMinSize, minHeight: btnMinSize),
+                  onPressed: closeSearch,
+                ),
+              ],
+            ),
           ),
         ),
       ),

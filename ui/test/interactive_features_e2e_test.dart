@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -279,7 +280,11 @@ void main() {
       final controller = ReaderController(autoRestorePreferences: false);
       addTearDown(controller.dispose);
 
-      await controller.openFile(multipagePdfFile.path);
+      await tester.runAsync(() async {
+        for (int i = 0; i < 80 && controller.isCompiling; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 25));
+        }
+      });
 
       await tester.pumpWidget(
         MaterialApp(
@@ -290,7 +295,7 @@ void main() {
       Future<void> advance([int frames = 20]) async {
         for (var i = 0; i < frames; i++) {
           await tester.pump(const Duration(milliseconds: 16));
-          await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 2)));
+          await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 5)));
         }
       }
 
@@ -310,15 +315,49 @@ void main() {
       expect(find.byTooltip('下一个 (Enter)'), findsOneWidget);
       expect(find.byTooltip('上一个 (Shift+Enter)'), findsOneWidget);
 
-      // 2. Type search query
-      await tester.enterText(searchField, 'Page');
-      await advance(30);
+      // 2. Type search query ('Typst' appears 3 times in the sample document)
+      await tester.enterText(searchField, 'Typst');
+      await tester.pump(const Duration(milliseconds: 600));
+      await advance(40);
 
-      // 3. Navigate matches
-      canvasState.searchNext();
+      final matchCountFinder = find.byKey(const ValueKey('search_match_count_text'));
+      expect(matchCountFinder, findsOneWidget);
+      expect(tester.widget<Text>(matchCountFinder).data, '1 / 3');
+
+      // 3. Navigate matches and verify current match index updates (Issue #31)
+      unawaited(canvasState.searchNext());
       await advance(10);
-      canvasState.searchPrev();
+      expect(tester.widget<Text>(matchCountFinder).data, '2 / 3');
+
+      unawaited(canvasState.searchNext());
       await advance(10);
+      expect(tester.widget<Text>(matchCountFinder).data, '3 / 3');
+
+      unawaited(canvasState.searchPrev());
+      await advance(10);
+      expect(tester.widget<Text>(matchCountFinder).data, '2 / 3');
+
+      unawaited(canvasState.searchPrev());
+      await advance(10);
+      expect(tester.widget<Text>(matchCountFinder).data, '1 / 3');
+
+      // 3b. Verify Backspace key deletes characters in search field (Issue #31)
+      await tester.tap(searchField);
+      await advance(5);
+      final textCtrl = tester.widget<TextField>(searchField).controller!;
+      textCtrl.selection = TextSelection.collapsed(offset: textCtrl.text.length);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await advance(5);
+      expect(textCtrl.text, 'Typs');
+
+      // 3c. Verify inline clear button clears search text without closing search bar
+      final clearBtn = find.byKey(const ValueKey('search_clear_button'));
+      expect(clearBtn, findsOneWidget);
+      await tester.tap(clearBtn);
+      await advance(5);
+      expect(textCtrl.text, isEmpty);
+      expect(canvasState.isSearchOpen, isTrue);
 
       // 4. Test closing via Esc key
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);

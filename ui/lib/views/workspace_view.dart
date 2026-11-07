@@ -214,6 +214,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _focusCheckScheduled = false;
       if (!mounted || _workspaceFocusNode.hasFocus) return;
+      if (_pdfCanvasKey.currentState?.isSearchOpen == true) return;
       final focus = FocusManager.instance.primaryFocus;
       if (focus == null || _workspaceFocusNode.ancestors.contains(focus)) {
         _workspaceFocusNode.requestFocus();
@@ -672,6 +673,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   Future<void> _handleCopySelection() async {
+    if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
     final copied = await _pdfCanvasKey.currentState?.copyTextSelection() ?? false;
     if (!mounted) return;
     if (copied) {
@@ -995,10 +997,14 @@ class _WorkspaceViewState extends State<WorkspaceView> {
             const SingleActivator(LogicalKeyboardKey.pageDown): _handleNextPage,
 
             // Scrolling (Arrow keys = line scroll, Space = screen scroll)
-            const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
-                _pdfCanvasKey.currentState?.scrollByDelta(-120),
-            const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
-                _pdfCanvasKey.currentState?.scrollByDelta(120),
+            const SingleActivator(LogicalKeyboardKey.arrowUp): () {
+              if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
+              _pdfCanvasKey.currentState?.scrollByDelta(-120);
+            },
+            const SingleActivator(LogicalKeyboardKey.arrowDown): () {
+              if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
+              _pdfCanvasKey.currentState?.scrollByDelta(120);
+            },
             const SingleActivator(LogicalKeyboardKey.space): _handleScrollScreenDown,
             const SingleActivator(LogicalKeyboardKey.space, shift: true): _handleScrollScreenUp,
             const SingleActivator(LogicalKeyboardKey.home): _handleFirstPage,
@@ -1029,9 +1035,11 @@ class _WorkspaceViewState extends State<WorkspaceView> {
             const SingleActivator(LogicalKeyboardKey.keyC, control: true):
                 _handleCopySelection,
             const SingleActivator(LogicalKeyboardKey.keyA, meta: true): () async {
+              if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
               await _pdfCanvasKey.currentState?.selectAllText();
             },
             const SingleActivator(LogicalKeyboardKey.keyA, control: true): () async {
+              if (_pdfCanvasKey.currentState?.isSearchFocused == true) return;
               await _pdfCanvasKey.currentState?.selectAllText();
             },
           },
