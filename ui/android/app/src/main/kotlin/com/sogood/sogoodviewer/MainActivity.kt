@@ -258,6 +258,56 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun detectWordExtension(file: File, effectiveMime: String?): String? {
+        when (effectiveMime) {
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> return ".docx"
+            "application/vnd.ms-word.document.macroenabled.12" -> return ".docm"
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.template" -> return ".dotx"
+            "application/vnd.ms-word.template.macroenabled.12" -> return ".dotm"
+            "application/msword" -> return ".doc"
+        }
+        return try {
+            val buf = ByteArray(8)
+            val readLen = FileInputStream(file).use { it.read(buf) }
+            if (readLen >= 8 &&
+                buf[0] == 0xD0.toByte() &&
+                buf[1] == 0xCF.toByte() &&
+                buf[2] == 0x11.toByte() &&
+                buf[3] == 0xE0.toByte() &&
+                buf[4] == 0xA1.toByte() &&
+                buf[5] == 0xB1.toByte() &&
+                buf[6] == 0x1A.toByte() &&
+                buf[7] == 0xE1.toByte()
+            ) {
+                ".doc"
+            } else if (readLen >= 4 &&
+                buf[0] == 0x50.toByte() &&
+                buf[1] == 0x4B.toByte() &&
+                buf[2] == 0x03.toByte() &&
+                buf[3] == 0x04.toByte()
+            ) {
+                var hasWordDir = false
+                java.util.zip.ZipInputStream(FileInputStream(file)).use { zis ->
+                    var count = 0
+                    while (count < 64) {
+                        val entry = zis.nextEntry ?: break
+                        val name = entry.name.replace('\\', '/')
+                        if (name == "word" || name.startsWith("word/")) {
+                            hasWordDir = true
+                            break
+                        }
+                        count++
+                    }
+                }
+                if (hasWordDir) ".docx" else null
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun copyUriToFile(uri: Uri, targetFile: File): Boolean {
         try {
             contentResolver.openInputStream(uri)?.use { input ->
@@ -339,6 +389,11 @@ class MainActivity : FlutterActivity() {
             // are guaranteed to have a .pdf extension.
             val isPdf = hasPdfMagicBytes(targetFile) || effectiveMime == "application/pdf"
             val lowerName = targetFile.name.lowercase()
+            val hasWordExt = lowerName.endsWith(".docx") ||
+                lowerName.endsWith(".doc") ||
+                lowerName.endsWith(".docm") ||
+                lowerName.endsWith(".dotx") ||
+                lowerName.endsWith(".dotm")
             if (isPdf) {
                 if (!lowerName.endsWith(".pdf")) {
                     val baseName = if (lowerName.endsWith(".md") || lowerName.endsWith(".bin") || lowerName.endsWith(".tmp")) {
@@ -351,16 +406,31 @@ class MainActivity : FlutterActivity() {
                         targetFile = renamedFile
                     }
                 }
+            } else if (hasWordExt) {
+                // Keep existing Word extension untouched
             } else {
-                val hasMarkdownExt = lowerName.endsWith(".md") ||
-                    lowerName.endsWith(".markdown") ||
-                    lowerName.endsWith(".mdown") ||
-                    lowerName.endsWith(".mkd") ||
-                    lowerName.endsWith(".mkdn")
-                if (!hasMarkdownExt) {
-                    val renamedFile = File(sessionDir, "${targetFile.name}.md")
+                val wordExt = detectWordExtension(targetFile, effectiveMime)
+                if (wordExt != null) {
+                    val baseName = if (lowerName.endsWith(".md") || lowerName.endsWith(".bin") || lowerName.endsWith(".tmp")) {
+                        targetFile.nameWithoutExtension.ifEmpty { "document" }
+                    } else {
+                        targetFile.name
+                    }
+                    val renamedFile = File(sessionDir, "$baseName$wordExt")
                     if (targetFile.renameTo(renamedFile)) {
                         targetFile = renamedFile
+                    }
+                } else {
+                    val hasMarkdownExt = lowerName.endsWith(".md") ||
+                        lowerName.endsWith(".markdown") ||
+                        lowerName.endsWith(".mdown") ||
+                        lowerName.endsWith(".mkd") ||
+                        lowerName.endsWith(".mkdn")
+                    if (!hasMarkdownExt) {
+                        val renamedFile = File(sessionDir, "${targetFile.name}.md")
+                        if (targetFile.renameTo(renamedFile)) {
+                            targetFile = renamedFile
+                        }
                     }
                 }
             }

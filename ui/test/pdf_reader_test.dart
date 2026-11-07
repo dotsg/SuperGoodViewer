@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:pdfrx/pdfrx.dart';
 import 'package:sogoodviewer/controllers/reader_controller.dart';
+import 'package:sogoodviewer/models/render_options.dart';
 import 'package:sogoodviewer/services/preferences_service.dart';
 import 'package:sogoodviewer/views/settings_dialog.dart';
 import 'package:sogoodviewer/views/sidebar_view.dart';
@@ -455,6 +456,75 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('当前正在阅读独立 PDF 文档'), findsOneWidget);
+    });
+
+    test('Opening a Word (.docx) document compiles to PDF in both paged and fluid modes', () async {
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      expect(ReaderController.isWordFilePath('report.docx'), isTrue);
+      expect(ReaderController.isWordFilePath('legacy.DOC'), isTrue);
+      expect(ReaderController.isWordFilePath('macro.docm'), isTrue);
+      expect(ReaderController.isWordFilePath('template.dotx'), isTrue);
+      expect(ReaderController.isWordFilePath('readme.md'), isFalse);
+
+      // Word 2003 XML / Flat OPC XML is supported by parse_word_bytes without needing binary zip fixtures
+      const wordXml = '<?xml version="1.0" encoding="UTF-8"?>'
+          '<w:wordDocument xmlns:w="http://schemas.microsoft.com/office/word/2003/wordml">'
+          '<w:body>'
+          '<w:p><w:r><w:t>Hello SuperGoodViewer Word Preview</w:t></w:r></w:p>'
+          '</w:body>'
+          '</w:wordDocument>';
+      final sampleDocxFile = File(p.join(tempTestDir.path, 'sample_word.docx'));
+      sampleDocxFile.writeAsStringSync(wordXml);
+
+      // Set global default format to 16:9 before opening a Word document
+      controller.setPageFormat(PageFormat.slide16x9, updateGlobalDefault: true);
+      expect(controller.globalRenderOptions.effectivePageFormat, PageFormat.slide16x9);
+
+      await controller.openFile(sampleDocxFile.path);
+      for (int i = 0; i < 60 && controller.isCompiling; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+
+      expect(controller.isWordDocument, isTrue);
+      expect(controller.isPdfDocument, isFalse);
+      expect(controller.errorMessage, isNull);
+      expect(controller.currentPdfBytes, isNotNull);
+      expect(ReaderController.startsWithPdfHeader(controller.currentPdfBytes!), isTrue);
+      // Word document normalizes its own effective format to a4Portrait without clobbering global 16:9
+      expect(controller.renderOptions.effectivePageFormat, PageFormat.a4Portrait);
+      expect(controller.globalRenderOptions.effectivePageFormat, PageFormat.slide16x9);
+
+      // Toggle between fluid and paged mode and verify re-render succeeds while global format stays 16:9
+      controller.toggleMode();
+      for (int i = 0; i < 60 && controller.isCompiling; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+      expect(controller.errorMessage, isNull);
+      expect(controller.currentPdfBytes, isNotNull);
+      expect(ReaderController.startsWithPdfHeader(controller.currentPdfBytes!), isTrue);
+      expect(controller.renderOptions.effectivePageFormat, PageFormat.fluid);
+      expect(controller.globalRenderOptions.effectivePageFormat, PageFormat.slide16x9);
+
+      // Theme and typography changes on a Word document must NOT trigger native recompilation
+      final genBeforeTheme = controller.compileGeneration;
+      controller.renderOptionsChanged = false;
+      controller.toggleTheme();
+      controller.setFontSize(18.0);
+      controller.setLineSpacing(1.8);
+      expect(controller.compileGeneration, genBeforeTheme);
+      expect(controller.renderOptionsChanged, isFalse);
+
+      // Empty 0-byte .docx file must report an error instead of silently rendering blank PDF
+      final emptyDocxFile = File(p.join(tempTestDir.path, 'empty_word.docx'));
+      emptyDocxFile.writeAsBytesSync(const []);
+      await controller.openFile(emptyDocxFile.path, newTab: false);
+      for (int i = 0; i < 60 && controller.isCompiling; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+      expect(controller.errorMessage, isNotNull);
+      expect(controller.errorMessage, contains('empty'));
     });
   });
 }

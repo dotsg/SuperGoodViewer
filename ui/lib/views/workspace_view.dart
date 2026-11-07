@@ -453,7 +453,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     try {
       final file = await FilePicker.pickFile(
         type: FileType.custom,
-        allowedExtensions: ['md', 'markdown', 'txt', 'pdf'],
+        allowedExtensions: ReaderController.filePickerAllowedExtensions,
         dialogTitle: widget.controller.strings.openDocument,
       );
 
@@ -479,6 +479,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     '.mkd',
     '.mdx',
     '.pdf',
+    ...ReaderController.wordExtensions,
     '.typ',
     '.txt',
   };
@@ -488,7 +489,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     '.zip', '.tar', '.gz', '.7z', '.rar', '.bz2', '.xz',
     '.dmg', '.iso', '.pkg', '.app', '.exe', '.dll', '.so', '.dylib', '.bin',
     '.mp4', '.mov', '.avi', '.mkv', '.webm', '.mp3', '.wav', '.flac', '.aac',
-    '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+    '.xls', '.xlsx', '.ppt', '.pptx',
   };
 
   static Future<bool> _isFileSupported(File file) async {
@@ -1834,10 +1835,11 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               ),
               _PillDivider(isDark: isDark),
 
-              // Mode & Layout switcher (Fluid, A4, 16:9, etc.) - Markdown only
+              // Mode & Layout switcher (Fluid, A4, 16:9, etc.) - Markdown & Word
               if (!controller.isPdfDocument) ...[
                 _FormatSelectorPill(
                   format: controller.renderOptions.effectivePageFormat,
+                  isWordDocument: controller.isWordDocument,
                   shortcutLabel: controller.shortcutService.getShortcutLabel('toggleMode'),
                   onSelectFormat: controller.setPageFormat,
                   onToggle: controller.toggleMode,
@@ -2015,6 +2017,7 @@ class _PillIconButton extends StatelessWidget {
 
 class _FormatSelectorPill extends StatelessWidget {
   final String format;
+  final bool isWordDocument;
   final ValueChanged<String> onSelectFormat;
   final VoidCallback onToggle;
   final bool isDark;
@@ -2023,6 +2026,7 @@ class _FormatSelectorPill extends StatelessWidget {
 
   const _FormatSelectorPill({
     required this.format,
+    this.isWordDocument = false,
     required this.onSelectFormat,
     required this.onToggle,
     required this.isDark,
@@ -2127,36 +2131,38 @@ class _FormatSelectorPill extends StatelessWidget {
                   ],
                 ),
               ),
-              PopupMenuItem(
-                value: PageFormat.a4Landscape,
-                child: Row(
-                  children: [
-                    const Icon(Icons.landscape_outlined, size: 16),
-                    const SizedBox(width: 8),
-                    Text(strings.layoutModeA4Landscape),
-                  ],
+              if (!isWordDocument) ...[
+                PopupMenuItem(
+                  value: PageFormat.a4Landscape,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.landscape_outlined, size: 16),
+                      const SizedBox(width: 8),
+                      Text(strings.layoutModeA4Landscape),
+                    ],
+                  ),
                 ),
-              ),
-              PopupMenuItem(
-                value: PageFormat.slide16x9,
-                child: Row(
-                  children: [
-                    const Icon(Icons.slideshow_rounded, size: 16),
-                    const SizedBox(width: 8),
-                    Text(strings.layoutModeSlide169),
-                  ],
+                PopupMenuItem(
+                  value: PageFormat.slide16x9,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.slideshow_rounded, size: 16),
+                      const SizedBox(width: 8),
+                      Text(strings.layoutModeSlide169),
+                    ],
+                  ),
                 ),
-              ),
-              PopupMenuItem(
-                value: PageFormat.slide4x3,
-                child: Row(
-                  children: [
-                    const Icon(Icons.tv_rounded, size: 16),
-                    const SizedBox(width: 8),
-                    Text(strings.layoutModeSlide43),
-                  ],
+                PopupMenuItem(
+                  value: PageFormat.slide4x3,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.tv_rounded, size: 16),
+                      const SizedBox(width: 8),
+                      Text(strings.layoutModeSlide43),
+                    ],
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
           const SizedBox(width: 2),

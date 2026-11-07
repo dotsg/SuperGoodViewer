@@ -577,7 +577,7 @@ pub fn render_mermaid(code: &str, is_dark: bool) -> RenderedMermaid {
     hasher.update(theme_tag.as_bytes());
     hasher.update(b":");
     hasher.update(code.trim().as_bytes());
-    let hash = format!("{:x}", hasher.finalize());
+    let hash: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
     let virtual_filename = format!("mermaid_{}_{}.svg", theme_tag, &hash[..16]);
 
     // Check cache

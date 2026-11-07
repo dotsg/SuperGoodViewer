@@ -245,6 +245,19 @@ fn parse_cli_args(args: &[String]) -> Result<CliConfig, String> {
     Ok(config)
 }
 
+fn is_word_extension(ext: &str) -> bool {
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "docx" | "doc" | "docm" | "dotx" | "dotm"
+    )
+}
+
+fn is_word_file_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(is_word_extension)
+}
+
 fn collect_markdown_files(dir: &Path, recursive: bool) -> io::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     collect_markdown_files_internal(dir, recursive, &mut files)?;
@@ -268,8 +281,9 @@ fn collect_markdown_files_internal(
         let file_name = entry.file_name();
         let name_str = file_name.to_string_lossy();
 
-        // Skip hidden files/directories and common build/ignore directories
+        // Skip hidden files/directories, Word lock files (~$...), and common build/ignore directories
         if name_str.starts_with('.')
+            || name_str.starts_with("~$")
             || name_str == "node_modules"
             || name_str == "target"
             || name_str == "build"
@@ -285,7 +299,7 @@ fn collect_markdown_files_internal(
         } else if path.is_file() {
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                 let ext_lower = ext.to_ascii_lowercase();
-                if ext_lower == "md" || ext_lower == "markdown" {
+                if ext_lower == "md" || ext_lower == "markdown" || is_word_extension(&ext_lower) {
                     files.push(path);
                 }
             }
@@ -371,44 +385,80 @@ fn plan_export_tasks(config: &CliConfig) -> Result<Vec<ExportTask>, String> {
     }
 
     if collected_items.is_empty() {
-        return Err("No Markdown files (.md or .markdown) found to export.".to_string());
+        return Err("No Markdown or Word files (.md, .markdown, .docx, .doc) found to export.".to_string());
     }
 
     let is_single = collected_items.len() == 1;
     let mut tasks = Vec::with_capacity(collected_items.len());
+    let mut used_out_keys = std::collections::HashSet::new();
+
+    let default_out_path = |f_path: &Path, base_dir: &Option<PathBuf>, stem: &str| -> PathBuf {
+        let parent = f_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        if let Some(ref dest) = config.output {
+            let dest_p = Path::new(dest);
+            if is_single && base_dir.is_none() && !dest_p.is_dir() && !dest.ends_with('/') && !dest.ends_with('\\') {
+                dest_p.to_path_buf()
+            } else if let Some(base) = base_dir {
+                let rel = f_path.strip_prefix(base).unwrap_or(f_path);
+                let mut rel_out = rel.to_path_buf();
+                rel_out.set_extension("pdf");
+                dest_p.join(rel_out)
+            } else {
+                dest_p.join(format!("{}.pdf", stem))
+            }
+        } else {
+            parent.join(format!("{}.pdf", stem))
+        }
+    };
+
+    let mut markdown_out_keys = std::collections::HashSet::new();
+    for item in &collected_items {
+        if !is_word_file_path(&item.file_path) {
+            let stem = item
+                .file_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("document");
+            let p = default_out_path(&item.file_path, &item.base_dir, stem);
+            markdown_out_keys.insert(p.to_string_lossy().to_lowercase());
+        }
+    }
 
     for item in collected_items {
         let f_path = item.file_path;
+        let is_word = is_word_file_path(&f_path);
         let stem = f_path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("document")
             .to_string();
+        let file_name_with_ext = f_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&stem)
+            .to_string();
         let parent = f_path.parent().unwrap_or(Path::new(".")).to_path_buf();
 
-        let out_path = if let Some(ref dest) = config.output {
-            let dest_p = Path::new(dest);
-            if is_single && item.base_dir.is_none() && !dest_p.is_dir() && !dest.ends_with('/') && !dest.ends_with('\\') {
-                // User passed single file and specific output file name (e.g. -o out.pdf)
-                dest_p.to_path_buf()
-            } else {
-                // Destination is a directory
-                if let Some(ref base) = item.base_dir {
-                    // Preserve subpath relative to base directory
-                    let rel = f_path
-                        .strip_prefix(base)
-                        .unwrap_or(&f_path);
-                    let mut rel_out = rel.to_path_buf();
-                    rel_out.set_extension("pdf");
-                    dest_p.join(rel_out)
-                } else {
-                    dest_p.join(format!("{}.pdf", stem))
-                }
-            }
+        let mut out_path = default_out_path(&f_path, &item.base_dir, &stem);
+        let out_key = out_path.to_string_lossy().to_lowercase();
+
+        // Markdown files always keep `<stem>.pdf` when colliding with a Word file (`report.md` + `report.docx`).
+        let collides = if is_word {
+            markdown_out_keys.contains(&out_key) || used_out_keys.contains(&out_key)
         } else {
-            // No -o given: export in place next to markdown file
-            parent.join(format!("{}.pdf", stem))
+            used_out_keys.contains(&out_key)
         };
+
+        if collides {
+            let disambiguated_name = format!("{}.pdf", file_name_with_ext);
+            out_path = out_path
+                .parent()
+                .map(|p| p.join(&disambiguated_name))
+                .unwrap_or_else(|| PathBuf::from(&disambiguated_name));
+            used_out_keys.insert(out_path.to_string_lossy().to_lowercase());
+        } else {
+            used_out_keys.insert(out_key);
+        }
 
         tasks.push(ExportTask {
             source: SourceInput::File(f_path),
@@ -484,6 +534,11 @@ fn main() {
     let mut fail_count = 0;
 
     for (index, task) in tasks.iter().enumerate() {
+        let is_word = match &task.source {
+            SourceInput::Stdin => false,
+            SourceInput::File(p) => is_word_file_path(p),
+        };
+
         let (content, display_src) = match &task.source {
             SourceInput::Stdin => {
                 let mut buffer = String::new();
@@ -494,6 +549,7 @@ fn main() {
                 }
                 (buffer, "<stdin>".to_string())
             }
+            SourceInput::File(p) if is_word => (String::new(), p.display().to_string()),
             SourceInput::File(p) => match fs::read_to_string(p) {
                 Ok(c) => (c, p.display().to_string()),
                 Err(e) => {
@@ -506,6 +562,8 @@ fn main() {
 
         let title = if total == 1 && config.title.is_some() {
             config.title.clone().unwrap()
+        } else if is_word {
+            task.fallback_title.clone()
         } else {
             extract_title_from_markdown(&content, &task.fallback_title)
         };
@@ -520,7 +578,12 @@ fn main() {
             );
         }
 
-        match engine.compile_markdown(&content, &title, &task.doc_dir, &options_json) {
+        let compile_res = match (&task.source, is_word) {
+            (SourceInput::File(p), true) => engine.compile_word_file(p, &title, &options_json),
+            _ => engine.compile_markdown(&content, &title, &task.doc_dir, &options_json),
+        };
+
+        match compile_res {
             Ok(result) => {
                 if result.degraded_equation_count > 0 {
                     eprintln!(
@@ -731,6 +794,45 @@ mod tests {
         let tasks = plan_export_tasks(&cfg).expect("plan failed");
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].output_path, dist.join("single.pdf"));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_plan_export_word_and_markdown_collision_and_lock_files() {
+        let temp_dir = std::env::temp_dir().join(format!("sgv_test_word_collision_{}", std::process::id()));
+        let _ = fs::create_dir_all(&temp_dir);
+
+        let md_file = temp_dir.join("report.md");
+        let docx_file = temp_dir.join("report.docx");
+        let lock_file = temp_dir.join("~$report.docx");
+
+        fs::write(&md_file, "# Report\n").unwrap();
+        fs::write(&docx_file, "word\n").unwrap();
+        fs::write(&lock_file, "lock\n").unwrap();
+
+        let cfg = CliConfig {
+            inputs: vec![temp_dir.to_string_lossy().to_string()],
+            recursive: true,
+            ..Default::default()
+        };
+
+        let tasks = plan_export_tasks(&cfg).expect("plan failed");
+        // ~$report.docx lock file must be skipped; only report.docx and report.md remain
+        assert_eq!(tasks.len(), 2);
+
+        let docx_task = tasks
+            .iter()
+            .find(|t| matches!(&t.source, SourceInput::File(p) if p.ends_with("report.docx")))
+            .expect("docx task");
+        let md_task = tasks
+            .iter()
+            .find(|t| matches!(&t.source, SourceInput::File(p) if p.ends_with("report.md")))
+            .expect("md task");
+
+        // Markdown keeps `report.pdf` even though `report.docx` sorts alphabetically before `report.md`
+        assert_eq!(md_task.output_path, temp_dir.join("report.pdf"));
+        assert_eq!(docx_task.output_path, temp_dir.join("report.docx.pdf"));
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

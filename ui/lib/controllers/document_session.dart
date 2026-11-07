@@ -88,6 +88,9 @@ class DocumentSession {
   String title = 'Welcome';
   Uint8List? pdfBytes;
   bool isRawPdf = false;
+  bool isWordDoc = false;
+  int? wordFileModifiedMicros;
+  int? wordFileSize;
   Uint8List? originalPdfBytes;
   List<OutlineItem> originalPdfOutlines = [];
   bool isPdfReflowed = false;

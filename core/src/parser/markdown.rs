@@ -883,7 +883,7 @@ pub fn url_to_cache_filename(url: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(clean_url.as_bytes());
-    let hash = format!("{:x}", hasher.finalize());
+    let hash: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
     let ext = extract_url_extension(clean_url);
     format!("{}.{}", &hash[..32], ext)
 }

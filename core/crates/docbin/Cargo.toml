@@ -1,0 +1,24 @@
+[package]
+name = "wordcraft-docbin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WordCraft reader for the Word 97-2003 binary file format (.doc)"
+
+[lib]
+test = false
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+wordcraft-doc = { workspace = true }
+wordcraft-geom = { workspace = true }
+cfb = { workspace = true }
+image = { workspace = true }
+miniz_oxide = { workspace = true }
+sha1 = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+chrono = { workspace = true }

@@ -151,6 +151,8 @@ pub enum CompileError {
     Typst(String),
     #[error("PDF export error: {0}")]
     Pdf(String),
+    #[error("Word document error: {0}")]
+    Word(String),
 }
 
 #[derive(Debug)]

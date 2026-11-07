@@ -1,0 +1,26 @@
+[package]
+name = "wordcraft-pdf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WordCraft PDF export (Krilla)"
+
+[lib]
+test = false
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+wordcraft-doc = { workspace = true }
+wordcraft-geom = { workspace = true, features = ["image"] }
+wordcraft-fonts = { workspace = true }
+wordcraft-layout = { workspace = true }
+wordcraft-metafile = { workspace = true }
+krilla = { workspace = true }
+kurbo = { workspace = true }
+image = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+chrono = { workspace = true }

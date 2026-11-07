@@ -94,7 +94,7 @@ class _SidebarViewState extends State<SidebarView> {
     try {
       final file = await FilePicker.pickFile(
         type: FileType.custom,
-        allowedExtensions: ['md', 'markdown', 'txt', 'pdf'],
+        allowedExtensions: ReaderController.filePickerAllowedExtensions,
       );
 
       if (file != null && file.path != null) {

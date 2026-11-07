@@ -2606,7 +2606,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             }
             extractNodes(outlines);
 
-            if (widget.controller.isPdfDocument) {
+            if (widget.controller.isPdfDocument || widget.controller.isWordDocument) {
               final items = <OutlineItem>[];
               void traverse(List<PdfOutlineNode> nodes, int level) {
                 for (final node in nodes) {
@@ -2722,7 +2722,15 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
               final file = File(resolvedPath);
               if (await file.exists()) {
                 final ext = p.extension(resolvedPath).toLowerCase();
-                const supportedExtensions = {'.md', '.markdown', '.mdown', '.mkd', '.mkdn', '.pdf'};
+                const supportedExtensions = {
+                  '.md',
+                  '.markdown',
+                  '.mdown',
+                  '.mkd',
+                  '.mkdn',
+                  '.pdf',
+                  ...ReaderController.wordExtensions,
+                };
                 if (supportedExtensions.contains(ext) || ext.isEmpty) {
                   // Markdown 与 PDF 文档：直接在当前视窗中平滑切换打开
                   await widget.controller.openFile(resolvedPath);
@@ -2793,7 +2801,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final colorFilter = isMobile
         ? mobilePrefs.resolveCanvasColorFilter(
             isDark: isDark,
-            isPdfDocument: widget.controller.isPdfDocument,
+            isPdfDocument: widget.controller.isPdfDocument || widget.controller.isWordDocument,
             isMobile: isMobile,
           )
         : null;
