@@ -1684,6 +1684,8 @@ pub fn convert_markdown_to_typst(
 
     if !is_fluid {
         let skip_first = options.skip_first_page_header_footer.unwrap_or(true);
+        let enable_header = options.enable_header.unwrap_or(true);
+        let enable_footer = options.enable_footer.unwrap_or(true);
         let show_header_rule = options.show_header_rule.unwrap_or(false);
         let show_footer_rule = options.show_footer_rule.unwrap_or(false);
 
@@ -1697,7 +1699,8 @@ pub fn convert_markdown_to_typst(
         let h_center = options.header_center.as_deref().unwrap_or("");
         let h_right = options.header_right.as_deref().unwrap_or(default_header_right);
 
-        let has_header = !h_left.is_empty() || !h_center.is_empty() || !h_right.is_empty() || show_header_rule;
+        let has_header = enable_header
+            && (!h_left.is_empty() || !h_center.is_empty() || !h_right.is_empty() || show_header_rule);
 
         if has_header {
             let slot_left = format_slot_to_typst(h_left, &safe_title, header_color);
@@ -1752,7 +1755,8 @@ pub fn convert_markdown_to_typst(
         let f_center = options.footer_center.as_deref().unwrap_or(default_footer_center);
         let f_right = options.footer_right.as_deref().unwrap_or(default_footer_right);
 
-        let has_footer = !f_left.is_empty() || !f_center.is_empty() || !f_right.is_empty() || show_footer_rule;
+        let has_footer = enable_footer
+            && (!f_left.is_empty() || !f_center.is_empty() || !f_right.is_empty() || show_footer_rule);
 
         if has_footer {
             let slot_left = format_slot_to_typst(f_left, &safe_title, header_color);
@@ -3651,6 +3655,19 @@ A table with wide metrics.
         assert!(res.is_ok(), "A4 Landscape compilation failed: {:?}", res.err());
         let pdf = res.unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn test_enable_header_and_footer_switches_can_disable_defaults() {
+        let md = "# Sample A4 Doc\nBody content.\n";
+        let mut options = RenderOptions::default();
+        options.page_format = Some("a4Portrait".to_string());
+        options.enable_header = Some(false);
+        options.enable_footer = Some(false);
+
+        let parsed = convert_markdown_to_typst(md, "Doc Title", &options);
+        assert!(!parsed.typst_source.contains("header: context"));
+        assert!(!parsed.typst_source.contains("footer: context"));
     }
 
     #[test]

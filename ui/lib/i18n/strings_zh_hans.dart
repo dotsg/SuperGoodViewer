@@ -360,6 +360,10 @@ class ZhHansStrings implements AppStrings {
   @override
   String get footerRight => '页脚右侧';
   @override
+  String get enableHeader => '启用页眉';
+  @override
+  String get enableFooter => '启用页脚';
+  @override
   String get showHeaderRule => '页眉底端分割线';
   @override
   String get showFooterRule => '页脚顶端分割线';

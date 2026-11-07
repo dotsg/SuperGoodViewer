@@ -57,6 +57,10 @@ pub struct RenderOptions {
     #[serde(default)]
     pub footer_right: Option<String>,
     #[serde(default)]
+    pub enable_header: Option<bool>,
+    #[serde(default)]
+    pub enable_footer: Option<bool>,
+    #[serde(default)]
     pub show_header_rule: Option<bool>,
     #[serde(default)]
     pub show_footer_rule: Option<bool>,
@@ -139,6 +143,8 @@ impl Default for RenderOptions {
             footer_left: None,
             footer_center: None,
             footer_right: None,
+            enable_header: None,
+            enable_footer: None,
             show_header_rule: None,
             show_footer_rule: None,
             skip_first_page_header_footer: None,

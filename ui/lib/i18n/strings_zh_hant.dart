@@ -360,6 +360,10 @@ class ZhHantStrings extends ZhHansStrings {
   @override
   String get footerRight => '頁尾右側';
   @override
+  String get enableHeader => '啟用頁首';
+  @override
+  String get enableFooter => '啟用頁尾';
+  @override
   String get showHeaderRule => '頁首底端分隔線';
   @override
   String get showFooterRule => '頁尾頂端分隔線';

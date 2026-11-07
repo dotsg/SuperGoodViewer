@@ -110,6 +110,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late TextEditingController _footerLeftController;
   late TextEditingController _footerCenterController;
   late TextEditingController _footerRightController;
+  late bool _enableHeader;
+  late bool _enableFooter;
   late bool _showHeaderRule;
   late bool _showFooterRule;
   late bool _skipFirstPage;
@@ -156,6 +158,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
       footerLeft: _footerLeftController.text.trim().isEmpty ? null : _footerLeftController.text.trim(),
       footerCenter: _footerCenterController.text.trim().isEmpty ? null : _footerCenterController.text.trim(),
       footerRight: _footerRightController.text.trim().isEmpty ? null : _footerRightController.text.trim(),
+      enableHeader: _enableHeader,
+      enableFooter: _enableFooter,
       showHeaderRule: _showHeaderRule,
       showFooterRule: _showFooterRule,
       skipFirstPageHeaderFooter: _skipFirstPage,
@@ -193,6 +197,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
     if (fC != opts.footerCenter) return true;
     final fR = _footerRightController.text.trim().isEmpty ? null : _footerRightController.text.trim();
     if (fR != opts.footerRight) return true;
+    if (_enableHeader != (opts.enableHeader ?? true)) return true;
+    if (_enableFooter != (opts.enableFooter ?? true)) return true;
     if (_showHeaderRule != (opts.showHeaderRule ?? false)) return true;
     if (_showFooterRule != (opts.showFooterRule ?? false)) return true;
     if (_skipFirstPage != (opts.skipFirstPageHeaderFooter ?? true)) return true;
@@ -212,6 +218,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
       _footerLeftController.text = opts.footerLeft ?? '';
       _footerCenterController.text = opts.footerCenter ?? '';
       _footerRightController.text = opts.footerRight ?? '';
+      _enableHeader = opts.enableHeader ?? true;
+      _enableFooter = opts.enableFooter ?? true;
       _showHeaderRule = opts.showHeaderRule ?? false;
       _showFooterRule = opts.showFooterRule ?? false;
       _skipFirstPage = opts.skipFirstPageHeaderFooter ?? true;
@@ -286,6 +294,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _footerLeftController = TextEditingController(text: opts.footerLeft ?? '');
     _footerCenterController = TextEditingController(text: opts.footerCenter ?? '');
     _footerRightController = TextEditingController(text: opts.footerRight ?? '');
+    _enableHeader = opts.enableHeader ?? true;
+    _enableFooter = opts.enableFooter ?? true;
     _showHeaderRule = opts.showHeaderRule ?? false;
     _showFooterRule = opts.showFooterRule ?? false;
     _skipFirstPage = opts.skipFirstPageHeaderFooter ?? true;
@@ -1143,15 +1153,29 @@ class _SettingsDialogState extends State<SettingsDialog> {
           contentPadding: EdgeInsets.zero,
         ),
         SwitchListTile(
+          value: _enableHeader,
+          onChanged: (val) => setState(() => _enableHeader = val),
+          title: Text(widget.controller.strings.enableHeader, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+        SwitchListTile(
           value: _showHeaderRule,
-          onChanged: (val) => setState(() => _showHeaderRule = val),
+          onChanged: _enableHeader ? (val) => setState(() => _showHeaderRule = val) : null,
           title: Text(widget.controller.strings.showHeaderRule, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           dense: true,
           contentPadding: EdgeInsets.zero,
         ),
         SwitchListTile(
+          value: _enableFooter,
+          onChanged: (val) => setState(() => _enableFooter = val),
+          title: Text(widget.controller.strings.enableFooter, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+        SwitchListTile(
           value: _showFooterRule,
-          onChanged: (val) => setState(() => _showFooterRule = val),
+          onChanged: _enableFooter ? (val) => setState(() => _showFooterRule = val) : null,
           title: Text(widget.controller.strings.showFooterRule, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           dense: true,
           contentPadding: EdgeInsets.zero,
@@ -1170,11 +1194,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-              onPressed: () {
-                _headerLeftController.clear();
-                _headerCenterController.clear();
-                _headerRightController.clear();
-              },
+              onPressed: _enableHeader
+                  ? () {
+                      _headerLeftController.clear();
+                      _headerCenterController.clear();
+                      _headerRightController.clear();
+                    }
+                  : null,
             ),
           ],
         ),
@@ -1187,18 +1213,21 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 controller: _headerLeftController,
                 label: widget.controller.strings.slotLeft,
                 hintText: widget.controller.strings.slotHintCustom,
+                enabled: _enableHeader,
               ),
               const SizedBox(height: 8),
               _buildSlotField(
                 controller: _headerCenterController,
                 label: widget.controller.strings.slotCenter,
                 hintText: widget.controller.strings.slotHintEmpty,
+                enabled: _enableHeader,
               ),
               const SizedBox(height: 8),
               _buildSlotField(
                 controller: _headerRightController,
                 label: widget.controller.strings.slotRight,
                 hintText: '{title}',
+                enabled: _enableHeader,
               ),
             ],
           )
@@ -1210,6 +1239,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   controller: _headerLeftController,
                   label: widget.controller.strings.slotLeft,
                   hintText: widget.controller.strings.slotHintCustom,
+                  enabled: _enableHeader,
                 ),
               ),
               const SizedBox(width: 8),
@@ -1218,6 +1248,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   controller: _headerCenterController,
                   label: widget.controller.strings.slotCenter,
                   hintText: widget.controller.strings.slotHintEmpty,
+                  enabled: _enableHeader,
                 ),
               ),
               const SizedBox(width: 8),
@@ -1226,6 +1257,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   controller: _headerRightController,
                   label: widget.controller.strings.slotRight,
                   hintText: '{title}',
+                  enabled: _enableHeader,
                 ),
               ),
             ],
@@ -1244,11 +1276,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-              onPressed: () {
-                _footerLeftController.clear();
-                _footerCenterController.clear();
-                _footerRightController.clear();
-              },
+              onPressed: _enableFooter
+                  ? () {
+                      _footerLeftController.clear();
+                      _footerCenterController.clear();
+                      _footerRightController.clear();
+                    }
+                  : null,
             ),
           ],
         ),
@@ -1261,18 +1295,21 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 controller: _footerLeftController,
                 label: widget.controller.strings.slotLeft,
                 hintText: widget.controller.strings.slotHintCopyright,
+                enabled: _enableFooter,
               ),
               const SizedBox(height: 8),
               _buildSlotField(
                 controller: _footerCenterController,
                 label: widget.controller.strings.slotCenter,
                 hintText: '{page}',
+                enabled: _enableFooter,
               ),
               const SizedBox(height: 8),
               _buildSlotField(
                 controller: _footerRightController,
                 label: widget.controller.strings.slotRight,
                 hintText: widget.controller.strings.slotHintPageTotal,
+                enabled: _enableFooter,
               ),
             ],
           )
@@ -1284,6 +1321,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   controller: _footerLeftController,
                   label: widget.controller.strings.slotLeft,
                   hintText: widget.controller.strings.slotHintCopyright,
+                  enabled: _enableFooter,
                 ),
               ),
               const SizedBox(width: 8),
@@ -1292,6 +1330,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   controller: _footerCenterController,
                   label: widget.controller.strings.slotCenter,
                   hintText: '{page}',
+                  enabled: _enableFooter,
                 ),
               ),
               const SizedBox(width: 8),
@@ -1300,6 +1339,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   controller: _footerRightController,
                   label: widget.controller.strings.slotRight,
                   hintText: widget.controller.strings.slotHintPageTotal,
+                  enabled: _enableFooter,
                 ),
               ),
             ],
@@ -1439,19 +1479,21 @@ class _SettingsDialogState extends State<SettingsDialog> {
     required TextEditingController controller,
     required String label,
     required String hintText,
+    bool enabled = true,
   }) {
     return ValueListenableBuilder<TextEditingValue>(
       valueListenable: controller,
       builder: (context, value, _) {
         return TextField(
           controller: controller,
+          enabled: enabled,
           decoration: InputDecoration(
             labelText: label,
             hintText: hintText,
             isDense: true,
             border: const OutlineInputBorder(),
             contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-            suffixIcon: value.text.isNotEmpty
+            suffixIcon: enabled && value.text.isNotEmpty
                 ? IconButton(
                     icon: const Icon(Icons.clear, size: 14),
                     splashRadius: 12,

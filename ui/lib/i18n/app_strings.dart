@@ -177,6 +177,8 @@ abstract class AppStrings {
   String get footerLeft;
   String get footerCenter;
   String get footerRight;
+  String get enableHeader;
+  String get enableFooter;
   String get showHeaderRule;
   String get showFooterRule;
   String get skipFirstPage;

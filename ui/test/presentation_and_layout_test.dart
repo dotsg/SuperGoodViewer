@@ -209,6 +209,23 @@ void main() {
       expect(json, contains('"show_footer_rule":false'));
       expect(json, contains('"skip_first_page_header_footer":true'));
       expect(json, contains('"marp_enabled":true'));
+
+      // Disabling header and footer preserves configured slots on RenderOptions
+      // while serializing empty slots and enable_header/enable_footer=false for the engine.
+      final disabledOptions = options.copyWith(
+        enableHeader: false,
+        enableFooter: false,
+      );
+      expect(disabledOptions.enableHeader, isFalse);
+      expect(disabledOptions.enableFooter, isFalse);
+      expect(disabledOptions.headerLeft, 'Company Presentation');
+      expect(disabledOptions.footerCenter, 'Page {page} of {total}');
+      final disabledJson = disabledOptions.toJsonString();
+      expect(disabledJson, contains('"enable_header":false'));
+      expect(disabledJson, contains('"enable_footer":false'));
+      expect(disabledJson, contains('"header_right":""'));
+      expect(disabledJson, contains('"footer_center":""'));
+      expect(disabledJson, contains('"show_header_rule":false'));
     });
 
     test('ReaderController setPageFormat and cyclePageFormat cycle through all 5 formats', () {
@@ -269,10 +286,14 @@ void main() {
       controller.setHeaderFooterOptions(
         headerLeft: null,
         footerRight: null,
+        enableHeader: false,
+        enableFooter: false,
       );
 
       expect(controller.renderOptions.headerLeft, isNull);
       expect(controller.renderOptions.footerRight, isNull);
+      expect(controller.renderOptions.enableHeader, isFalse);
+      expect(controller.renderOptions.enableFooter, isFalse);
     });
 
     test('ReaderController detects Marp frontmatter on openFile and allows manual format override', () async {

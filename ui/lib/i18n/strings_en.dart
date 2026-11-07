@@ -370,6 +370,10 @@ class EnStrings implements AppStrings {
   @override
   String get footerRight => 'Footer Right';
   @override
+  String get enableHeader => 'Enable Header';
+  @override
+  String get enableFooter => 'Enable Footer';
+  @override
   String get showHeaderRule => 'Header Dividing Line';
   @override
   String get showFooterRule => 'Footer Dividing Line';

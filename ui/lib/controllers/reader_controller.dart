@@ -891,6 +891,8 @@ class ReaderController extends ChangeNotifier {
       final savedFooterLeft = prefs['footerLeft'] as String?;
       final savedFooterCenter = prefs['footerCenter'] as String?;
       final savedFooterRight = prefs['footerRight'] as String?;
+      final savedEnableHeader = prefs['enableHeader'] as bool?;
+      final savedEnableFooter = prefs['enableFooter'] as bool?;
       final savedShowHeaderRule = prefs['showHeaderRule'] as bool?;
       final savedShowFooterRule = prefs['showFooterRule'] as bool?;
       final savedSkipFirstPage = prefs['skipFirstPageHeaderFooter'] as bool?;
@@ -926,6 +928,8 @@ class ReaderController extends ChangeNotifier {
           savedFooterLeft != null ||
           savedFooterCenter != null ||
           savedFooterRight != null ||
+          savedEnableHeader != null ||
+          savedEnableFooter != null ||
           savedShowHeaderRule != null ||
           savedShowFooterRule != null ||
           savedSkipFirstPage != null ||
@@ -946,6 +950,8 @@ class ReaderController extends ChangeNotifier {
           footerLeft: savedFooterLeft ?? _renderOptions.footerLeft,
           footerCenter: savedFooterCenter ?? _renderOptions.footerCenter,
           footerRight: savedFooterRight ?? _renderOptions.footerRight,
+          enableHeader: savedEnableHeader ?? _renderOptions.enableHeader,
+          enableFooter: savedEnableFooter ?? _renderOptions.enableFooter,
           showHeaderRule: savedShowHeaderRule ?? _renderOptions.showHeaderRule,
           showFooterRule: savedShowFooterRule ?? _renderOptions.showFooterRule,
           skipFirstPageHeaderFooter: savedSkipFirstPage ?? _renderOptions.skipFirstPageHeaderFooter,
@@ -1104,6 +1110,8 @@ class ReaderController extends ChangeNotifier {
       'footerLeft': _renderOptions.footerLeft,
       'footerCenter': _renderOptions.footerCenter,
       'footerRight': _renderOptions.footerRight,
+      'enableHeader': _renderOptions.enableHeader,
+      'enableFooter': _renderOptions.enableFooter,
       'showHeaderRule': _renderOptions.showHeaderRule,
       'showFooterRule': _renderOptions.showFooterRule,
       'skipFirstPageHeaderFooter': _renderOptions.skipFirstPageHeaderFooter,
@@ -2148,6 +2156,8 @@ class ReaderController extends ChangeNotifier {
     Object? footerLeft = _undefined,
     Object? footerCenter = _undefined,
     Object? footerRight = _undefined,
+    bool? enableHeader,
+    bool? enableFooter,
     bool? showHeaderRule,
     bool? showFooterRule,
     bool? skipFirstPageHeaderFooter,
@@ -2161,6 +2171,8 @@ class ReaderController extends ChangeNotifier {
       footerLeft: footerLeft,
       footerCenter: footerCenter,
       footerRight: footerRight,
+      enableHeader: enableHeader,
+      enableFooter: enableFooter,
       showHeaderRule: showHeaderRule,
       showFooterRule: showFooterRule,
       skipFirstPageHeaderFooter: skipFirstPageHeaderFooter,
