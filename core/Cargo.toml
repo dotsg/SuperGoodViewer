@@ -9,6 +9,16 @@ members = [
     "crates/docbin",
     "crates/layout",
     "crates/pdf",
+    "crates/deck-geom",
+    "crates/deck-color",
+    "crates/deck-metafile",
+    "crates/deck-model",
+    "crates/deck-anim",
+    "crates/deck-fonts",
+    "crates/deck-text",
+    "crates/deck-pptx",
+    "crates/deck-render",
+    "crates/deck-pdf",
 ]
 
 [workspace.package]
@@ -32,6 +42,19 @@ wordcraft-docbin = { path = "crates/docbin" }
 wordcraft-layout = { path = "crates/layout" }
 wordcraft-pdf = { path = "crates/pdf" }
 
+deckcraft-geom = { path = "crates/deck-geom" }
+deckcraft-color = { path = "crates/deck-color" }
+deckcraft-metafile = { path = "crates/deck-metafile" }
+deckcraft-model = { path = "crates/deck-model" }
+deckcraft-anim = { path = "crates/deck-anim" }
+deckcraft-fonts = { path = "crates/deck-fonts" }
+deckcraft-text = { path = "crates/deck-text" }
+deckcraft-pptx = { path = "crates/deck-pptx" }
+deckcraft-render = { path = "crates/deck-render" }
+deckcraft-pdf = { path = "crates/deck-pdf" }
+
+vello_cpu = "0.2"
+vello_common = "0.2"
 kurbo = { version = "0.13", features = ["serde"] }
 thiserror = "2.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
@@ -98,6 +121,11 @@ wordcraft-docx = { workspace = true }
 wordcraft-docbin = { workspace = true }
 wordcraft-layout = { workspace = true }
 wordcraft-pdf = { workspace = true }
+
+deckcraft-model = { workspace = true }
+deckcraft-fonts = { workspace = true }
+deckcraft-pptx = { workspace = true }
+deckcraft-pdf = { workspace = true }
 
 [dev-dependencies]
 ttf-parser = "0.25"

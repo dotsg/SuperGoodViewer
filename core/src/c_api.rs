@@ -4,7 +4,7 @@ use std::os::raw::c_char;
 use std::path::Path;
 
 use crate::compiler::engine::RenderOptions;
-use crate::{compile_markdown_to_pdf_result, compile_word_file_to_pdf};
+use crate::{compile_markdown_to_pdf_result, compile_ppt_file_to_pdf, compile_word_file_to_pdf};
 
 #[repr(C)]
 pub struct SogoodBuffer {
@@ -150,15 +150,7 @@ pub extern "C" fn sogood_compile_markdown(
             unsafe { CStr::from_ptr(doc_dir_ptr) }.to_str().unwrap_or(".")
         };
 
-        let options: RenderOptions = if !options_json_ptr.is_null() {
-            if let Ok(json_str) = unsafe { CStr::from_ptr(options_json_ptr) }.to_str() {
-                serde_json::from_str(json_str).unwrap_or_default()
-            } else {
-                RenderOptions::default()
-            }
-        } else {
-            RenderOptions::default()
-        };
+        let options = parse_render_options_ffi(options_json_ptr);
 
         match compile_markdown_to_pdf_result(markdown, title, Path::new(doc_dir), &options) {
             Ok(result) => {
@@ -185,46 +177,67 @@ pub extern "C" fn sogood_compile_markdown(
     })
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn sogood_compile_word_file(
+fn parse_render_options_ffi(options_json_ptr: *const c_char) -> RenderOptions {
+    if options_json_ptr.is_null() {
+        return RenderOptions::default();
+    }
+    match unsafe { CStr::from_ptr(options_json_ptr) }.to_str() {
+        Ok(json_str) => match serde_json::from_str(json_str) {
+            Ok(opts) => opts,
+            Err(e) => {
+                eprintln!(
+                    "sogood_core: warning: failed to deserialize RenderOptions JSON ({e}); falling back to default"
+                );
+                RenderOptions::default()
+            }
+        },
+        Err(e) => {
+            eprintln!(
+                "sogood_core: warning: invalid UTF-8 in RenderOptions JSON ({e}); falling back to default"
+            );
+            RenderOptions::default()
+        }
+    }
+}
+
+fn compile_office_file_ffi<F>(
     file_path_ptr: *const c_char,
     title_ptr: *const c_char,
     options_json_ptr: *const c_char,
-) -> *mut SogoodBuffer {
-    std::panic::catch_unwind(|| {
+    kind_label: &str,
+    default_title: &str,
+    fn_name: &str,
+    compile_fn: F,
+) -> *mut SogoodBuffer
+where
+    F: FnOnce(&Path, &str, &RenderOptions) -> Result<Vec<u8>, crate::CompileError>,
+{
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         clear_last_error();
         clear_last_degraded();
 
         if file_path_ptr.is_null() {
-            set_last_error("Word file path pointer is null".to_string());
+            set_last_error(format!("{kind_label} file path pointer is null"));
             return std::ptr::null_mut();
         }
 
         let file_path = match unsafe { CStr::from_ptr(file_path_ptr) }.to_str() {
             Ok(s) => s,
             Err(e) => {
-                set_last_error(format!("Invalid UTF-8 in Word file path: {}", e));
+                set_last_error(format!("Invalid UTF-8 in {kind_label} file path: {e}"));
                 return std::ptr::null_mut();
             }
         };
 
         let title = if title_ptr.is_null() {
-            "Document"
+            default_title
         } else {
-            unsafe { CStr::from_ptr(title_ptr) }.to_str().unwrap_or("Document")
+            unsafe { CStr::from_ptr(title_ptr) }.to_str().unwrap_or(default_title)
         };
 
-        let options: RenderOptions = if !options_json_ptr.is_null() {
-            if let Ok(json_str) = unsafe { CStr::from_ptr(options_json_ptr) }.to_str() {
-                serde_json::from_str(json_str).unwrap_or_default()
-            } else {
-                RenderOptions::default()
-            }
-        } else {
-            RenderOptions::default()
-        };
+        let options = parse_render_options_ffi(options_json_ptr);
 
-        match compile_word_file_to_pdf(Path::new(file_path), title, &options) {
+        match compile_fn(Path::new(file_path), title, &options) {
             Ok(pdf_bytes) => {
                 let mut buf = pdf_bytes.into_boxed_slice();
                 let data = buf.as_mut_ptr();
@@ -239,11 +252,45 @@ pub extern "C" fn sogood_compile_word_file(
                 std::ptr::null_mut()
             }
         }
-    })
+    }))
     .unwrap_or_else(|_| {
-        set_last_error("Internal panic caught in sogood_compile_word_file".to_string());
+        set_last_error(format!("Internal panic caught in {fn_name}"));
         std::ptr::null_mut()
     })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sogood_compile_word_file(
+    file_path_ptr: *const c_char,
+    title_ptr: *const c_char,
+    options_json_ptr: *const c_char,
+) -> *mut SogoodBuffer {
+    compile_office_file_ffi(
+        file_path_ptr,
+        title_ptr,
+        options_json_ptr,
+        "Word",
+        "Document",
+        "sogood_compile_word_file",
+        |path, title, opts| compile_word_file_to_pdf(path, title, opts),
+    )
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sogood_compile_ppt_file(
+    file_path_ptr: *const c_char,
+    title_ptr: *const c_char,
+    options_json_ptr: *const c_char,
+) -> *mut SogoodBuffer {
+    compile_office_file_ffi(
+        file_path_ptr,
+        title_ptr,
+        options_json_ptr,
+        "PowerPoint",
+        "Presentation",
+        "sogood_compile_ppt_file",
+        |path, title, opts| compile_ppt_file_to_pdf(path, title, opts),
+    )
 }
 
 #[unsafe(no_mangle)]

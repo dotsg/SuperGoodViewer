@@ -55,6 +55,17 @@ typedef SogoodCompileWordFileDart = Pointer<CSogoodBuffer> Function(
   Pointer<Utf8> optionsJson,
 );
 
+typedef SogoodCompilePptFileC = Pointer<CSogoodBuffer> Function(
+  Pointer<Utf8> filePath,
+  Pointer<Utf8> title,
+  Pointer<Utf8> optionsJson,
+);
+typedef SogoodCompilePptFileDart = Pointer<CSogoodBuffer> Function(
+  Pointer<Utf8> filePath,
+  Pointer<Utf8> title,
+  Pointer<Utf8> optionsJson,
+);
+
 typedef SogoodDetectFontsC = Pointer<CSogoodBuffer> Function();
 typedef SogoodDetectFontsDart = Pointer<CSogoodBuffer> Function();
 
@@ -102,6 +113,7 @@ class NativeEngine {
   late final SogoodCompileMarkdownDart _compileMarkdown;
   late final SogoodDetectFontsDart _detectFonts;
   SogoodCompileWordFileDart? _compileWordFile;
+  SogoodCompilePptFileDart? _compilePptFile;
   SogoodGetLastDegradedCountDart? _getLastDegradedCount;
   SogoodGetLastDegradedEquationsJsonDart? _getLastDegradedEquationsJson;
   SogoodExtractRemoteImageUrlsJsonDart? _extractRemoteImageUrlsJson;
@@ -169,6 +181,13 @@ class NativeEngine {
           SogoodCompileWordFileC,
           SogoodCompileWordFileDart
         >('sogood_compile_word_file');
+      } catch (_) {}
+
+      try {
+        _compilePptFile = lib.lookupFunction<
+          SogoodCompilePptFileC,
+          SogoodCompilePptFileDart
+        >('sogood_compile_ppt_file');
       } catch (_) {}
 
       try {
@@ -490,16 +509,16 @@ class NativeEngine {
     return result.pdfBytes;
   }
 
-  /// Compiles a Word document file (`.docx`, `.doc`, `.docm`, `.dotx`, `.dotm`)
-  /// into a PDF byte stream and returns structured compilation result.
-  NativeCompilationResult compileWordFileResult(
+  NativeCompilationResult _compileOfficeFileResult(
     String filePath, {
-    String title = 'Document',
-    RenderOptions options = const RenderOptions(),
+    required String title,
+    required RenderOptions options,
+    required SogoodCompileWordFileDart? compileFn,
+    required String kindLabel,
   }) {
-    if (!isAvailable || _compileWordFile == null) {
+    if (!isAvailable || compileFn == null) {
       return NativeCompilationResult(
-        errorMessage: _initError ?? 'Native engine word compiler is not available',
+        errorMessage: _initError ?? 'Native engine $kindLabel compiler is not available',
       );
     }
 
@@ -510,22 +529,22 @@ class NativeEngine {
     Pointer<CSogoodBuffer> bufferPtr = nullptr;
 
     try {
-      bufferPtr = _compileWordFile!(
+      bufferPtr = compileFn(
         filePathPtr,
         titlePtr,
         optionsPtr,
       );
 
       if (bufferPtr.address == 0) {
-        final err = getLastError() ?? 'Unknown Word compilation error';
-        debugPrint('[NativeEngine] Word compilation failed: $err');
+        final err = getLastError() ?? 'Unknown $kindLabel compilation error';
+        debugPrint('[NativeEngine] $kindLabel compilation failed: $err');
         return NativeCompilationResult(errorMessage: err);
       }
 
       final buffer = bufferPtr.ref;
       if (buffer.len == 0 || buffer.data.address == 0) {
-        return const NativeCompilationResult(
-          errorMessage: 'Empty PDF buffer returned from Word engine',
+        return NativeCompilationResult(
+          errorMessage: 'Empty PDF buffer returned from $kindLabel engine',
         );
       }
 
@@ -540,6 +559,22 @@ class NativeEngine {
         _freeBuffer(bufferPtr);
       }
     }
+  }
+
+  /// Compiles a Word document file (`.docx`, `.doc`, `.docm`, `.dotx`, `.dotm`)
+  /// into a PDF byte stream and returns structured compilation result.
+  NativeCompilationResult compileWordFileResult(
+    String filePath, {
+    String title = 'Document',
+    RenderOptions options = const RenderOptions(),
+  }) {
+    return _compileOfficeFileResult(
+      filePath,
+      title: title,
+      options: options,
+      compileFn: _compileWordFile,
+      kindLabel: 'Word',
+    );
   }
 
   /// Compiles a Word document file in a background Dart isolate.
@@ -564,6 +599,51 @@ class NativeEngine {
     RenderOptions options = const RenderOptions(),
   }) async {
     final result = await compileWordFileResultAsync(
+      filePath,
+      title: title,
+      options: options,
+    );
+    return result.pdfBytes;
+  }
+
+  /// Compiles a PowerPoint presentation file (`.pptx`, `.pptm`, `.potx`, `.potm`, `.ppsx`, `.ppsm`)
+  /// into a PDF byte stream and returns structured compilation result.
+  NativeCompilationResult compilePptFileResult(
+    String filePath, {
+    String title = 'Presentation',
+    RenderOptions options = const RenderOptions(),
+  }) {
+    return _compileOfficeFileResult(
+      filePath,
+      title: title,
+      options: options,
+      compileFn: _compilePptFile,
+      kindLabel: 'PowerPoint',
+    );
+  }
+
+  /// Compiles a PowerPoint presentation file in a background Dart isolate.
+  Future<NativeCompilationResult> compilePptFileResultAsync(
+    String filePath, {
+    String title = 'Presentation',
+    RenderOptions options = const RenderOptions(),
+  }) {
+    return Isolate.run(() {
+      return NativeEngine.instance.compilePptFileResult(
+        filePath,
+        title: title,
+        options: options,
+      );
+    });
+  }
+
+  /// Compiles a PowerPoint presentation file in a background Dart isolate and returns PDF bytes.
+  Future<Uint8List?> compilePptFileAsync(
+    String filePath, {
+    String title = 'Presentation',
+    RenderOptions options = const RenderOptions(),
+  }) async {
+    final result = await compilePptFileResultAsync(
       filePath,
       title: title,
       options: options,

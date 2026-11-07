@@ -1,0 +1,18 @@
+[package]
+name = "deckcraft-fonts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DeckCraft fonts: font database (craft-fonts + system), substitutes for Office fonts, metrics, outlines, shaping"
+
+[lints]
+workspace = true
+
+[dependencies]
+kurbo = { workspace = true }
+skrifa = { workspace = true }
+harfrust = { workspace = true }
+unicode-bidi = { workspace = true }
+log = { workspace = true }
+# Reuse wordcraft-fonts bundled faces (Liberation Sans/Serif/Mono + Noto Math/Symbols/Emoji).
+wordcraft-fonts = { workspace = true }

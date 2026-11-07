@@ -2606,7 +2606,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             }
             extractNodes(outlines);
 
-            if (widget.controller.isPdfDocument || widget.controller.isWordDocument) {
+            if (widget.controller.isPdfDocument ||
+                widget.controller.isWordDocument ||
+                widget.controller.isPptDocument) {
               final items = <OutlineItem>[];
               void traverse(List<PdfOutlineNode> nodes, int level) {
                 for (final node in nodes) {
@@ -2730,6 +2732,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
                   '.mkdn',
                   '.pdf',
                   ...ReaderController.wordExtensions,
+                  ...ReaderController.pptExtensions,
                 };
                 if (supportedExtensions.contains(ext) || ext.isEmpty) {
                   // Markdown 与 PDF 文档：直接在当前视窗中平滑切换打开
@@ -2801,7 +2804,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final colorFilter = isMobile
         ? mobilePrefs.resolveCanvasColorFilter(
             isDark: isDark,
-            isPdfDocument: widget.controller.isPdfDocument || widget.controller.isWordDocument,
+            isPdfDocument: widget.controller.isPdfDocument ||
+                widget.controller.isWordDocument ||
+                widget.controller.isPptDocument,
             isMobile: isMobile,
           )
         : null;

@@ -158,6 +158,8 @@ abstract class AppStrings {
   String get layoutModeA4Landscape;
   String get layoutModeSlide169;
   String get layoutModeSlide43;
+  String get layoutModePptSlides;
+  String get layoutModePptNotes;
   String get twoPageSpreadDesc;
   String get marpCompatibility;
   String get marpCompatibilityDesc;

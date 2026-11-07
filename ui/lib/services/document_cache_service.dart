@@ -9,7 +9,7 @@ import 'remote_image_service.dart';
 /// Enables 0ms instantaneous document open on cold start and document switching.
 class DocumentCacheService {
   // Bump when renderer changes must invalidate previously compiled PDFs.
-  static const _renderCacheVersion = 6;
+  static const _renderCacheVersion = 7;
   static Directory? _customCacheDirForTesting;
   static Directory? _cachedDir;
 
@@ -178,7 +178,7 @@ class DocumentCacheService {
     // Quantize viewportWidth to 20pt grid to maximize cache hit rates across minor window resize variations,
     // which aligns with ReaderController's 40pt deadband threshold for fluid re-renders.
     final quantizedWidth = (options.viewportWidth / 20.0).round() * 20;
-    final raw = '$filePath#$mtime#$size#${options.mode}#${options.effectivePageFormat}#${options.theme}#${options.fontSize}#${options.lineSpacing}#${options.paragraphSpacing}#$quantizedWidth#${options.bodyFont ?? ''}#${options.codeFont ?? ''}#${options.headerLeft ?? ''}#${options.headerCenter ?? ''}#${options.headerRight ?? ''}#${options.footerLeft ?? ''}#${options.footerCenter ?? ''}#${options.footerRight ?? ''}#${options.showHeaderRule ?? false}#${options.showFooterRule ?? false}#${options.skipFirstPageHeaderFooter ?? false}#${options.marpEnabled ?? true}#$attachmentFingerprint';
+    final raw = '$filePath#$mtime#$size#${options.mode}#${options.effectivePageFormat}#${options.theme}#${options.fontSize}#${options.lineSpacing}#${options.paragraphSpacing}#$quantizedWidth#${options.bodyFont ?? ''}#${options.codeFont ?? ''}#${options.headerLeft ?? ''}#${options.headerCenter ?? ''}#${options.headerRight ?? ''}#${options.footerLeft ?? ''}#${options.footerCenter ?? ''}#${options.footerRight ?? ''}#${options.showHeaderRule ?? false}#${options.showFooterRule ?? false}#${options.skipFirstPageHeaderFooter ?? false}#${options.marpEnabled ?? true}#${options.exportQuality}#$attachmentFingerprint';
     int hash = 0xcbf29ce484222325;
     for (final unit in utf8.encode(raw)) {
       hash ^= unit;

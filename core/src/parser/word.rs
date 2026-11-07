@@ -88,8 +88,8 @@ fn sync_custom_user_fonts() {
         }
         if let Ok(bytes) = std::fs::read(&path) {
             let _ = wordcraft_fonts::FontDb::global().install_font(name, &bytes);
+            loaded.insert(key);
         }
-        loaded.insert(key);
     }
 }
 
@@ -306,5 +306,5 @@ fn render_word_native_pdf(
     };
 
     wordcraft_pdf::export_layout(doc, &lay, &pdf_opts)
-        .map_err(|e| CompileError::Pdf(format!("Word PDF export failed: {e}")))
+        .map_err(|e| CompileError::Word(format!("Word PDF export failed: {e}")))
 }

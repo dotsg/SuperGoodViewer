@@ -32,6 +32,11 @@ type CompileWordFileFn = unsafe extern "C" fn(
     *const c_char,
     *const c_char,
 ) -> *mut SogoodBuffer;
+type CompilePptFileFn = unsafe extern "C" fn(
+    *const c_char,
+    *const c_char,
+    *const c_char,
+) -> *mut SogoodBuffer;
 type FreeBufferFn = unsafe extern "C" fn(*mut SogoodBuffer);
 type GetLastErrorFn = unsafe extern "C" fn() -> *mut c_char;
 type FreeStringFn = unsafe extern "C" fn(*mut c_char);
@@ -184,6 +189,53 @@ impl CoreEngine {
             self.library
                 .get(b"sogood_compile_word_file")
                 .map_err(|e| format!("engine is missing sogood_compile_word_file: {e}"))?
+        };
+        let free_buffer: Symbol<FreeBufferFn> = unsafe {
+            self.library
+                .get(b"sogood_free_buffer")
+                .map_err(|e| format!("engine is missing sogood_free_buffer: {e}"))?
+        };
+
+        let buffer = unsafe {
+            compile(
+                file_path_c.as_ptr(),
+                title_c.as_ptr(),
+                options_c.as_ptr(),
+            )
+        };
+
+        if buffer.is_null() {
+            return Err(self.last_error().unwrap_or_else(|| "unknown engine error".to_string()));
+        }
+
+        let pdf_bytes = unsafe {
+            let buf = &*buffer;
+            std::slice::from_raw_parts(buf.data, buf.len).to_vec()
+        };
+        unsafe { free_buffer(buffer) };
+
+        Ok(Compilation {
+            pdf_bytes,
+            degraded_equation_count: 0,
+        })
+    }
+
+    /// Compiles a PowerPoint presentation file (`.pptx`, `.pptm`, `.potx`, `.potm`, `.ppsx`, `.ppsm`)
+    /// to PDF bytes through the engine's C ABI.
+    pub fn compile_ppt_file(
+        &self,
+        file_path: &Path,
+        title: &str,
+        options_json: &str,
+    ) -> Result<Compilation, String> {
+        let file_path_c = to_c_string(&file_path.to_string_lossy(), "PowerPoint file path")?;
+        let title_c = to_c_string(title, "title")?;
+        let options_c = to_c_string(options_json, "render options")?;
+
+        let compile: Symbol<CompilePptFileFn> = unsafe {
+            self.library
+                .get(b"sogood_compile_ppt_file")
+                .map_err(|e| format!("engine is missing sogood_compile_ppt_file: {e}"))?
         };
         let free_buffer: Symbol<FreeBufferFn> = unsafe {
             self.library

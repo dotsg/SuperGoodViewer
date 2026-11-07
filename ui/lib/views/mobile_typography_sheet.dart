@@ -234,7 +234,7 @@ class _MobileTypographySheetState extends State<MobileTypographySheet> {
                     ],
 
                     // Font Size Stepper & Slider (Markdown / Typst documents)
-                    if (!controller.isPdfDocument) ...[
+                    if (!controller.isPdfDocument && !controller.isOfficeDocument) ...[
                       Container(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
@@ -519,7 +519,7 @@ class _MobileTypographySheetState extends State<MobileTypographySheet> {
                     ),
                     const SizedBox(height: 14),
 
-                    // Page Layout Modes (Markdown documents)
+                    // Page Layout Modes (Markdown, Word, and PowerPoint documents)
                     if (!controller.isPdfDocument) ...[
                       Text(
                         strings.tabLayoutTitle,
@@ -531,27 +531,49 @@ class _MobileTypographySheetState extends State<MobileTypographySheet> {
                       ),
                       const SizedBox(height: 8),
                       Row(
-                        children: [
-                          Expanded(
-                            child: _LayoutModeButton(
-                              title: strings.layoutModeFluid,
-                              icon: Icons.view_headline_rounded,
-                              isSelected: options.isFluid,
-                              isDark: isDark,
-                              onTap: () => controller.setPageFormat(PageFormat.fluid),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: _LayoutModeButton(
-                              title: strings.layoutModeA4Portrait,
-                              icon: Icons.description_outlined,
-                              isSelected: options.effectivePageFormat == PageFormat.a4Portrait,
-                              isDark: isDark,
-                              onTap: () => controller.setPageFormat(PageFormat.a4Portrait),
-                            ),
-                          ),
-                        ],
+                        children: controller.isPptDocument
+                            ? [
+                                Expanded(
+                                  child: _LayoutModeButton(
+                                    title: strings.layoutModePptSlides,
+                                    icon: Icons.slideshow_rounded,
+                                    isSelected: !controller.isPptNotesView,
+                                    isDark: isDark,
+                                    onTap: () => controller.setPageFormat(PageFormat.pptSlides),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: _LayoutModeButton(
+                                    title: strings.layoutModePptNotes,
+                                    icon: Icons.speaker_notes_outlined,
+                                    isSelected: controller.isPptNotesView,
+                                    isDark: isDark,
+                                    onTap: () => controller.setPageFormat(PageFormat.pptNotes),
+                                  ),
+                                ),
+                              ]
+                            : [
+                                Expanded(
+                                  child: _LayoutModeButton(
+                                    title: strings.layoutModeFluid,
+                                    icon: Icons.view_headline_rounded,
+                                    isSelected: options.isFluid,
+                                    isDark: isDark,
+                                    onTap: () => controller.setPageFormat(PageFormat.fluid),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: _LayoutModeButton(
+                                    title: strings.layoutModeA4Portrait,
+                                    icon: Icons.description_outlined,
+                                    isSelected: options.effectivePageFormat == PageFormat.a4Portrait,
+                                    isDark: isDark,
+                                    onTap: () => controller.setPageFormat(PageFormat.a4Portrait),
+                                  ),
+                                ),
+                              ],
                       ),
                       const SizedBox(height: 14),
                     ],
@@ -740,7 +762,7 @@ class _MobileTypographySheetState extends State<MobileTypographySheet> {
                     const SizedBox(height: 14),
 
                     // Font Family Selection (detected system fonts)
-                    if (!controller.isPdfDocument)
+                    if (!controller.isPdfDocument && !controller.isOfficeDocument)
                       Builder(
                         builder: (context) {
                           final rawFonts = (controller.fontReport['detected_body_fonts']

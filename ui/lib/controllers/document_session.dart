@@ -80,6 +80,9 @@ class DocumentSession {
   /// toggle). Null follows the app-wide default.
   String? pageFormat;
 
+  /// Saved page format prior to entering presentation mode for this session.
+  String? formatBeforePresentation;
+
   /// Options the current [pdfBytes] were rendered with, to tell whether a tab
   /// shown again needs a recompile after app-wide settings changed.
   RenderOptions? renderedWith;
@@ -89,8 +92,9 @@ class DocumentSession {
   Uint8List? pdfBytes;
   bool isRawPdf = false;
   bool isWordDoc = false;
-  int? wordFileModifiedMicros;
-  int? wordFileSize;
+  bool isPptDoc = false;
+  int? officeFileModifiedMicros;
+  int? officeFileSize;
   Uint8List? originalPdfBytes;
   List<OutlineItem> originalPdfOutlines = [];
   bool isPdfReflowed = false;

@@ -94,7 +94,35 @@
                 <data android:pathPattern=".*\\.dotm" />
             </intent-filter>
 
-            <!-- 系统分享菜单接入：支持从微信/QQ/AI助手分享 PDF、Word 文件或 Markdown 文本到超好读 -->
+            <!-- 关联打开 Microsoft PowerPoint 演示文稿 (Content Scheme) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.presentation" />
+                <data android:scheme="content" android:mimeType="application/vnd.ms-powerpoint.presentation.macroEnabled.12" />
+                <data android:scheme="content" android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.template" />
+                <data android:scheme="content" android:mimeType="application/vnd.ms-powerpoint.template.macroEnabled.12" />
+                <data android:scheme="content" android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.slideshow" />
+                <data android:scheme="content" android:mimeType="application/vnd.ms-powerpoint.slideshow.macroEnabled.12" />
+            </intent-filter>
+
+            <!-- 关联打开 Microsoft PowerPoint 演示文稿 (File Scheme) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="file" />
+                <data android:mimeType="*/*" />
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.pptx" />
+                <data android:pathPattern=".*\\.pptm" />
+                <data android:pathPattern=".*\\.potx" />
+                <data android:pathPattern=".*\\.potm" />
+                <data android:pathPattern=".*\\.ppsx" />
+                <data android:pathPattern=".*\\.ppsm" />
+            </intent-filter>
+
+            <!-- 系统分享菜单接入：支持从微信/QQ/AI助手分享 PDF、Word、PowerPoint 文件或 Markdown 文本到超好读 -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -104,6 +132,12 @@
                 <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.template" />
                 <data android:mimeType="application/vnd.ms-word.template.macroEnabled.12" />
                 <data android:mimeType="application/msword" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.presentation" />
+                <data android:mimeType="application/vnd.ms-powerpoint.presentation.macroEnabled.12" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.template" />
+                <data android:mimeType="application/vnd.ms-powerpoint.template.macroEnabled.12" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.slideshow" />
+                <data android:mimeType="application/vnd.ms-powerpoint.slideshow.macroEnabled.12" />
                 <data android:mimeType="application/octet-stream" />
                 <data android:mimeType="text/plain" />
                 <data android:mimeType="text/markdown" />

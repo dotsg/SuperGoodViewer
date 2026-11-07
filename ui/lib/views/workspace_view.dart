@@ -480,6 +480,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     '.mdx',
     '.pdf',
     ...ReaderController.wordExtensions,
+    ...ReaderController.pptExtensions,
     '.typ',
     '.txt',
   };
@@ -489,7 +490,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     '.zip', '.tar', '.gz', '.7z', '.rar', '.bz2', '.xz',
     '.dmg', '.iso', '.pkg', '.app', '.exe', '.dll', '.so', '.dylib', '.bin',
     '.mp4', '.mov', '.avi', '.mkv', '.webm', '.mp3', '.wav', '.flac', '.aac',
-    '.xls', '.xlsx', '.ppt', '.pptx',
+    '.xls', '.xlsx', '.ppt',
   };
 
   static Future<bool> _isFileSupported(File file) async {
@@ -1835,11 +1836,12 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               ),
               _PillDivider(isDark: isDark),
 
-              // Mode & Layout switcher (Fluid, A4, 16:9, etc.) - Markdown & Word
+              // Mode & Layout switcher (Fluid, A4, 16:9, Slides/Notes, etc.) - Markdown, Word & PowerPoint
               if (!controller.isPdfDocument) ...[
                 _FormatSelectorPill(
                   format: controller.renderOptions.effectivePageFormat,
                   isWordDocument: controller.isWordDocument,
+                  isPptDocument: controller.isPptDocument,
                   shortcutLabel: controller.shortcutService.getShortcutLabel('toggleMode'),
                   onSelectFormat: controller.setPageFormat,
                   onToggle: controller.toggleMode,
@@ -2018,6 +2020,7 @@ class _PillIconButton extends StatelessWidget {
 class _FormatSelectorPill extends StatelessWidget {
   final String format;
   final bool isWordDocument;
+  final bool isPptDocument;
   final ValueChanged<String> onSelectFormat;
   final VoidCallback onToggle;
   final bool isDark;
@@ -2027,6 +2030,7 @@ class _FormatSelectorPill extends StatelessWidget {
   const _FormatSelectorPill({
     required this.format,
     this.isWordDocument = false,
+    this.isPptDocument = false,
     required this.onSelectFormat,
     required this.onToggle,
     required this.isDark,
@@ -2043,7 +2047,10 @@ class _FormatSelectorPill extends StatelessWidget {
       case PageFormat.a4Landscape:
         return Icons.landscape_outlined;
       case PageFormat.slide16x9:
+      case PageFormat.pptSlides:
         return Icons.slideshow_rounded;
+      case PageFormat.pptNotes:
+        return Icons.speaker_notes_outlined;
       case PageFormat.slide4x3:
         return Icons.tv_rounded;
       default:
@@ -2111,57 +2118,80 @@ class _FormatSelectorPill extends StatelessWidget {
               color: theme.colorScheme.primary,
             ),
             itemBuilder: (context) => [
-              PopupMenuItem(
-                value: PageFormat.fluid,
-                child: Row(
-                  children: [
-                    const Icon(Icons.view_stream_rounded, size: 16),
-                    const SizedBox(width: 8),
-                    Text(strings.layoutModeFluid),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: PageFormat.a4Portrait,
-                child: Row(
-                  children: [
-                    const Icon(Icons.description_outlined, size: 16),
-                    const SizedBox(width: 8),
-                    Text(strings.layoutModeA4Portrait),
-                  ],
-                ),
-              ),
-              if (!isWordDocument) ...[
+              if (isPptDocument) ...[
                 PopupMenuItem(
-                  value: PageFormat.a4Landscape,
-                  child: Row(
-                    children: [
-                      const Icon(Icons.landscape_outlined, size: 16),
-                      const SizedBox(width: 8),
-                      Text(strings.layoutModeA4Landscape),
-                    ],
-                  ),
-                ),
-                PopupMenuItem(
-                  value: PageFormat.slide16x9,
+                  value: PageFormat.pptSlides,
                   child: Row(
                     children: [
                       const Icon(Icons.slideshow_rounded, size: 16),
                       const SizedBox(width: 8),
-                      Text(strings.layoutModeSlide169),
+                      Text(strings.layoutModePptSlides),
                     ],
                   ),
                 ),
                 PopupMenuItem(
-                  value: PageFormat.slide4x3,
+                  value: PageFormat.pptNotes,
                   child: Row(
                     children: [
-                      const Icon(Icons.tv_rounded, size: 16),
+                      const Icon(Icons.speaker_notes_outlined, size: 16),
                       const SizedBox(width: 8),
-                      Text(strings.layoutModeSlide43),
+                      Text(strings.layoutModePptNotes),
                     ],
                   ),
                 ),
+              ] else ...[
+                PopupMenuItem(
+                  value: PageFormat.fluid,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.view_stream_rounded, size: 16),
+                      const SizedBox(width: 8),
+                      Text(strings.layoutModeFluid),
+                    ],
+                  ),
+                ),
+                PopupMenuItem(
+                  value: PageFormat.a4Portrait,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.description_outlined, size: 16),
+                      const SizedBox(width: 8),
+                      Text(strings.layoutModeA4Portrait),
+                    ],
+                  ),
+                ),
+                if (!isWordDocument) ...[
+                  PopupMenuItem(
+                    value: PageFormat.a4Landscape,
+                    child: Row(
+                      children: [
+                        const Icon(Icons.landscape_outlined, size: 16),
+                        const SizedBox(width: 8),
+                        Text(strings.layoutModeA4Landscape),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: PageFormat.slide16x9,
+                    child: Row(
+                      children: [
+                        const Icon(Icons.slideshow_rounded, size: 16),
+                        const SizedBox(width: 8),
+                        Text(strings.layoutModeSlide169),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: PageFormat.slide4x3,
+                    child: Row(
+                      children: [
+                        const Icon(Icons.tv_rounded, size: 16),
+                        const SizedBox(width: 8),
+                        Text(strings.layoutModeSlide43),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ],
           ),

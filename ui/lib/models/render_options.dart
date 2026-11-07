@@ -8,6 +8,8 @@ class PageFormat {
   static const String a4Landscape = 'a4Landscape';
   static const String slide16x9 = 'slide16x9';
   static const String slide4x3 = 'slide4x3';
+  static const String pptSlides = 'pptSlides';
+  static const String pptNotes = 'pptNotes';
 
   static const List<String> all = [
     fluid,
@@ -29,6 +31,10 @@ class PageFormat {
         return strings.layoutModeSlide169;
       case slide4x3:
         return strings.layoutModeSlide43;
+      case pptSlides:
+        return strings.layoutModePptSlides;
+      case pptNotes:
+        return strings.layoutModePptNotes;
       default:
         return format;
     }
@@ -84,6 +90,7 @@ class RenderOptions {
   final bool? skipFirstPageHeaderFooter;
   final bool? marpEnabled;
   final bool pdfCropMargins;
+  final bool exportQuality;
 
   const RenderOptions({
     this.mode = 'fluid',
@@ -107,6 +114,7 @@ class RenderOptions {
     this.skipFirstPageHeaderFooter,
     this.marpEnabled,
     this.pdfCropMargins = false,
+    this.exportQuality = false,
   });
 
   String get effectivePageFormat {
@@ -120,20 +128,24 @@ class RenderOptions {
   bool get isDark => theme == 'dark';
   bool get isSlide =>
       effectivePageFormat == PageFormat.slide16x9 ||
-      effectivePageFormat == PageFormat.slide4x3;
+      effectivePageFormat == PageFormat.slide4x3 ||
+      effectivePageFormat == PageFormat.pptSlides;
   bool get isA4 =>
       effectivePageFormat == PageFormat.a4Portrait ||
-      effectivePageFormat == PageFormat.a4Landscape;
+      effectivePageFormat == PageFormat.a4Landscape ||
+      effectivePageFormat == PageFormat.pptNotes;
 
   double get aspectRatio {
     switch (effectivePageFormat) {
       case PageFormat.slide16x9:
+      case PageFormat.pptSlides:
         return 16.0 / 9.0;
       case PageFormat.slide4x3:
         return 4.0 / 3.0;
       case PageFormat.a4Landscape:
         return 841.89 / 595.28;
       case PageFormat.a4Portrait:
+      case PageFormat.pptNotes:
         return 595.28 / 841.89;
       default:
         return 1.0;
@@ -164,6 +176,7 @@ class RenderOptions {
     bool? skipFirstPageHeaderFooter,
     bool? marpEnabled,
     bool? pdfCropMargins,
+    bool? exportQuality,
   }) {
     return RenderOptions(
       mode: mode ?? this.mode,
@@ -188,6 +201,7 @@ class RenderOptions {
           skipFirstPageHeaderFooter ?? this.skipFirstPageHeaderFooter,
       marpEnabled: marpEnabled ?? this.marpEnabled,
       pdfCropMargins: pdfCropMargins ?? this.pdfCropMargins,
+      exportQuality: exportQuality ?? this.exportQuality,
     );
   }
 
@@ -224,6 +238,7 @@ class RenderOptions {
     }
     if (marpEnabled != null) map['marp_enabled'] = marpEnabled;
     if (pdfCropMargins) map['pdf_crop_margins'] = pdfCropMargins;
+    if (exportQuality) map['export_quality'] = exportQuality;
 
     return jsonEncode(map);
   }
@@ -252,7 +267,8 @@ class RenderOptions {
           other.showFooterRule == showFooterRule &&
           other.skipFirstPageHeaderFooter == skipFirstPageHeaderFooter &&
           other.marpEnabled == marpEnabled &&
-          other.pdfCropMargins == pdfCropMargins;
+          other.pdfCropMargins == pdfCropMargins &&
+          other.exportQuality == exportQuality;
 
   @override
   int get hashCode => Object.hashAll([
@@ -277,5 +293,6 @@ class RenderOptions {
         skipFirstPageHeaderFooter,
         marpEnabled,
         pdfCropMargins,
+        exportQuality,
       ]);
 }

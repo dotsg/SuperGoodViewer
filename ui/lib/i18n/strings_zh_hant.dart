@@ -129,6 +129,10 @@ class ZhHantStrings extends ZhHansStrings {
         return '16:9';
       case 'slide4x3':
         return '4:3';
+      case 'pptSlides':
+        return '投影片';
+      case 'pptNotes':
+        return '備註頁';
       default:
         return 'A4';
     }
@@ -317,6 +321,10 @@ class ZhHantStrings extends ZhHansStrings {
   String get layoutModeSlide169 => '16:9 寬螢幕投影片';
   @override
   String get layoutModeSlide43 => '4:3 傳統投影片';
+  @override
+  String get layoutModePptSlides => '投影片檢視 (Slides)';
+  @override
+  String get layoutModePptNotes => '備註講稿檢視 (Notes)';
   @override
   String get twoPageSpreadDesc => '在分頁檢視中左右並排展示兩頁，呈現書籍與畫冊級對開閱讀體驗';
   @override

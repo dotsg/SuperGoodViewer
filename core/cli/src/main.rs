@@ -16,22 +16,22 @@ fn json_string(value: &str) -> serde_json::Value {
 
 fn print_help() {
     println!(
-        r#"sgv-cli {VERSION} - SuperGoodViewer Headless Markdown Exporter & CLI
+        r#"sgv-cli {VERSION} - SuperGoodViewer Headless Document Exporter & CLI
 
 Usage:
   sgv export <path>... [options]
   sgv-cli export <path>... [options]
-  sgv <input.md> -o <output.pdf> [options]
+  sgv <input.md|input.docx|input.pptx> -o <output.pdf> [options]
 
 Arguments:
-  <path>...                       One or more Markdown files or directories,
-                                  or '-' to read from stdin
+  <path>...                       One or more Markdown, Word (.docx/.doc), or PowerPoint
+                                  (.pptx) files or directories, or '-' to read from stdin
 
 Options:
   -o, --output <path>             Output PDF path (for single file) or
                                   destination directory (for directory/multi-file)
-  -f, --format <format>           Page layout format: a4, a4-landscape, fluid, slide, slide-4-3
-                                  (default: a4)
+  -f, --format <format>           Page layout format: a4, a4-landscape, fluid, slide, slide-4-3,
+                                  pptSlides, notes (pptNotes) (default: a4)
       --fluid                     Shorthand for --format fluid
   -t, --theme <theme>             Theme: light, dark (default: light)
       --dark                      Shorthand for --theme dark
@@ -45,9 +45,10 @@ Options:
 
 Examples:
   sgv export README.md                             # Single file -> README.pdf
-  sgv export ./docs                                # All markdown in ./docs (in-place)
-  sgv export ./docs -o ./dist                      # All markdown in ./docs -> ./dist/*.pdf
-  sgv export doc1.md doc2.md -o ./dist             # Multiple files into ./dist
+  sgv export deck.pptx -f notes                    # PowerPoint with speaker notes -> deck.pdf
+  sgv export ./docs                                # All supported docs in ./docs (in-place)
+  sgv export ./docs -o ./dist                      # All supported docs in ./docs -> ./dist/*.pdf
+  sgv export doc1.md doc2.docx -o ./dist           # Multiple files into ./dist
   cat draft.md | sgv export - -o draft.pdf         # Stdin pipe
 "#
     );
@@ -86,8 +87,10 @@ fn normalize_format(fmt: &str) -> String {
         "a4" | "a4_portrait" | "a4portrait" | "portrait" => "a4".to_string(),
         "a4_landscape" | "a4landscape" | "landscape" | "a4-landscape" => "a4_landscape".to_string(),
         "fluid" => "fluid".to_string(),
-        "slide" | "slide_16_9" | "slide16x9" | "slide-16-9" | "16:9" | "16x9" => "slide_16_9".to_string(),
+        "slide" | "slides" | "slide_16_9" | "slide16x9" | "slide-16-9" | "16:9" | "16x9" => "slide_16_9".to_string(),
+        "pptslides" | "ppt-slides" | "ppt_slides" => "pptSlides".to_string(),
         "slide_4_3" | "slide4x3" | "slide-4-3" | "4:3" | "4x3" => "slide_4_3".to_string(),
+        "notes" | "pptnotes" | "ppt-notes" | "ppt_notes" => "pptNotes".to_string(),
         other => other.to_string(),
     }
 }
@@ -258,6 +261,23 @@ fn is_word_file_path(path: &Path) -> bool {
         .is_some_and(is_word_extension)
 }
 
+fn is_ppt_extension(ext: &str) -> bool {
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "pptx" | "pptm" | "potx" | "potm" | "ppsx" | "ppsm"
+    )
+}
+
+fn is_ppt_file_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(is_ppt_extension)
+}
+
+fn is_office_file_path(path: &Path) -> bool {
+    is_word_file_path(path) || is_ppt_file_path(path)
+}
+
 fn collect_markdown_files(dir: &Path, recursive: bool) -> io::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     collect_markdown_files_internal(dir, recursive, &mut files)?;
@@ -299,7 +319,11 @@ fn collect_markdown_files_internal(
         } else if path.is_file() {
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                 let ext_lower = ext.to_ascii_lowercase();
-                if ext_lower == "md" || ext_lower == "markdown" || is_word_extension(&ext_lower) {
+                if ext_lower == "md"
+                    || ext_lower == "markdown"
+                    || is_word_extension(&ext_lower)
+                    || is_ppt_extension(&ext_lower)
+                {
                     files.push(path);
                 }
             }
@@ -385,7 +409,7 @@ fn plan_export_tasks(config: &CliConfig) -> Result<Vec<ExportTask>, String> {
     }
 
     if collected_items.is_empty() {
-        return Err("No Markdown or Word files (.md, .markdown, .docx, .doc) found to export.".to_string());
+        return Err("No Markdown, Word, or PowerPoint files (.md, .markdown, .docx, .doc, .pptx) found to export.".to_string());
     }
 
     let is_single = collected_items.len() == 1;
@@ -413,7 +437,7 @@ fn plan_export_tasks(config: &CliConfig) -> Result<Vec<ExportTask>, String> {
 
     let mut markdown_out_keys = std::collections::HashSet::new();
     for item in &collected_items {
-        if !is_word_file_path(&item.file_path) {
+        if !is_office_file_path(&item.file_path) {
             let stem = item
                 .file_path
                 .file_stem()
@@ -426,7 +450,7 @@ fn plan_export_tasks(config: &CliConfig) -> Result<Vec<ExportTask>, String> {
 
     for item in collected_items {
         let f_path = item.file_path;
-        let is_word = is_word_file_path(&f_path);
+        let is_office = is_office_file_path(&f_path);
         let stem = f_path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -442,8 +466,8 @@ fn plan_export_tasks(config: &CliConfig) -> Result<Vec<ExportTask>, String> {
         let mut out_path = default_out_path(&f_path, &item.base_dir, &stem);
         let out_key = out_path.to_string_lossy().to_lowercase();
 
-        // Markdown files always keep `<stem>.pdf` when colliding with a Word file (`report.md` + `report.docx`).
-        let collides = if is_word {
+        // Markdown files always keep `<stem>.pdf` when colliding with a Word/PPT file (`report.md` + `report.docx` + `report.pptx`).
+        let collides = if is_office {
             markdown_out_keys.contains(&out_key) || used_out_keys.contains(&out_key)
         } else {
             used_out_keys.contains(&out_key)
@@ -515,6 +539,7 @@ fn main() {
         serde_json::Value::from(config.font_size.unwrap_or(10.5)),
     );
     options.insert("page_format".to_string(), json_string(&chosen_format));
+    options.insert("export_quality".to_string(), serde_json::Value::Bool(true));
     if let Some(dir) = &config.image_cache_dir {
         options.insert("image_cache_dir".to_string(), json_string(dir));
     }
@@ -534,9 +559,9 @@ fn main() {
     let mut fail_count = 0;
 
     for (index, task) in tasks.iter().enumerate() {
-        let is_word = match &task.source {
-            SourceInput::Stdin => false,
-            SourceInput::File(p) => is_word_file_path(p),
+        let (is_word, is_ppt) = match &task.source {
+            SourceInput::Stdin => (false, false),
+            SourceInput::File(p) => (is_word_file_path(p), is_ppt_file_path(p)),
         };
 
         let (content, display_src) = match &task.source {
@@ -549,7 +574,7 @@ fn main() {
                 }
                 (buffer, "<stdin>".to_string())
             }
-            SourceInput::File(p) if is_word => (String::new(), p.display().to_string()),
+            SourceInput::File(p) if is_word || is_ppt => (String::new(), p.display().to_string()),
             SourceInput::File(p) => match fs::read_to_string(p) {
                 Ok(c) => (c, p.display().to_string()),
                 Err(e) => {
@@ -562,7 +587,7 @@ fn main() {
 
         let title = if total == 1 && config.title.is_some() {
             config.title.clone().unwrap()
-        } else if is_word {
+        } else if is_word || is_ppt {
             task.fallback_title.clone()
         } else {
             extract_title_from_markdown(&content, &task.fallback_title)
@@ -578,8 +603,16 @@ fn main() {
             );
         }
 
-        let compile_res = match (&task.source, is_word) {
-            (SourceInput::File(p), true) => engine.compile_word_file(p, &title, &options_json),
+        if !is_ppt && matches!(chosen_format.as_str(), "pptNotes" | "pptSlides") {
+            eprintln!(
+                "sgv-cli: warning: format '{}' only applies to PowerPoint (.pptx) files; falling back to A4 for '{}'",
+                chosen_format, display_src
+            );
+        }
+
+        let compile_res = match (&task.source, is_word, is_ppt) {
+            (SourceInput::File(p), true, _) => engine.compile_word_file(p, &title, &options_json),
+            (SourceInput::File(p), _, true) => engine.compile_ppt_file(p, &title, &options_json),
             _ => engine.compile_markdown(&content, &title, &task.doc_dir, &options_json),
         };
 
@@ -655,6 +688,11 @@ mod tests {
         assert_eq!(normalize_format("slide"), "slide_16_9");
         assert_eq!(normalize_format("16:9"), "slide_16_9");
         assert_eq!(normalize_format("4:3"), "slide_4_3");
+        assert_eq!(normalize_format("pptSlides"), "pptSlides");
+        assert_eq!(normalize_format("ppt-slides"), "pptSlides");
+        assert_eq!(normalize_format("notes"), "pptNotes");
+        assert_eq!(normalize_format("pptNotes"), "pptNotes");
+        assert_eq!(normalize_format("ppt-notes"), "pptNotes");
     }
 
     #[test]
@@ -805,11 +843,15 @@ mod tests {
 
         let md_file = temp_dir.join("report.md");
         let docx_file = temp_dir.join("report.docx");
+        let pptx_file = temp_dir.join("report.pptx");
         let lock_file = temp_dir.join("~$report.docx");
+        let ppt_lock_file = temp_dir.join("~$report.pptx");
 
         fs::write(&md_file, "# Report\n").unwrap();
         fs::write(&docx_file, "word\n").unwrap();
+        fs::write(&pptx_file, "ppt\n").unwrap();
         fs::write(&lock_file, "lock\n").unwrap();
+        fs::write(&ppt_lock_file, "lock\n").unwrap();
 
         let cfg = CliConfig {
             inputs: vec![temp_dir.to_string_lossy().to_string()],
@@ -818,13 +860,17 @@ mod tests {
         };
 
         let tasks = plan_export_tasks(&cfg).expect("plan failed");
-        // ~$report.docx lock file must be skipped; only report.docx and report.md remain
-        assert_eq!(tasks.len(), 2);
+        // ~$report.* lock files must be skipped; report.docx, report.md, and report.pptx remain
+        assert_eq!(tasks.len(), 3);
 
         let docx_task = tasks
             .iter()
             .find(|t| matches!(&t.source, SourceInput::File(p) if p.ends_with("report.docx")))
             .expect("docx task");
+        let pptx_task = tasks
+            .iter()
+            .find(|t| matches!(&t.source, SourceInput::File(p) if p.ends_with("report.pptx")))
+            .expect("pptx task");
         let md_task = tasks
             .iter()
             .find(|t| matches!(&t.source, SourceInput::File(p) if p.ends_with("report.md")))
@@ -833,6 +879,7 @@ mod tests {
         // Markdown keeps `report.pdf` even though `report.docx` sorts alphabetically before `report.md`
         assert_eq!(md_task.output_path, temp_dir.join("report.pdf"));
         assert_eq!(docx_task.output_path, temp_dir.join("report.docx.pdf"));
+        assert_eq!(pptx_task.output_path, temp_dir.join("report.pptx.pdf"));
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

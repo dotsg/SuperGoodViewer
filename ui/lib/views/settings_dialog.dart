@@ -177,7 +177,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 
   bool get _hasUnsavedLayoutChanges {
-    final opts = widget.controller.isWordDocument
+    final opts = widget.controller.isOfficeDocument
         ? widget.controller.globalRenderOptions
         : widget.controller.renderOptions;
     if (_selectedPageFormat != opts.effectivePageFormat) return true;
@@ -201,7 +201,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 
   void _revertLayout() {
-    final opts = widget.controller.isWordDocument
+    final opts = widget.controller.isOfficeDocument
         ? widget.controller.globalRenderOptions
         : widget.controller.renderOptions;
     setState(() {
@@ -270,7 +270,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       _desktopEntryStatus = LinuxDesktopIntegration.instance.status();
     }
     final opts = widget.controller.renderOptions;
-    final layoutOpts = widget.controller.isWordDocument
+    final layoutOpts = widget.controller.isOfficeDocument
         ? widget.controller.globalRenderOptions
         : opts;
     _selectedBodyFont = opts.bodyFont;
