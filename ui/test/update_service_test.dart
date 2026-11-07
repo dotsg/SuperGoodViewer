@@ -319,6 +319,38 @@ void main() {
       expect(info.formattedSize, '50.0 MB');
       expect(info.hasUpdate, isTrue);
       expect(info.toString(), contains('50.0 MB'));
+      expect(info.versionSummary, isEmpty);
+    });
+
+    test('UpdateInfo extracts versionSummary and strips installation boilerplate from releaseNotes', () {
+      const info = UpdateInfo(
+        currentVersion: '1.1.1',
+        latestVersion: '1.1.2',
+        title: 'v1.1.2 — Word/PPT 预览、Quick Look 与公式增强',
+        releaseNotes: '''✨ 新增功能
+
+- 新增 Microsoft Word (.docx / .doc) 原生排版预览
+- 新增 Microsoft PowerPoint (.pptx) 预览与备注视图 (#31)
+
+---
+
+<details>
+<summary><b>📦 下载与安装指南（macOS / Windows / Linux）</b></summary>
+
+#### 🍏 macOS 用户
+- 下载 dmg 安装包
+</details>
+
+**Full Changelog**: https://github.com/dotsg/SuperGoodViewer/compare/v1.1.1...v1.1.2''',
+        htmlUrl: 'https://github.com/dotsg/supergoodviewer/releases/tag/v1.1.2',
+        hasUpdate: true,
+      );
+
+      expect(info.versionSummary, 'Word/PPT 预览、Quick Look 与公式增强');
+      expect(info.displayReleaseNotes, contains('新增 Microsoft Word'));
+      expect(info.displayReleaseNotes, isNot(contains('下载与安装指南')));
+      expect(info.displayReleaseNotes, isNot(contains('<details>')));
+      expect(info.displayReleaseNotes, isNot(contains('Full Changelog')));
     });
   });
 

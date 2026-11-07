@@ -6,7 +6,7 @@
 </div>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Release: v1.1.1](https://img.shields.io/badge/Release-v1.1.1-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
+[![Release: v1.1.2](https://img.shields.io/badge/Release-v1.1.2-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
 [![CI Status](https://img.shields.io/badge/CI-Passing-brightgreen.svg)]()
 [![Platform: macOS | Windows | Linux](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)]()
 
@@ -238,6 +238,20 @@ cat draft.md | sgv export - -o draft.pdf
 ---
 
 ## 📝 更新日志 (Changelog)
+
+### v1.1.2 (2026-11)
+- **Microsoft Word 与 PowerPoint 原生排版预览及 PDF 导出**：
+  - 支持直接打开 `.docx` / `.doc` 文档进行流式与 A4 分页阅读，提取标题大纲、表格、内嵌图片与列表并支持一键导出无损 PDF；
+  - 支持直接打开 `.pptx` / `.potx` / `.ppsx` 演示文稿，提供「16:9 幻灯片视图（Slides） ⇄ 备注讲稿视图（Notes，上半页幻灯片 + 下半页演讲者备注）」双视图切换、全屏演示与 PDF 导出；
+  - 按文档类型（Markdown / Word / PPT / PDF）精细化隔离流式视图、双页对开、去白边、全屏演示模式与移动端深色反色能力。
+- **macOS Finder 空格键快速预览扩展 (Quick Look Extension)**：
+  - 内置原生 macOS `QuickLookExtension.appex`，支持在 Finder 中选中 Markdown 文件直接按空格键秒级预览排版效果。
+- **Mermaid 引擎升级与布局调优 (#28)**：
+  - 迁移至 `zebra-mermaid 0.1.0`，优化流程图 `subgraph` 嵌套布局，并在浮动工具栏与设置中新增会话级图表间距调节。
+- **LaTeX 数学公式符号桥接增强 (#29)**：
+  - 桥接 MiTeX 至 Typst 0.15 符号体系并补齐缺失的常用 LaTeX 数学命令。
+- **文档内全文搜索体验修复 (#31)**：
+  - 修复搜索框聚焦时无法使用 `Backspace` / `Delete` 删除文字的问题，新增内联一键清空按钮，并修复前后翻阅匹配项时当前匹配序号（`X / Y`）不更新的问题。
 
 ### v1.1.1 (2026-10)
 - **内联 `data:image/...` 图片渲染支持 (#21)**：
