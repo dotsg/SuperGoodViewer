@@ -218,6 +218,85 @@ void main() {
   });
 
   group('PdfReflowService & ReaderController Client-Side PDF Reflow Tests', () {
+    test('joinTextFlow handles soft hyphens, boundary emphasis markers, and compound words', () {
+      const cases = <({String prev, String next, bool isCjk, String expected})>[
+        (
+          prev: '*as learn*\u00AD',
+          next: '*ing residual functions*',
+          isCjk: false,
+          expected: '*as learning residual functions*',
+        ),
+        (
+          prev: '**deep**\u00AD',
+          next: '**er networks**',
+          isCjk: false,
+          expected: '**deeper networks**',
+        ),
+        (
+          prev: 'on the WMT 2014 English\u00AD',
+          next: 'to-German translation task',
+          isCjk: false,
+          expected: 'on the WMT 2014 English-to-German translation task',
+        ),
+        (
+          prev: 'naturally integrates low/mid/high\u00AD',
+          next: 'level features and classifiers',
+          isCjk: false,
+          expected: 'naturally integrates low/mid/high-level features and classifiers',
+        ),
+        (
+          prev: 'dot-product (multi\u00AD',
+          next: 'plicative) attention',
+          isCjk: false,
+          expected: 'dot-product (multiplicative) attention',
+        ),
+        (
+          prev: 'in a semi-',
+          next: 'supervised setting',
+          isCjk: false,
+          expected: 'in a semi-supervised setting',
+        ),
+        (
+          prev: 'with my co-',
+          next: 'author on the paper',
+          isCjk: false,
+          expected: 'with my co-author on the paper',
+        ),
+        (
+          prev: 'using a pre-',
+          next: 'trained model',
+          isCjk: false,
+          expected: 'using a pre-trained model',
+        ),
+        (
+          prev: 'compared with high\u00AD',
+          next: 'way networks',
+          isCjk: false,
+          expected: 'compared with highway networks',
+        ),
+        (
+          prev: 'suggests that pre\u00AD',
+          next: 'conditioning is useful',
+          isCjk: false,
+          expected: 'suggests that preconditioning is useful',
+        ),
+        (
+          prev: 'attend to position\u00AD',
+          next: 'Figure 1: The Transformer',
+          isCjk: false,
+          expected: 'attend to position Figure 1: The Transformer',
+        ),
+      ];
+
+      for (final c in cases) {
+        expect(
+          PdfReflowService.joinTextFlow(c.prev, c.next, isCjk: c.isCjk),
+          equals(c.expected),
+          reason: 'joinTextFlow(${c.prev}, ${c.next})',
+        );
+      }
+    });
+
     test('Reflows single-column academic PDF (Attention Is All You Need) into semantic Markdown', () async {
       final bytes = File(attentionPdfPath).readAsBytesSync();
       final result = await PdfReflowService.reflowPdfBytes(
@@ -231,6 +310,18 @@ void main() {
       expect(result.markdown, contains('Attention Is All You Need'));
       expect(result.markdown, contains('Introduction'));
       expect(result.markdown, contains('#'));
+      expect(result.markdown, contains('English-to-German'));
+      expect(result.markdown, contains('(multiplicative)'));
+      expect(result.markdown, isNot(contains('\u00AD')));
+      // Verify Page 8 & Page 9 single-column prose is not split into fake 2-column fragments
+      final idxCompetitive = result.markdown.indexOf(
+        'at a fraction of the training cost of any of the competitive models.',
+      );
+      final idxEnsembles = result.markdown.indexOf(
+        'In the former task our best model outperforms even all previously reported ensembles.',
+      );
+      expect(idxCompetitive, greaterThan(0));
+      expect(idxEnsembles, greaterThan(idxCompetitive));
     });
 
     test('Uncurls multi-column academic PDF (ResNet CVPR 2016) and toggles ReaderController reflow mode', () async {
@@ -244,6 +335,22 @@ void main() {
       expect(result.pageCount, equals(12));
       expect(result.elements.length, greaterThan(40));
       expect(result.markdown, contains('Deep Residual Learning'));
+      expect(result.markdown, contains('low/mid/high-level'));
+      expect(result.markdown, contains('highway networks'));
+      expect(result.markdown, contains('preconditioning'));
+      expect(result.markdown, isNot(contains('\u00AD')));
+      // Ensure italic soft-hyphenated words are unwrapped without mid-word `**`
+      expect(RegExp(r'[a-z]\*\*[a-z]').hasMatch(result.markdown), isFalse);
+      // Ensure single-column CVPR tables are preserved
+      final tableCount = result.elements.where((e) => e.text.startsWith('| ')).length;
+      expect(tableCount, greaterThanOrEqualTo(12));
+      // Ensure Figure 1 axis labels (56-layer / 20-layer) do not leak into the Abstract
+      final abstractStart = result.markdown.indexOf('Abstract');
+      final introStart = result.markdown.indexOf('1. Introduction');
+      expect(abstractStart, greaterThanOrEqualTo(0));
+      expect(introStart, greaterThan(abstractStart));
+      final abstractSection = result.markdown.substring(abstractStart, introStart);
+      expect(abstractSection, isNot(contains('56-layer')));
 
       final controller = ReaderController(autoRestorePreferences: false);
       addTearDown(controller.dispose);
@@ -300,6 +407,13 @@ void main() {
 
       final doc = await PdfDocument.openFile(newyorkFile.path);
       try {
+        // Page 4 (index 3) is "CONTRIBUTORS" with 2 narrow-gutter columns
+        final page4 = doc.pages[3];
+        final page4Text = await page4.loadStructuredText();
+        final analysis4 = PdfPageAnalysisService.computePageAnalysis(page4, page4Text);
+        expect(analysis4.isMultiColumn, isTrue);
+        expect(analysis4.columns.length, equals(2));
+
         // Page 14 (index 13) is "SCHMEAR CAMPAIGN" with 3 columns, 2-of-3 spanning header, and drop cap "E"
         final page14 = doc.pages[13];
         final page14Text = await page14.loadStructuredText();
@@ -317,6 +431,8 @@ void main() {
         );
         expect(result.hasContent, isTrue);
         expect(result.markdown, contains('SCHMEAR CAMPAIGN'));
+        // Sunken drop-cap "T" on Page 9 merged with Line 1 ("The chaos") instead of Line 2
+        expect(result.markdown, contains('The chaos of Donald Trump’s Presidency'));
         // Drop cap "E" + "very summer in France" merged cleanly
         expect(result.markdown, contains('Every summer in France, an exodus takes place.'));
         // Cross-column continuation from Col 1 bottom to Col 2 top
@@ -324,19 +440,37 @@ void main() {
           result.markdown,
           contains('an annual transmigration of people, money, goods, gifts, expectations'),
         );
-        // Cross-page continuation across bottom figure caption from Page 14 Col 3 to Page 15 Col 1
+        // Cross-page continuation + PDFium \x02 soft-hyphen unwrapping ("thou\x02sand" -> "thousand")
         expect(
           result.markdown,
-          matches(
-            RegExp(
-              r'A shopkeeper in Cholet, a midsize town, reported that he had sold a thou\s*sand jars of El Mordjene in five hours\.',
-            ),
+          contains(
+            'A shopkeeper in Cholet, a midsize town, reported that he had sold a thousand jars of El Mordjene in five hours.',
           ),
+        );
+        // Stick-up initial cap "W" on Page 16 normalized to body paragraph
+        expect(
+          result.markdown,
+          contains('Was a Nutella conspiracy behind the strangest quarrel in Franco-Algerian memory?'),
         );
         // Standalone pronoun drop cap "I" on Page 17 ("I had hoped to visit")
         expect(
           result.markdown,
           contains('I had hoped to visit'),
+        );
+        // 2-column inset poems on 3-column Pages 36 ("INQUEST") and 49 ("AN OCEAN OF CLOUDS")
+        expect(result.markdown, contains('INQUEST'));
+        expect(result.markdown, contains('*—Ellen Bass*'));
+        expect(result.markdown, contains('AN OCEAN OF CLOUDS'));
+        expect(result.markdown, contains('*—Garrett Hongo*'));
+        // Cross-page sentence continuation across Page 63 BRIEFLY NOTED sidebar and Page 64 ADVERTISEMENT column
+        expect(
+          result.markdown,
+          contains('wrote, “I laid out above eight pounds of my own money for a suit of superfine clothes to dance with at my freedom.”'),
+        );
+        // Cross-column pdfrx hyphenated line-height repair on Page 66 ("fall-" + "ing" -> "falling")
+        expect(
+          result.markdown,
+          contains('Brown began to gesticulate, his arms rising and falling in exasperation. He argued with Hood, growing more agitated.'),
         );
         // Standalone figures extracted as inline PNG data URIs
         expect(
@@ -455,9 +589,14 @@ void main() {
         contains('| 单次功能付费 | 定盘、企业招聘分析 | 按功能单独定价 |'),
       );
 
-      // Ordered list items
+      // Ordered list items & Page 2 single-column reading order
       expect(result.markdown, contains('1. 接入支付系统，开始试运营'));
-      expect(result.markdown, contains('4. 观察用户是否自发将问天星作为人际关系管理工具使用，验证产品定位'));
+      final idxItem4 = result.markdown.indexOf('4. 观察用户是否自发将问天星作为人际关系管理工具使用，验证产品定位');
+      final idxSec9 = result.markdown.indexOf('### 九、待验证的核心假设');
+      expect(idxItem4, greaterThan(0));
+      expect(idxSec9, greaterThan(idxItem4));
+      expect(result.markdown, isNot(contains('SolaRee_AI_产品定位摘要')));
+      expect(result.markdown.trimRight(), isNot(endsWith('\n2')));
 
       // Verify end-to-end compilation to mobile PDF via ReaderController
       final controller = ReaderController(autoRestorePreferences: false);
@@ -469,6 +608,39 @@ void main() {
       final exportedBytes = await controller.getPdfBytesForExport();
       expect(exportedBytes, isNotNull);
       expect(exportedBytes!.isNotEmpty, isTrue);
+    });
+
+    test('Detects and reflows 2-column academic first pages with long full-width abstracts (a_abstract.pdf, g_abs20.pdf)', () async {
+      final absFile = File(p.join(projectRoot, 'docs', 'samples', 'a_abstract.pdf'));
+      final gAbs20File = File(p.join(projectRoot, 'docs', 'samples', 'g_abs20.pdf'));
+      expect(absFile.existsSync(), isTrue);
+      expect(gAbs20File.existsSync(), isTrue);
+
+      final absDoc = await PdfDocument.openFile(absFile.path);
+      addTearDown(absDoc.dispose);
+      final absText = await absDoc.pages[0].loadStructuredText();
+      final absAnalysis = PdfPageAnalysisService.computePageAnalysis(absDoc.pages[0], absText);
+      expect(absAnalysis.isMultiColumn, isTrue);
+      expect(absAnalysis.columns.length, equals(2));
+
+      final absResult = await PdfReflowService.reflowDocument(absDoc);
+      final idxLeftEnd = absResult.markdown.indexOf('LEFTEND');
+      final idxRightStart = absResult.markdown.indexOf('RIGHTSTART');
+      expect(idxLeftEnd, greaterThan(0));
+      expect(idxRightStart, greaterThan(idxLeftEnd));
+
+      final gAbsDoc = await PdfDocument.openFile(gAbs20File.path);
+      addTearDown(gAbsDoc.dispose);
+      final gAbsText = await gAbsDoc.pages[0].loadStructuredText();
+      final gAbsAnalysis = PdfPageAnalysisService.computePageAnalysis(gAbsDoc.pages[0], gAbsText);
+      expect(gAbsAnalysis.isMultiColumn, isTrue);
+      expect(gAbsAnalysis.columns.length, equals(2));
+
+      final gAbsResult = await PdfReflowService.reflowDocument(gAbsDoc);
+      final idxL69 = gAbsResult.markdown.indexOf('Leftside sentence L69');
+      final idxR1 = gAbsResult.markdown.indexOf('Rightside sentence R1');
+      expect(idxL69, greaterThan(0));
+      expect(idxR1, greaterThan(idxL69));
     });
   });
 }
