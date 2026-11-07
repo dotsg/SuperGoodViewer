@@ -284,6 +284,82 @@ class ShortcutService extends ChangeNotifier {
     for (final entry in _nameToKey.entries) entry.value: entry.key,
   };
 
+  static final Map<LogicalKeyboardKey, LogicalKeyboardKey> _shiftedToBaseKey = {
+    LogicalKeyboardKey.braceLeft: LogicalKeyboardKey.bracketLeft,
+    LogicalKeyboardKey.braceRight: LogicalKeyboardKey.bracketRight,
+    LogicalKeyboardKey.add: LogicalKeyboardKey.equal,
+    LogicalKeyboardKey.numpadAdd: LogicalKeyboardKey.equal,
+    LogicalKeyboardKey.underscore: LogicalKeyboardKey.minus,
+    LogicalKeyboardKey.bar: LogicalKeyboardKey.backslash,
+    LogicalKeyboardKey.less: LogicalKeyboardKey.comma,
+    LogicalKeyboardKey.greater: LogicalKeyboardKey.period,
+    LogicalKeyboardKey.question: LogicalKeyboardKey.slash,
+    LogicalKeyboardKey.colon: LogicalKeyboardKey.semicolon,
+    LogicalKeyboardKey.exclamation: LogicalKeyboardKey.digit1,
+    LogicalKeyboardKey.at: LogicalKeyboardKey.digit2,
+    LogicalKeyboardKey.numberSign: LogicalKeyboardKey.digit3,
+    LogicalKeyboardKey.dollar: LogicalKeyboardKey.digit4,
+    LogicalKeyboardKey.percent: LogicalKeyboardKey.digit5,
+    LogicalKeyboardKey.caret: LogicalKeyboardKey.digit6,
+    LogicalKeyboardKey.ampersand: LogicalKeyboardKey.digit7,
+    LogicalKeyboardKey.asterisk: LogicalKeyboardKey.digit8,
+    LogicalKeyboardKey.parenthesisLeft: LogicalKeyboardKey.digit9,
+    LogicalKeyboardKey.parenthesisRight: LogicalKeyboardKey.digit0,
+  };
+
+  static final Map<LogicalKeyboardKey, LogicalKeyboardKey> _baseToShiftedKey = {
+    for (final entry in _shiftedToBaseKey.entries)
+      if (entry.key != LogicalKeyboardKey.numpadAdd) entry.value: entry.key,
+  };
+
+  static final Map<PhysicalKeyboardKey, LogicalKeyboardKey> _physicalToLogicalKey = {
+    PhysicalKeyboardKey.keyA: LogicalKeyboardKey.keyA,
+    PhysicalKeyboardKey.keyB: LogicalKeyboardKey.keyB,
+    PhysicalKeyboardKey.keyC: LogicalKeyboardKey.keyC,
+    PhysicalKeyboardKey.keyD: LogicalKeyboardKey.keyD,
+    PhysicalKeyboardKey.keyE: LogicalKeyboardKey.keyE,
+    PhysicalKeyboardKey.keyF: LogicalKeyboardKey.keyF,
+    PhysicalKeyboardKey.keyG: LogicalKeyboardKey.keyG,
+    PhysicalKeyboardKey.keyH: LogicalKeyboardKey.keyH,
+    PhysicalKeyboardKey.keyI: LogicalKeyboardKey.keyI,
+    PhysicalKeyboardKey.keyJ: LogicalKeyboardKey.keyJ,
+    PhysicalKeyboardKey.keyK: LogicalKeyboardKey.keyK,
+    PhysicalKeyboardKey.keyL: LogicalKeyboardKey.keyL,
+    PhysicalKeyboardKey.keyM: LogicalKeyboardKey.keyM,
+    PhysicalKeyboardKey.keyN: LogicalKeyboardKey.keyN,
+    PhysicalKeyboardKey.keyO: LogicalKeyboardKey.keyO,
+    PhysicalKeyboardKey.keyP: LogicalKeyboardKey.keyP,
+    PhysicalKeyboardKey.keyQ: LogicalKeyboardKey.keyQ,
+    PhysicalKeyboardKey.keyR: LogicalKeyboardKey.keyR,
+    PhysicalKeyboardKey.keyS: LogicalKeyboardKey.keyS,
+    PhysicalKeyboardKey.keyT: LogicalKeyboardKey.keyT,
+    PhysicalKeyboardKey.keyU: LogicalKeyboardKey.keyU,
+    PhysicalKeyboardKey.keyV: LogicalKeyboardKey.keyV,
+    PhysicalKeyboardKey.keyW: LogicalKeyboardKey.keyW,
+    PhysicalKeyboardKey.keyX: LogicalKeyboardKey.keyX,
+    PhysicalKeyboardKey.keyY: LogicalKeyboardKey.keyY,
+    PhysicalKeyboardKey.keyZ: LogicalKeyboardKey.keyZ,
+    PhysicalKeyboardKey.digit0: LogicalKeyboardKey.digit0,
+    PhysicalKeyboardKey.digit1: LogicalKeyboardKey.digit1,
+    PhysicalKeyboardKey.digit2: LogicalKeyboardKey.digit2,
+    PhysicalKeyboardKey.digit3: LogicalKeyboardKey.digit3,
+    PhysicalKeyboardKey.digit4: LogicalKeyboardKey.digit4,
+    PhysicalKeyboardKey.digit5: LogicalKeyboardKey.digit5,
+    PhysicalKeyboardKey.digit6: LogicalKeyboardKey.digit6,
+    PhysicalKeyboardKey.digit7: LogicalKeyboardKey.digit7,
+    PhysicalKeyboardKey.digit8: LogicalKeyboardKey.digit8,
+    PhysicalKeyboardKey.digit9: LogicalKeyboardKey.digit9,
+    PhysicalKeyboardKey.equal: LogicalKeyboardKey.equal,
+    PhysicalKeyboardKey.minus: LogicalKeyboardKey.minus,
+    PhysicalKeyboardKey.backslash: LogicalKeyboardKey.backslash,
+    PhysicalKeyboardKey.comma: LogicalKeyboardKey.comma,
+    PhysicalKeyboardKey.period: LogicalKeyboardKey.period,
+    PhysicalKeyboardKey.slash: LogicalKeyboardKey.slash,
+    PhysicalKeyboardKey.semicolon: LogicalKeyboardKey.semicolon,
+    PhysicalKeyboardKey.bracketLeft: LogicalKeyboardKey.bracketLeft,
+    PhysicalKeyboardKey.bracketRight: LogicalKeyboardKey.bracketRight,
+  };
+
   /// Overrides the platform for default keys and labels in tests.
   @visibleForTesting
   static bool? debugIsMacLayout;
@@ -331,11 +407,12 @@ class ShortcutService extends ChangeNotifier {
   void setKey(String actionId, LogicalKeyboardKey key) {
     final action = actionMap[actionId];
     if (action == null) return;
+    final normalizedKey = normalizeSupportedKey(key) ?? key;
 
-    if (action.platformDefaultKey == key) {
+    if (action.platformDefaultKey == normalizedKey) {
       _customKeys.remove(actionId);
     } else {
-      _customKeys[actionId] = key;
+      _customKeys[actionId] = normalizedKey;
     }
     notifyListeners();
   }
@@ -359,6 +436,7 @@ class ShortcutService extends ChangeNotifier {
   String? findConflict(String actionId, LogicalKeyboardKey candidateKey) {
     final targetAction = actionMap[actionId];
     if (targetAction == null) return null;
+    final normalizedCandidate = normalizeSupportedKey(candidateKey) ?? candidateKey;
 
     for (final action in allActions) {
       if (action.id == actionId) continue;
@@ -366,7 +444,7 @@ class ShortcutService extends ChangeNotifier {
           action.hasMetaOrControl == targetAction.hasMetaOrControl &&
           !isShadowed(action.id)) {
         final currentKeyForOther = getKey(action.id);
-        if (currentKeyForOther == candidateKey) {
+        if (currentKeyForOther == normalizedCandidate) {
           return action.name;
         }
       }
@@ -412,12 +490,36 @@ class ShortcutService extends ChangeNotifier {
         key == LogicalKeyboardKey.altRight ||
         key == LogicalKeyboardKey.meta ||
         key == LogicalKeyboardKey.metaLeft ||
-        key == LogicalKeyboardKey.metaRight;
+        key == LogicalKeyboardKey.metaRight ||
+        key == LogicalKeyboardKey.capsLock ||
+        key == LogicalKeyboardKey.fn;
+  }
+
+  /// Normalize [key] (including shifted variants) to a canonical supported key,
+  /// or return `null` if [key] is not supported.
+  static LogicalKeyboardKey? normalizeSupportedKey(LogicalKeyboardKey key) {
+    if (_keyToName.containsKey(key)) return key;
+    final baseKey = _shiftedToBaseKey[key];
+    if (baseKey != null) return baseKey;
+    final label = key.keyLabel.toUpperCase();
+    if (label.length == 1 && _nameToKey.containsKey(label)) {
+      return _nameToKey[label];
+    }
+    return null;
+  }
+
+  /// Resolve a [KeyEvent] to a canonical supported [LogicalKeyboardKey],
+  /// normalizing shifted symbols (e.g. `{` -> `[`) and falling back to
+  /// [KeyEvent.physicalKey] when modifiers alter the logical key.
+  static LogicalKeyboardKey? resolveSupportedKey(KeyEvent event) {
+    final logical = normalizeSupportedKey(event.logicalKey);
+    if (logical != null) return logical;
+    return _physicalToLogicalKey[event.physicalKey];
   }
 
   /// Check if a key is supported for shortcut binding.
   static bool isSupportedKey(LogicalKeyboardKey key) {
-    return _keyToName.containsKey(key);
+    return normalizeSupportedKey(key) != null;
   }
 
   /// Export configured shortcuts to Map for persistence.
@@ -507,6 +609,13 @@ class ShortcutService extends ChangeNotifier {
         map[SingleActivator(key, meta: true, shift: action.hasShift)] = callback;
         // Register Ctrl (Windows / Linux)
         map[SingleActivator(key, control: true, shift: action.hasShift)] = callback;
+        if (action.hasShift) {
+          final shiftedKey = _baseToShiftedKey[key];
+          if (shiftedKey != null) {
+            map[SingleActivator(shiftedKey, meta: true, shift: true)] = callback;
+            map[SingleActivator(shiftedKey, control: true, shift: true)] = callback;
+          }
+        }
       }
     }
 

@@ -6,6 +6,7 @@ import 'dart:ui';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import '../controllers/reader_controller.dart';
@@ -66,7 +67,7 @@ class WorkspaceView extends StatefulWidget {
   State<WorkspaceView> createState() => _WorkspaceViewState();
 }
 
-class _WorkspaceViewState extends State<WorkspaceView> {
+class _WorkspaceViewState extends State<WorkspaceView> with WidgetsBindingObserver {
   // Zen Mode: clean reading canvas by default, toolbar visible until scroll
   bool get _isSidebarOpen => widget.controller.isSidebarOpen;
   bool _isToolbarVisible = true;
@@ -100,9 +101,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     // In full screen, macOS handles traffic lights automatically on top hover.
     // Never hide standard window buttons in full screen mode.
     final show = _isFullScreen ? true : _shouldShowTitleBar;
-    try {
-      _windowChannel.invokeMethod('setTrafficLightsVisible', show);
-    } catch (_) {}
+    _windowChannel.invokeMethod('setTrafficLightsVisible', show).catchError((_) {});
   }
 
   int _currentPage = 1;
@@ -142,7 +141,9 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       _syncMenuTitles();
     });
     widget.controller.addListener(_onControllerChanged);
+    WidgetsBinding.instance.addObserver(this);
     FocusManager.instance.addListener(_reclaimLostFocus);
+    FocusManager.instance.addEarlyKeyEventHandler(_handleWorkspaceEarlyKeyEvent);
     final enableIntegration = widget.enableSystemIntegration ?? WorkspaceView.defaultEnableSystemIntegration;
     if (enableIntegration) {
       NativeCliService.channel.setMethodCallHandler(_handleNativeMethodCall);
@@ -192,9 +193,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
     if (_lastSyncedTitle != fullTitle) {
       _lastSyncedTitle = fullTitle;
-      try {
-        _windowChannel.invokeMethod('setWindowTitle', fullTitle);
-      } catch (_) {}
+      _windowChannel.invokeMethod('setWindowTitle', fullTitle).catchError((_) {});
     }
   }
 
@@ -202,6 +201,47 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
   final FocusNode _workspaceFocusNode = FocusNode(debugLabel: 'workspace');
   bool _focusCheckScheduled = false;
+  ModalRoute<dynamic>? _modalRoute;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _modalRoute = ModalRoute.of(context);
+    if (_modalRoute?.isCurrent != false) {
+      _reclaimLostFocus();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _reclaimLostFocus();
+    }
+  }
+
+  KeyEventResult _handleWorkspaceEarlyKeyEvent(KeyEvent event) {
+    if (!mounted || _modalRoute?.isCurrent == false) {
+      return KeyEventResult.ignored;
+    }
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final isTab = event.logicalKey == LogicalKeyboardKey.tab ||
+        event.physicalKey == PhysicalKeyboardKey.tab;
+    final keyboard = HardwareKeyboard.instance;
+    if (isTab &&
+        keyboard.isControlPressed &&
+        !keyboard.isMetaPressed &&
+        !keyboard.isAltPressed) {
+      if (keyboard.isShiftPressed) {
+        widget.controller.activatePreviousSession();
+      } else {
+        widget.controller.activateNextSession();
+      }
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
 
   /// The PDF viewer takes focus on clicks, and its focus node goes away when
   /// a document is swapped in (tab switch, theme or layout change, reload).
@@ -209,17 +249,29 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   /// every keyboard shortcut stops working until the user clicks the page.
   /// Take it back in that case; focus in a dialog is left alone.
   void _reclaimLostFocus() {
-    if (_focusCheckScheduled) return;
-    _focusCheckScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _focusCheckScheduled = false;
-      if (!mounted || _workspaceFocusNode.hasFocus) return;
-      if (_pdfCanvasKey.currentState?.isSearchOpen == true) return;
-      final focus = FocusManager.instance.primaryFocus;
-      if (focus == null || _workspaceFocusNode.ancestors.contains(focus)) {
-        _workspaceFocusNode.requestFocus();
-      }
-    });
+    if (!mounted) return;
+    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks) {
+      if (_focusCheckScheduled) return;
+      _focusCheckScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _focusCheckScheduled = false;
+        _performFocusReclaim();
+      });
+      WidgetsBinding.instance.scheduleFrame();
+      return;
+    }
+    _performFocusReclaim();
+  }
+
+  void _performFocusReclaim() {
+    if (!mounted || _workspaceFocusNode.hasFocus) return;
+    if (!_workspaceFocusNode.canRequestFocus || _workspaceFocusNode.context == null) return;
+    if (_modalRoute?.isCurrent == false) return;
+    if (_pdfCanvasKey.currentState?.isSearchOpen == true) return;
+    final focus = FocusManager.instance.primaryFocus;
+    if (focus == null || _workspaceFocusNode.ancestors.contains(focus)) {
+      _workspaceFocusNode.requestFocus();
+    }
   }
   String? _lastSyncedMenuLanguage;
 
@@ -303,10 +355,13 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     _syncWindowTheme();
     _syncMenuTitles();
     _updateTrafficLights();
+    _reclaimLostFocus();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    FocusManager.instance.removeEarlyKeyEventHandler(_handleWorkspaceEarlyKeyEvent);
     FocusManager.instance.removeListener(_reclaimLostFocus);
     _workspaceFocusNode.dispose();
     if (!Platform.isAndroid && !Platform.isIOS) {

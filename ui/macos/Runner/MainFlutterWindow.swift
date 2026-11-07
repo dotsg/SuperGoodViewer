@@ -26,6 +26,7 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     self.titleVisibility = .hidden
     self.titlebarAppearsTransparent = true
     self.styleMask.insert(.fullSizeContentView)
+    self.tabbingMode = .disallowed
     self.delegate = self
 
     // Layout is verified down to 800x600 (see test/layout_overflow_test.dart).

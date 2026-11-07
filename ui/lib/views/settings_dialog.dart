@@ -232,6 +232,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   // Shortcuts state
   String? _listeningActionId;
   String? _conflictMessage;
+  final FocusNode _shortcutCaptureFocusNode = FocusNode(debugLabel: 'shortcutCapture');
 
   // CLI state
   bool _isLoadingCli = true;
@@ -302,14 +303,53 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
     final prefs = PreferencesService.loadSync();
     _autoCheckUpdates = prefs[UpdateService.prefAutoCheck] as bool? ?? true;
+    FocusManager.instance.addEarlyKeyEventHandler(_handleShortcutCaptureKeyEvent);
   }
 
   void _onLayoutFieldChanged() {
     if (mounted) setState(() {});
   }
 
+  KeyEventResult _handleShortcutCaptureKeyEvent(KeyEvent event) {
+    final actionId = _listeningActionId;
+    if (!mounted || actionId == null || _currentTab != SettingsTab.shortcuts) {
+      return KeyEventResult.ignored;
+    }
+    if (event is! KeyDownEvent) {
+      return KeyEventResult.handled;
+    }
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.escape ||
+        event.physicalKey == PhysicalKeyboardKey.escape) {
+      setState(() => _listeningActionId = null);
+      return KeyEventResult.handled;
+    }
+    if (ShortcutService.isModifierKey(key)) {
+      return KeyEventResult.handled;
+    }
+    final resolvedKey = ShortcutService.resolveSupportedKey(event);
+    if (resolvedKey != null) {
+      final shortcutService = widget.controller.shortcutService;
+      final strings = widget.controller.strings;
+      final conflict = shortcutService.findConflict(actionId, resolvedKey);
+      shortcutService.setKey(actionId, resolvedKey);
+      setState(() {
+        _listeningActionId = null;
+        if (conflict != null) {
+          _conflictMessage = strings.shortcutConflict(conflict);
+        } else {
+          _conflictMessage = null;
+        }
+      });
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.handled;
+  }
+
   @override
   void dispose() {
+    FocusManager.instance.removeEarlyKeyEventHandler(_handleShortcutCaptureKeyEvent);
+    _shortcutCaptureFocusNode.dispose();
     _headerLeftController.removeListener(_onLayoutFieldChanged);
     _headerCenterController.removeListener(_onLayoutFieldChanged);
     _headerRightController.removeListener(_onLayoutFieldChanged);
@@ -3406,40 +3446,24 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
           // Shortcut Key Badge / Key Listener
           Focus(
+            focusNode: isListening ? _shortcutCaptureFocusNode : null,
             autofocus: isListening,
-            onKeyEvent: (node, event) {
-              if (!isListening) return KeyEventResult.ignored;
-              if (event is KeyDownEvent) {
-                final key = event.logicalKey;
-                if (key == LogicalKeyboardKey.escape) {
-                  setState(() => _listeningActionId = null);
-                  return KeyEventResult.handled;
-                }
-                if (ShortcutService.isModifierKey(key)) {
-                  return KeyEventResult.handled;
-                }
-                if (ShortcutService.isSupportedKey(key)) {
-                  final conflict = shortcutService.findConflict(action.id, key);
-                  shortcutService.setKey(action.id, key);
-                  setState(() {
-                    _listeningActionId = null;
-                    if (conflict != null) {
-                      _conflictMessage = strings.shortcutConflict(conflict);
-                    } else {
-                      _conflictMessage = null;
-                    }
-                  });
-                  return KeyEventResult.handled;
-                }
-              }
-              return KeyEventResult.ignored;
-            },
+            onKeyEvent: (node, event) =>
+                isListening ? _handleShortcutCaptureKeyEvent(event) : KeyEventResult.ignored,
             child: GestureDetector(
               onTap: () {
+                final willListen = !isListening;
                 setState(() {
-                  _listeningActionId = isListening ? null : action.id;
+                  _listeningActionId = willListen ? action.id : null;
                   _conflictMessage = null;
                 });
+                if (willListen) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted && _listeningActionId == action.id) {
+                      _shortcutCaptureFocusNode.requestFocus();
+                    }
+                  });
+                }
               },
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
