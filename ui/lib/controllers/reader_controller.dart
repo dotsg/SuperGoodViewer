@@ -341,7 +341,7 @@ class ReaderController extends ChangeNotifier {
   bool get restoreSession => _restoreSession;
   List<String> get recentFiles => List.unmodifiable(_recentFiles);
   Map<String, dynamic> get fontReport => _fontReport;
-  bool get isTwoPage => _isTwoPage;
+  bool get isTwoPage => _isTwoPage && !isPptDocument;
   bool get isSidebarOpen => _isSidebarOpen;
   String get sidebarPosition => _sidebarPosition;
   bool get isSidebarOnRight => _sidebarPosition == 'right';
@@ -359,6 +359,12 @@ class ReaderController extends ChangeNotifier {
   bool get isOfficeDocument => _isOffice(_doc);
   bool get isPptNotesView =>
       isPptDocument && renderOptions.effectivePageFormat == PageFormat.pptNotes;
+  bool get supportsCropMargins => isPdfDocument;
+  bool get effectivePdfCropMargins =>
+      supportsCropMargins && _renderOptions.pdfCropMargins;
+  bool get supportsTwoPage =>
+      !isPptDocument && (isPdfDocument || !isFluidLayout);
+  bool get supportsPresentationMode => !isWordDocument;
 
   static const Set<String> wordExtensions = {
     '.docx',
@@ -740,6 +746,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void toggleTwoPage() {
+    if (isPptDocument) return;
     renderOptionsChanged = true;
     _isTwoPage = !_isTwoPage;
     _persistPreferences();
@@ -2064,6 +2071,7 @@ class ReaderController extends ChangeNotifier {
   String? _globalFormatBeforePresentation;
 
   void setPresentationMode(bool value) {
+    if (value && !supportsPresentationMode) return;
     if (_isPresentationMode != value) {
       _isPresentationMode = value;
       if (value) {
@@ -2081,7 +2089,7 @@ class ReaderController extends ChangeNotifier {
             _globalFormatBeforePresentation = _renderOptions.effectivePageFormat;
           }
           final savedLastPaged = _lastPagedFormat;
-          setPageFormat(isWordDocument ? PageFormat.a4Portrait : PageFormat.slide16x9);
+          setPageFormat(PageFormat.slide16x9);
           _lastPagedFormat = savedLastPaged;
         }
       } else {
@@ -2106,6 +2114,11 @@ class ReaderController extends ChangeNotifier {
                 pageFormat: savedGlobalFormat,
               );
               _persistDebounced();
+              if (_doc.pageFormat == null && !isPdfDocument && !isOfficeDocument) {
+                renderOptionsChanged = true;
+                startReloading();
+                compileDocument();
+              }
             }
           }
         }

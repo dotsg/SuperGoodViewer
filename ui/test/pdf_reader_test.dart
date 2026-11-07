@@ -497,6 +497,12 @@ void main() {
       // Word document normalizes its own effective format to a4Portrait without clobbering global 16:9
       expect(controller.renderOptions.effectivePageFormat, PageFormat.a4Portrait);
       expect(controller.globalRenderOptions.effectivePageFormat, PageFormat.slide16x9);
+      expect(controller.supportsCropMargins, isFalse);
+      expect(controller.effectivePdfCropMargins, isFalse);
+      expect(controller.supportsTwoPage, isTrue);
+      expect(controller.supportsPresentationMode, isFalse);
+      controller.setPresentationMode(true);
+      expect(controller.isPresentationMode, isFalse);
 
       // Toggle between fluid and paged mode and verify re-render succeeds while global format stays 16:9
       controller.toggleMode();
@@ -508,6 +514,7 @@ void main() {
       expect(ReaderController.startsWithPdfHeader(controller.currentPdfBytes!), isTrue);
       expect(controller.renderOptions.effectivePageFormat, PageFormat.fluid);
       expect(controller.globalRenderOptions.effectivePageFormat, PageFormat.slide16x9);
+      expect(controller.supportsTwoPage, isFalse);
 
       // Theme and typography changes on a Word document must NOT trigger native recompilation
       final genBeforeTheme = controller.compileGeneration;
@@ -554,8 +561,10 @@ void main() {
       final samplePptxFile = File(p.join(tempTestDir.path, 'sample_deck.pptx'));
       samplePptxFile.writeAsBytesSync(pptxBytes);
 
-      // Set global default format to fluid before opening a PPTX document
+      // Set global default format to fluid and enable two-page/crop before opening a PPTX document
       controller.setPageFormat(PageFormat.fluid, updateGlobalDefault: true);
+      controller.setTwoPage(true);
+      controller.setPdfCropMargins(true);
       expect(controller.globalRenderOptions.effectivePageFormat, PageFormat.fluid);
 
       await controller.openFile(samplePptxFile.path);
@@ -568,6 +577,13 @@ void main() {
       expect(controller.isPdfDocument, isFalse);
       expect(controller.isFluidLayout, isFalse);
       expect(controller.isPptNotesView, isFalse);
+      expect(controller.supportsCropMargins, isFalse);
+      expect(controller.effectivePdfCropMargins, isFalse);
+      expect(controller.supportsTwoPage, isFalse);
+      expect(controller.isTwoPage, isFalse);
+      controller.toggleTwoPage();
+      expect(controller.isTwoPage, isFalse);
+      expect(controller.supportsPresentationMode, isTrue);
       expect(controller.errorMessage, isNull);
       expect(controller.currentPdfBytes, isNotNull);
       expect(ReaderController.startsWithPdfHeader(controller.currentPdfBytes!), isTrue);

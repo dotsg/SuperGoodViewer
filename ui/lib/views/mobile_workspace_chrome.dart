@@ -401,7 +401,7 @@ class MobileWorkspaceChrome {
                               ],
                             ),
                           ),
-                          if (controller.currentPdfBytes != null)
+                          if (controller.supportsPresentationMode && controller.currentPdfBytes != null)
                             PopupMenuItem(
                               value: 'presentation',
                               height: 46,

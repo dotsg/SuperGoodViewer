@@ -796,6 +796,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handleToggleTwoPage() {
+    if (widget.controller.isPptDocument) return;
     if (widget.controller.isFluidLayout) {
       widget.controller.toggleMode();
       if (!widget.controller.isTwoPage) {
@@ -809,6 +810,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _handleTogglePdfCropMargins() {
+    if (!widget.controller.supportsCropMargins) return;
     widget.controller.togglePdfCropMargins();
     _showZoomHud(widget.controller.strings.toggleCropMarginsTooltip(
       widget.controller.pdfCropMargins,
@@ -830,6 +832,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   Future<void> _handleTogglePresentation() async {
     final willEnter = !widget.controller.isPresentationMode;
     if (willEnter) {
+      if (!widget.controller.supportsPresentationMode) return;
       if (!_isFullScreen) {
         _enteredFullScreenForPresentation = true;
         await _toggleFullScreen();
@@ -1851,41 +1854,47 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 _PillDivider(isDark: isDark),
               ],
 
-              // Full-screen Presentation Mode (PPT) - works for both Markdown and PDF
-              _PillIconButton(
-                icon: Icons.slideshow_rounded,
-                tooltip: controller.strings.togglePresentationTooltip(controller.shortcutService.getShortcutLabel('togglePresentation')),
-                isSelected: controller.isPresentationMode,
-                iconSize: 18,
-                onPressed: _handleTogglePresentation,
-              ),
-              _PillDivider(isDark: isDark),
+              // Full-screen Presentation Mode (PPT) - enabled for PPT, Markdown, and PDF
+              if (controller.supportsPresentationMode) ...[
+                _PillIconButton(
+                  icon: Icons.slideshow_rounded,
+                  tooltip: controller.strings.togglePresentationTooltip(controller.shortcutService.getShortcutLabel('togglePresentation')),
+                  isSelected: controller.isPresentationMode,
+                  iconSize: 18,
+                  onPressed: _handleTogglePresentation,
+                ),
+                _PillDivider(isDark: isDark),
+              ],
 
-              // When in A4 Paged mode or reading a PDF, show Two-Page Spread toggle and Page Navigation
+              // Paged navigation & document-specific page tools
               if (controller.isPdfDocument || !controller.renderOptions.isFluid) ...[
-                _PillIconButton(
-                  icon: controller.isTwoPage
-                      ? Icons.auto_stories_rounded
-                      : Icons.menu_book_outlined,
-                  tooltip: controller.strings.toggleTwoPageTooltip(controller.isTwoPage, controller.shortcutService.getShortcutLabel('toggleTwoPage')),
-                  isSelected: controller.isTwoPage,
-                  iconSize: 17,
-                  onPressed: _handleToggleTwoPage,
-                ),
-                _PillDivider(isDark: isDark),
-                _PillIconButton(
-                  icon: controller.pdfCropMargins
-                      ? Icons.crop_rounded
-                      : Icons.crop_free_rounded,
-                  tooltip: controller.strings.toggleCropMarginsTooltip(
-                    controller.pdfCropMargins,
-                    controller.shortcutService.getShortcutLabel('toggleCropMargins'),
+                if (controller.supportsTwoPage) ...[
+                  _PillIconButton(
+                    icon: controller.isTwoPage
+                        ? Icons.auto_stories_rounded
+                        : Icons.menu_book_outlined,
+                    tooltip: controller.strings.toggleTwoPageTooltip(controller.isTwoPage, controller.shortcutService.getShortcutLabel('toggleTwoPage')),
+                    isSelected: controller.isTwoPage,
+                    iconSize: 17,
+                    onPressed: _handleToggleTwoPage,
                   ),
-                  isSelected: controller.pdfCropMargins,
-                  iconSize: 17,
-                  onPressed: _handleTogglePdfCropMargins,
-                ),
-                _PillDivider(isDark: isDark),
+                  _PillDivider(isDark: isDark),
+                ],
+                if (controller.supportsCropMargins) ...[
+                  _PillIconButton(
+                    icon: controller.pdfCropMargins
+                        ? Icons.crop_rounded
+                        : Icons.crop_free_rounded,
+                    tooltip: controller.strings.toggleCropMarginsTooltip(
+                      controller.pdfCropMargins,
+                      controller.shortcutService.getShortcutLabel('toggleCropMargins'),
+                    ),
+                    isSelected: controller.pdfCropMargins,
+                    iconSize: 17,
+                    onPressed: _handleTogglePdfCropMargins,
+                  ),
+                  _PillDivider(isDark: isDark),
+                ],
                 _PageNavPill(
                   currentPage: _currentPage,
                   pageCount: _pageCount,

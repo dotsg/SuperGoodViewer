@@ -1216,13 +1216,14 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       });
     }
 
-    if (widget.renderOptions.pdfCropMargins != oldWidget.renderOptions.pdfCropMargins) {
+    if (widget.renderOptions.pdfCropMargins != oldWidget.renderOptions.pdfCropMargins &&
+        widget.controller.supportsCropMargins) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           PdfPageAnalysisService.applyMarginCrop(
             _pdfController,
             widget.controller,
-            widget.renderOptions.pdfCropMargins,
+            widget.controller.effectivePdfCropMargins,
             isMounted: () => mounted,
           );
         }
@@ -2181,7 +2182,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           },
         ),
       );
-      if (widget.controller.isPdfDocument || !widget.controller.isFluidLayout) {
+      if (widget.controller.supportsTwoPage) {
         items.add(
           ContextMenuButtonItem(
             label: s.toggleTwoPageTooltip(widget.controller.isTwoPage, widget.controller.shortcutService.getShortcutLabel('toggleTwoPage')),
@@ -2191,6 +2192,8 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             },
           ),
         );
+      }
+      if (widget.controller.supportsCropMargins) {
         items.add(
           ContextMenuButtonItem(
             label: s.toggleCropMarginsTooltip(widget.controller.pdfCropMargins, widget.controller.shortcutService.getShortcutLabel('toggleCropMargins')),
@@ -2202,9 +2205,13 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         );
       }
       if (!widget.controller.isPdfDocument) {
+        final shortcutLabel = widget.controller.shortcutService.getShortcutLabel('toggleMode');
+        final toggleModeLabel = widget.controller.isPptDocument
+            ? '${s.layoutModePptSlides} / ${s.layoutModePptNotes} ($shortcutLabel)'
+            : s.toggleModeTooltip(shortcutLabel);
         items.add(
           ContextMenuButtonItem(
-            label: s.toggleModeTooltip(widget.controller.shortcutService.getShortcutLabel('toggleMode')),
+            label: toggleModeLabel,
             onPressed: () {
               params.dismissContextMenu();
               widget.controller.toggleMode();
@@ -2433,13 +2440,13 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
                   viewSize: viewSize,
                   documentSize: layout.documentSize,
                   coverScale: controller.coverScale,
-                  pdfCropMargins: widget.controller.pdfCropMargins,
+                  pdfCropMargins: widget.controller.effectivePdfCropMargins,
                 );
               }
             : null,
         onInteractionEnd: FormFactor.isMobilePlatform(context)
             ? (details) {
-                if (!ctrl.isReady || widget.controller.pdfCropMargins) return;
+                if (!ctrl.isReady || widget.controller.effectivePdfCropMargins) return;
                 final zoom = ctrl.currentZoom;
                 final fitWidthZoom = ctrl.coverScale;
                 if (fitWidthZoom <= 0) return;
@@ -2513,7 +2520,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           readerController: widget.controller,
           isFluid: effectiveFluid,
           isTwoPage: widget.isTwoPage,
-          pdfCropMargins: widget.controller.pdfCropMargins,
+          pdfCropMargins: widget.controller.effectivePdfCropMargins,
           minScale: effectiveFluid ? 0.35 : 0.2,
           maxScale: 5.0,
           topInset: widget.topInset,
@@ -2547,7 +2554,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             isMobile: FormFactor.isMobilePlatform(context),
             onCroppedReady: () {
               if (!mounted) return;
-              if (widget.controller.pdfCropMargins) {
+              if (widget.controller.effectivePdfCropMargins) {
                 PdfPageAnalysisService.applyMarginCrop(
                   controller,
                   widget.controller,
@@ -2805,8 +2812,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         ? mobilePrefs.resolveCanvasColorFilter(
             isDark: isDark,
             isPdfDocument: widget.controller.isPdfDocument ||
-                widget.controller.isWordDocument ||
-                widget.controller.isPptDocument,
+                widget.controller.isWordDocument,
             isMobile: isMobile,
           )
         : null;

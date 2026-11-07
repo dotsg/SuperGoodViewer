@@ -578,8 +578,9 @@ class _MobileTypographySheetState extends State<MobileTypographySheet> {
                       const SizedBox(height: 14),
                     ],
 
-                    // PDF Reading Enhancements (Margin Crop + Smart Dark Invert)
-                    if (controller.isPdfDocument) ...[
+                    // PDF / Document Reading Enhancements (Margin Crop for PDF + Smart Dark Invert for PDF/Word)
+                    if (controller.supportsCropMargins ||
+                        (options.isDark && (controller.isPdfDocument || controller.isWordDocument))) ...[
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                         decoration: BoxDecoration(
@@ -588,48 +589,50 @@ class _MobileTypographySheetState extends State<MobileTypographySheet> {
                         ),
                         child: Column(
                           children: [
-                            Row(
-                              children: [
-                                Icon(
-                                  options.pdfCropMargins
-                                      ? Icons.crop_rounded
-                                      : Icons.crop_free_rounded,
-                                  size: 22,
-                                  color: theme.colorScheme.primary,
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        options.pdfCropMargins
-                                            ? strings.mobileCropMarginsActiveTitle
-                                            : strings.mobileCropMarginsTitle,
-                                        style: const TextStyle(
-                                          fontSize: 13.5,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        strings.mobileCropMarginsDesc,
-                                        style: TextStyle(
-                                          fontSize: 11.5,
-                                          color: isDark ? Colors.white60 : Colors.black54,
-                                        ),
-                                      ),
-                                    ],
+                            if (controller.supportsCropMargins)
+                              Row(
+                                children: [
+                                  Icon(
+                                    options.pdfCropMargins
+                                        ? Icons.crop_rounded
+                                        : Icons.crop_free_rounded,
+                                    size: 22,
+                                    color: theme.colorScheme.primary,
                                   ),
-                                ),
-                                Switch(
-                                  value: options.pdfCropMargins,
-                                  onChanged: (val) => controller.setPdfCropMargins(val),
-                                ),
-                              ],
-                            ),
-                            if (options.isDark) ...[
-                              const Divider(height: 16),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          options.pdfCropMargins
+                                              ? strings.mobileCropMarginsActiveTitle
+                                              : strings.mobileCropMarginsTitle,
+                                          style: const TextStyle(
+                                            fontSize: 13.5,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          strings.mobileCropMarginsDesc,
+                                          style: TextStyle(
+                                            fontSize: 11.5,
+                                            color: isDark ? Colors.white60 : Colors.black54,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Switch(
+                                    value: options.pdfCropMargins,
+                                    onChanged: (val) => controller.setPdfCropMargins(val),
+                                  ),
+                                ],
+                              ),
+                            if (options.isDark &&
+                                (controller.isPdfDocument || controller.isWordDocument)) ...[
+                              if (controller.supportsCropMargins) const Divider(height: 16),
                               Row(
                                 children: [
                                   Icon(
