@@ -4,6 +4,7 @@ import '../i18n/app_strings.dart';
 /// Predefined page layout formats for SuperGoodViewer.
 class PageFormat {
   static const String fluid = 'fluid';
+  static const String mobilePortrait = 'mobilePortrait';
   static const String a4Portrait = 'a4Portrait';
   static const String a4Landscape = 'a4Landscape';
   static const String slide16x9 = 'slide16x9';
@@ -13,6 +14,7 @@ class PageFormat {
 
   static const List<String> all = [
     fluid,
+    mobilePortrait,
     a4Portrait,
     a4Landscape,
     slide16x9,
@@ -23,6 +25,8 @@ class PageFormat {
     switch (format) {
       case fluid:
         return strings.layoutModeFluid;
+      case mobilePortrait:
+        return strings.layoutModeMobile;
       case a4Portrait:
         return strings.layoutModeA4Portrait;
       case a4Landscape:
@@ -151,6 +155,8 @@ class RenderOptions {
       case PageFormat.a4Portrait:
       case PageFormat.pptNotes:
         return 595.28 / 841.89;
+      case PageFormat.mobilePortrait:
+        return 390.0 / 780.0;
       default:
         return 1.0;
     }

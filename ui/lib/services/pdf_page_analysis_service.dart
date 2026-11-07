@@ -111,7 +111,23 @@ class PdfPageAnalysisService {
     return analysis;
   }
 
-  /// Pure geometric layout analyzer: Computes content bounding box and multi-column gutters.
+  /// Returns true if a fragment represents 90°-rotated vertical side-margin text
+  /// (such as vertical photo credits along the outer edge of magazine pages).
+  static bool isVerticalMarginFragment(
+    PdfPage page,
+    PdfPageTextFragment fragment,
+    Rect rect,
+  ) {
+    if (fragment.direction == PdfTextDirection.vrtl) return true;
+    final inOuterMargin =
+        rect.right < page.width * 0.058 || rect.left > page.width * 0.942;
+    if (inOuterMargin && rect.width < 12.5 && rect.height > rect.width * 1.35) {
+      return true;
+    }
+    return false;
+  }
+
+  /// Pure geometric layout analyzer: Computes content bounding box and multi-column gutters (2, 3, or 4 columns).
   static PdfPageAnalysis computePageAnalysis(PdfPage page, PdfPageText pageText) {
     if (pageText.fragments.isEmpty) {
       final full = Rect.fromLTWH(0, 0, page.width, page.height);
@@ -129,12 +145,29 @@ class PdfPageAnalysisService {
     var minY = double.infinity;
     var maxY = double.negativeInfinity;
 
+    final validFragments = <({PdfPageTextFragment frag, Rect rect})>[];
     for (final f in pageText.fragments) {
       final r = f.bounds.toRect(page: page);
+      if (!r.left.isFinite || !r.top.isFinite || r.width <= 0 || r.height <= 0) {
+        continue;
+      }
+      if (isVerticalMarginFragment(page, f, r)) continue;
+      validFragments.add((frag: f, rect: r));
       if (r.left < minX) minX = r.left;
       if (r.right > maxX) maxX = r.right;
       if (r.top < minY) minY = r.top;
       if (r.bottom > maxY) maxY = r.bottom;
+    }
+
+    if (validFragments.isEmpty) {
+      final full = Rect.fromLTWH(0, 0, page.width, page.height);
+      return PdfPageAnalysis(
+        pageNumber: page.pageNumber,
+        pageSize: Size(page.width, page.height),
+        contentBounds: full,
+        columns: [PdfColumnInfo(bounds: full, index: 0)],
+        isMultiColumn: false,
+      );
     }
 
     final contentWidth = maxX - minX;
@@ -149,15 +182,55 @@ class PdfPageAnalysisService {
       );
     }
 
-    // 5pt buckets for horizontal projection histogram
-    const bucketSize = 5.0;
+    // Group word fragments on the same baseline with normal inter-word spacing (<= 5.5pt)
+    // so that multi-column spanning titles/subtitles/captions can be identified by their combined width.
+    final headerCutoff = page.height * 0.042;
+    final footerCutoff = page.height * 0.948;
+    final bodyRects = <Rect>[];
+    for (final item in validFragments) {
+      final r = item.rect;
+      if ((page.pageNumber > 1 && r.bottom < headerCutoff) || r.top > footerCutoff) {
+        continue;
+      }
+      // Exclude decorative full-column single-char ornaments (e.g. 40pt rule glyphs)
+      if (r.height > 28.0 && item.frag.length <= 2 && r.width > 80.0) {
+        continue;
+      }
+      bodyRects.add(r);
+    }
+
+    bodyRects.sort((a, b) {
+      final dy = (a.center.dy - b.center.dy).abs();
+      final tol = math.max(2.5, math.min(a.height, b.height) * 0.45);
+      if (dy <= tol) return a.left.compareTo(b.left);
+      return a.center.dy.compareTo(b.center.dy);
+    });
+
+    final mergedRuns = <Rect>[];
+    for (final r in bodyRects) {
+      if (mergedRuns.isEmpty) {
+        mergedRuns.add(r);
+        continue;
+      }
+      final prev = mergedRuns.last;
+      final dy = (r.center.dy - prev.center.dy).abs();
+      final tol = math.max(2.5, math.min(r.height, prev.height) * 0.5);
+      final gap = r.left - prev.right;
+      if (dy <= tol && gap >= -2.0 && gap <= math.max(5.5, math.min(r.height, prev.height) * 0.52)) {
+        mergedRuns[mergedRuns.length - 1] = prev.expandToInclude(r);
+      } else {
+        mergedRuns.add(r);
+      }
+    }
+
+    // 2pt buckets for high-resolution horizontal projection histogram (detects narrow ~9pt magazine gutters)
+    const bucketSize = 2.0;
     final bucketCount = (page.width / bucketSize).ceil();
     final buckets = List<int>.filled(bucketCount, 0);
 
-    for (final f in pageText.fragments) {
-      final r = f.bounds.toRect(page: page);
-      // Exclude wide cross-column elements (titles, wide figures, table banners)
-      if (r.width > contentWidth * 0.65) continue;
+    for (final r in mergedRuns) {
+      // Exclude wide cross-column elements (2-of-3 or full-width spanning titles, banners, captions)
+      if (r.width > contentWidth * 0.54) continue;
       final start = (r.left / bucketSize).floor().clamp(0, bucketCount - 1);
       final end = (r.right / bucketSize).floor().clamp(0, bucketCount - 1);
       for (var b = start; b <= end; b++) {
@@ -165,48 +238,123 @@ class PdfPageAnalysisService {
       }
     }
 
-    // Search for a column gutter (valley) in the middle 30% to 70% of content width
-    final searchStart = ((minX + contentWidth * 0.3) / bucketSize).floor();
-    final searchEnd = ((minX + contentWidth * 0.7) / bucketSize).floor();
-    final rangeBuckets = buckets.sublist(
-      (minX / bucketSize).floor(),
-      (maxX / bucketSize).ceil().clamp(0, bucketCount),
-    );
+    final minBucket = (minX / bucketSize).floor().clamp(0, bucketCount - 1);
+    final maxBucket = (maxX / bucketSize).ceil().clamp(0, bucketCount);
+    final rangeBuckets = buckets.sublist(minBucket, maxBucket);
     final totalDensity = rangeBuckets.isEmpty ? 0 : rangeBuckets.reduce((a, b) => a + b);
-    final avgDensity = totalDensity / math.max(1, contentWidth / bucketSize);
+    final avgDensity = totalDensity / math.max(1.0, contentWidth / bucketSize);
+    final threshold = (avgDensity * 0.14).ceil().clamp(1, 8);
 
-    int? bestGutterStart;
-    int? bestGutterEnd;
+    // Search for column gutters (valleys) in the middle 18% to 82% of content width
+    final searchStart = ((minX + contentWidth * 0.18) / bucketSize).floor().clamp(0, bucketCount - 1);
+    final searchEnd = ((minX + contentWidth * 0.82) / bucketSize).floor().clamp(0, bucketCount - 1);
+
+    final candidateGutters = <({double left, double right})>[];
     int currentGapLen = 0;
     int currentGapStart = 0;
-    final threshold = (avgDensity * 0.15).ceil().clamp(1, 10);
 
     for (var i = searchStart; i <= searchEnd; i++) {
       if (buckets[i] <= threshold) {
         if (currentGapLen == 0) currentGapStart = i;
         currentGapLen++;
       } else {
-        if (currentGapLen * bucketSize >= 8.0) {
-          if (bestGutterStart == null || currentGapLen > (bestGutterEnd! - bestGutterStart)) {
-            bestGutterStart = currentGapStart;
-            bestGutterEnd = i;
-          }
+        if (currentGapLen * bucketSize >= 6.0) {
+          candidateGutters.add((
+            left: currentGapStart * bucketSize,
+            right: i * bucketSize,
+          ));
         }
         currentGapLen = 0;
       }
     }
-    if (currentGapLen * bucketSize >= 8.0) {
-      if (bestGutterStart == null || currentGapLen > (bestGutterEnd! - bestGutterStart)) {
-        bestGutterStart = currentGapStart;
-        bestGutterEnd = searchEnd;
+    if (currentGapLen * bucketSize >= 6.0) {
+      candidateGutters.add((
+        left: currentGapStart * bucketSize,
+        right: searchEnd * bucketSize,
+      ));
+    }
+
+    double columnAverageDensity(double leftX, double rightX) {
+      final s = (leftX / bucketSize).floor().clamp(0, bucketCount - 1);
+      final e = (rightX / bucketSize).ceil().clamp(s, bucketCount);
+      if (e <= s) return 0.0;
+      var sum = 0;
+      for (var i = s; i < e; i++) {
+        sum += buckets[i];
+      }
+      return sum / (e - s);
+    }
+
+    // 1. Try 3-column (or 4-column) layout if 2+ valid gutters partition the page into balanced columns
+    if (candidateGutters.length >= 2) {
+      final minColW = math.max(90.0, contentWidth * 0.18);
+      final filtered = <({double left, double right})>[];
+      double prevRight = minX;
+      for (final g in candidateGutters) {
+        if (g.left - prevRight >= minColW &&
+            columnAverageDensity(prevRight, g.left) >= avgDensity * 0.22) {
+          filtered.add(g);
+          prevRight = g.right;
+        }
+      }
+      while (filtered.isNotEmpty &&
+          (maxX - filtered.last.right < minColW ||
+              columnAverageDensity(filtered.last.right, maxX) < avgDensity * 0.22)) {
+        filtered.removeLast();
+      }
+
+      if (filtered.length >= 2 && filtered.length <= 3) {
+        final colBounds = <Rect>[];
+        double curLeft = minX;
+        for (final g in filtered) {
+          colBounds.add(Rect.fromLTRB(curLeft, minY, g.left, maxY));
+          curLeft = g.right;
+        }
+        colBounds.add(Rect.fromLTRB(curLeft, minY, maxX, maxY));
+
+        final widths = colBounds.map((c) => c.width).toList();
+        final minW = widths.reduce(math.min);
+        final maxW = widths.reduce(math.max);
+        if (minW >= minColW && maxW <= contentWidth * 0.45 && (maxW / minW) <= 1.85) {
+          return PdfPageAnalysis(
+            pageNumber: page.pageNumber,
+            pageSize: Size(page.width, page.height),
+            contentBounds: contentBounds,
+            columns: [
+              for (var i = 0; i < colBounds.length; i++)
+                PdfColumnInfo(bounds: colBounds[i], index: i),
+            ],
+            isMultiColumn: true,
+          );
+        }
       }
     }
 
-    if (bestGutterStart != null && bestGutterEnd != null) {
-      final gutterLeft = bestGutterStart * bucketSize;
-      final gutterRight = bestGutterEnd * bucketSize;
-      final col1 = Rect.fromLTRB(minX, minY, gutterLeft, maxY);
-      final col2 = Rect.fromLTRB(gutterRight, minY, maxX, maxY);
+    // 2. Try 2-column layout in the central 28%..72% region
+    final centralMinX = minX + contentWidth * 0.28;
+    final centralMaxX = minX + contentWidth * 0.72;
+    ({double left, double right})? bestTwoColGutter;
+    for (final g in candidateGutters) {
+      final mid = (g.left + g.right) / 2.0;
+      if (mid < centralMinX || mid > centralMaxX) continue;
+      if (g.right - g.left < 6.5) continue;
+      final leftW = g.left - minX;
+      final rightW = maxX - g.right;
+      final minTwoColW = math.max(90.0, contentWidth * 0.26);
+      if (leftW < minTwoColW || rightW < minTwoColW) continue;
+      if (columnAverageDensity(minX, g.left) < avgDensity * 0.22 ||
+          columnAverageDensity(g.right, maxX) < avgDensity * 0.22) {
+        continue;
+      }
+      if (bestTwoColGutter == null ||
+          (g.right - g.left) > (bestTwoColGutter.right - bestTwoColGutter.left)) {
+        bestTwoColGutter = g;
+      }
+    }
+
+    if (bestTwoColGutter != null) {
+      final col1 = Rect.fromLTRB(minX, minY, bestTwoColGutter.left, maxY);
+      final col2 = Rect.fromLTRB(bestTwoColGutter.right, minY, maxX, maxY);
       return PdfPageAnalysis(
         pageNumber: page.pageNumber,
         pageSize: Size(page.width, page.height),

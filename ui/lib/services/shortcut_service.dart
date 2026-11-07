@@ -77,6 +77,14 @@ class ShortcutService extends ChangeNotifier {
       hasShift: true,
     ),
     AppShortcutAction(
+      id: 'togglePdfReflow',
+      name: 'PDF 智能重排',
+      category: '视图模式',
+      description: '将双栏/三栏与小字 PDF 重排为自适应单栏流式或手机竖屏版式',
+      defaultKey: LogicalKeyboardKey.keyR,
+      hasShift: true,
+    ),
+    AppShortcutAction(
       id: 'toggleToolbar',
       name: '显示 / 隐藏底部浮动栏',
       category: '视图模式',
@@ -587,6 +595,7 @@ class ShortcutService extends ChangeNotifier {
     required VoidCallback onFontSettings,
     VoidCallback? onTogglePresentation,
     VoidCallback? onToggleCropMargins,
+    VoidCallback? onTogglePdfReflow,
     VoidCallback? onFindInDocument,
     VoidCallback? onPreferences,
     VoidCallback? onKeyboardShortcuts,
@@ -629,6 +638,7 @@ class ShortcutService extends ChangeNotifier {
     addAction('toggleTheme', onToggleTheme);
     addAction('toggleTwoPage', onToggleTwoPage);
     addAction('toggleCropMargins', onToggleCropMargins);
+    addAction('togglePdfReflow', onTogglePdfReflow);
     addAction('zoomIn', onZoomIn);
     addAction('zoomOut', onZoomOut);
     addAction('resetZoom', onResetZoom);

@@ -82,6 +82,10 @@ class EnStrings implements AppStrings {
       ? 'Smart Margin Crop: ON (Cropping blank margins). Click to reset ($shortcut)'
       : 'Smart Margin Crop: OFF. Click to crop whitespace margins and magnify text ($shortcut)';
   @override
+  String togglePdfReflowTooltip(bool isReflowed, String shortcut) => isReflowed
+      ? 'PDF Smart Reflow: ON. Click to restore original PDF ($shortcut)'
+      : 'PDF Smart Reflow: Uncurl multi-column & small-font PDFs for mobile reading ($shortcut)';
+  @override
   String zoomInTooltip(String shortcut) => 'Zoom In ($shortcut)';
   @override
   String zoomOutTooltip(String shortcut) => 'Zoom Out ($shortcut)';
@@ -128,6 +132,8 @@ class EnStrings implements AppStrings {
     switch (format) {
       case 'fluid':
         return 'Fluid';
+      case 'mobilePortrait':
+        return 'Mobile';
       case 'slide16x9':
         return '16:9';
       case 'slide4x3':
@@ -322,6 +328,8 @@ class EnStrings implements AppStrings {
   @override
   String get layoutModeFluid => 'Continuous Scroll (Fluid)';
   @override
+  String get layoutModeMobile => 'Mobile Portrait Paged';
+  @override
   String get layoutModeA4Portrait => 'A4 Portrait Paged (Print)';
   @override
   String get layoutModeA4Landscape => 'A4 Landscape Paged';
@@ -468,6 +476,8 @@ class EnStrings implements AppStrings {
         return 'Toggle Single / Two-Page Spread';
       case 'toggleCropMargins':
         return 'Smart Margin Crop';
+      case 'togglePdfReflow':
+        return 'PDF Smart Reflow';
       case 'toggleToolbar':
         return 'Toggle Floating Toolbar';
       case 'findInDocument':
@@ -525,6 +535,8 @@ class EnStrings implements AppStrings {
         return 'Toggle between single page and two-page facing spread in A4 mode';
       case 'toggleCropMargins':
         return 'Automatically detect and crop empty margins to maximize readable text width';
+      case 'togglePdfReflow':
+        return 'Reflow multi-column and small-type PDFs into adaptive fluid or mobile portrait layout';
       case 'toggleToolbar':
         return 'Toggle bottom floating toolbar visibility for immersive Zen reading';
       case 'findInDocument':
@@ -712,6 +724,8 @@ class EnStrings implements AppStrings {
   String get pageFormatDesc => 'Choose the default document layout: 16:9 / 4:3 slides for presenting, A4 or fluid for reading and print.';
   @override
   String get pageFormatFluidDesc => 'Comfortable fixed line width, auto height and seamless scrolling, ideal for technical docs and long reads';
+  @override
+  String get pageFormatMobileDesc => '9:18 Mobile Portrait (390 × 780 pt) with compact margins and readable type, ideal for exporting mobile-friendly PDFs';
   @override
   String get pageFormatA4PortraitDesc => 'Standard A4 portrait (595.28 × 841.89 pt) with header, footer and widow control, ready for print';
   @override

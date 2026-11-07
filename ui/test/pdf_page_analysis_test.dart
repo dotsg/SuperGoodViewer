@@ -269,5 +269,206 @@ void main() {
       expect(controller.isPdfDocument, isTrue);
       expect(controller.currentPdfBytes?.length, equals(bytes.length));
     });
+
+    test('Exports reflowed PDF in mobile-friendly Mobile Portrait (390x780pt) layout', () async {
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await controller.openFile(resnetPdfPath);
+      final enabled = await controller.setPdfReflowMode(true);
+      expect(enabled, isTrue);
+      expect(controller.isPdfReflowed, isTrue);
+      expect(controller.isFluidLayout, isTrue);
+
+      final exportedBytes = await controller.getPdfBytesForExport();
+      expect(exportedBytes, isNotNull);
+      expect(exportedBytes!.isNotEmpty, isTrue);
+
+      final exportedDoc = await PdfDocument.openData(exportedBytes);
+      try {
+        expect(exportedDoc.pages.length, greaterThan(1));
+        expect(exportedDoc.pages.first.width, closeTo(390.0, 1.0));
+        expect(exportedDoc.pages.first.height, closeTo(780.0, 1.0));
+      } finally {
+        await exportedDoc.dispose();
+      }
+    });
+
+    test('Reflows 3-column magazine PDF (newyork.pdf) with drop caps and partial spanning headers when present', () async {
+      final newyorkFile = File('/Users/wuvist/Desktop/newyork.pdf');
+      if (!newyorkFile.existsSync()) return;
+
+      final doc = await PdfDocument.openFile(newyorkFile.path);
+      try {
+        // Page 14 (index 13) is "SCHMEAR CAMPAIGN" with 3 columns, 2-of-3 spanning header, and drop cap "E"
+        final page14 = doc.pages[13];
+        final page14Text = await page14.loadStructuredText();
+        final analysis14 = PdfPageAnalysisService.computePageAnalysis(page14, page14Text);
+
+        expect(analysis14.isMultiColumn, isTrue);
+        expect(analysis14.columns.length, equals(3));
+        expect(analysis14.columns[0].bounds.width, closeTo(160.4, 8.0));
+        expect(analysis14.columns[1].bounds.width, closeTo(160.4, 8.0));
+        expect(analysis14.columns[2].bounds.width, closeTo(160.4, 8.0));
+
+        final result = await PdfReflowService.reflowDocument(
+          doc,
+          documentTitle: 'The New Yorker',
+        );
+        expect(result.hasContent, isTrue);
+        expect(result.markdown, contains('SCHMEAR CAMPAIGN'));
+        // Drop cap "E" + "very summer in France" merged cleanly
+        expect(result.markdown, contains('Every summer in France, an exodus takes place.'));
+        // Cross-column continuation from Col 1 bottom to Col 2 top
+        expect(
+          result.markdown,
+          contains('an annual transmigration of people, money, goods, gifts, expectations'),
+        );
+        // Cross-page continuation across bottom figure caption from Page 14 Col 3 to Page 15 Col 1
+        expect(
+          result.markdown,
+          matches(
+            RegExp(
+              r'A shopkeeper in Cholet, a midsize town, reported that he had sold a thou\s*sand jars of El Mordjene in five hours\.',
+            ),
+          ),
+        );
+        // Standalone pronoun drop cap "I" on Page 17 ("I had hoped to visit")
+        expect(
+          result.markdown,
+          contains('I had hoped to visit'),
+        );
+        // Standalone figures extracted as inline PNG data URIs
+        expect(
+          result.markdown,
+          contains('![Figure](data:image/png;base64,'),
+        );
+      } finally {
+        await doc.dispose();
+      }
+    });
+
+    test('Reflows structured resume PDF (cv.pdf) preserving bold, italic, links, and split headers when present', () async {
+      final cvFile = File('/Users/wuvist/Desktop/cv.pdf');
+      if (!cvFile.existsSync()) return;
+
+      final bytes = cvFile.readAsBytesSync();
+      final result = await PdfReflowService.reflowPdfBytes(
+        bytes,
+        documentTitle: 'XUE YuanHuang CV',
+      );
+
+      expect(result.hasContent, isTrue);
+      // Title & H1 sections
+      expect(result.markdown, contains('# XUE, YuanHuang'));
+      expect(result.markdown, contains('## EDUCATION'));
+      expect(result.markdown, contains('## EXPERIENCE'));
+      expect(result.markdown, contains('## PROJECTS'));
+      expect(result.markdown, contains('## ACTIVITIES & COMMUNITY'));
+      expect(result.markdown, contains('## SKILLS'));
+
+      // Hyperlinks preserved
+      expect(result.markdown, contains('[LinkedIn](https://www.linkedin.com/in/xue-yuanhuang/)'));
+      expect(result.markdown, contains('[GitHub](https://github.com/xueyuanhuang)'));
+      expect(result.markdown, contains('[**HR Talent Pool**](https://hr-talent-pool.pages.dev/)'));
+      expect(
+        result.markdown,
+        contains('[**API Diagnostics**](https://api-diagnostics.xue-yuanhuang.workers.dev/tests)'),
+      );
+      expect(result.markdown, contains('[**AI Relay**](https://xyhmail.xyz/)'));
+      expect(
+        result.markdown,
+        contains('[**Poker Club Manager**](https://github.com/xueyuanhuang/texasholdem)'),
+      );
+
+      // Left-right split header lines & italic subheaders preserved
+      expect(
+        result.markdown,
+        contains('**Xiamen University - Singapore Management University (Joint Program)** — *Sep 2022 - Aug 2024*'),
+      );
+      expect(result.markdown, contains('*Master of Science in Quantitative Finance*'));
+      expect(result.markdown, contains('**Business Development, Asia - WorldRouter** — *Jun 2026 - Present*'));
+
+      // Inline bold metrics & skill categories preserved
+      expect(result.markdown, contains('**3.92/4.0**'));
+      expect(result.markdown, contains('**First-class Scholarship**'));
+      expect(result.markdown, contains('**AI & Development:**'));
+      expect(result.markdown, contains('**Languages:**'));
+    });
+
+    test('Reflows Chinese document with multi-line tables (SolaRee_AI.pdf) into Markdown tables when present', () async {
+      final solaFile = File('/Users/wuvist/Desktop/SolaRee_AI.pdf');
+      if (!solaFile.existsSync()) return;
+
+      final bytes = solaFile.readAsBytesSync();
+      final result = await PdfReflowService.reflowPdfBytes(
+        bytes,
+        documentTitle: 'SolaRee.AI',
+      );
+
+      expect(result.hasContent, isTrue);
+      // Title & Chinese section headings
+      expect(result.markdown, contains('# SolaRee.AI / 问天星'));
+      expect(result.markdown, contains('### 一、产品定义'));
+      expect(result.markdown, contains('### 五、功能矩阵'));
+      expect(result.markdown, contains('### 七、商业模式与定价思路'));
+
+      // Circled-number subheadings
+      expect(result.markdown, contains('#### ① 零隐私架构（Zero PII）'));
+      expect(result.markdown, contains('#### ② 换位推演功能'));
+
+      // Table 1 (4 columns, multi-line wrapped cells & vertically centered cells)
+      expect(result.markdown, contains('| 功能 | 状态 | 粘性 | 作用 |'));
+      expect(
+        result.markdown,
+        contains('| 八字排盘 + 批命 + 喜忌 + 大运流年 | 已上线 | 低（一次性） | 引流入口，建立专业信任 |'),
+      );
+      expect(
+        result.markdown,
+        contains('| 换位推演（档案替换） | 已上线 | 高 | 核心差异化卖点，付费意愿最强 |'),
+      );
+      expect(
+        result.markdown,
+        contains('| 生日提醒 + 朋友档案管理 | 已上线/迭代中 | 高 | 将产品转化为人际关系 CRM |'),
+      );
+      expect(
+        result.markdown,
+        contains('| 定盘功能（通过问答确定时辰） | 计划中（\\~1 周开发） | 中 | 单独按次收费卖点，企业招聘场景切入点 |'),
+      );
+
+      // Table 2 (3 columns)
+      expect(result.markdown, contains('| 收费模式 | 适用场景 | 参考定价 |'));
+      expect(
+        result.markdown,
+        contains('| 按次收费 | 轻度用户、单次批命 | 基础模式 |'),
+      );
+      expect(
+        result.markdown,
+        contains('| 按时段收费 | 社交聚会场景（2 小时无限量） | 约 ¥100/次 |'),
+      );
+      expect(
+        result.markdown,
+        contains('| 月订阅 | 重度用户、人际关系管理 | 约 \\\$10-20/月 |'),
+      );
+      expect(
+        result.markdown,
+        contains('| 单次功能付费 | 定盘、企业招聘分析 | 按功能单独定价 |'),
+      );
+
+      // Ordered list items
+      expect(result.markdown, contains('1. 接入支付系统，开始试运营'));
+      expect(result.markdown, contains('4. 观察用户是否自发将问天星作为人际关系管理工具使用，验证产品定位'));
+
+      // Verify end-to-end compilation to mobile PDF via ReaderController
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+      await controller.openFile(solaFile.path);
+      final enabled = await controller.setPdfReflowMode(true);
+      expect(enabled, isTrue);
+      expect(controller.isPdfReflowed, isTrue);
+      final exportedBytes = await controller.getPdfBytesForExport();
+      expect(exportedBytes, isNotNull);
+      expect(exportedBytes!.isNotEmpty, isTrue);
+    });
   });
 }

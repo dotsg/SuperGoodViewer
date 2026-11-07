@@ -563,7 +563,19 @@ class _MobileTypographySheetState extends State<MobileTypographySheet> {
                                     onTap: () => controller.setPageFormat(PageFormat.fluid),
                                   ),
                                 ),
-                                const SizedBox(width: 10),
+                                if (!controller.isWordDocument) ...[
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: _LayoutModeButton(
+                                      title: strings.layoutModeMobile,
+                                      icon: Icons.smartphone_rounded,
+                                      isSelected: options.effectivePageFormat == PageFormat.mobilePortrait,
+                                      isDark: isDark,
+                                      onTap: () => controller.setPageFormat(PageFormat.mobilePortrait),
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(width: 8),
                                 Expanded(
                                   child: _LayoutModeButton(
                                     title: strings.layoutModeA4Portrait,

@@ -2508,13 +2508,21 @@ class ReaderController extends ChangeNotifier {
         }
         return doc.pdfBytes;
       }
-      if (options.theme == 'light') {
-        // Light mode Markdown: use current in-memory PDF immediately (0ms fast path)
+      if (options.theme == 'light' && !(doc.isPdfReflowed && options.isFluid)) {
+        // Light mode Markdown (or reflowed PDF already in a paged format): use current in-memory PDF immediately (0ms fast path)
         return doc.pdfBytes;
       }
 
-      // When viewing in dark mode, strictly export publication-grade light mode document
-      final exportOptions = options.copyWith(theme: 'light');
+      // When viewing in dark mode, strictly export publication-grade light mode document.
+      // When exporting a reflowed PDF from Fluid mode, default to Mobile Portrait (390x780pt)
+      // so the exported PDF is paginated for mobile screens rather than a giant continuous strip.
+      final exportOptions = (doc.isPdfReflowed && options.isFluid)
+          ? options.copyWith(
+              theme: 'light',
+              mode: 'paged',
+              pageFormat: PageFormat.mobilePortrait,
+            )
+          : options.copyWith(theme: 'light');
 
       if (doc.filePath != null) {
         final cached = DocumentCacheService.getCachedPdf(
@@ -2858,6 +2866,10 @@ graph LR
       switch (pageFormat.toLowerCase()) {
         case 'fluid':
           return PageFormat.fluid;
+        case 'mobile':
+        case 'mobile_portrait':
+        case 'mobileportrait':
+          return PageFormat.mobilePortrait;
         case 'a4':
         case 'a4_portrait':
         case 'a4portrait':

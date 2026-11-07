@@ -875,6 +875,29 @@ class _WorkspaceViewState extends State<WorkspaceView> with WidgetsBindingObserv
     ));
   }
 
+  Future<void> _handleTogglePdfReflow() async {
+    final controller = widget.controller;
+    if (!controller.isSourcePdfDocument || controller.isReflowingPdf) return;
+    final targetEnable = !controller.isPdfReflowed;
+    final ok = await controller.setPdfReflowMode(targetEnable);
+    if (!mounted) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(controller.strings.mobilePdfReflowScannedFallback),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+    _showZoomHud(
+      controller.isPdfReflowed
+          ? controller.strings.mobilePdfReflowActiveTitle
+          : controller.strings.mobilePdfReflowTitle,
+    );
+  }
+
   Future<void> _toggleFullScreen() async {
     try {
       final res = await _windowChannel.invokeMethod('toggleFullScreen');
@@ -998,6 +1021,7 @@ class _WorkspaceViewState extends State<WorkspaceView> with WidgetsBindingObserv
               onToggleTheme: controller.toggleTheme,
               onToggleTwoPage: _handleToggleTwoPage,
               onToggleCropMargins: _handleTogglePdfCropMargins,
+              onTogglePdfReflow: _handleTogglePdfReflow,
               onZoomIn: _handleZoomIn,
               onZoomOut: _handleZoomOut,
               onResetZoom: _handleResetZoom,
@@ -1902,7 +1926,7 @@ class _WorkspaceViewState extends State<WorkspaceView> with WidgetsBindingObserv
               ),
               _PillDivider(isDark: isDark),
 
-              // Mode & Layout switcher (Fluid, A4, 16:9, Slides/Notes, etc.) - Markdown, Word & PowerPoint
+              // Mode & Layout switcher (Fluid, Mobile, A4, 16:9, Slides/Notes, etc.) - Markdown, Reflowed PDF, Word & PowerPoint
               if (!controller.isPdfDocument) ...[
                 _FormatSelectorPill(
                   format: controller.renderOptions.effectivePageFormat,
@@ -1913,6 +1937,22 @@ class _WorkspaceViewState extends State<WorkspaceView> with WidgetsBindingObserv
                   onToggle: controller.toggleMode,
                   isDark: isDark,
                   strings: controller.strings,
+                ),
+                _PillDivider(isDark: isDark),
+              ],
+
+              // PDF Smart Reflow toggle (available for any source PDF document)
+              if (controller.isSourcePdfDocument) ...[
+                _PillIconButton(
+                  key: const ValueKey('desktop_pdf_reflow_btn'),
+                  icon: Icons.auto_awesome_rounded,
+                  tooltip: controller.strings.togglePdfReflowTooltip(
+                    controller.isPdfReflowed,
+                    controller.shortcutService.getShortcutLabel('togglePdfReflow'),
+                  ),
+                  isSelected: controller.isPdfReflowed,
+                  iconSize: 17,
+                  onPressed: _handleTogglePdfReflow,
                 ),
                 _PillDivider(isDark: isDark),
               ],
@@ -2054,6 +2094,7 @@ class _PillIconButton extends StatelessWidget {
   final double iconSize;
 
   const _PillIconButton({
+    super.key,
     required this.icon,
     required this.tooltip,
     required this.onPressed,
@@ -2114,6 +2155,8 @@ class _FormatSelectorPill extends StatelessWidget {
     switch (fmt) {
       case PageFormat.fluid:
         return Icons.view_stream_rounded;
+      case PageFormat.mobilePortrait:
+        return Icons.smartphone_rounded;
       case PageFormat.a4Portrait:
         return Icons.description_outlined;
       case PageFormat.a4Landscape:
@@ -2222,6 +2265,17 @@ class _FormatSelectorPill extends StatelessWidget {
                     ],
                   ),
                 ),
+                if (!isWordDocument)
+                  PopupMenuItem(
+                    value: PageFormat.mobilePortrait,
+                    child: Row(
+                      children: [
+                        const Icon(Icons.smartphone_rounded, size: 16),
+                        const SizedBox(width: 8),
+                        Text(strings.layoutModeMobile),
+                      ],
+                    ),
+                  ),
                 PopupMenuItem(
                   value: PageFormat.a4Portrait,
                   child: Row(

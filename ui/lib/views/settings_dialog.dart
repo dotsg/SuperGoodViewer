@@ -1039,6 +1039,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
               desc = widget.controller.strings.pageFormatFluidDesc;
               icon = Icons.view_stream_rounded;
               break;
+            case PageFormat.mobilePortrait:
+              desc = widget.controller.strings.pageFormatMobileDesc;
+              icon = Icons.smartphone_rounded;
+              break;
             case PageFormat.a4Portrait:
               desc = widget.controller.strings.pageFormatA4PortraitDesc;
               icon = Icons.description_outlined;

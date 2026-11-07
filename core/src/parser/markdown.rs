@@ -60,6 +60,21 @@ pub fn resolve_page_geometry(
                 margin_right_pt: margin_x,
             }
         }
+        "mobile" => {
+            // Mobile Portrait: 390pt x 780pt (9:18 phone screen), compact 20pt horizontal margins
+            let margin_x: f32 = 20.0;
+            let width: f32 = 390.0;
+            let bw: f32 = width - 2.0 * margin_x; // 350.0 pt
+            PageGeometry {
+                page_width_str: format!("{width}pt"),
+                page_height_str: "780pt".to_string(),
+                page_margin_str: format!("(x: {margin_x}pt, top: 32pt, bottom: 32pt)"),
+                body_width_pt: bw,
+                page_width_pt: width,
+                margin_left_pt: margin_x,
+                margin_right_pt: margin_x,
+            }
+        }
         "a4" => {
             // A4: 595.28pt x 841.89pt, margin x: 2cm = 56.692913 pt.
             let margin_x: f32 = 2.0 * 72.0 / 2.54;
@@ -1616,6 +1631,7 @@ pub fn convert_markdown_to_typst(
 
     let normalized_format = match raw_format {
         "fluid" => "fluid",
+        "mobile" | "mobile_portrait" | "mobilePortrait" => "mobile",
         "a4" | "a4_portrait" | "a4Portrait" | "portrait" => "a4",
         "a4_landscape" | "a4Landscape" | "landscape" => "a4_landscape",
         "slide_16_9" | "slide16x9" | "16:9" | "16_9" => "slide_16_9",
@@ -3668,6 +3684,20 @@ A table with wide metrics.
         let parsed = convert_markdown_to_typst(md, "Doc Title", &options);
         assert!(!parsed.typst_source.contains("header: context"));
         assert!(!parsed.typst_source.contains("footer: context"));
+    }
+
+    #[test]
+    fn test_mobile_portrait_page_format() {
+        let md = "# Reflowed Magazine Article\n\nParagraph text for mobile portrait PDF reading.\n";
+        let mut options = RenderOptions::default();
+        options.mode = "paged".to_string();
+        options.page_format = Some("mobilePortrait".to_string());
+
+        let parsed = convert_markdown_to_typst(md, "The New Yorker", &options);
+        assert!(!parsed.is_fluid);
+        assert!(parsed.typst_source.contains("width: 390pt"));
+        assert!(parsed.typst_source.contains("height: 780pt"));
+        assert!(parsed.typst_source.contains("margin: (x: 20pt, top: 32pt, bottom: 32pt)"));
     }
 
     #[test]
