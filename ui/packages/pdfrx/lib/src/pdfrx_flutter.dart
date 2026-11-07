@@ -8,6 +8,13 @@ import 'package:pdfrx_engine/pdfrx_engine.dart';
 import 'utils/platform.dart';
 
 bool _isInitialized = false;
+Future<void>? _initializingFuture;
+
+@visibleForTesting
+void debugResetPdfrxFlutterInitialization({Future<void>? pendingInit}) {
+  _isInitialized = false;
+  _initializingFuture = pendingInit;
+}
 
 /// Explicitly initializes the Pdfrx library for Flutter.
 ///
@@ -21,6 +28,13 @@ Future<void> pdfrxFlutterInitialize({
   @Deprecated('WASM modules are now only included in web builds. This flag now does nothing.')
   bool dismissPdfiumWasmWarnings = false,
 }) async {
+  if (_isInitialized) return;
+  await (_initializingFuture ??= _pdfrxFlutterInitializeInternal().whenComplete(() {
+    _initializingFuture = null;
+  }));
+}
+
+Future<void> _pdfrxFlutterInitializeInternal() async {
   if (_isInitialized) return;
 
   WidgetsFlutterBinding.ensureInitialized();

@@ -93,6 +93,8 @@ class DocumentSession {
   bool isRawPdf = false;
   bool isWordDoc = false;
   bool isPptDoc = false;
+  /// On-disk modification timestamp (microseconds) and byte size for binary
+  /// documents (Word, PowerPoint, and raw PDF) used by `_isAlreadyShowing`.
   int? officeFileModifiedMicros;
   int? officeFileSize;
   Uint8List? originalPdfBytes;

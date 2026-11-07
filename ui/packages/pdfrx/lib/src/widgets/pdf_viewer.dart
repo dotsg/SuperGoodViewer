@@ -429,7 +429,7 @@ class _PdfViewerState extends State<PdfViewer>
       oldWidget?.documentRef.resolveListenable().removeListener(_onDocumentChanged);
       final documentRef = widget.documentRef;
       await pdfrxFlutterInitialize();
-      if (!mounted || !identical(documentRef, widget.documentRef)) {
+      if (!mounted || documentRef.key != widget.documentRef.key) {
         return;
       }
       widget.documentRef.resolveListenable()
@@ -485,7 +485,7 @@ class _PdfViewerState extends State<PdfViewer>
     _gotoTargetPageNumber = null;
     _initialized = false;
     _txController.removeListener(_onMatrixChanged);
-    _controller?._attach(null);
+    _controller?._detach(this);
 
     final listenable = widget.documentRef.resolveListenable();
     final document = listenable.document;
@@ -619,7 +619,7 @@ class _PdfViewerState extends State<PdfViewer>
     _canvasLinkPainter.resetAll();
     _textCache.clear();
     _txController.removeListener(_onMatrixChanged);
-    _controller?._attach(null);
+    _controller?._detach(this);
     _txController.dispose();
     _tileCache.dispose();
     super.dispose();
@@ -4616,6 +4616,12 @@ class PdfViewerController extends ValueListenable<Matrix4> {
     __state?._txController.removeListener(_notifyListeners);
     __state = state;
     __state?._txController.addListener(_notifyListeners);
+  }
+
+  void _detach(_PdfViewerState state) {
+    if (identical(__state, state)) {
+      _attach(null);
+    }
   }
 
   void _notifyListeners() {

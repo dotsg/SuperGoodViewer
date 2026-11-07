@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:pdfrx/pdfrx.dart';
 import 'controllers/reader_controller.dart';
 import 'i18n/app_localizations.dart';
 import 'i18n/locales.dart';
@@ -12,6 +14,9 @@ import 'services/update_service.dart';
 void main(List<String> args) async {
   StartupMetrics.begin();
   WidgetsFlutterBinding.ensureInitialized();
+  unawaited(pdfrxFlutterInitialize().catchError((Object e) {
+    debugPrint('[main] pdfrxFlutterInitialize failed: $e');
+  }));
   await FormFactor.initMobileDirectoriesIfNeeded();
 
   String? targetFile;

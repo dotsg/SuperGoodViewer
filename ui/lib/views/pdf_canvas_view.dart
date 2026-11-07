@@ -912,7 +912,19 @@ class PdfCanvasView extends StatefulWidget {
   State<PdfCanvasView> createState() => PdfCanvasViewState();
 }
 
+FutureOr<int> Function(Uint8List buffer, int position, int size) createPdfBytesReader(Uint8List bytes) {
+  return (buffer, position, size) {
+    if (position + size > bytes.length) {
+      size = bytes.length - position;
+      if (size <= 0) return 0;
+    }
+    buffer.setRange(0, size, bytes, position);
+    return size;
+  };
+}
+
 class PdfCanvasViewState extends State<PdfCanvasView> {
+  static int _nextDocumentLoadId = 0;
   int _activeSlot = 0;
   int? _pendingSlot;
   Uint8List? _queuedBytes;
@@ -923,6 +935,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   ];
   final List<Uint8List?> _slotBytes = [null, null];
   final List<int> _slotDocHash = [0, 0];
+  final List<({Uint8List bytes, PdfDocumentRef ref})?> _slotDocRefs = [null, null];
   final List<SuperGoodScrollInteractionDelegate?> _scrollDelegates = [null, null];
   int _mountGeneration = 0;
   int _restoredGeneration = 0;
@@ -1058,12 +1071,43 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     });
   }
 
+  void _clearSlotDocumentRef(int slotIndex) {
+    _slotDocRefs[slotIndex] = null;
+  }
+
+  PdfDocumentRef _resolveSlotDocumentRef(int slotIndex, Uint8List bytes) {
+    final existing = _slotDocRefs[slotIndex];
+    if (existing != null && identical(existing.bytes, bytes)) {
+      return existing.ref;
+    }
+    final sourceName = 'slot_${slotIndex}_doc_${++_nextDocumentLoadId}';
+    final ref = PdfDocumentRefCustom(
+      fileSize: bytes.length,
+      read: createPdfBytesReader(bytes),
+      sourceName: sourceName,
+      maxSizeToCacheOnMemory: bytes.length,
+    );
+    _slotDocRefs[slotIndex] = (bytes: bytes, ref: ref);
+    return ref;
+  }
+
+  @visibleForTesting
+  PdfDocumentRef? debugSlotDocumentRef(int slotIndex) => _slotDocRefs[slotIndex]?.ref;
+
+  @visibleForTesting
+  int get debugActiveSlot => _activeSlot;
+
+  @visibleForTesting
+  int? get debugPendingSlot => _pendingSlot;
+
   @override
   void dispose() {
     MobileReadingPrefs.instance.removeListener(_onMobilePrefsChanged);
     _cleanupTimer?.cancel();
     _pendingWatchdogTimer?.cancel();
     _directReloadWatchdogTimer?.cancel();
+    _clearSlotDocumentRef(0);
+    _clearSlotDocumentRef(1);
     _controllers[0].removeListener(_onViewerChanged0);
     _controllers[1].removeListener(_onViewerChanged1);
     for (final s in _textSearchers) {
@@ -1110,6 +1154,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           _slotDocHash[0] = fallbackBytes.hashCode;
           _slotBytes[1] = null;
           _slotDocHash[1] = 0;
+          _clearSlotDocumentRef(1);
           _startDirectReloadWatchdog();
           setState(() {});
         } else {
@@ -1145,6 +1190,15 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       _activeSlot = slotIndex;
       _pendingSlot = null;
     });
+    final activeCtrl = _controllers[_activeSlot];
+    if (activeCtrl.isReady) {
+      final pNum = activeCtrl.pageNumber ?? 1;
+      final pCnt = activeCtrl.pageCount;
+      _lastReportedPage = pNum;
+      _lastReportedCount = pCnt;
+      widget.controller.updatePageNumber(pNum);
+      widget.onPageChanged?.call(pNum, pCnt);
+    }
     if (_isSearchOpen && _searchFieldController.text.trim().isNotEmpty) {
       _activeSearcher?.startTextSearch(
         _searchFieldController.text.trim(),
@@ -1157,8 +1211,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     _cleanupTimer = Timer(const Duration(milliseconds: 500), () {
       if (mounted && _pendingSlot == null) {
         setState(() {
-          _slotBytes[1 - _activeSlot] = null;
-          _slotDocHash[1 - _activeSlot] = 0;
+          final inactiveSlot = 1 - _activeSlot;
+          _slotBytes[inactiveSlot] = null;
+          _slotDocHash[inactiveSlot] = 0;
+          _clearSlotDocumentRef(inactiveSlot);
         });
       }
     });
@@ -1243,21 +1299,35 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
 
     final newBytes = widget.pdfBytes;
     if (newBytes == null || newBytes.isEmpty) {
-      if (_slotBytes[0] != null || _slotBytes[1] != null) {
+      if (_slotBytes[0] != null || _slotBytes[1] != null || _pendingSlot != null) {
+        _cleanupTimer?.cancel();
+        _pendingWatchdogTimer?.cancel();
+        _directReloadWatchdogTimer?.cancel();
+        _activeSlot = 0;
         _slotBytes[0] = null;
         _slotBytes[1] = null;
         _slotDocHash[0] = 0;
         _slotDocHash[1] = 0;
+        _clearSlotDocumentRef(0);
+        _clearSlotDocumentRef(1);
         _pendingSlot = null;
+        _queuedBytes = null;
         _pendingViewerReady = false;
         _pendingImageLoaded = false;
-        _pendingWatchdogTimer?.cancel();
         setState(() {});
       }
       return;
     }
 
     if (_slotBytes[_activeSlot] == null) {
+      _cleanupTimer?.cancel();
+      _pendingWatchdogTimer?.cancel();
+      final inactiveSlot = 1 - _activeSlot;
+      _slotBytes[inactiveSlot] = null;
+      _slotDocHash[inactiveSlot] = 0;
+      _clearSlotDocumentRef(inactiveSlot);
+      _pendingSlot = null;
+      _queuedBytes = null;
       _slotBytes[_activeSlot] = newBytes;
       _slotDocHash[_activeSlot] = newBytes.hashCode;
       _modeOrDocChanged = false;
@@ -1285,6 +1355,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         _slotDocHash[0] = newBytes.hashCode;
         _slotBytes[1] = null;
         _slotDocHash[1] = 0;
+        _clearSlotDocumentRef(1);
         _pendingViewerReady = false;
         _pendingImageLoaded = false;
         _startDirectReloadWatchdog();
@@ -1308,6 +1379,32 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           _startPendingWatchdog();
           setState(() {});
         }
+      }
+    } else if (_modeOrDocChanged) {
+      // Note: Do NOT clear `_modeOrDocChanged` here when a recompile may arrive on Frame B;
+      // only clear it for native PDFs where bytes do not recompile on layout/two-page toggles.
+      if (widget.controller.isPdfDocument) {
+        _modeOrDocChanged = false;
+      }
+      _cleanupTimer?.cancel();
+      _pendingWatchdogTimer?.cancel();
+      final viewerKeyChanged = widget.renderOptions.mode != oldWidget.renderOptions.mode ||
+          pageFormatChanged ||
+          widget.isTwoPage != oldWidget.isTwoPage ||
+          isPdfDocChanged;
+      final inactiveSlot = 1 - _activeSlot;
+      if (_pendingSlot != null || _slotBytes[inactiveSlot] != null) {
+        _pendingSlot = null;
+        _queuedBytes = null;
+        _pendingViewerReady = false;
+        _pendingImageLoaded = false;
+        _slotBytes[inactiveSlot] = null;
+        _slotDocHash[inactiveSlot] = 0;
+        _clearSlotDocumentRef(inactiveSlot);
+      }
+      if (viewerKeyChanged) {
+        _mountGeneration++;
+        _startDirectReloadWatchdog();
       }
     }
   }
@@ -2290,14 +2387,12 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     bool isCurrentSlot() => mounted && identical(_slotBytes[slotIndex], bytes) &&
         widget.controller.currentFilePath == builtForPath;
     final effectiveFluid = isFluid && !isPdfDoc;
-    return PdfViewer.data(
-      bytes,
-      maxSizeToCacheOnMemory: bytes.length,
+    return PdfViewer(
+      _resolveSlotDocumentRef(slotIndex, bytes),
       initialPageNumber: effectiveFluid ? 1 : widget.controller.lastPageNumber.clamp(1, 999999),
       key: ValueKey(
         'slot_${slotIndex}_${_slotDocHash[slotIndex]}_${widget.renderOptions.mode}_${widget.renderOptions.effectivePageFormat}_${widget.isTwoPage}_$isPdfDoc',
       ),
-      sourceName: '${widget.documentTitle}_slot_${slotIndex}_${_slotDocHash[slotIndex]}',
       controller: ctrl,
       params: PdfViewerParams(
         backgroundColor: canvasBg,
@@ -2514,9 +2609,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
                 spreadRadius: 1,
                 offset: const Offset(0, 3),
               ),
-        behaviorControlParams: const PdfViewerBehaviorControlParams(
+        behaviorControlParams: PdfViewerBehaviorControlParams(
           enableLowResolutionPagePreview: true,
-          trailingPageLoadingDelay: Duration.zero,
+          trailingPageLoadingDelay: isPdfDoc ? const Duration(milliseconds: 100) : Duration.zero,
           pageImageCachingDelay: Duration.zero,
           partialImageLoadingDelay: Duration.zero,
         ),
@@ -2601,29 +2696,6 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             if (widget.controller.currentFilePath != srcPath) {
               return;
             }
-            final isFluidDoc = widget.controller.isFluidLayout;
-            final destMap = <String, ({int? pageNumber, double? docY})>{};
-            final orderedDocYs = <double>[];
-            void extractNodes(List<PdfOutlineNode> list) {
-              for (final n in list) {
-                final dest = n.dest;
-                final offset = dest != null ? _calcDestDocumentOffsetFor(controller, dest) : null;
-                final pageNum = isFluidDoc ? null : dest?.pageNumber;
-                final docY = offset?.dy;
-                if (docY != null) orderedDocYs.add(docY);
-                if (pageNum != null || docY != null) {
-                  final trimmedTitle = n.title.trim();
-                  destMap[trimmedTitle] = (pageNumber: pageNum, docY: docY);
-                  final cleanedTitle = ReaderController.cleanHeadingTitle(trimmedTitle);
-                  if (cleanedTitle != trimmedTitle) {
-                    destMap[cleanedTitle] = (pageNumber: pageNum, docY: docY);
-                  }
-                }
-                if (n.children.isNotEmpty) extractNodes(n.children);
-              }
-            }
-            extractNodes(outlines);
-
             if (widget.controller.isPdfDocument ||
                 widget.controller.isWordDocument ||
                 widget.controller.isPptDocument) {
@@ -2648,6 +2720,28 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
               traverse(outlines, 1);
               widget.controller.setPdfOutlines(items, targetFilePath: srcPath);
             } else if (outlines.isNotEmpty) {
+              final isFluidDoc = widget.controller.isFluidLayout;
+              final destMap = <String, ({int? pageNumber, double? docY})>{};
+              final orderedDocYs = <double>[];
+              void extractNodes(List<PdfOutlineNode> list) {
+                for (final n in list) {
+                  final dest = n.dest;
+                  final offset = dest != null ? _calcDestDocumentOffsetFor(controller, dest) : null;
+                  final pageNum = isFluidDoc ? null : dest?.pageNumber;
+                  final docY = offset?.dy;
+                  if (docY != null) orderedDocYs.add(docY);
+                  if (pageNum != null || docY != null) {
+                    final trimmedTitle = n.title.trim();
+                    destMap[trimmedTitle] = (pageNumber: pageNum, docY: docY);
+                    final cleanedTitle = ReaderController.cleanHeadingTitle(trimmedTitle);
+                    if (cleanedTitle != trimmedTitle) {
+                      destMap[cleanedTitle] = (pageNumber: pageNum, docY: docY);
+                    }
+                  }
+                  if (n.children.isNotEmpty) extractNodes(n.children);
+                }
+              }
+              extractNodes(outlines);
               widget.controller.syncOutlinesDestinations(destMap, orderedDocYs: orderedDocYs);
             }
           }).catchError((e) {
@@ -2660,11 +2754,13 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           } else if (slotIndex == _activeSlot) {
             _restoreScroll();
           }
-          final pNum = _pdfController.pageNumber ?? 1;
-          final pCnt = _pdfController.pageCount;
-          widget.onPageChanged?.call(pNum, pCnt);
+          final pNum = controller.pageNumber ?? 1;
+          final pCnt = controller.pageCount;
+          if (slotIndex == _activeSlot) {
+            widget.onPageChanged?.call(pNum, pCnt);
+          }
           PdfPageAnalysisService.preloadPageIfNeeded(
-            _pdfController,
+            controller,
             widget.controller,
             pNum,
             isMobile: FormFactor.isMobilePlatform(context),

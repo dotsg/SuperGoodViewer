@@ -40,7 +40,13 @@ Local changes:
   `rect` to prevent gutter overlaps from delaying `rasterReady`; reuse page layout across pan/raster rebuilds;
   re-evaluate on parent updates, resize, zoom, page status changes, document replacement and explicit
   controller invalidation; skip the page overlay scan when neither legacy link widgets nor custom page
-  overlays are configured.
+  overlays are configured; compare `documentRef.key != widget.documentRef.key` rather than
+  `!identical(documentRef, widget.documentRef)` after `await pdfrxFlutterInitialize()` in `_widgetUpdated`
+  so parent rebuilds that recreate a `PdfDocumentRef` with the same key during initialization do not abort
+  `addListener`/`load()`, and guard `PdfViewerController._detach` so an unmounting viewer does not detach a
+  newly mounted viewer sharing the same controller.
+- `lib/src/pdfrx_flutter.dart`: deduplicate concurrent `pdfrxFlutterInitialize` calls via an in-flight
+  future and expose `debugResetPdfrxFlutterInitialization` for tests.
 - `lib/src/widgets/pdf_viewer_params.dart`: `enableTiledRendering` and
   `onVisiblePagesRendered`, included in parameter equality/hash.
 - `test/lazy_loading_test.dart`: correct a stale documentation reference.

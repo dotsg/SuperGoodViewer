@@ -1299,6 +1299,7 @@ class ReaderController extends ChangeNotifier {
         return;
       }
 
+      final stat = file.statSync();
       final bytes = file.readAsBytesSync();
       final ext = p.extension(filePath).toLowerCase();
       const markdownExtensions = {
@@ -1348,6 +1349,8 @@ class ReaderController extends ChangeNotifier {
           return;
         }
 
+        _doc.officeFileModifiedMicros = stat.modified.microsecondsSinceEpoch;
+        _doc.officeFileSize = stat.size;
         _doc.pdfBytes = bytes;
         _doc.originalPdfBytes = bytes;
         _doc.errorMessage = null;
@@ -1512,16 +1515,15 @@ class ReaderController extends ChangeNotifier {
       if (File(filePath).resolveSymbolicLinksSync() != File(current).resolveSymbolicLinksSync()) {
         return false;
       }
-      if (_isOffice(_doc)) {
+      if (_isOffice(_doc) || _isSourcePdf(_doc)) {
+        if (_isSourcePdf(_doc) && (_doc.originalPdfBytes ?? _doc.pdfBytes) == null) {
+          return false;
+        }
         final stat = File(filePath).statSync();
         return _doc.officeFileModifiedMicros == stat.modified.microsecondsSinceEpoch &&
             _doc.officeFileSize == stat.size;
       }
       final bytes = File(filePath).readAsBytesSync();
-      if (_isSourcePdf(_doc)) {
-        final pdf = _doc.originalPdfBytes ?? _doc.pdfBytes;
-        return pdf != null && listEquals(pdf, bytes);
-      }
       final text = utf8.decode(bytes, allowMalformed: true);
       if (_doc.markdown.isEmpty || text != _doc.markdown) {
         return false;
@@ -1678,11 +1680,14 @@ class ReaderController extends ChangeNotifier {
       if (await file.exists()) {
         try {
           if (_isSourcePdf(doc)) {
+            final stat = await file.stat();
             final bytes = await file.readAsBytes();
             if (!isValidPdfBytes(bytes)) {
               debugPrint('[ReaderController] PDF reload skipped: incomplete file (in-flight write)');
               return;
             }
+            doc.officeFileModifiedMicros = stat.modified.microsecondsSinceEpoch;
+            doc.officeFileSize = stat.size;
             final existingBytes = doc.originalPdfBytes ?? doc.pdfBytes;
             if (existingBytes != null && listEquals(bytes, existingBytes)) {
               return;
@@ -1757,7 +1762,10 @@ class ReaderController extends ChangeNotifier {
         final file = File(doc.filePath!);
         try {
           if (await file.exists()) {
+            final stat = await file.stat();
             final bytes = await file.readAsBytes();
+            doc.officeFileModifiedMicros = stat.modified.microsecondsSinceEpoch;
+            doc.officeFileSize = stat.size;
             doc.originalPdfBytes = bytes;
             doc.reflowMarkdownCache = '';
             if (doc.isPdfReflowed) {

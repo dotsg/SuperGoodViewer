@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:archive/archive.dart';
@@ -695,6 +696,151 @@ void main() {
       // Global default remains a4Portrait and PPT session remains pptSlides
       expect(controller.globalRenderOptions.effectivePageFormat, PageFormat.a4Portrait);
       expect(controller.renderOptions.effectivePageFormat, PageFormat.pptSlides);
+    });
+
+    testWidgets('PdfViewer still calls load() when rebuilt with a new PdfDocumentRef of the same key during pdfrxFlutterInitialize', (WidgetTester tester) async {
+      final initCompleter = Completer<void>();
+      debugResetPdfrxFlutterInitialization(pendingInit: initCompleter.future);
+      addTearDown(debugResetPdfrxFlutterInitialization);
+
+      var loaderCallCount = 0;
+      final loadBlockCompleter = Completer<PdfDocument>();
+      final key = PdfDocumentRefKey('race_test_doc');
+      final ref1 = PdfDocumentRefByLoader((_) {
+        loaderCallCount++;
+        return loadBlockCompleter.future;
+      }, key: key);
+      final ref2 = PdfDocumentRefByLoader((_) {
+        loaderCallCount++;
+        return loadBlockCompleter.future;
+      }, key: key);
+      expect(identical(ref1, ref2), isFalse);
+      expect(ref1.key, equals(ref2.key));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PdfViewer(ref1),
+          ),
+        ),
+      );
+      expect(loaderCallCount, 0);
+
+      // Rebuild with ref2 (different instance, same key) while _widgetUpdated(null)
+      // is still suspended at `await pdfrxFlutterInitialize()`.
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PdfViewer(ref2),
+          ),
+        ),
+      );
+      expect(loaderCallCount, 0);
+
+      // Complete initialization and verify load() is invoked rather than aborted.
+      initCompleter.complete();
+      await tester.pump();
+      expect(loaderCallCount, 1);
+
+      loadBlockCompleter.completeError(StateError('expected test teardown'));
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    });
+
+    testWidgets('PdfCanvasView preserves identical PdfDocumentRef across rebuilds and handles two-frame mode changes and null resets', (WidgetTester tester) async {
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await tester.runAsync(() async {
+        await controller.openFile(samplePdfFile.path);
+      });
+      expect(controller.isPdfDocument, isTrue);
+      expect(controller.currentPdfBytes, isNotNull);
+
+      final canvasKey = GlobalKey<PdfCanvasViewState>();
+      double topInset = 0.0;
+      String docTitle = controller.documentTitle;
+      Uint8List? currentBytes = controller.currentPdfBytes;
+      RenderOptions currentOptions = controller.renderOptions;
+
+      Widget buildCanvas() {
+        return MaterialApp(
+          home: Scaffold(
+            body: PdfCanvasView(
+              key: canvasKey,
+              pdfBytes: currentBytes,
+              renderOptions: currentOptions,
+              isTwoPage: controller.isTwoPage,
+              documentTitle: docTitle,
+              documentId: controller.activeSession.id,
+              controller: controller,
+              topInset: topInset,
+            ),
+          ),
+        );
+      }
+
+      await tester.pumpWidget(buildCanvas());
+      final viewerBefore = tester.widget<PdfViewer>(find.byType(PdfViewer));
+      final refBefore = viewerBefore.documentRef;
+      expect(refBefore, isA<PdfDocumentRefCustom>());
+      expect(identical(canvasKey.currentState!.debugSlotDocumentRef(0), refBefore), isTrue);
+
+      // Simulate an immediate parent rebuild (e.g., FocusManager reclaim, topInset, or title update).
+      topInset = 36.0;
+      docTitle = 'Renamed Title';
+      await tester.pumpWidget(buildCanvas());
+      final viewerAfter = tester.widget<PdfViewer>(find.byType(PdfViewer));
+      final refAfter = viewerAfter.documentRef;
+
+      // Must be the exact same PdfDocumentRef instance.
+      expect(identical(refBefore, refAfter), isTrue);
+
+      // Verify PdfDocumentRefCustom bulk range read works accurately.
+      final customRef = refAfter as PdfDocumentRefCustom;
+      final srcBytes = controller.currentPdfBytes!;
+      final outBuffer = Uint8List(16);
+      final readCount = await customRef.read(outBuffer, 0, 16);
+      expect(readCount, 16);
+      expect(outBuffer, equals(srcBytes.sublist(0, 16)));
+
+      // Switch to Markdown mode and verify two-frame mode change (Frame A: mode change with old bytes; Frame B: new bytes)
+      // uses direct reload on slot 0 rather than background pending slot.
+      await tester.runAsync(() async {
+        await controller.openFile(sampleMdFile.path);
+      });
+      final bytesA = Uint8List.fromList(samplePdfContent.codeUnits);
+      final bytesB = Uint8List.fromList('$samplePdfContent\n% gen2\n'.codeUnits);
+      currentBytes = bytesA;
+      currentOptions = const RenderOptions(pageFormat: PageFormat.fluid);
+      await tester.pumpWidget(buildCanvas());
+      expect(canvasKey.currentState!.debugActiveSlot, 0);
+      expect(canvasKey.currentState!.debugPendingSlot, isNull);
+
+      // Frame A: Mode/format changes to slide16x9, bytes still bytesA
+      currentOptions = const RenderOptions(pageFormat: PageFormat.slide16x9);
+      await tester.pumpWidget(buildCanvas());
+      // Frame B: New compiled bytes arrive
+      currentBytes = bytesB;
+      await tester.pumpWidget(buildCanvas());
+      expect(canvasKey.currentState!.debugActiveSlot, 0);
+      expect(canvasKey.currentState!.debugPendingSlot, isNull);
+
+      // Same-mode hot-reload update mounts pending slot 1, and clearing bytes to null resets both slots.
+      final bytesC = Uint8List.fromList('$samplePdfContent\n% gen3\n'.codeUnits);
+      currentBytes = bytesC;
+      await tester.pumpWidget(buildCanvas());
+      expect(canvasKey.currentState!.debugPendingSlot, 1);
+      expect(canvasKey.currentState!.debugSlotDocumentRef(1), isNotNull);
+
+      currentBytes = null;
+      await tester.pumpWidget(buildCanvas());
+      expect(canvasKey.currentState!.debugActiveSlot, 0);
+      expect(canvasKey.currentState!.debugPendingSlot, isNull);
+      expect(canvasKey.currentState!.debugSlotDocumentRef(0), isNull);
+      expect(canvasKey.currentState!.debugSlotDocumentRef(1), isNull);
+
+      await tester.pump(const Duration(seconds: 2));
     });
   });
 }
