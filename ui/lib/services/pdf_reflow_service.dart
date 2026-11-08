@@ -67,13 +67,25 @@ class _StyledSpan {
   });
 }
 
+class _FontSpan {
+  final Rect rect;
+  final String fontFamily;
+
+  const _FontSpan({
+    required this.rect,
+    required this.fontFamily,
+  });
+}
+
 class _PageNativeInspection {
   final List<_StyledSpan> styledSpans;
+  final List<_FontSpan> fontSpans;
   final List<Rect> imageRects;
   final List<({double y, double left, double right})> horizontalRules;
 
   const _PageNativeInspection({
     this.styledSpans = const [],
+    this.fontSpans = const [],
     this.imageRects = const [],
     this.horizontalRules = const [],
   });
@@ -241,6 +253,30 @@ class _PdfiumPageInspector {
     }
   }
 
+  static final RegExp _fontSubsetPrefixRegex = RegExp(r'^[a-z]{6}\+');
+  static final RegExp _fontStyleSuffixRegex = RegExp(
+    r'[-,_](?:bold|italic|oblique|regular|roman|medium|medi|light|book|heavy|black|semibold|demibold|demi|condensed|cond|psmt|mt|ps|std|pro|lt|it|bd|rg|reg|rom).*$',
+  );
+  static final RegExp _fontTrailingVendorOrStyleRegex = RegExp(
+    r'(?:psmt|boldmt|italicmt|mt|ps|regular|bold|italic|oblique|semibold|demibold|medium|light|std|pro)$',
+  );
+
+  static String normalizeFontFamily(String rawFontName) {
+    if (rawFontName.isEmpty) return '';
+    var s = rawFontName.toLowerCase().replaceFirst(_fontSubsetPrefixRegex, '');
+    final plusIdx = s.indexOf('+');
+    if (plusIdx != -1) s = s.substring(plusIdx + 1);
+    s = s.replaceFirst(_fontStyleSuffixRegex, '');
+    final dashIdx = s.indexOf('-');
+    if (dashIdx > 2) s = s.substring(0, dashIdx);
+    while (s.length > 4 && _fontTrailingVendorOrStyleRegex.hasMatch(s)) {
+      final next = s.replaceFirst(_fontTrailingVendorOrStyleRegex, '');
+      if (next.length < 3 || next == s) break;
+      s = next;
+    }
+    return s.trim();
+  }
+
   static _PageNativeInspection inspectPage(PdfPage page) {
     if (!_ensureInitialized()) return const _PageNativeInspection();
     try {
@@ -259,6 +295,7 @@ class _PdfiumPageInspector {
         if (fpdfPage == ffi.nullptr) return const _PageNativeInspection();
         try {
           final styledSpans = <_StyledSpan>[];
+          final fontSpans = <_FontSpan>[];
           final textPage = _fpdfTextLoadPage(fpdfPage);
           if (textPage != ffi.nullptr) {
             try {
@@ -274,6 +311,9 @@ class _PdfiumPageInspector {
               bool curBold = false;
               bool curItalic = false;
 
+              Rect? curFontBounds;
+              String curFontFamily = '';
+
               void flushSpan() {
                 if (curBounds != null && (curBold || curItalic)) {
                   styledSpans.add(_StyledSpan(
@@ -285,6 +325,17 @@ class _PdfiumPageInspector {
                 curBounds = null;
                 curBold = false;
                 curItalic = false;
+              }
+
+              void flushFontSpan() {
+                if (curFontBounds != null && curFontFamily.isNotEmpty) {
+                  fontSpans.add(_FontSpan(
+                    rect: curFontBounds!,
+                    fontFamily: curFontFamily,
+                  ));
+                }
+                curFontBounds = null;
+                curFontFamily = '';
               }
 
               int styledChars = 0;
@@ -319,6 +370,7 @@ class _PdfiumPageInspector {
                   fontLower = String.fromCharCodes(bytes).toLowerCase();
                 }
                 final flags = flagsPtr.value;
+                final fontFamily = normalizeFontFamily(fontLower);
 
                 final isBold = weight >= 600 ||
                     fontLower.contains('bold') ||
@@ -354,8 +406,28 @@ class _PdfiumPageInspector {
                     curItalic = isItalic;
                   }
                 }
+
+                if (curFontBounds == null) {
+                  curFontBounds = cRect;
+                  curFontFamily = fontFamily;
+                } else {
+                  final sameFont = curFontFamily == fontFamily;
+                  final sameLine = (cRect.center.dy - curFontBounds!.center.dy).abs() <=
+                      math.max(4.5, curFontBounds!.height * 0.75);
+                  final closeHoriz = (cRect.left - curFontBounds!.right) <=
+                          math.max(16.0, curFontBounds!.height * 1.8) &&
+                      (cRect.left >= curFontBounds!.left - 4.0);
+                  if (sameFont && sameLine && closeHoriz) {
+                    curFontBounds = curFontBounds!.expandToInclude(cRect);
+                  } else {
+                    flushFontSpan();
+                    curFontBounds = cRect;
+                    curFontFamily = fontFamily;
+                  }
+                }
               }
               flushSpan();
+              flushFontSpan();
 
               // If >65% of characters on the page report bold, the base body font itself is bold-weighted;
               // suppress bold spans on that page so body paragraphs aren't wrapped in **...**.
@@ -460,6 +532,7 @@ class _PdfiumPageInspector {
 
           return _PageNativeInspection(
             styledSpans: styledSpans,
+            fontSpans: fontSpans,
             imageRects: imageRects,
             horizontalRules: horizontalRules,
           );
@@ -485,6 +558,7 @@ class _VisualFragment {
   final bool isBold;
   final bool isItalic;
   final String? linkUrl;
+  final String fontFamily;
 
   const _VisualFragment({
     required this.rect,
@@ -498,6 +572,7 @@ class _VisualFragment {
     this.isBold = false,
     this.isItalic = false,
     this.linkUrl,
+    this.fontFamily = '',
   });
 }
 
@@ -515,6 +590,7 @@ class _VisualLine {
   final bool startsWithBoldColon;
   final int? firstTextStart;
   final int? lastTextEnd;
+  final String primaryFontFamily;
 
   const _VisualLine({
     required this.bounds,
@@ -530,6 +606,7 @@ class _VisualLine {
     this.startsWithBoldColon = false,
     this.firstTextStart,
     this.lastTextEnd,
+    this.primaryFontFamily = '',
   });
 }
 
@@ -1542,8 +1619,111 @@ class PdfReflowService {
   static final RegExp _controlAndPuaRegex =
       RegExp(r'[\x01\x03-\x08\x0B\x0C\x0E-\x1F\uE000-\uF8FF]');
   static final RegExp _strayLeadingOneDropCapRegex =
-      RegExp(r'(?:^|(?<=\s))1(?=[A-Z][a-zA-Z]{2,})');
+      RegExp(r'^1(?=[A-Z][a-z]{2,})');
   static final RegExp _multiWhitespaceRegex = RegExp(r'\s+');
+
+  /// Normalizes a PDF font name into its canonical lowercase family name.
+  @visibleForTesting
+  static String normalizeFontFamilyForTest(String rawFontName) =>
+      _PdfiumPageInspector.normalizeFontFamily(rawFontName);
+
+  /// Returns true if a `'1'` character box is a wide decorative horizontal rule glyph
+  /// rather than a genuine numeric digit `'1'`.
+  @visibleForTesting
+  static bool isOrnamentalRuleOneChar(int cp, Rect cr) =>
+      cp == 0x31 && cr.width > 36.0 && cr.width > cr.height * 1.15;
+
+  /// Cleans raw PDF fragment text using the internal fragment cleaner (exposed for unit tests).
+  @visibleForTesting
+  static String cleanRawPdfFragmentTextForTest(String raw) =>
+      _cleanRawPdfFragmentText(raw).text;
+
+  static final RegExp _digitsRunRegex = RegExp(r'\d+');
+
+  static String _normalizeRunningHeaderKey(String text) =>
+      text.replaceAll(_digitsRunRegex, '#').replaceAll(_multiWhitespaceRegex, ' ').trim().toLowerCase();
+
+  static String _buildTopZoneLineKey(PdfPage page, PdfPageText pageText, Rect targetRect) {
+    final topCutoff = page.height * 0.068;
+    final peerFrags = <({double left, String text})>[];
+    for (final o in pageText.fragments) {
+      final r = o.bounds.toRect(page: page);
+      if (!r.top.isFinite || r.bottom >= topCutoff) continue;
+      if ((r.center.dy - targetRect.center.dy).abs() <= 3.2 &&
+          (r.center.dx - targetRect.center.dx).abs() <= 140.0) {
+        final s = o.index.clamp(0, pageText.fullText.length);
+        final e = o.end.clamp(s, pageText.fullText.length);
+        final cleaned = _cleanRawPdfFragmentText(pageText.fullText.substring(s, e)).text;
+        if (cleaned.isNotEmpty) {
+          peerFrags.add((left: r.left, text: cleaned));
+        }
+      }
+    }
+    peerFrags.sort((a, b) => a.left.compareTo(b.left));
+    final joined = peerFrags.map((p) => p.text).join(' ');
+    return _normalizeRunningHeaderKey(joined);
+  }
+
+  /// Evaluates whether a small-font top-of-page fragment (`rect.bottom < pageHeight * 0.068`,
+  /// `rect.height < 9.8`, `pageNumber > 1`) should be filtered out as a running header.
+  @visibleForTesting
+  static bool shouldFilterSmallTopRunningHeader({
+    required bool isMultiColumn,
+    required String cleanedText,
+    required bool isRepeatedAcrossPages,
+    required bool hasColumnBodyLineImmediatelyBelow,
+  }) {
+    if (!isMultiColumn) return true;
+    if (isRepeatedAcrossPages) return true;
+    final isShortDigitFreeAllCapsRubric = _allCapsHeadingRegex.hasMatch(cleanedText) &&
+        cleanedText.length <= 32 &&
+        !_hasDigitRegex.hasMatch(cleanedText);
+    if (isShortDigitFreeAllCapsRubric || hasColumnBodyLineImmediatelyBelow) {
+      return false;
+    }
+    return true;
+  }
+
+  static bool _hasAtLeastThreeUpperLetters(String s) {
+    int count = 0;
+    for (var i = 0; i < s.length; i++) {
+      final c = s.codeUnitAt(i);
+      if (c >= 0x41 && c <= 0x5A) {
+        count++;
+        if (count >= 3) return true;
+      }
+    }
+    return false;
+  }
+
+  /// Groups synthetic fragment specs into visual line texts for testing inline rubric transitions.
+  @visibleForTesting
+  static List<({String text, String richText, String fontFamily, bool startsParagraph})>
+      groupInlineRubricFragmentsForTest(
+    List<({Rect rect, String text, bool isItalic, bool isBold, String fontFamily})> specs,
+  ) {
+    final frags = [
+      for (final s in specs)
+        _VisualFragment(
+          rect: s.rect,
+          text: s.text,
+          hasTrailingSpace: true,
+          isItalic: s.isItalic,
+          isBold: s.isBold,
+          fontFamily: s.fontFamily,
+        ),
+    ];
+    final lines = _groupFragmentsIntoLines(frags, enableSplitHeaders: false);
+    return [
+      for (final l in lines)
+        (
+          text: l.text,
+          richText: l.richText,
+          fontFamily: l.primaryFontFamily,
+          startsParagraph: l.startsParagraph,
+        ),
+    ];
+  }
 
   /// Escapes characters in raw PDF text that could be misinterpreted as broken
   /// Markdown or LaTeX math syntax while preserving readable prose.
@@ -1552,7 +1732,6 @@ class PdfReflowService {
         .replaceAll('\x00', '')
         .replaceAll('\x02', '')
         .replaceAll(_controlAndPuaRegex, '')
-        .replaceAll(_strayLeadingOneDropCapRegex, '')
         .replaceAll(_brokenFlLigatureRegex, 'f')
         .replaceAll(_brokenFiLigatureRegex, 'fi')
         .replaceAll('\r\n', ' ')
@@ -1711,8 +1890,32 @@ class PdfReflowService {
 
     final isCjk = detectIsCjk(sampleStrings);
 
-    // Collect ordered visual lines and extracted tables per page, and profile line heights
+    // Pre-scan the top 6.8% zone across pages to identify running headers that repeat across pages
+    final topHeaderPageCounts = <String, int>{};
+    final minRepeatPages = doc.pages.length >= 6 ? 3 : 2;
+    for (var pno = 0; pno < doc.pages.length; pno++) {
+      final page = doc.pages[pno];
+      final pageText = pageTexts[pno];
+      final topCutoff = page.height * 0.068;
+      final seenOnPage = <String>{};
+      for (final f in pageText.fragments) {
+        final rect = f.bounds.toRect(page: page);
+        if (!rect.top.isFinite || rect.bottom >= topCutoff || rect.height >= 11.0) continue;
+        final key = _buildTopZoneLineKey(page, pageText, rect);
+        if (key.length >= 4) seenOnPage.add(key);
+      }
+      for (final key in seenOnPage) {
+        topHeaderPageCounts[key] = (topHeaderPageCounts[key] ?? 0) + 1;
+      }
+    }
+    final repeatedHeaderKeys = <String>{
+      for (final entry in topHeaderPageCounts.entries)
+        if (entry.value >= minRepeatPages) entry.key,
+    };
+
+    // Collect ordered visual lines and extracted tables per page, and profile line heights & body font
     final heightHistogram = <double, int>{};
+    final fontHistogram = <String, int>{};
     final pageLinesList = <List<({List<_VisualLine> lines, Rect regionBounds, bool isBottomSpanning})>>[];
     final pageTablesList = <List<({Rect rect, String markdownTable})>>[];
 
@@ -1726,8 +1929,10 @@ class PdfReflowService {
         analysis,
         isCjk: isCjk,
         styledSpans: pageInspections[pno].styledSpans,
+        fontSpans: pageInspections[pno].fontSpans,
         linkRects: pageLinksList[pno],
         horizontalRules: pageInspections[pno].horizontalRules,
+        repeatedHeaderKeys: repeatedHeaderKeys,
       );
       pageLinesList.add(extracted.regions);
       pageTablesList.add(extracted.tables);
@@ -1738,10 +1943,23 @@ class PdfReflowService {
           if (textLen > 1 && line.maxHeight > 4.0 && line.maxHeight < 72.0) {
             final bucket = (line.maxHeight * 2).round() / 2.0;
             heightHistogram[bucket] = (heightHistogram[bucket] ?? 0) + textLen;
+            if (textLen >= 18 && line.primaryFontFamily.isNotEmpty) {
+              fontHistogram[line.primaryFontFamily] =
+                  (fontHistogram[line.primaryFontFamily] ?? 0) + textLen;
+            }
           }
         }
       }
     }
+
+    String docBodyFontFamily = '';
+    int maxDocFontWeight = 0;
+    fontHistogram.forEach((fam, weight) {
+      if (weight > maxDocFontWeight) {
+        maxDocFontWeight = weight;
+        docBodyFontFamily = fam;
+      }
+    });
 
     double bodyHeight = 10.0;
     if (heightHistogram.isNotEmpty) {
@@ -1899,6 +2117,71 @@ class PdfReflowService {
           pno + 1 < doc.pages.length &&
           !lowercaseStartRegex.hasMatch(firstPageLineText) &&
           (pageAnalyses[pno - 1].isMultiColumn || pageAnalyses[pno + 1].isMultiColumn);
+      _VisualLine? firstPageBodyLine;
+      String firstPageBodyLineText = '';
+      for (final r in regions) {
+        if (r.isBottomSpanning) continue;
+        for (final l in r.lines) {
+          final vt = l.text.replaceAll('\u00AD', '').trim();
+          if (vt.isNotEmpty) {
+            firstPageBodyLine = l;
+            firstPageBodyLineText = vt;
+            break;
+          }
+        }
+        if (firstPageBodyLineText.isNotEmpty) break;
+      }
+      String nextPageFirstBodyLineText = '';
+      if (pno + 1 < doc.pages.length) {
+        for (final r in pageLinesList[pno + 1]) {
+          if (r.isBottomSpanning) continue;
+          for (final l in r.lines) {
+            final vt = l.text.replaceAll('\u00AD', '').trim();
+            if (vt.isNotEmpty) {
+              nextPageFirstBodyLineText = vt;
+              break;
+            }
+          }
+          if (nextPageFirstBodyLineText.isNotEmpty) break;
+        }
+      }
+      final firstPageBodyIsRubricOrDisplay = firstPageBodyLine != null &&
+          ((firstPageBodyLine.text == firstPageBodyLine.text.toUpperCase() &&
+                  _hasWordLettersRegex.hasMatch(firstPageBodyLine.text)) ||
+              firstPageBodyLine.maxHeight >= bodyHeight * 1.25 ||
+              (docBodyFontFamily.isNotEmpty &&
+                  firstPageBodyLine.primaryFontFamily.isNotEmpty &&
+                  firstPageBodyLine.primaryFontFamily != docBodyFontFamily));
+      final isMultiColSidebarInterruptionPage = analysis.isMultiColumn &&
+          pno > 0 &&
+          pno + 1 < doc.pages.length &&
+          (pageAnalyses[pno - 1].isMultiColumn || pageAnalyses[pno + 1].isMultiColumn) &&
+          curParagraph != null &&
+          !_endsWithParagraphPunctuation(curParagraph!.text) &&
+          firstPageBodyLineText.isNotEmpty &&
+          !lowercaseStartRegex.hasMatch(firstPageBodyLineText) &&
+          firstPageBodyIsRubricOrDisplay &&
+          lowercaseStartRegex.hasMatch(nextPageFirstBodyLineText);
+
+      int tocCandidateLines = 0;
+      int rubricCandidateLines = 0;
+      if (!analysis.isMultiColumn) {
+        for (final r in regions) {
+          for (final l in r.lines) {
+            final vt = l.text.replaceAll('\u00AD', '').trim();
+            if (_tocEntryLineRegex.hasMatch(vt)) tocCandidateLines++;
+            if (vt.length >= 4 &&
+                vt.length <= 50 &&
+                _allCapsStandAloneRubricRegex.hasMatch(vt) &&
+                _hasAtLeastThreeUpperLetters(vt)) {
+              rubricCandidateLines++;
+            }
+          }
+        }
+      }
+      final isTocLikePage = !analysis.isMultiColumn &&
+          tocCandidateLines >= 4 &&
+          (tocCandidateLines >= 6 || rubricCandidateLines >= 3);
 
       void emitDueBlocks(double upToY, {int? curRegionIdx}) {
         bool isBlockDueInRegion(Rect rect) {
@@ -1971,6 +2254,13 @@ class PdfReflowService {
         continue;
       }
 
+      ReflowElement? pageSavedParagraph;
+      if (isMultiColSidebarInterruptionPage) {
+        pageSavedParagraph = curParagraph;
+        curParagraph = null;
+        deferFlushedBlocks = true;
+      }
+
       for (var rIdx = 0; rIdx < regions.length; rIdx++) {
         final region = regions[rIdx];
         final lines = region.lines;
@@ -2010,7 +2300,9 @@ class PdfReflowService {
         final regionRight = region.regionBounds.right;
         double? prevLineBottom;
         double? prevLineRight;
+        double? prevLineLeft;
         int? prevLineTextEnd;
+        bool prevLineWasTocEntry = false;
 
         for (var i = 0; i < lines.length; i++) {
           final line = lines[i];
@@ -2070,10 +2362,11 @@ class PdfReflowService {
                         i == 0 ||
                         capEnd == lines.length - 1 ||
                         nextGap > bodyHeight * 0.45);
-            final isSeparatedItalicCaption = _endsWithParagraphPunctuation(capText) &&
-                ((isLargeVerticalGap && nextGap > bodyHeight * 0.45) ||
-                    (i == 0 && nextGap > bodyHeight * 0.85) ||
-                    (capEnd == lines.length - 1 && isLargeVerticalGap));
+            final isSeparatedItalicCaption =
+                (_endsWithParagraphPunctuation(capText) || (capEnd == i && capText.length < 55)) &&
+                    ((isLargeVerticalGap && nextGap > bodyHeight * 0.45) ||
+                        (i == 0 && nextGap > bodyHeight * 0.85) ||
+                        (capEnd == lines.length - 1 && isLargeVerticalGap));
             if (isQuotedCartoonCaption || isSeparatedItalicCaption) {
               final prevDefer = deferFlushedBlocks;
               deferFlushedBlocks = true;
@@ -2085,6 +2378,8 @@ class PdfReflowService {
                 richText: capRich.replaceAll('\u00AD', ''),
                 pageNumber: pno + 1,
               ));
+              prevLineBottom = null;
+              prevLineRight = null;
               i = capEnd;
               continue;
             }
@@ -2103,9 +2398,12 @@ class PdfReflowService {
               line.firstTextStart != null &&
               line.firstTextStart == prevLineTextEnd;
 
+          final prevTocEntryLeft = prevLineWasTocEntry ? prevLineLeft : null;
           prevLineBottom = line.bounds.bottom;
           prevLineRight = line.bounds.right;
+          prevLineLeft = line.bounds.left;
           prevLineTextEnd = line.lastTextEnd;
+          prevLineWasTocEntry = false;
 
           final canBeHeading = !lowercaseStartRegex.hasMatch(visibleLineText) &&
               !(line.isAllItalic && openingQuoteRegex.hasMatch(visibleLineText)) &&
@@ -2250,21 +2548,53 @@ class PdfReflowService {
           }
 
           // 6. Structured subheader / metadata line detection (split left-right headers,
-          // short standalone bold/italic subheaders, pipe-delimited contact bars, or BoldLabel: lines)
+          // short standalone bold/italic/all-caps rubrics, TOC entries, pipe-delimited contact bars, or BoldLabel: lines)
+          final hasRubricStyleOrFont = line.isAllBold ||
+              line.isAllItalic ||
+              isTocLikePage ||
+              (line.bounds.width < region.regionBounds.width * 0.65 &&
+                  (curParagraph == null || _endsWithParagraphPunctuation(curParagraph!.text))) ||
+              (docBodyFontFamily.isNotEmpty &&
+                  line.primaryFontFamily.isNotEmpty &&
+                  line.primaryFontFamily != docBodyFontFamily);
+          final isAllCapsRubricLine = canBeHeading &&
+              hasRubricStyleOrFont &&
+              !visibleLineText.endsWith(',') &&
+              !visibleLineText.endsWith(';') &&
+              visibleLineText.length >= 4 &&
+              visibleLineText.length <= 50 &&
+              maxSize >= 5.5 &&
+              line.bounds.width < region.regionBounds.width * 0.90 &&
+              _allCapsStandAloneRubricRegex.hasMatch(visibleLineText) &&
+              _hasAtLeastThreeUpperLetters(visibleLineText);
+          final isTocEntryLine = isTocLikePage && _tocEntryLineRegex.hasMatch(visibleLineText);
+          final isTocDeckContinuation = prevTocEntryLeft != null &&
+              !isTocEntryLine &&
+              !isAllCapsRubricLine &&
+              !isLargeVerticalGap &&
+              (line.bounds.left - prevTocEntryLeft) >= 36.0;
+          final isEmDashSignOff = _emDashSignOffLineRegex.hasMatch(visibleLineText) ||
+              _inlineEmDashSignOffEndRegex.hasMatch(visibleLineText);
+          prevLineWasTocEntry = isTocEntryLine;
+
           final isStandaloneSubheader = line.isSplitHeaderLine ||
+              isAllCapsRubricLine ||
               (pno == 0 && visibleLineText.contains(' | ') && visibleLineText.length < 120) ||
               (!endsWithSentencePunct &&
                   line.bounds.width < region.regionBounds.width * 0.76 &&
                   (line.isAllBold || (!analysis.isMultiColumn && line.isAllItalic)));
 
-          if (curParagraphForceFlushNext ||
-              isStandaloneSubheader ||
-              line.startsWithBoldColon ||
-              line.startsParagraph ||
-              isLargeVerticalGap) {
+          if (!isTocDeckContinuation &&
+              (curParagraphForceFlushNext ||
+                  isStandaloneSubheader ||
+                  isTocEntryLine ||
+                  line.startsWithBoldColon ||
+                  line.startsParagraph ||
+                  isLargeVerticalGap)) {
             flushBlock();
             emitDueBlocks(line.bounds.top, curRegionIdx: rIdx);
-          } else if (curParagraph != null &&
+          } else if (!isTocDeckContinuation &&
+              curParagraph != null &&
               (isFirstLineIndented || prevWasShortLine) &&
               _endsWithParagraphPunctuation(curParagraph!.text)) {
             flushBlock();
@@ -2299,7 +2629,7 @@ class PdfReflowService {
               isCjk: isCjk,
               softHyphenWrap: isSoftHyphenWrap,
             );
-            if (line.endsParagraph) {
+            if (line.endsParagraph || isTocDeckContinuation || isEmDashSignOff) {
               curParagraphForceFlushNext = true;
             }
           } else {
@@ -2309,7 +2639,7 @@ class PdfReflowService {
               richText: line.richText,
               pageNumber: pno + 1,
             );
-            if (isStandaloneSubheader || line.endsParagraph) {
+            if (isStandaloneSubheader || isTocEntryLine || isEmDashSignOff || line.endsParagraph) {
               curParagraphForceFlushNext = true;
             }
           }
@@ -2317,7 +2647,7 @@ class PdfReflowService {
 
         if (holdCrossPageSentence) {
           flushBlock();
-          deferFlushedBlocks = false;
+          deferFlushedBlocks = pageSavedParagraph != null;
           emitDueBlocks(region.regionBounds.bottom + 20.0, curRegionIdx: rIdx);
           curParagraph = savedParagraph;
         } else if (region.isBottomSpanning ||
@@ -2340,6 +2670,12 @@ class PdfReflowService {
         if (holdCrossPage) {
           curParagraph = saved;
         }
+      }
+
+      if (pageSavedParagraph != null) {
+        flushBlock();
+        deferFlushedBlocks = false;
+        curParagraph = pageSavedParagraph;
       }
     }
     flushBlock();
@@ -2668,8 +3004,16 @@ class PdfReflowService {
   );
   static final RegExp _allCapsHeadingRegex =
       RegExp(r"^[A-Z][A-Z0-9\s&,/\-–—:'’\.]{2,44}$");
-  static final RegExp _allCapsRubricHeaderRegex =
-      RegExp(r"^[A-Z][A-Z0-9\s&\-\—\/:,\.'’]{2,44}$");
+  static final RegExp _allCapsStandAloneRubricRegex =
+      RegExp(r"^(?:\d{1,2}\s+)?[A-Z][A-Z0-9\s&,/\-–—:'’\.]{2,48}$");
+  static final RegExp _hasDigitRegex = RegExp(r'\d');
+  static final RegExp _tocEntryLineRegex = RegExp(
+    r'^(?:[A-Z][A-Za-z.\-’\x27]*(?:\s+[A-Z][A-Za-z.\-’\x27]*)+\s+)?\d{1,3}\s+[A-Z“"‘\x27]\S*',
+  );
+  static final RegExp _emDashSignOffLineRegex =
+      RegExp(r'^(?:\*)?—\s*[A-Z][A-Za-z.\-\s’\x27]+(?:\*)?$');
+  static final RegExp _inlineEmDashSignOffEndRegex =
+      RegExp(r'[.!?”’"\x27]\s*—\s*[A-Z][A-Za-z.\-]+(?:\s+[A-Z][A-Za-z.\-]+){0,3}\s*$');
   static final RegExp _lowercaseStartRegex = RegExp(r'^[a-z]');
   static final RegExp _openingQuoteStartRegex = RegExp(r'^["“‘\x27]');
   static final RegExp _quotedLineRegex =
@@ -2770,6 +3114,7 @@ class PdfReflowService {
           isBold: target.isBold,
           isItalic: target.isItalic,
           linkUrl: target.linkUrl,
+          fontFamily: target.fontFamily,
         );
         consumed[i] = true;
       }
@@ -2804,6 +3149,7 @@ class PdfReflowService {
         .replaceAll('\x00', '')
         .replaceAll('\x02', '\u00AD')
         .replaceAll(_controlAndPuaStripRegex, '')
+        .replaceAll(_strayLeadingOneDropCapRegex, '')
         .replaceAll(_trailingOrnamentBulletRegex, '')
         .replaceAll(_brokenFlLigatureRegex, 'f')
         .replaceAll(_brokenFiLigatureRegex, 'fi')
@@ -2820,18 +3166,70 @@ class PdfReflowService {
     bool fragHasTrailingSpace,
     List<_StyledSpan> pageStyledSpans,
     List<({Rect rect, String url})> pageLinks, {
+    List<_FontSpan> pageFontSpans = const [],
     ({String text, bool endsParagraph})? preCleaned,
   }) {
+    final n = end - start;
+    bool hasOrnamentalRuleChar = false;
+    bool hasDigitOneInSlice = false;
+    if (fragRect.width > 36.0 && n > 0 && end <= pageText.fullText.length) {
+      for (var i = start; i < end; i++) {
+        if (pageText.fullText.codeUnitAt(i) == 0x31) {
+          hasDigitOneInSlice = true;
+          break;
+        }
+      }
+    }
+    if (hasDigitOneInSlice && end <= pageText.charRects.length) {
+      Rect? tightUnion;
+      for (var i = 0; i < n; i++) {
+        final cp = pageText.fullText.codeUnitAt(start + i);
+        if (cp <= 0x20 || cp == 0xA0 || cp == 0x02) continue;
+        final cr = pageText.charRects[start + i].toRect(page: page);
+        if (cr.width <= 0 || cr.height <= 0) continue;
+        if (isOrnamentalRuleOneChar(cp, cr)) {
+          hasOrnamentalRuleChar = true;
+          continue;
+        }
+        tightUnion = tightUnion == null ? cr : tightUnion.expandToInclude(cr);
+      }
+      if (hasOrnamentalRuleChar && tightUnion == null) {
+        return const [];
+      }
+      if (hasOrnamentalRuleChar && tightUnion != null) {
+        fragRect = tightUnion;
+      }
+    }
+
     final overSpans = <_StyledSpan>[
       for (final s in pageStyledSpans)
         if (s.rect.inflate(1.5).overlaps(fragRect)) s,
+    ];
+    final overFonts = <_FontSpan>[
+      for (final fs in pageFontSpans)
+        if (fs.rect.inflate(1.5).overlaps(fragRect)) fs,
     ];
     final overLinks = <({Rect rect, String url})>[
       for (final l in pageLinks)
         if (l.rect.inflate(1.5).overlaps(fragRect)) l,
     ];
 
-    final n = end - start;
+    String resolveFontForRect(Rect target) {
+      String bestFamily = '';
+      double bestOverlapArea = 0.0;
+      for (final fs in overFonts) {
+        final inter = fs.rect.intersect(target);
+        if (inter.width > 0 && inter.height > 0) {
+          final area = inter.width * inter.height;
+          if (area > bestOverlapArea) {
+            bestOverlapArea = area;
+            bestFamily = fs.fontFamily;
+          }
+        }
+      }
+      return bestFamily;
+    }
+
     final wideGapThreshold = fragRect.height > 36.0
         ? 11.5
         : math.max(13.0, math.min(fragRect.height, 18.0) * 1.25);
@@ -2839,6 +3237,7 @@ class PdfReflowService {
     // Inspect charRects for stick-up initial caps (e.g. 20pt 'W' followed by 8pt 'hat' on the same baseline)
     // or sunken drop-caps (e.g. 30pt 'S' followed by 8pt 'am' near the top of a multi-line fragment)
     bool hasStickUpInitialCap = false;
+    bool hasSunkenInitialWordCap = false;
     bool hasSunkenDropCap = false;
     double bodyLineHeight = fragRect.height;
     if (n >= 2 &&
@@ -2848,6 +3247,7 @@ class PdfReflowService {
       Rect? firstLetterRect;
       int firstLetterEndIdx = 0;
       double restMaxCharH = 0.0;
+      double restMaxBottom = 0.0;
       int restCharCount = 0;
       for (var i = 0; i < n; i++) {
         final cp = pageText.fullText.codeUnitAt(start + i);
@@ -2866,18 +3266,19 @@ class PdfReflowService {
         }
       }
       if (firstLetterRect != null && firstLetterRect.height >= 10.2) {
-        final restCharWidths = <double>[];
-        bool hasLowercase = false;
         for (var i = firstLetterEndIdx + 1; i < n; i++) {
           final cp = pageText.fullText.codeUnitAt(start + i);
           if (cp <= 0x20 || cp == 0xA0 || cp == 0x02) continue;
-          if (cp >= 0x61 && cp <= 0x7A) hasLowercase = true;
           final cr = pageText.charRects[start + i].toRect(page: page);
           if (cr.width <= 0 || cr.height <= 0) continue;
           if (cr.height > restMaxCharH) restMaxCharH = cr.height;
-          restCharWidths.add(cr.width);
+          if (cr.bottom > restMaxBottom) restMaxBottom = cr.bottom;
           restCharCount++;
         }
+        // Note: When pdfrx unifies charRects across the entire line (restMaxCharH > 10.2),
+        // we defer height normalization to _groupFragmentsIntoLines, which has access to
+        // subsequent lineClusters to distinguish stick-up caps (anchored to bottom) from
+        // 2-line sunken initial caps (anchored to top, e.g. Page 74 "Wes Anderson’s...").
         if (restCharCount >= 1 &&
             restMaxCharH >= 3.5 &&
             restMaxCharH <= 10.2 &&
@@ -2888,38 +3289,38 @@ class PdfReflowService {
             hasSunkenDropCap = true;
           } else if (fragRect.height <= 28.0) {
             hasStickUpInitialCap = true;
+            hasSunkenInitialWordCap =
+                restMaxBottom > 0 && (firstLetterRect.bottom - restMaxBottom) > 4.0;
             bodyLineHeight = math.max(9.5, math.min(11.8, restMaxCharH / 0.68));
-          }
-        } else if (fragRect.height <= 28.0 && restCharWidths.length >= 8 && hasLowercase) {
-          restCharWidths.sort();
-          final restMedianCharW = restCharWidths[restCharWidths.length ~/ 2];
-          if (restMedianCharW >= 3.2 &&
-              restMedianCharW <= 5.6 &&
-              fragRect.height >= restMedianCharW * 3.0) {
-            hasStickUpInitialCap = true;
-            bodyLineHeight = (restMedianCharW * 2.2).clamp(9.5, 11.8);
           }
         }
       }
     }
 
     final normalizedFragRect = hasStickUpInitialCap
-        ? Rect.fromLTRB(
-            fragRect.left,
-            fragRect.bottom - bodyLineHeight,
-            fragRect.right,
-            fragRect.bottom,
-          )
+        ? (hasSunkenInitialWordCap
+            ? Rect.fromLTRB(
+                fragRect.left,
+                fragRect.top,
+                fragRect.right,
+                fragRect.top + bodyLineHeight,
+              )
+            : Rect.fromLTRB(
+                fragRect.left,
+                fragRect.bottom - bodyLineHeight,
+                fragRect.right,
+                fragRect.bottom,
+              ))
         : fragRect;
 
     final isTallMultiLineFrag =
         hasSunkenDropCap || (fragRect.height > 14.5 && !hasStickUpInitialCap);
 
-    if (overSpans.isEmpty && overLinks.isEmpty && !hasSunkenDropCap) {
+    if (overSpans.isEmpty && overLinks.isEmpty && !hasSunkenDropCap && !hasOrnamentalRuleChar) {
       bool hasWideInternalGap = false;
       if (n > 1 &&
-          end <= pageText.charRects.length &&
-          (fragRect.width > 60.0 || isTallMultiLineFrag)) {
+           end <= pageText.charRects.length &&
+           (fragRect.width > 60.0 || isTallMultiLineFrag)) {
         double? prevRight;
         double? prevCenterY;
         for (var i = 0; i < n; i++) {
@@ -2945,6 +3346,7 @@ class PdfReflowService {
       if (!hasWideInternalGap) {
         final cleaned = preCleaned ?? _cleanRawPdfFragmentText(pageText.fullText.substring(start, end));
         if (cleaned.text.isEmpty) return const [];
+        final fontFamily = resolveFontForRect(fragRect);
         return [
           _VisualFragment(
             rect: normalizedFragRect,
@@ -2954,6 +3356,7 @@ class PdfReflowService {
             endsParagraph: cleaned.endsParagraph,
             textStart: start,
             textEnd: end,
+            fontFamily: fontFamily,
           ),
         ];
       }
@@ -2981,6 +3384,7 @@ class PdfReflowService {
           break;
         }
       }
+      final fontFamily = resolveFontForRect(fragRect);
       return [
         _VisualFragment(
           rect: normalizedFragRect,
@@ -2993,6 +3397,7 @@ class PdfReflowService {
           isBold: isBold,
           isItalic: isItalic,
           linkUrl: linkUrl,
+          fontFamily: fontFamily,
         ),
       ];
     }
@@ -3004,10 +3409,16 @@ class PdfReflowService {
       n,
       (i) => pageText.charRects[start + i].toRect(page: page),
     );
-    final isSpace = List<bool>.generate(n, (i) {
+    final isSpace = List<bool>.filled(n, false);
+    for (var i = 0; i < n; i++) {
       final cp = pageText.fullText.codeUnitAt(start + i);
-      return cp != 0x02 && (cp <= 0x20 || cp == 0xA0);
-    });
+      if (isOrnamentalRuleOneChar(cp, charRects[i])) {
+        charRects[i] = Rect.zero;
+        isSpace[i] = true;
+      } else {
+        isSpace[i] = cp != 0x02 && (cp <= 0x20 || cp == 0xA0);
+      }
+    }
 
     for (var i = 0; i < n; i++) {
       if (isSpace[i]) continue;
@@ -3200,6 +3611,7 @@ class PdfReflowService {
             }
           }
         }
+        final fontFamily = resolveFontForRect(runRect.width > 0 ? runRect : effectiveRect);
         result.add(_VisualFragment(
           rect: effectiveRect,
           text: outText,
@@ -3212,6 +3624,7 @@ class PdfReflowService {
           isBold: rBold,
           isItalic: rItalic,
           linkUrl: rLink,
+          fontFamily: fontFamily,
         ));
       }
     }
@@ -3460,8 +3873,10 @@ class PdfReflowService {
     PdfPageAnalysis analysis, {
     required bool isCjk,
     List<_StyledSpan> styledSpans = const [],
+    List<_FontSpan> fontSpans = const [],
     List<({Rect rect, String url})> linkRects = const [],
     List<({double y, double left, double right})> horizontalRules = const [],
+    Set<String> repeatedHeaderKeys = const {},
   }) {
     if (pageText.fragments.isEmpty) {
       return (regions: const [], tables: const []);
@@ -3473,7 +3888,8 @@ class PdfReflowService {
     final footerCutoff = pageHeight * 0.958;
 
     final initialFragments = <_VisualFragment>[];
-    for (final f in pageText.fragments) {
+    for (var fIdx = 0; fIdx < pageText.fragments.length; fIdx++) {
+      final f = pageText.fragments[fIdx];
       final rect = f.bounds.toRect(page: page);
       if (!rect.left.isFinite || !rect.top.isFinite || rect.width <= 0 || rect.height <= 0) {
         continue;
@@ -3493,15 +3909,35 @@ class PdfReflowService {
       if (cleanedCheck.text.isEmpty) continue;
       if (page.pageNumber > 1 &&
           rect.bottom < runningHeaderSmallFontCutoff &&
-          rect.height < 9.8 &&
-          !(analysis.isMultiColumn && _allCapsRubricHeaderRegex.hasMatch(cleanedCheck.text))) {
-        continue;
+          rect.height < 9.8) {
+        final lineKey = _buildTopZoneLineKey(page, pageText, rect);
+        final isRepeated = repeatedHeaderKeys.contains(lineKey);
+        bool hasColumnBodyLineImmediatelyBelow = false;
+        if (analysis.isMultiColumn && !isRepeated) {
+          for (var j = 0; j < pageText.fragments.length; j++) {
+            if (j == fIdx) continue;
+            final nextRect = pageText.fragments[j].bounds.toRect(page: page);
+            if (nextRect.top >= rect.bottom - 1.5 &&
+                nextRect.top <= rect.bottom + 9.0 &&
+                (nextRect.center.dx - rect.center.dx).abs() <= 95.0) {
+              hasColumnBodyLineImmediatelyBelow = true;
+              break;
+            }
+          }
+        }
+        if (shouldFilterSmallTopRunningHeader(
+          isMultiColumn: analysis.isMultiColumn,
+          cleanedText: cleanedCheck.text,
+          isRepeatedAcrossPages: isRepeated,
+          hasColumnBodyLineImmediatelyBelow: hasColumnBodyLineImmediatelyBelow,
+        )) {
+          continue;
+        }
       }
       // Skip decorative full-column single-char ornaments (e.g. 40pt rule glyphs) or "1i" icon glyphs
-      if (rect.height > 28.0 && cleanedCheck.text.length == 1 && rect.width > 80.0) {
-        continue;
-      }
-      if (cleanedCheck.text == '1i') {
+      if ((rect.height > 28.0 && cleanedCheck.text.length == 1 && rect.width > 80.0) ||
+          (cleanedCheck.text == '1' && isOrnamentalRuleOneChar(0x31, rect)) ||
+          cleanedCheck.text == '1i') {
         continue;
       }
       final hasTrailingSpace = rawSub.endsWith(' ') ||
@@ -3515,6 +3951,7 @@ class PdfReflowService {
         hasTrailingSpace,
         styledSpans,
         linkRects,
+        pageFontSpans: fontSpans,
         preCleaned: cleanedCheck,
       ));
     }
@@ -3580,6 +4017,7 @@ class PdfReflowService {
                 isBold: cur.isBold,
                 isItalic: cur.isItalic,
                 linkUrl: cur.linkUrl,
+                fontFamily: cur.fontFamily,
               );
             }
           }
@@ -3669,6 +4107,36 @@ class PdfReflowService {
 
     final allLines = _groupFragmentsIntoLines(mergedFragments, gutters: gutters);
 
+    // Profile the page's baseline body line height (pageBodyH, calibrated around a ~10.5-10.9pt baseline)
+    // and dominant body font family. Require >= 8 sample lines and clamp to [6.0, 16.0] pt so sparse
+    // cover/display pages do not skew thresholds.
+    final bodyHeights = <double>[];
+    final bodyFontCounts = <String, int>{};
+    for (final l in allLines) {
+      if (l.maxHeight >= 5.0 && l.maxHeight <= 24.0 && l.text.length >= 18) {
+        bodyHeights.add(l.maxHeight);
+        final ff = l.primaryFontFamily;
+        if (ff.isNotEmpty) {
+          bodyFontCounts[ff] = (bodyFontCounts[ff] ?? 0) + l.text.length;
+        }
+      }
+    }
+    bodyHeights.sort();
+    final rawPageBodyH = bodyHeights.length >= 8
+        ? bodyHeights[bodyHeights.length ~/ 2]
+        : 10.5;
+    final pageBodyH = rawPageBodyH.clamp(6.0, 16.0);
+    String? pageBodyFontFamily;
+    if (bodyHeights.length >= 8) {
+      int maxBodyFontChars = 0;
+      for (final entry in bodyFontCounts.entries) {
+        if (entry.value > maxBodyFontChars) {
+          maxBodyFontChars = entry.value;
+          pageBodyFontFamily = entry.key;
+        }
+      }
+    }
+
     // Detect full-width horizontal rules that divide stacked multi-column stories (e.g. Goings On About Town)
     final dividerYs = <double>[];
     for (final r in horizontalRules) {
@@ -3683,8 +4151,8 @@ class PdfReflowService {
     }
 
     // Also detect full-width horizontal whitespace bands separating stacked multi-column stories
-    // (e.g. Page 10 where COMMENT occupies the top half of all 3 columns and FIRST THINGS FIRST DEPT.
-    // occupies the bottom half across a >= 18pt full-width horizontal whitespace gap)
+    // (e.g. Page 10 where COMMENT occupies the top half of all columns and FIRST THINGS FIRST DEPT.
+    // occupies the bottom half across a >= 1.65x body-height full-width horizontal whitespace gap)
     if (allLines.length >= cols.length * 6) {
       final topSortedLines = List<_VisualLine>.from(allLines)
         ..sort((a, b) => a.bounds.top.compareTo(b.bounds.top));
@@ -3695,7 +4163,7 @@ class PdfReflowService {
         }
         final nextTop = topSortedLines[i + 1].bounds.top;
         final gapH = nextTop - maxBottomSoFar;
-        if (gapH >= 18.0 &&
+        if (gapH >= pageBodyH * 1.65 &&
             maxBottomSoFar > pageHeight * 0.20 &&
             nextTop < pageHeight * 0.82) {
           final midY = (maxBottomSoFar + nextTop) / 2.0;
@@ -3737,7 +4205,10 @@ class PdfReflowService {
             final belowStartsRubricOrHeading = firstBelowCol0 != null &&
                 ((firstBelowCol0.text == firstBelowCol0.text.toUpperCase() &&
                         _hasWordLettersRegex.hasMatch(firstBelowCol0.text)) ||
-                    firstBelowCol0.maxHeight >= 13.5);
+                    firstBelowCol0.maxHeight >= pageBodyH * 1.25 ||
+                    (pageBodyFontFamily != null &&
+                        firstBelowCol0.primaryFontFamily.isNotEmpty &&
+                        firstBelowCol0.primaryFontFamily != pageBodyFontFamily));
             final aboveEndsWithBylineDash = lastAboveLastCol != null &&
                 (lastAboveLastCol.text.startsWith('—') || lastAboveLastCol.text.startsWith('--'));
             if (belowStartsRubricOrHeading || aboveEndsWithBylineDash) {
@@ -3750,7 +4221,7 @@ class PdfReflowService {
     dividerYs.sort();
     final mergedDividers = <double>[];
     for (final y in dividerYs) {
-      if (mergedDividers.isEmpty || (y - mergedDividers.last) > 24.0) {
+      if (mergedDividers.isEmpty || (y - mergedDividers.last) > pageBodyH * 2.2) {
         mergedDividers.add(y);
       }
     }
@@ -3767,54 +4238,56 @@ class PdfReflowService {
       ];
       if (bandLines.isEmpty) continue;
 
-      // Detect 2-column inset poem/sidebar box in cols[1..2] or cols[0..1] on a 3-column page
-      // (e.g. Pages 36 & 49 where an inset poem box spans two of the three columns)
+      // Detect 2-column inset poem/sidebar box spanning any adjacent pair of columns on a multi-column page
+      // (e.g. Pages 36 & 49 where an inset poem box spans two of the columns while outer columns flow around it)
       final insetRegions = <({List<_VisualLine> lines, Rect regionBounds, bool isBottomSpanning})>[];
-      if (cols.length == 3) {
-        final twoColSpanWidth = cols[2].bounds.right - cols[1].bounds.left;
-        double? insetBottomRuleY;
-        for (final r in horizontalRules) {
-          final rW = r.right - r.left;
-          if (r.left >= cols[0].bounds.right - 14.0 &&
-              rW >= twoColSpanWidth * 0.65 &&
-              r.y > bTop + 70.0 &&
-              r.y < bBottom - 70.0) {
-            if (insetBottomRuleY == null || r.y > insetBottomRuleY) {
-              insetBottomRuleY = r.y;
+      if (cols.length >= 3) {
+        for (var startCol = cols.length - 2; startCol >= 0; startCol--) {
+          final g = gutters[startCol];
+          final pairLeft = cols[startCol].bounds.left;
+          final pairRight = cols[startCol + 1].bounds.right;
+          final twoColSpanWidth = pairRight - pairLeft;
+          double? insetBottomRuleY;
+          for (final r in horizontalRules) {
+            final rW = r.right - r.left;
+            if ((r.left - pairLeft).abs() <= 24.0 &&
+                r.right <= pairRight + 18.0 &&
+                rW >= twoColSpanWidth * 0.65 &&
+                r.y > bTop + pageBodyH * 6.5 &&
+                r.y < bBottom - pageBodyH * 6.5) {
+              if (insetBottomRuleY == null || r.y > insetBottomRuleY) {
+                insetBottomRuleY = r.y;
+              }
             }
           }
-        }
-        for (final isRightPair in [true, false]) {
-          final g = isRightPair ? gutters[1] : gutters[0];
           final crossLines = <_VisualLine>[
             for (final l in bandLines)
-              if ((isRightPair
-                      ? l.bounds.left >= cols[0].bounds.right - 10.0
-                      : l.bounds.right <= cols[2].bounds.left + 10.0) &&
+              if ((startCol == 0 || l.bounds.left >= cols[startCol - 1].bounds.right - 10.0) &&
+                  (startCol + 1 == cols.length - 1 ||
+                      l.bounds.right <= cols[startCol + 2].bounds.left + 10.0) &&
                   l.bounds.left < g.mid - 6.0 &&
                   l.bounds.right > g.mid + 6.0)
                 l,
           ];
           if (crossLines.length < 12) continue;
 
-          final boxTop = crossLines.map((l) => l.bounds.top).reduce(math.min) - 38.0;
-          final boxBottom = (isRightPair ? insetBottomRuleY : null) ??
-              (crossLines.map((l) => l.bounds.bottom).reduce(math.max) + 28.0);
+          final boxTop = crossLines.map((l) => l.bounds.top).reduce(math.min) - pageBodyH * 3.5;
+          final boxBottom = insetBottomRuleY ??
+              (crossLines.map((l) => l.bounds.bottom).reduce(math.max) + pageBodyH * 2.6);
           final hasOuterColAlongside = bandLines.any(
             (l) =>
-                (isRightPair
-                    ? l.bounds.right <= cols[0].bounds.right + 12.0
-                    : l.bounds.left >= cols[2].bounds.left - 12.0) &&
-                l.bounds.top < boxBottom - 40.0,
+                ((startCol > 0 && l.bounds.right <= cols[startCol - 1].bounds.right + 12.0) ||
+                    (startCol + 1 < cols.length - 1 &&
+                        l.bounds.left >= cols[startCol + 2].bounds.left - 12.0)) &&
+                l.bounds.top < boxBottom - pageBodyH * 3.6,
           );
           if (!hasOuterColAlongside) continue;
 
           final insetLines = <_VisualLine>[];
           final remainingBandLines = <_VisualLine>[];
           for (final l in bandLines) {
-            final inHorizSpan = isRightPair
-                ? l.bounds.left >= cols[1].bounds.left - 12.0
-                : l.bounds.right <= cols[1].bounds.right + 12.0;
+            final inHorizSpan = (startCol == 0 || l.bounds.left >= pairLeft - 12.0) &&
+                (startCol + 1 == cols.length - 1 || l.bounds.right <= pairRight + 12.0);
             if (inHorizSpan && l.bounds.top >= boxTop && l.bounds.center.dy <= boxBottom) {
               insetLines.add(l);
             } else {
@@ -3826,12 +4299,7 @@ class PdfReflowService {
             insetLines.sort((a, b) => a.bounds.top.compareTo(b.bounds.top));
             insetRegions.add((
               lines: insetLines,
-              regionBounds: Rect.fromLTRB(
-                isRightPair ? cols[1].bounds.left : cols[0].bounds.left,
-                boxTop,
-                isRightPair ? cols[2].bounds.right : cols[1].bounds.right,
-                boxBottom,
-              ),
+              regionBounds: Rect.fromLTRB(pairLeft, boxTop, pairRight, boxBottom),
               isBottomSpanning: true,
             ));
             break;
@@ -3839,40 +4307,57 @@ class PdfReflowService {
         }
       }
 
-      // Check for a 2-column story header spanning ONLY cols[1..2] (gutters[1]) on a 3-column page
-      // while col0 contains the preceding story (e.g. Pages 10 & 13).
-      if (cols.length == 3) {
-        final g0 = gutters[0];
-        final g1 = gutters[1];
+      // Check for a partial-spanning story header across cols[splitCol..N-1] on a multi-column page
+      // while cols[0..splitCol-1] contain the preceding story (e.g. Pages 10 & 13).
+      if (cols.length >= 3) {
         final hasFullSpanTop = bandLines.any(
           (l) =>
               l.bounds.top < pageHeight * 0.50 &&
-              l.bounds.left < g0.mid - 14.0 &&
-              l.bounds.right > g1.mid + 14.0,
+              l.bounds.left < gutters.first.mid - 14.0 &&
+              l.bounds.right > gutters.last.mid + 14.0,
         );
-        final g1HeaderLines = <_VisualLine>[
-          for (final l in bandLines)
-            if (l.bounds.top < pageHeight * 0.50 &&
-                l.bounds.left >= cols[0].bounds.right - 10.0 &&
-                l.bounds.left < g1.mid - 10.0 &&
-                l.bounds.right > g1.mid + 10.0)
-              l,
-        ];
-        if (!hasFullSpanTop && g1HeaderLines.isNotEmpty && g1HeaderLines.length <= 5) {
-          final spanMinTop = g1HeaderLines.map((l) => l.bounds.top).reduce(math.min);
-          final spanMaxBottom = g1HeaderLines.map((l) => l.bounds.bottom).reduce(math.max);
-          final hasCol1AboveRubric = bandLines.any(
+        int? matchedSplitCol;
+        List<_VisualLine>? matchedHeaderLines;
+        if (!hasFullSpanTop) {
+          for (var splitCol = 1; splitCol < cols.length - 1; splitCol++) {
+            final gSplit = gutters[splitCol];
+            final headerLines = <_VisualLine>[
+              for (final l in bandLines)
+                if (l.bounds.top < pageHeight * 0.50 &&
+                    l.bounds.left >= cols[splitCol - 1].bounds.right - 10.0 &&
+                    l.bounds.left < gSplit.mid - 10.0 &&
+                    l.bounds.right > gSplit.mid + 10.0)
+                  l,
+            ];
+            if (headerLines.isNotEmpty && headerLines.length <= 5) {
+              matchedSplitCol = splitCol;
+              matchedHeaderLines = headerLines;
+              break;
+            }
+          }
+        }
+        if (matchedSplitCol != null && matchedHeaderLines != null) {
+          final splitCol = matchedSplitCol;
+          final gSplit = gutters[splitCol];
+          final spanMinTop = matchedHeaderLines.map((l) => l.bounds.top).reduce(math.min);
+          final spanMaxBottom = matchedHeaderLines.map((l) => l.bounds.bottom).reduce(math.max);
+          final headerPad = pageBodyH * 3.1;
+          final hasSplitColAboveRubric = bandLines.any(
             (l) =>
-                l.bounds.left >= cols[0].bounds.right - 10.0 &&
-                l.bounds.right <= g1.mid + 10.0 &&
-                l.bounds.bottom < spanMinTop - 36.0,
+                l.bounds.left >= cols[splitCol - 1].bounds.right - 10.0 &&
+                l.bounds.right <= gSplit.mid + 10.0 &&
+                l.bounds.bottom < spanMinTop - headerPad,
           );
-          final col0Lines = <_VisualLine>[];
-          final col1Above = <_VisualLine>[];
-          final col2Above = <_VisualLine>[];
-          final cols12Header = <_VisualLine>[];
-          final col1Below = <_VisualLine>[];
-          final col2Below = <_VisualLine>[];
+          final leftColsBuckets = List<List<_VisualLine>>.generate(splitCol, (_) => <_VisualLine>[]);
+          final rightAboveBuckets = List<List<_VisualLine>>.generate(
+            cols.length - splitCol,
+            (_) => <_VisualLine>[],
+          );
+          final rightHeader = <_VisualLine>[];
+          final rightBelowBuckets = List<List<_VisualLine>>.generate(
+            cols.length - splitCol,
+            (_) => <_VisualLine>[],
+          );
           final bottomSpan = <_VisualLine>[];
 
           for (final l in bandLines) {
@@ -3882,44 +4367,49 @@ class PdfReflowService {
               bottomSpan.add(l);
               continue;
             }
-            if (r.right <= cols[0].bounds.right + 12.0) {
-              col0Lines.add(l);
+            if (r.right <= cols[splitCol - 1].bounds.right + 12.0) {
+              final cIdx = analysis.findBestColumn(r.center).index.clamp(0, splitCol - 1);
+              leftColsBuckets[cIdx].add(l);
               continue;
             }
-            final inHeaderBand = r.top >= spanMinTop - 34.0 &&
-                r.bottom <= spanMaxBottom + 34.0 &&
+            final inHeaderBand = r.top >= spanMinTop - headerPad &&
+                r.bottom <= spanMaxBottom + headerPad &&
                 (spansGutter ||
                     r.top >= spanMinTop - 2.0 ||
-                    !hasCol1AboveRubric ||
+                    !hasSplitColAboveRubric ||
                     l.text == l.text.toUpperCase());
             if (inHeaderBand) {
-              cols12Header.add(l);
-            } else if (r.bottom <= spanMinTop) {
-              if (r.center.dx < g1.mid) {
-                col1Above.add(l);
-              } else {
-                col2Above.add(l);
-              }
+              rightHeader.add(l);
             } else {
-              if (r.center.dx < g1.mid) {
-                col1Below.add(l);
+              final rightIdx = (analysis.findBestColumn(r.center).index - splitCol)
+                  .clamp(0, cols.length - splitCol - 1);
+              if (r.bottom <= spanMinTop) {
+                rightAboveBuckets[rightIdx].add(l);
               } else {
-                col2Below.add(l);
+                rightBelowBuckets[rightIdx].add(l);
               }
             }
           }
 
-          for (final bucket in [
-            (lines: col0Lines, bounds: cols[0].bounds),
-            (lines: col1Above, bounds: cols[1].bounds),
-            (lines: col2Above, bounds: cols[2].bounds),
+          final orderedBuckets = <({List<_VisualLine> lines, Rect bounds})>[
+            for (var c = 0; c < splitCol; c++)
+              (lines: leftColsBuckets[c], bounds: cols[c].bounds),
+            for (var c = 0; c < cols.length - splitCol; c++)
+              (lines: rightAboveBuckets[c], bounds: cols[splitCol + c].bounds),
             (
-              lines: cols12Header,
-              bounds: Rect.fromLTRB(cols[1].bounds.left, spanMinTop - 34.0, cols[2].bounds.right, spanMaxBottom + 34.0),
+              lines: rightHeader,
+              bounds: Rect.fromLTRB(
+                cols[splitCol].bounds.left,
+                spanMinTop - headerPad,
+                cols.last.bounds.right,
+                spanMaxBottom + headerPad,
+              ),
             ),
-            (lines: col1Below, bounds: cols[1].bounds),
-            (lines: col2Below, bounds: cols[2].bounds),
-          ]) {
+            for (var c = 0; c < cols.length - splitCol; c++)
+              (lines: rightBelowBuckets[c], bounds: cols[splitCol + c].bounds),
+          ];
+
+          for (final bucket in orderedBuckets) {
             if (bucket.lines.isNotEmpty) {
               bucket.lines.sort((a, b) => a.bounds.top.compareTo(b.bounds.top));
               result.add((
@@ -3950,7 +4440,7 @@ class PdfReflowService {
         return bandLines.any(
           (l) =>
               analysis.findBestColumn(l.bounds.center).index.clamp(0, cols.length - 1) == cIdx &&
-              l.text.trim() == 'ADVERTISEMENT',
+              _adColumnLabelRegex.hasMatch(l.text.trim()),
         );
       });
 
@@ -3958,18 +4448,33 @@ class PdfReflowService {
       final colBodyTop = List<double?>.filled(cols.length, null);
       for (final l in bandLines) {
         final r = l.bounds;
-        final spansGutter = gutters.any((g) => r.left < g.mid - 14.0 && r.right > g.mid + 14.0);
-        if (spansGutter || r.width > maxColWidth * 1.18) continue;
+        final spansGutter = gutters.any(
+          (g) => r.left < g.mid - 14.0 && r.right > math.max(g.mid + 14.0, g.right - 8.0),
+        );
+        final isWide = r.width > maxColWidth * 1.18 &&
+            gutters.any((g) => r.left < g.left && r.right > g.right - 8.0);
+        if (spansGutter || isWide) continue;
         final colIdx = analysis.findBestColumn(r.center).index.clamp(0, cols.length - 1);
         if (isAdCol[colIdx]) continue;
         final isAllCapsLine =
             l.text == l.text.toUpperCase() && _hasWordLettersRegex.hasMatch(l.text);
-        final isFullColItalicBody =
-            l.isAllItalic && r.width >= cols[colIdx].bounds.width * 0.65 && l.maxHeight <= 12.5;
+        final hasBylineBelow = l.isAllItalic &&
+            bandLines.any(
+              (b) =>
+                  !identical(b, l) &&
+                  b.bounds.top >= r.bottom - 2.0 &&
+                  b.bounds.top <= r.bottom + pageBodyH * 3.8 &&
+                  (b.bounds.center.dx - r.center.dx).abs() < maxColWidth * 0.55 &&
+                  _bylinePrefixRegex.hasMatch(b.text.trim()),
+            );
+        final isFullColItalicBody = l.isAllItalic &&
+            !hasBylineBelow &&
+            r.width >= cols[colIdx].bounds.width * 0.65 &&
+            l.maxHeight <= pageBodyH * 1.18;
         final isNormalBodyLine = (!l.isAllItalic || isFullColItalicBody) &&
             !isAllCapsLine &&
-            r.left <= cols[colIdx].bounds.left + 28.0 &&
-            (colIdx == 0 || (r.width >= cols[colIdx].bounds.width * 0.62 && l.maxHeight <= 13.5));
+            r.left <= cols[colIdx].bounds.left + pageBodyH * 2.6 &&
+            (colIdx == 0 || (r.width >= cols[colIdx].bounds.width * 0.62 && l.maxHeight <= pageBodyH * 1.25));
         if (isNormalBodyLine) {
           if (colBodyTop[colIdx] == null || r.top < colBodyTop[colIdx]!) {
             colBodyTop[colIdx] = r.top;
@@ -3978,7 +4483,7 @@ class PdfReflowService {
       }
       final col0BodyTop = colBodyTop[0];
 
-      final topSpanCutoff = col0BodyTop != null ? (col0BodyTop + 18.0) : (pageHeight * 0.48);
+      final topSpanCutoff = col0BodyTop != null ? (col0BodyTop + pageBodyH * 1.65) : (pageHeight * 0.48);
       final topSpanning = <_VisualLine>[];
       final colBuckets = List<List<_VisualLine>>.generate(cols.length, (_) => <_VisualLine>[]);
       final bottomSpanning = <_VisualLine>[];
@@ -3987,8 +4492,11 @@ class PdfReflowService {
       double maxTopSpanRight = -1.0;
       for (final line in bandLines) {
         final r = line.bounds;
-        final spansGutter = gutters.any((g) => r.left < g.mid - 14.0 && r.right > g.mid + 14.0);
-        final isWide = r.width > maxColWidth * 1.18;
+        final spansGutter = gutters.any(
+          (g) => r.left < g.mid - 14.0 && r.right > math.max(g.mid + 14.0, g.right - 8.0),
+        );
+        final isWide = r.width > maxColWidth * 1.18 &&
+            gutters.any((g) => r.left < g.left && r.right > g.right - 8.0);
         if (spansGutter || isWide) {
           if (r.top <= topSpanCutoff || r.top < pageHeight * 0.45) {
             topSpanning.add(line);
@@ -4006,7 +4514,7 @@ class PdfReflowService {
       // Promote narrow centered rubrics/bylines/headers (e.g. "PROFILES", "BY AVA KOFMAN",
       // "ANNALS OF AVIATION", "THE CRITICS") that sit above their column's body prose into topSpanning
       final headerZoneBottom = math.max(
-        maxTopSpanBottom >= 0 ? maxTopSpanBottom + 56.0 : -1.0,
+        maxTopSpanBottom >= 0 ? maxTopSpanBottom + pageBodyH * 5.2 : -1.0,
         col0BodyTop != null ? col0BodyTop - 2.0 : -1.0,
       );
       if (headerZoneBottom > 0) {
@@ -4024,10 +4532,18 @@ class PdfReflowService {
           final kept = <_VisualLine>[];
           for (final l in colBuckets[cIdx]) {
             final isAboveSpanningTitle = maxTopSpanBottom >= 0 && l.bounds.bottom <= maxTopSpanBottom + 2.0;
+            final isDisplayFontTransition = pageBodyFontFamily != null &&
+                l.primaryFontFamily.isNotEmpty &&
+                l.primaryFontFamily != pageBodyFontFamily &&
+                l.bounds.width < cols[cIdx].bounds.width * 0.78;
             final isHeaderStyleLine = (l.text == l.text.toUpperCase() &&
                     _hasWordLettersRegex.hasMatch(l.text)) ||
-                l.text.toUpperCase().startsWith('BY ') ||
-                l.maxHeight >= 13.8;
+                _bylinePrefixRegex.hasMatch(l.text.trim()) ||
+                l.maxHeight >= pageBodyH * 1.28 ||
+                isDisplayFontTransition ||
+                (l.isAllItalic &&
+                    maxTopSpanBottom >= 0 &&
+                    l.bounds.top >= maxTopSpanBottom - 4.0);
             if (l.bounds.bottom <= cCutoff &&
                 (cIdx == 0 || isAboveSpanningTitle || isHeaderStyleLine)) {
               topSpanning.add(l);
@@ -4096,6 +4612,12 @@ class PdfReflowService {
   }
 
   static final RegExp _hasWordLettersRegex = RegExp(r'[A-Za-z\u4e00-\u9fa5]');
+  static final RegExp _adColumnLabelRegex = RegExp(
+    r'^(?:ADVERTISEMENT|SPONSORED|PROMOTION|广告|廣告|推广)$',
+  );
+  static final RegExp _bylinePrefixRegex = RegExp(
+    r'^(?:BY\s+[A-Z]|By\s+[A-Z][a-z]+\s+[A-Z]|文\s*[/:：]|作者\s*[:：])',
+  );
   static final RegExp _trailingUnstyledCommaRegex = RegExp(r'^(.*?\S)([,;]+)$');
 
   static String _formatRichRun(
@@ -4272,7 +4794,8 @@ class PdfReflowService {
     }
 
     final lines = <_VisualLine>[];
-    for (final cluster in lineClusters) {
+    for (var cIdx = 0; cIdx < lineClusters.length; cIdx++) {
+      final cluster = lineClusters[cIdx];
       cluster.sort((a, b) => a.rect.left.compareTo(b.rect.left));
       Rect? bounds;
       double maxH = 0.0;
@@ -4294,13 +4817,26 @@ class PdfReflowService {
           int letterFrags = 0;
           int boldFrags = 0;
           int italicFrags = 0;
+          final fontWeights = <String, int>{};
           for (final f in segFragments) {
             if (_hasWordLettersRegex.hasMatch(f.text)) {
+              final w = math.max(1, f.text.trim().length);
               letterFrags++;
               if (f.isBold) boldFrags++;
               if (f.isItalic) italicFrags++;
+              if (f.fontFamily.isNotEmpty) {
+                fontWeights[f.fontFamily] = (fontWeights[f.fontFamily] ?? 0) + w;
+              }
             }
           }
+          String primaryFontFamily = '';
+          int bestFontWeight = 0;
+          fontWeights.forEach((fam, weight) {
+            if (weight > bestFontWeight) {
+              bestFontWeight = weight;
+              primaryFontFamily = fam;
+            }
+          });
           final isAllBold = letterFrags > 0 && boldFrags == letterFrags;
           final isAllItalic = letterFrags > 0 && italicFrags == letterFrags;
           bool startsWithBoldColon = false;
@@ -4386,12 +4922,37 @@ class PdfReflowService {
             final estimatedBodyH = (avgCharW * 2.05).clamp(9.5, 11.5);
             startsPara = true;
             effectiveMaxH = estimatedBodyH;
-            bounds = Rect.fromLTRB(
-              bounds!.left,
-              bounds!.bottom - estimatedBodyH,
-              bounds!.right,
-              bounds!.bottom,
-            );
+            bool isSunkenTwoLineInitial = false;
+            for (var nextIdx = cIdx + 1;
+                nextIdx < lineClusters.length && nextIdx <= cIdx + 3;
+                nextIdx++) {
+              final nextCluster = lineClusters[nextIdx];
+              if (nextCluster.isEmpty) continue;
+              final nextMinLeft = nextCluster.map((f) => f.rect.left).reduce(math.min);
+              final nextMaxRight = nextCluster.map((f) => f.rect.right).reduce(math.max);
+              final nextMinTop = nextCluster.map((f) => f.rect.top).reduce(math.min);
+              if (nextMinLeft >= bounds!.left + estimatedBodyH * 0.9 &&
+                  nextMinLeft <= bounds!.left + estimatedBodyH * 4.6 &&
+                  (nextMaxRight - bounds!.right).abs() < estimatedBodyH * 3.4 &&
+                  nextMinTop >= bounds!.top + estimatedBodyH * 0.65 &&
+                  nextMinTop <= bounds!.bottom - estimatedBodyH * 0.18) {
+                isSunkenTwoLineInitial = true;
+                break;
+              }
+            }
+            bounds = isSunkenTwoLineInitial
+                ? Rect.fromLTRB(
+                    bounds!.left,
+                    bounds!.top,
+                    bounds!.right,
+                    bounds!.top + estimatedBodyH,
+                  )
+                : Rect.fromLTRB(
+                    bounds!.left,
+                    bounds!.bottom - estimatedBodyH,
+                    bounds!.right,
+                    bounds!.bottom,
+                  );
           }
 
           lines.add(_VisualLine(
@@ -4408,6 +4969,7 @@ class PdfReflowService {
             startsWithBoldColon: startsWithBoldColon,
             firstTextStart: firstStart,
             lastTextEnd: lastEnd,
+            primaryFontFamily: primaryFontFamily,
           ));
         }
         bounds = null;
@@ -4437,11 +4999,15 @@ class PdfReflowService {
             crossesGutterGap = true;
           }
           if (!crossesGutterGap && gutters.isNotEmpty) {
+            final isContiguousTextRun = prevTextEnd != null &&
+                item.textStart != null &&
+                (item.textStart == prevTextEnd ||
+                    (prevHasTrailingSpace && item.textStart == prevTextEnd! + 1));
             for (final g in gutters) {
               final gutterWidth = math.max(6.0, g.right - g.left);
               final minGutterGap = minAdjH >= 13.5
                   ? math.max(6.5, minAdjH * 0.65)
-                  : math.max(4.5, gutterWidth * 0.50);
+                  : math.max(isContiguousTextRun ? 6.5 : 4.5, gutterWidth * 0.50);
               if (prevRight! <= g.mid + 3.0 &&
                   item.rect.left >= g.mid - 3.0 &&
                   gap >= minGutterGap) {
@@ -4450,8 +5016,27 @@ class PdfReflowService {
               }
             }
           }
-          if (crossesGutterGap) {
+          final prevFrag = segFragments.isNotEmpty ? segFragments.last : null;
+          final prevTrimmed = prevFrag?.text.trimRight() ?? '';
+          final isInlineRubricTransition = prevFrag != null &&
+              !prevTrimmed.endsWith(',') &&
+              !prevTrimmed.endsWith(';') &&
+              !prevTrimmed.endsWith(':') &&
+              !prevTrimmed.endsWith('-') &&
+              !item.isItalic &&
+              item.text.length >= 4 &&
+              _allCapsHeadingRegex.hasMatch(item.text) &&
+              _hasAtLeastThreeUpperLetters(item.text) &&
+              segFragments.every((f) => !_hasWordLettersRegex.hasMatch(f.text) || f.isItalic) &&
+              segFragments.any((f) => f.text != f.text.toUpperCase()) &&
+              (item.fontFamily.isEmpty ||
+                  prevFrag.fontFamily.isEmpty ||
+                  item.fontFamily != prevFrag.fontFamily);
+          if (crossesGutterGap || isInlineRubricTransition) {
             flushSegment();
+            if (isInlineRubricTransition) {
+              startsPara = true;
+            }
           } else if (enableSplitHeaders &&
               gutters.isEmpty &&
               isWideHorizontalGap &&

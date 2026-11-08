@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' show Rect;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:pdfrx/pdfrx.dart';
@@ -502,6 +503,95 @@ void main() {
         // Page 45 full-page feature illustration (with light overlaid display text) and late-page figures preserved
         expect(imageElements.any((e) => e.pageNumber == 45), isTrue);
         expect(imageElements.where((e) => e.pageNumber >= 60).length, greaterThanOrEqualTo(20));
+
+        // Page 3 Table of Contents rubrics and entries each stand on their own block
+        for (final standaloneBlock in [
+          '4 GOINGS ON',
+          '7 THE TALK OF THE TOWN',
+          'LETTER FROM FRANCE',
+          'SHOUTS & MURMURS',
+          'ANNALS OF AVIATION',
+          'PROFILES',
+          'TAKES',
+          'U.S. JOURNAL',
+          'FICTION',
+          'THE CRITICS',
+          'THE ART WORLD',
+          'BOOKS',
+          'A CRITIC AT LARGE',
+          'THE CURRENT CINEMA',
+          'POEMS',
+          'COVER',
+          'SPOTS Daniel Salmieri',
+          'Alyssa Brandt 19 An Update on Our Family',
+          'Ava Kofman 28 Autocracy Now! Curtis Yarvin’s case against democracy.',
+          '61 Briefly Noted',
+          'Ellen Bass 34 “Inquest”',
+          'Garrett Hongo 47 “An Ocean of Clouds”',
+          'AMERICAN CRUELTIES',
+          'SIGNS AND SOUNDS',
+          'DIGITAL HUMANITIES',
+          'ABOUT TOWN',
+          'BAR TAB',
+          'COMMENT',
+          'FIRST THINGS FIRST DEPT.',
+          'ARTIFICIAL INTELLIGENCE',
+          'CONTINUING EDUCATION DEPT.',
+          'TUSKS UP',
+          'SOUND CHECK DEPT.',
+          'THE PICTURES',
+          'PUZZLES & GAMES DEPT.',
+        ]) {
+          expect(
+            result.elements.any((e) => e.text == standaloneBlock),
+            isTrue,
+            reason: 'Expected standalone block: "$standaloneBlock"',
+          );
+        }
+
+        // Ornamental '1' rule glyphs stripped cleanly
+        expect(result.markdown, isNot(contains('1SIGNS')));
+        expect(result.markdown, isNot(contains('1CONTINUING')));
+        expect(result.markdown, isNot(contains('1SOUND')));
+        expect(result.markdown, isNot(contains('1Ore.')));
+
+        // Page 2 left-column address lines remain before right-column text
+        final idxMarketSt = result.markdown.indexOf('425 Market Street, San Francisco');
+        final idxNotecards = result.markdown.indexOf('Notecards available at Amazon.');
+        expect(idxMarketSt, greaterThan(0));
+        expect(idxNotecards, greaterThan(idxMarketSt));
+
+        // Page 40 -> Page 42 cross-page sentence continuation across Page 41 TAKES interruption page
+        expect(
+          result.markdown,
+          contains('It is not difficult to anticipate the totalitarian endgame of a world view'),
+        );
+
+        // Top-of-column lines without descenders and 2-line sunken initial word caps preserved
+        expect(
+          result.markdown,
+          contains('originally from Edmonton. “You didn’t like the dinosaurs, did you?”'),
+        );
+        expect(
+          result.markdown,
+          contains('grew replacement teeth, back to front, throughout its life.'),
+        );
+        expect(
+          result.markdown,
+          contains('until the next trip to the motherland. From Cameroon,'),
+        );
+        expect(
+          result.markdown,
+          contains('But America wasn’t on my mind when'),
+        );
+        expect(
+          result.markdown,
+          contains('Wes Anderson’s new film, “The Phoenician Scheme,”'),
+        );
+        expect(
+          result.markdown,
+          contains('Costume Institute, “Superfine” does something exceedingly rare in the history'),
+        );
       } finally {
         await doc.dispose();
       }
@@ -693,6 +783,173 @@ void main() {
       final idxR1 = gAbsResult.markdown.indexOf('Rightside sentence R1');
       expect(idxL69, greaterThan(0));
       expect(idxR1, greaterThan(idxL69));
+    });
+
+    test('Normalizes PDF font family names consistently across subset prefixes and MT/PS/style suffixes', () {
+      expect(
+        PdfReflowService.normalizeFontFamilyForTest('TimesNewRomanPSMT'),
+        equals('timesnewroman'),
+      );
+      expect(
+        PdfReflowService.normalizeFontFamilyForTest('TimesNewRomanPS-BoldMT'),
+        equals('timesnewroman'),
+      );
+      expect(
+        PdfReflowService.normalizeFontFamilyForTest('TimesNewRomanPS-ItalicMT'),
+        equals('timesnewroman'),
+      );
+      expect(
+        PdfReflowService.normalizeFontFamilyForTest('ArialMT'),
+        equals('arial'),
+      );
+      expect(
+        PdfReflowService.normalizeFontFamilyForTest('Arial-BoldMT'),
+        equals('arial'),
+      );
+      expect(
+        PdfReflowService.normalizeFontFamilyForTest('ABCDEF+Irvin-Heading'),
+        equals('irvin'),
+      );
+      expect(
+        PdfReflowService.normalizeFontFamilyForTest('XYZWVU+AdobeCaslonPro-Regular'),
+        equals('adobecaslon'),
+      );
+      expect(
+        PdfReflowService.normalizeFontFamilyForTest('XYZWVU+AdobeCaslonPro-Italic'),
+        equals('adobecaslon'),
+      );
+    });
+
+    test('Distinguishes wide ornamental rule 1 glyphs from genuine large digits and alphanumeric strings', () {
+      // Wide decorative rule glyph encoded as '1' (148pt wide x 40pt tall)
+      expect(
+        PdfReflowService.isOrnamentalRuleOneChar(0x31, const Rect.fromLTWH(48, 41, 148.5, 40.0)),
+        isTrue,
+      );
+      // Genuine 50pt chapter number '1' (24pt wide x 50pt tall) must NOT be treated as ornament
+      expect(
+        PdfReflowService.isOrnamentalRuleOneChar(0x31, const Rect.fromLTWH(100, 100, 24.0, 50.0)),
+        isFalse,
+      );
+      // Positive stray drop-cap '1' at start of fragment ("1The" -> "The")
+      expect(
+        PdfReflowService.cleanRawPdfFragmentTextForTest('1The quick brown fox'),
+        equals('The quick brown fox'),
+      );
+      // Alphanumeric strings like "Route 1A NYC", "2021", "Top 10" must be preserved intact by fragment cleaner
+      expect(
+        PdfReflowService.cleanRawPdfFragmentTextForTest('Route 1A NYC'),
+        equals('Route 1A NYC'),
+      );
+      expect(
+        PdfReflowService.cleanRawPdfFragmentTextForTest('2021 Annual Report'),
+        equals('2021 Annual Report'),
+      );
+      expect(
+        PdfReflowService.cleanRawPdfFragmentTextForTest('Top 10 Highlights'),
+        equals('Top 10 Highlights'),
+      );
+    });
+
+    test('Filters multi-column academic running headers while keeping top-of-column prose and rubrics', () {
+      // Mixed-case academic running headers (isolated above columns or repeated across pages) are filtered
+      expect(
+        PdfReflowService.shouldFilterSmallTopRunningHeader(
+          isMultiColumn: true,
+          cleanedText: 'Journal of Machine Learning Research 21 (2020) 1-48',
+          isRepeatedAcrossPages: false,
+          hasColumnBodyLineImmediatelyBelow: false,
+        ),
+        isTrue,
+      );
+      expect(
+        PdfReflowService.shouldFilterSmallTopRunningHeader(
+          isMultiColumn: true,
+          cleanedText: 'Smith et al.',
+          isRepeatedAcrossPages: true,
+          hasColumnBodyLineImmediatelyBelow: true,
+        ),
+        isTrue,
+      );
+      expect(
+        PdfReflowService.shouldFilterSmallTopRunningHeader(
+          isMultiColumn: true,
+          cleanedText: 'IEEE TRANSACTIONS ON PATTERN ANALYSIS, VOL. 3',
+          isRepeatedAcrossPages: false,
+          hasColumnBodyLineImmediatelyBelow: false,
+        ),
+        isTrue,
+      );
+      // Short digit-free all-caps department rubrics and top-of-column body prose lines are preserved
+      expect(
+        PdfReflowService.shouldFilterSmallTopRunningHeader(
+          isMultiColumn: true,
+          cleanedText: 'LETTER FROM FRANCE',
+          isRepeatedAcrossPages: false,
+          hasColumnBodyLineImmediatelyBelow: false,
+        ),
+        isFalse,
+      );
+      expect(
+        PdfReflowService.shouldFilterSmallTopRunningHeader(
+          isMultiColumn: true,
+          cleanedText: 'originally from Edmonton. “You didn’t like the',
+          isRepeatedAcrossPages: false,
+          hasColumnBodyLineImmediatelyBelow: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('Splits inline rubric transition when font family and style switch from italic credit to all-caps rubric', () {
+      final splitLines = PdfReflowService.groupInlineRubricFragmentsForTest([
+        (
+          rect: const Rect.fromLTWH(64, 514, 180, 9.5),
+          text: 'Roland High, Ali Solomon, Charlie Hankin',
+          isItalic: true,
+          isBold: false,
+          fontFamily: 'adobecaslon',
+        ),
+        (
+          rect: const Rect.fromLTWH(252, 514, 34, 9.5),
+          text: 'SPOTS',
+          isItalic: false,
+          isBold: false,
+          fontFamily: 'neutraface',
+        ),
+        (
+          rect: const Rect.fromLTWH(290, 514, 72, 9.5),
+          text: 'Daniel Salmieri',
+          isItalic: true,
+          isBold: false,
+          fontFamily: 'adobecaslon',
+        ),
+      ]);
+      expect(splitLines.length, equals(2));
+      expect(splitLines[0].text, equals('Roland High, Ali Solomon, Charlie Hankin'));
+      expect(splitLines[1].text, equals('SPOTS Daniel Salmieri'));
+      expect(splitLines[1].richText, equals('SPOTS *Daniel Salmieri*'));
+      expect(splitLines[1].startsParagraph, isTrue);
+
+      // Preceding italic segment followed by non-italic all-caps word in the SAME font family must NOT split
+      final sameFontItalicToCaps = PdfReflowService.groupInlineRubricFragmentsForTest([
+        (
+          rect: const Rect.fromLTWH(64, 200, 120, 10.0),
+          text: 'See the special issue of',
+          isItalic: true,
+          isBold: false,
+          fontFamily: 'timesnewroman',
+        ),
+        (
+          rect: const Rect.fromLTWH(188, 200, 36, 10.0),
+          text: 'IEEE',
+          isItalic: false,
+          isBold: false,
+          fontFamily: 'timesnewroman',
+        ),
+      ]);
+      expect(sameFontItalicToCaps.length, equals(1));
+      expect(sameFontItalicToCaps[0].text, equals('See the special issue of IEEE'));
     });
   });
 }
