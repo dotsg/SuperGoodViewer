@@ -62,7 +62,16 @@ void main() {
       expect(service.getKey('toggleTheme'), LogicalKeyboardKey.keyL);
       expect(service.getShortcutLabel('toggleTheme'), endsWith('Shift+L'));
       expect(service.getKey('toggleTwoPage'), LogicalKeyboardKey.keyD);
-      expect(service.getKey('keyboardShortcuts'), LogicalKeyboardKey.comma);
+      expect(service.getKey('preferences'), LogicalKeyboardKey.comma);
+      expect(service.getKey('keyboardShortcuts'), LogicalKeyboardKey.slash);
+      // No default action should conflict with any other default action
+      for (final action in ShortcutService.allActions) {
+        expect(
+          service.findConflict(action.id, service.getKey(action.id)),
+          isNull,
+          reason: 'Default shortcut for ${action.id} must not conflict with another action',
+        );
+      }
     });
 
     group('zoom defaults follow each platform', () {

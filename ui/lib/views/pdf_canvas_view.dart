@@ -15,6 +15,8 @@ import '../services/startup_metrics.dart';
 import '../models/render_options.dart';
 import '../services/pdf_page_analysis_service.dart';
 import '../services/form_factor.dart';
+import '../services/shortcut_service.dart';
+import 'settings_dialog.dart';
 
 const List<double> kZoomLadder = [
   0.25, 0.33, 0.50, 0.67, 0.75, 0.80, 0.90, 1.00,
@@ -2222,18 +2224,16 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
     final isText = params.contextMenuFor == PdfViewerPart.selectedText ||
         (params.isTextSelectionEnabled && params.textSelectionDelegate.hasSelectedText);
 
-    final items = <ContextMenuButtonItem>[];
-
     final isMobile = FormFactor.isMobilePlatform(context);
     final s = widget.controller.strings;
-    if (isText) {
-      // 1. Text Selection Context Menu: strictly text actions
+
+    if (isMobile) {
+      if (!isText) return null;
+      final items = <ContextMenuButtonItem>[];
       if (params.isTextSelectionEnabled && params.textSelectionDelegate.isCopyAllowed) {
         items.add(
           ContextMenuButtonItem(
-            label: isMobile
-                ? s.copy
-                : '${s.copy} (${Platform.isMacOS ? 'Cmd+C' : 'Ctrl+C'})',
+            label: s.copy,
             type: ContextMenuButtonType.copy,
             onPressed: () async {
               params.dismissContextMenu();
@@ -2248,9 +2248,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       if (params.isTextSelectionEnabled && !params.textSelectionDelegate.isSelectingAllText) {
         items.add(
           ContextMenuButtonItem(
-            label: isMobile
-                ? s.selectAll
-                : '${s.selectAll} (${Platform.isMacOS ? 'Cmd+A' : 'Ctrl+A'})',
+            label: s.selectAll,
             type: ContextMenuButtonType.selectAll,
             onPressed: () {
               params.dismissContextMenu();
@@ -2259,13 +2257,130 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           ),
         );
       }
-    } else if (!isMobile) {
-      // 2. Canvas / Background Context Menu: desktop right-click actions
+      if (items.isEmpty) return null;
+      return Align(
+        alignment: Alignment.topLeft,
+        child: AdaptiveTextSelectionToolbar.buttonItems(
+          anchors: TextSelectionToolbarAnchors(
+            primaryAnchor: params.anchorA,
+            secondaryAnchor: params.anchorB,
+          ),
+          buttonItems: items,
+        ),
+      );
+    }
+
+    return _buildDesktopContextMenu(context, params, isText: isText);
+  }
+
+  Widget? _buildDesktopContextMenu(
+    BuildContext context,
+    PdfViewerContextMenuBuilderParams params, {
+    required bool isText,
+  }) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final s = widget.controller.strings;
+    final shortcuts = widget.controller.shortcutService;
+    final mod = Platform.isMacOS ? 'Cmd' : 'Ctrl';
+    String actionLabel(String id) {
+      final defaultName = ShortcutService.allActions
+          .firstWhere((a) => a.id == id)
+          .name;
+      return s.shortcutActionName(id, defaultName);
+    }
+
+    final groups = <List<Widget>>[];
+
+    Widget buildItem({
+      required IconData icon,
+      required String label,
+      String? shortcut,
+      bool isSelected = false,
+      required VoidCallback onPressed,
+    }) {
+      final accent = theme.colorScheme.primary;
+      final fg = isSelected
+          ? accent
+          : (isDark ? const Color(0xFFEEEEEE) : const Color(0xFF1F2937));
+      return InkWell(
+        borderRadius: BorderRadius.circular(6),
+        onTap: onPressed,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6.5),
+          child: Row(
+            children: [
+              Icon(icon, size: 15, color: isSelected ? accent : fg.withValues(alpha: 0.78)),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                    color: fg,
+                  ),
+                ),
+              ),
+              if (shortcut != null && shortcut.isNotEmpty) ...[
+                const SizedBox(width: 12),
+                Text(
+                  shortcut,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: isDark ? Colors.white38 : Colors.black45,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (isText) {
+      final textGroup = <Widget>[];
+      if (params.isTextSelectionEnabled && params.textSelectionDelegate.isCopyAllowed) {
+        textGroup.add(
+          buildItem(
+            icon: Icons.copy_rounded,
+            label: s.copy,
+            shortcut: '$mod+C',
+            onPressed: () async {
+              params.dismissContextMenu();
+              final copied = await _safeCopySelectedText(params.textSelectionDelegate);
+              if (copied && mounted) {
+                widget.onTextCopied?.call();
+              }
+            },
+          ),
+        );
+      }
+      if (params.isTextSelectionEnabled && !params.textSelectionDelegate.isSelectingAllText) {
+        textGroup.add(
+          buildItem(
+            icon: Icons.select_all_rounded,
+            label: s.selectAll,
+            shortcut: '$mod+A',
+            onPressed: () {
+              params.dismissContextMenu();
+              params.textSelectionDelegate.selectAllText();
+            },
+          ),
+        );
+      }
+      if (textGroup.isNotEmpty) groups.add(textGroup);
+    } else {
+      // Group 1: Selection & Search
+      final searchGroup = <Widget>[];
       if (params.isTextSelectionEnabled) {
-        items.add(
-          ContextMenuButtonItem(
-            label: '${s.selectAll} (${Platform.isMacOS ? 'Cmd+A' : 'Ctrl+A'})',
-            type: ContextMenuButtonType.selectAll,
+        searchGroup.add(
+          buildItem(
+            icon: Icons.select_all_rounded,
+            label: s.selectAll,
+            shortcut: '$mod+A',
             onPressed: () {
               params.dismissContextMenu();
               params.textSelectionDelegate.selectAllText();
@@ -2273,55 +2388,95 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           ),
         );
       }
-      items.add(
-        ContextMenuButtonItem(
-          label: '${s.fitWindowWidth} (${widget.controller.shortcutService.getShortcutLabel('fitWidth')})',
+      searchGroup.add(
+        buildItem(
+          icon: Icons.search_rounded,
+          label: actionLabel('findInDocument'),
+          shortcut: shortcuts.getShortcutLabel('findInDocument'),
+          onPressed: () {
+            params.dismissContextMenu();
+            openSearch();
+          },
+        ),
+      );
+      groups.add(searchGroup);
+
+      // Group 2: Zoom & Fit
+      groups.add([
+        buildItem(
+          icon: Icons.fit_screen_outlined,
+          label: s.fitWindowWidth,
+          shortcut: shortcuts.getShortcutLabel('fitWidth'),
+          isSelected: widget.controller.autoFitMode == AutoFitMode.fitWidth,
           onPressed: () {
             params.dismissContextMenu();
             fitWidth();
           },
         ),
-      );
-      items.add(
-        ContextMenuButtonItem(
-          label: '${s.fitPageWhole} (${widget.controller.shortcutService.getShortcutLabel('fitPage')})',
+        buildItem(
+          icon: Icons.crop_free_rounded,
+          label: s.fitPageWhole,
+          shortcut: shortcuts.getShortcutLabel('fitPage'),
+          isSelected: widget.controller.autoFitMode == AutoFitMode.fitPage,
           onPressed: () {
             params.dismissContextMenu();
             fitPage();
           },
         ),
-      );
-      items.add(
-        ContextMenuButtonItem(
-          label: s.resetZoomTooltip(widget.controller.shortcutService.getShortcutLabel('resetZoom')),
+        buildItem(
+          icon: Icons.zoom_out_map_rounded,
+          label: actionLabel('resetZoom'),
+          shortcut: shortcuts.getShortcutLabel('resetZoom'),
           onPressed: () {
             params.dismissContextMenu();
             resetZoom();
           },
         ),
-      );
-      items.add(
-        ContextMenuButtonItem(
-          label: s.zoomInTooltip(widget.controller.shortcutService.getShortcutLabel('zoomIn')),
+        buildItem(
+          icon: Icons.zoom_in_rounded,
+          label: actionLabel('zoomIn'),
+          shortcut: shortcuts.getShortcutLabel('zoomIn'),
           onPressed: () {
             params.dismissContextMenu();
             zoomIn();
           },
         ),
-      );
-      items.add(
-        ContextMenuButtonItem(
-          label: s.zoomOutTooltip(widget.controller.shortcutService.getShortcutLabel('zoomOut')),
+        buildItem(
+          icon: Icons.zoom_out_rounded,
+          label: actionLabel('zoomOut'),
+          shortcut: shortcuts.getShortcutLabel('zoomOut'),
           onPressed: () {
             params.dismissContextMenu();
             zoomOut();
           },
         ),
-      );
+      ]);
+
+      // Group 3: Layout & Reading View
+      final viewGroup = <Widget>[];
+      if (widget.controller.isSourcePdfDocument) {
+        viewGroup.add(
+          buildItem(
+            icon: Icons.auto_awesome_rounded,
+            label: actionLabel('togglePdfReflow'),
+            shortcut: shortcuts.getShortcutLabel('togglePdfReflow'),
+            isSelected: widget.controller.isPdfReflowed,
+            onPressed: () {
+              params.dismissContextMenu();
+              if (!widget.controller.isReflowingPdf) {
+                widget.controller.setPdfReflowMode(!widget.controller.isPdfReflowed);
+              }
+            },
+          ),
+        );
+      }
       if (widget.controller.supportsTwoPage) {
-        items.add(
-          ContextMenuButtonItem(
-            label: s.toggleTwoPageTooltip(widget.controller.isTwoPage, widget.controller.shortcutService.getShortcutLabel('toggleTwoPage')),
+        viewGroup.add(
+          buildItem(
+            icon: widget.controller.isTwoPage ? Icons.auto_stories_rounded : Icons.menu_book_outlined,
+            label: actionLabel('toggleTwoPage'),
+            shortcut: shortcuts.getShortcutLabel('toggleTwoPage'),
+            isSelected: widget.controller.isTwoPage,
             onPressed: () {
               params.dismissContextMenu();
               widget.controller.toggleTwoPage();
@@ -2330,9 +2485,12 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         );
       }
       if (widget.controller.supportsCropMargins) {
-        items.add(
-          ContextMenuButtonItem(
-            label: s.toggleCropMarginsTooltip(widget.controller.pdfCropMargins, widget.controller.shortcutService.getShortcutLabel('toggleCropMargins')),
+        viewGroup.add(
+          buildItem(
+            icon: widget.controller.pdfCropMargins ? Icons.crop_rounded : Icons.crop_free_rounded,
+            label: actionLabel('toggleCropMargins'),
+            shortcut: shortcuts.getShortcutLabel('toggleCropMargins'),
+            isSelected: widget.controller.pdfCropMargins,
             onPressed: () {
               params.dismissContextMenu();
               widget.controller.togglePdfCropMargins();
@@ -2341,13 +2499,14 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         );
       }
       if (!widget.controller.isPdfDocument) {
-        final shortcutLabel = widget.controller.shortcutService.getShortcutLabel('toggleMode');
         final toggleModeLabel = widget.controller.isPptDocument
-            ? '${s.layoutModePptSlides} / ${s.layoutModePptNotes} ($shortcutLabel)'
-            : s.toggleModeTooltip(shortcutLabel);
-        items.add(
-          ContextMenuButtonItem(
+            ? '${s.layoutModePptSlides} / ${s.layoutModePptNotes}'
+            : actionLabel('toggleMode');
+        viewGroup.add(
+          buildItem(
+            icon: Icons.view_stream_rounded,
             label: toggleModeLabel,
+            shortcut: shortcuts.getShortcutLabel('toggleMode'),
             onPressed: () {
               params.dismissContextMenu();
               widget.controller.toggleMode();
@@ -2355,9 +2514,13 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           ),
         );
       }
-      items.add(
-        ContextMenuButtonItem(
-          label: s.toggleThemeTooltip(widget.controller.renderOptions.isDark, widget.controller.shortcutService.getShortcutLabel('toggleTheme')),
+      viewGroup.add(
+        buildItem(
+          icon: widget.controller.renderOptions.isDark
+              ? Icons.light_mode_rounded
+              : Icons.dark_mode_rounded,
+          label: actionLabel('toggleTheme'),
+          shortcut: shortcuts.getShortcutLabel('toggleTheme'),
           onPressed: () {
             params.dismissContextMenu();
             widget.controller.toggleTheme();
@@ -2365,9 +2528,12 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         ),
       );
       if (widget.onToggleSidebar != null) {
-        items.add(
-          ContextMenuButtonItem(
-            label: s.toggleSidebarTooltip(widget.controller.shortcutService.getShortcutLabel('toggleSidebar')),
+        viewGroup.add(
+          buildItem(
+            icon: Icons.view_sidebar_outlined,
+            label: actionLabel('toggleSidebar'),
+            shortcut: shortcuts.getShortcutLabel('toggleSidebar'),
+            isSelected: widget.controller.isSidebarOpen,
             onPressed: () {
               params.dismissContextMenu();
               widget.onToggleSidebar!();
@@ -2375,10 +2541,16 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           ),
         );
       }
+      groups.add(viewGroup);
+
+      // Group 4: Export & Settings
+      final footerGroup = <Widget>[];
       if (widget.onExportPdf != null) {
-        items.add(
-          ContextMenuButtonItem(
-            label: '${s.exportPdf} (${widget.controller.shortcutService.getShortcutLabel('exportPdf')})',
+        footerGroup.add(
+          buildItem(
+            icon: Icons.download_rounded,
+            label: s.exportPdf,
+            shortcut: shortcuts.getShortcutLabel('exportPdf'),
             onPressed: () {
               params.dismissContextMenu();
               widget.onExportPdf!();
@@ -2386,18 +2558,64 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           ),
         );
       }
+      footerGroup.add(
+        buildItem(
+          icon: Icons.settings_outlined,
+          label: s.settingsTitle,
+          shortcut: shortcuts.getShortcutLabel('preferences'),
+          onPressed: () {
+            params.dismissContextMenu();
+            showSettingsDialog(context, widget.controller);
+          },
+        ),
+      );
+      groups.add(footerGroup);
     }
 
-    if (items.isEmpty) return null;
+    if (groups.isEmpty) return null;
 
-    return Align(
-      alignment: Alignment.topLeft,
-      child: AdaptiveTextSelectionToolbar.buttonItems(
-        anchors: TextSelectionToolbarAnchors(
-          primaryAnchor: params.anchorA,
-          secondaryAnchor: params.anchorB,
+    final children = <Widget>[];
+    for (int i = 0; i < groups.length; i++) {
+      if (i > 0) {
+        children.add(
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 6),
+            child: Divider(
+              height: 1,
+              thickness: 1,
+              color: isDark ? const Color(0xFF383838) : const Color(0xFFE5E7EB),
+            ),
+          ),
+        );
+      }
+      children.addAll(groups[i]);
+    }
+
+    return Material(
+      color: isDark ? const Color(0xFF262626) : Colors.white,
+      elevation: 8,
+      shadowColor: Colors.black.withValues(alpha: isDark ? 0.55 : 0.18),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(
+          color: isDark ? const Color(0xFF3A3A3A) : const Color(0xFFE2E8F0),
+          width: 1,
         ),
-        buttonItems: items,
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: IntrinsicWidth(
+        stepWidth: 230,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 230, maxWidth: 300),
+          child: Padding(
+            padding: const EdgeInsets.all(5),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: children,
+            ),
+          ),
+        ),
       ),
     );
   }

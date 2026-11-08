@@ -26,19 +26,39 @@ enum SettingsTab {
   about,
 }
 
+_SettingsDialogState? _activeSettingsDialogState;
+bool _isPushingSettingsDialog = false;
+SettingsTab? _pendingSettingsTab;
+
 /// Opens the unified SettingsDialog with an optional starting tab.
+/// If a SettingsDialog is already open or being pushed, switches the existing
+/// dialog to [initialTab] instead of stacking a duplicate modal route.
 void showSettingsDialog(
   BuildContext context,
   ReaderController controller, {
   SettingsTab initialTab = SettingsTab.general,
 }) {
+  final active = _activeSettingsDialogState;
+  if (active != null && active.mounted) {
+    active.switchToTab(initialTab);
+    return;
+  }
+  if (_isPushingSettingsDialog) {
+    _pendingSettingsTab = initialTab;
+    return;
+  }
+  _isPushingSettingsDialog = true;
+  _pendingSettingsTab = null;
   showDialog(
     context: context,
     builder: (ctx) => SettingsDialog(
       controller: controller,
       initialTab: initialTab,
     ),
-  );
+  ).whenComplete(() {
+    _isPushingSettingsDialog = false;
+    _pendingSettingsTab = null;
+  });
 }
 
 class SettingsDialog extends StatefulWidget {
@@ -116,6 +136,55 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late bool _showFooterRule;
   late bool _skipFirstPage;
   late bool _marpEnabled;
+  bool _lastHasUnsavedLayoutChanges = false;
+
+  void switchToTab(SettingsTab tab) {
+    if (!mounted) return;
+    final mobileTabs = [
+      SettingsTab.general,
+      SettingsTab.layout,
+      SettingsTab.typography,
+      SettingsTab.about,
+    ];
+    final targetTab = (FormFactor.isMobilePlatform(context) && !mobileTabs.contains(tab))
+        ? SettingsTab.general
+        : tab;
+    if (_currentTab == targetTab && _listeningActionId == null) return;
+    setState(() {
+      _currentTab = targetTab;
+      _listeningActionId = null;
+      _conflictMessage = null;
+    });
+  }
+
+  void _applyPendingChangesOnClose() {
+    if (_hasUnsavedTypographyChanges) {
+      widget.controller.setTypography(
+        bodyFont: _selectedBodyFont,
+        codeFont: _selectedCodeFont,
+        fontSize: _selectedFontSize,
+        lineSpacing: _selectedLineSpacing,
+        paragraphSpacing: _selectedParagraphSpacing,
+      );
+    }
+    if (_hasUnsavedLayoutChanges) {
+      widget.controller.setPageFormat(_selectedPageFormat, updateGlobalDefault: true);
+      widget.controller.setHeaderFooterOptions(
+        headerLeft: _headerLeftController.text.trim().isEmpty ? null : _headerLeftController.text.trim(),
+        headerCenter: _headerCenterController.text.trim().isEmpty ? null : _headerCenterController.text.trim(),
+        headerRight: _headerRightController.text.trim().isEmpty ? null : _headerRightController.text.trim(),
+        footerLeft: _footerLeftController.text.trim().isEmpty ? null : _footerLeftController.text.trim(),
+        footerCenter: _footerCenterController.text.trim().isEmpty ? null : _footerCenterController.text.trim(),
+        footerRight: _footerRightController.text.trim().isEmpty ? null : _footerRightController.text.trim(),
+        enableHeader: _enableHeader,
+        enableFooter: _enableFooter,
+        showHeaderRule: _showHeaderRule,
+        showFooterRule: _showFooterRule,
+        skipFirstPageHeaderFooter: _skipFirstPage,
+        marpEnabled: _marpEnabled,
+      );
+    }
+  }
 
   bool get _hasUnsavedTypographyChanges {
     final opts = widget.controller.renderOptions;
@@ -165,6 +234,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       skipFirstPageHeaderFooter: _skipFirstPage,
       marpEnabled: _marpEnabled,
     );
+    _lastHasUnsavedLayoutChanges = false;
     setState(() {});
     try {
       final messenger = ScaffoldMessenger.maybeOf(context);
@@ -224,6 +294,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       _showFooterRule = opts.showFooterRule ?? false;
       _skipFirstPage = opts.skipFirstPageHeaderFooter ?? true;
       _marpEnabled = opts.marpEnabled ?? true;
+      _lastHasUnsavedLayoutChanges = false;
     });
   }
 
@@ -264,16 +335,21 @@ class _SettingsDialogState extends State<SettingsDialog> {
   @override
   void initState() {
     super.initState();
+    _activeSettingsDialogState = this;
+    _isPushingSettingsDialog = false;
+    final requestedTab = _pendingSettingsTab ?? widget.initialTab;
+    _pendingSettingsTab = null;
+
     final mobileTabs = [
       SettingsTab.general,
       SettingsTab.layout,
       SettingsTab.typography,
       SettingsTab.about,
     ];
-    if (FormFactor.isMobilePlatform() && !mobileTabs.contains(widget.initialTab)) {
+    if (FormFactor.isMobilePlatform() && !mobileTabs.contains(requestedTab)) {
       _currentTab = SettingsTab.general;
     } else {
-      _currentTab = widget.initialTab;
+      _currentTab = requestedTab;
     }
     if (LinuxDesktopIntegration.isSupported) {
       _desktopEntryStatus = LinuxDesktopIntegration.instance.status();
@@ -317,7 +393,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 
   void _onLayoutFieldChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    final hasChanges = _hasUnsavedLayoutChanges;
+    if (hasChanges != _lastHasUnsavedLayoutChanges) {
+      _lastHasUnsavedLayoutChanges = hasChanges;
+      setState(() {});
+    }
   }
 
   KeyEventResult _handleShortcutCaptureKeyEvent(KeyEvent event) {
@@ -358,6 +439,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
   @override
   void dispose() {
+    if (identical(_activeSettingsDialogState, this)) {
+      _activeSettingsDialogState = null;
+    }
+    _isPushingSettingsDialog = false;
     FocusManager.instance.removeEarlyKeyEventHandler(_handleShortcutCaptureKeyEvent);
     _shortcutCaptureFocusNode.dispose();
     _headerLeftController.removeListener(_onLayoutFieldChanged);
@@ -488,166 +573,169 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final isMobile = FormFactor.isMobilePlatform(context);
+    return PopScope(
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) {
+          _applyPendingChangesOnClose();
+        }
+      },
+      child: ListenableBuilder(
+        listenable: Listenable.merge([
+          widget.controller,
+          FontDownloadService.instance,
+        ]),
+        builder: (context, _) {
+          final theme = Theme.of(context);
+          final isDark = theme.brightness == Brightness.dark;
+          final isMobile = FormFactor.isMobilePlatform(context);
 
-    if (isMobile) {
-      final mobileTabs = [
-        SettingsTab.general,
-        SettingsTab.layout,
-        SettingsTab.typography,
-        SettingsTab.about,
-      ];
+          if (isMobile) {
+            final mobileTabs = [
+              SettingsTab.general,
+              SettingsTab.layout,
+              SettingsTab.typography,
+              SettingsTab.about,
+            ];
 
-      return Dialog.fullscreen(
-        backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-        child: SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Mobile Top Navigation Bar
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                child: Row(
+            return Dialog.fullscreen(
+              backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+              child: SafeArea(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back_rounded),
-                      tooltip: widget.controller.strings.close,
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        widget.controller.strings.settingsTitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                        ),
+                    // Mobile Top Navigation Bar
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      child: Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.arrow_back_rounded),
+                            tooltip: widget.controller.strings.close,
+                            onPressed: () => Navigator.of(context).pop(),
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              widget.controller.strings.settingsTitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
+                    ),
+
+                    // Mobile Horizontal Tab Chips
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                      child: Row(
+                        children: mobileTabs.map((tab) {
+                          final isSelected = _currentTab == tab;
+                          final s = widget.controller.strings;
+                          final String chipLabel;
+                          switch (tab) {
+                            case SettingsTab.general:
+                              chipLabel = s.tabGeneral;
+                              break;
+                            case SettingsTab.layout:
+                              chipLabel = s.tabLayout;
+                              break;
+                            case SettingsTab.typography:
+                              chipLabel = s.tabTypography;
+                              break;
+                            case SettingsTab.about:
+                              chipLabel = s.tabAbout;
+                              break;
+                            default:
+                              chipLabel = _getTabTitle(tab);
+                          }
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: FilterChip(
+                              selected: isSelected,
+                              label: Text(chipLabel),
+                              onSelected: (_) => setState(() => _currentTab = tab),
+                              selectedColor: theme.colorScheme.primary.withValues(alpha: 0.18),
+                              checkmarkColor: theme.colorScheme.primary,
+                              labelStyle: TextStyle(
+                                fontSize: 13,
+                                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                color: isSelected
+                                    ? theme.colorScheme.primary
+                                    : (isDark ? Colors.white70 : Colors.black87),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                    Divider(
+                      height: 1,
+                      thickness: 1,
+                      color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+                    ),
+
+                    // Tab Body (Full Width on mobile)
+                    Expanded(
+                      child: _currentTab == SettingsTab.typography
+                          ? Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                              child: _buildTypographyTab(theme, isDark),
+                            )
+                          : _currentTab == SettingsTab.layout
+                              ? Padding(
+                                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                                  child: _buildLayoutTab(theme, isDark),
+                                )
+                              : SingleChildScrollView(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                  child: _buildActiveTabBody(theme, isDark),
+                                ),
                     ),
                   ],
                 ),
               ),
+            );
+          }
 
-              // Mobile Horizontal Tab Chips
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                child: Row(
-                  children: mobileTabs.map((tab) {
-                    final isSelected = _currentTab == tab;
-                    final s = widget.controller.strings;
-                    final String chipLabel;
-                    switch (tab) {
-                      case SettingsTab.general:
-                        chipLabel = s.tabGeneral;
-                        break;
-                      case SettingsTab.layout:
-                        chipLabel = s.tabLayout;
-                        break;
-                      case SettingsTab.typography:
-                        chipLabel = s.tabTypography;
-                        break;
-                      case SettingsTab.about:
-                        chipLabel = s.tabAbout;
-                        break;
-                      default:
-                        chipLabel = _getTabTitle(tab);
-                    }
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: FilterChip(
-                        selected: isSelected,
-                        label: Text(chipLabel),
-                        onSelected: (_) => setState(() => _currentTab = tab),
-                        selectedColor: theme.colorScheme.primary.withValues(alpha: 0.18),
-                        checkmarkColor: theme.colorScheme.primary,
-                        labelStyle: TextStyle(
-                          fontSize: 13,
-                          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                          color: isSelected
-                              ? theme.colorScheme.primary
-                              : (isDark ? Colors.white70 : Colors.black87),
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
+          return Dialog(
+            backgroundColor: isDark ? const Color(0xFF222222) : Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: Container(
+              width: 880,
+              height: 640,
+              constraints: const BoxConstraints(maxWidth: 960, maxHeight: 720),
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
               ),
-              Divider(
-                height: 1,
-                thickness: 1,
-                color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
-              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Left Navigation Sidebar
+                  _buildSidebar(theme, isDark),
 
-              // Tab Body (Full Width on mobile)
-              Expanded(
-                child: ListenableBuilder(
-                  listenable: Listenable.merge([
-                    widget.controller,
-                    FontDownloadService.instance,
-                  ]),
-                  builder: (context, _) => _currentTab == SettingsTab.typography
-                      ? Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                          child: _buildTypographyTab(theme, isDark),
-                        )
-                      : _currentTab == SettingsTab.layout
-                          ? Padding(
-                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                              child: _buildLayoutTab(theme, isDark),
-                            )
-                          : SingleChildScrollView(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                              child: _buildActiveTabBody(theme, isDark),
-                            ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
+                  // Vertical Divider
+                  VerticalDivider(
+                    width: 1,
+                    thickness: 1,
+                    color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+                  ),
 
-    return Dialog(
-      backgroundColor: isDark ? const Color(0xFF222222) : Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        width: 880,
-        height: 640,
-        constraints: const BoxConstraints(maxWidth: 960, maxHeight: 720),
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Left Navigation Sidebar
-            _buildSidebar(theme, isDark),
-
-            // Vertical Divider
-            VerticalDivider(
-              width: 1,
-              thickness: 1,
-              color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
-            ),
-
-            // Right Tab Content
-            Expanded(
-              child: ListenableBuilder(
-                listenable: Listenable.merge([
-                  widget.controller,
-                  FontDownloadService.instance,
-                ]),
-                builder: (context, _) => _buildTabContent(theme, isDark),
+                  // Right Tab Content
+                  Expanded(
+                    child: _buildTabContent(theme, isDark),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }

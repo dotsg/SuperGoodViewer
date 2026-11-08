@@ -282,6 +282,10 @@ void main() {
       const allowedFiles = {
         // Simplified defaults and category keys, translated per id by AppStrings.
         'lib/services/shortcut_service.dart',
+        // Document-structure regex patterns for CJK headings/bylines/ads in PDF reflow.
+        'lib/services/pdf_reflow_service.dart',
+        // Release-notes markdown header cleanup regex.
+        'lib/models/update_info.dart',
       };
       bool allowedLine(String line) =>
           line.contains('│') || // CJK alignment specimen in the typography tab

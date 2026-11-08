@@ -72,6 +72,7 @@ class _WorkspaceViewState extends State<WorkspaceView> with WidgetsBindingObserv
   bool get _isSidebarOpen => widget.controller.isSidebarOpen;
   bool _isToolbarVisible = true;
   bool _isHoveringToolbar = false;
+  bool _isToolbarMenuOpen = false;
   Timer? _toolbarTimer;
   final GlobalKey<PdfCanvasViewState> _pdfCanvasKey = GlobalKey<PdfCanvasViewState>();
   final GlobalKey<PresentationViewState> _presentationKey = GlobalKey<PresentationViewState>();
@@ -321,6 +322,10 @@ class _WorkspaceViewState extends State<WorkspaceView> with WidgetsBindingObserv
       if (path != null && path.isNotEmpty) {
         await widget.controller.openFile(path);
       }
+    } else if (call.method == 'showPreferencesDialog') {
+      if (mounted) {
+        showSettingsDialog(context, widget.controller, initialTab: SettingsTab.general);
+      }
     } else if (call.method == 'showCliDialog') {
       if (mounted) {
         showSettingsDialog(context, widget.controller, initialTab: SettingsTab.cli);
@@ -433,8 +438,9 @@ class _WorkspaceViewState extends State<WorkspaceView> with WidgetsBindingObserv
 
   void _startToolbarTimer() {
     _toolbarTimer?.cancel();
+    if (_isToolbarMenuOpen) return;
     _toolbarTimer = Timer(const Duration(milliseconds: 3500), () {
-      if (mounted && !_isHoveringToolbar) {
+      if (mounted && !_isHoveringToolbar && !_isToolbarMenuOpen) {
         setState(() {
           _isToolbarVisible = false;
         });
@@ -443,7 +449,7 @@ class _WorkspaceViewState extends State<WorkspaceView> with WidgetsBindingObserv
   }
 
   void _hideToolbar() {
-    if (_isHoveringToolbar) return;
+    if (_isHoveringToolbar || _isToolbarMenuOpen) return;
     _toolbarTimer?.cancel();
     if (_isToolbarVisible) {
       setState(() {
@@ -1955,6 +1961,14 @@ class _WorkspaceViewState extends State<WorkspaceView> with WidgetsBindingObserv
                   shortcutLabel: controller.shortcutService.getShortcutLabel('toggleMode'),
                   onSelectFormat: controller.setPageFormat,
                   onToggle: controller.toggleMode,
+                  onMenuOpened: () {
+                    _isToolbarMenuOpen = true;
+                    _toolbarTimer?.cancel();
+                  },
+                  onMenuClosed: () {
+                    _isToolbarMenuOpen = false;
+                    if (!_isHoveringToolbar) _startToolbarTimer();
+                  },
                   isDark: isDark,
                   strings: controller.strings,
                 ),
@@ -2044,6 +2058,14 @@ class _WorkspaceViewState extends State<WorkspaceView> with WidgetsBindingObserv
                 isDark: isDark,
                 strings: controller.strings,
                 shortcuts: controller.shortcutService,
+                onMenuOpened: () {
+                  _isToolbarMenuOpen = true;
+                  _toolbarTimer?.cancel();
+                },
+                onMenuClosed: () {
+                  _isToolbarMenuOpen = false;
+                  if (!_isHoveringToolbar) _startToolbarTimer();
+                },
                 onZoomSelected: (zoom) {
                   if (zoom == -1.0) {
                     _handleFitWidth();
@@ -2154,6 +2176,8 @@ class _FormatSelectorPill extends StatelessWidget {
   final bool isPptDocument;
   final ValueChanged<String> onSelectFormat;
   final VoidCallback onToggle;
+  final VoidCallback? onMenuOpened;
+  final VoidCallback? onMenuClosed;
   final bool isDark;
   final String? shortcutLabel;
   final AppStrings strings;
@@ -2164,6 +2188,8 @@ class _FormatSelectorPill extends StatelessWidget {
     this.isPptDocument = false,
     required this.onSelectFormat,
     required this.onToggle,
+    this.onMenuOpened,
+    this.onMenuClosed,
     required this.isDark,
     required this.strings,
     this.shortcutLabel,
@@ -2242,7 +2268,12 @@ class _FormatSelectorPill extends StatelessWidget {
             tooltip: strings.layoutSelectTooltip,
             initialValue: format,
             offset: const Offset(0, -230),
-            onSelected: onSelectFormat,
+            onOpened: onMenuOpened,
+            onCanceled: onMenuClosed,
+            onSelected: (val) {
+              onMenuClosed?.call();
+              onSelectFormat(val);
+            },
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
             icon: Icon(
@@ -2367,6 +2398,8 @@ class _ZoomDropdownBadge extends StatelessWidget {
   final AutoFitMode autoFitMode;
   final bool isDark;
   final ValueChanged<double> onZoomSelected;
+  final VoidCallback? onMenuOpened;
+  final VoidCallback? onMenuClosed;
   final AppStrings strings;
   final ShortcutService shortcuts;
 
@@ -2376,6 +2409,8 @@ class _ZoomDropdownBadge extends StatelessWidget {
     required this.isDark,
     required this.strings,
     required this.shortcuts,
+    this.onMenuOpened,
+    this.onMenuClosed,
     required this.onZoomSelected,
   });
 
@@ -2392,7 +2427,12 @@ class _ZoomDropdownBadge extends StatelessWidget {
       tooltip: strings.zoomPresetsTooltip,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       color: isDark ? const Color(0xFF262626) : Colors.white,
-      onSelected: onZoomSelected,
+      onOpened: onMenuOpened,
+      onCanceled: onMenuClosed,
+      onSelected: (val) {
+        onMenuClosed?.call();
+        onZoomSelected(val);
+      },
       itemBuilder: (context) => [
         PopupMenuItem<double>(
           value: -1.0,

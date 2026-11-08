@@ -885,7 +885,7 @@ class _SidebarViewState extends State<SidebarView> {
                     child: Tooltip(
                       message: isMobileDrawer
                           ? controller.strings.settingsTitle
-                          : controller.strings.settingsTooltip(controller.shortcutService.getShortcutLabel('openSettings')),
+                          : controller.strings.settingsTooltip(controller.shortcutService.getShortcutLabel('preferences')),
                       child: InkWell(
                         borderRadius: BorderRadius.circular(isMobileDrawer ? 10 : 6),
                         onTap: () => showSettingsDialog(context, controller),

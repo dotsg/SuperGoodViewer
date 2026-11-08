@@ -232,7 +232,7 @@ class ShortcutService extends ChangeNotifier {
       name: '自定义快捷键面板',
       category: '排版与设置',
       description: '打开快捷键设置面板，可随心修改按键',
-      defaultKey: LogicalKeyboardKey.comma,
+      defaultKey: LogicalKeyboardKey.slash,
     ),
   ];
 

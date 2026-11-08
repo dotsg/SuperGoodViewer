@@ -270,7 +270,10 @@ class NativeCliService {
   static Future<void> setMenuTitles(AppStrings s) async {
     if (!Platform.isMacOS) return;
     try {
-      await channel.invokeMethod('setMenuTitles', {'installCli': s.cliMenuInstall});
+      await channel.invokeMethod('setMenuTitles', {
+        'installCli': s.cliMenuInstall,
+        'preferences': '${s.settingsTitle}…',
+      });
     } catch (_) {}
   }
 

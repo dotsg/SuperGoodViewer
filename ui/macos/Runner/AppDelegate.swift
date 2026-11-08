@@ -7,6 +7,7 @@ class AppDelegate: FlutterAppDelegate {
   var appChannel: FlutterMethodChannel?
   var pendingFileToOpen: String?
   private var installCliMenuItem: NSMenuItem?
+  private var preferencesMenuItem: NSMenuItem?
 
   // Dart owns the UI language and pushes localized titles through
   // "setMenuTitles"; until then the OS language picks the text.
@@ -26,6 +27,14 @@ class AppDelegate: FlutterAppDelegate {
     case .zhHans: return "安装 sgv 命令行工具…"
     case .zhHant: return "安裝 sgv 命令列工具…"
     case .en: return "Install sgv Command Line Tool…"
+    }
+  }
+
+  private static var defaultPreferencesTitle: String {
+    switch systemMenuLanguage {
+    case .zhHans: return "偏好设置…"
+    case .zhHant: return "偏好設定…"
+    case .en: return "Preferences…"
     }
   }
 
@@ -164,9 +173,13 @@ class AppDelegate: FlutterAppDelegate {
       case "uninstallCli":
         self.uninstallCli(result: result)
       case "setMenuTitles":
-        if let titles = call.arguments as? [String: String],
-           let installTitle = titles["installCli"] {
-          self.installCliMenuItem?.title = installTitle
+        if let titles = call.arguments as? [String: String] {
+          if let installTitle = titles["installCli"] {
+            self.installCliMenuItem?.title = installTitle
+          }
+          if let prefTitle = titles["preferences"] {
+            self.preferencesMenuItem?.title = prefTitle
+          }
         }
         result(nil)
       default:
@@ -183,6 +196,13 @@ class AppDelegate: FlutterAppDelegate {
   private func setupMenuBar() {
     guard let appMenu = NSApp.mainMenu?.items.first?.submenu else { return }
 
+    if let prefItem = appMenu.items.first(where: { $0.keyEquivalent == "," }) {
+      prefItem.title = Self.defaultPreferencesTitle
+      prefItem.target = self
+      prefItem.action = #selector(menuPreferencesAction)
+      preferencesMenuItem = prefItem
+    }
+
     if appMenu.items.contains(where: { $0.action == #selector(menuInstallCliAction) }) {
       return
     }
@@ -197,6 +217,11 @@ class AppDelegate: FlutterAppDelegate {
 
     let insertIndex = min(1, appMenu.items.count)
     appMenu.insertItem(installItem, at: insertIndex)
+  }
+
+  @objc private func menuPreferencesAction() {
+    NSApp.activate(ignoringOtherApps: true)
+    appChannel?.invokeMethod("showPreferencesDialog", arguments: nil)
   }
 
   @objc private func menuInstallCliAction() {
