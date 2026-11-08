@@ -375,7 +375,7 @@ class _PdfiumPageInspector {
             }
           }
 
-          final imageRects = <Rect>[];
+          final rawImageTiles = <Rect>[];
           final horizontalRules = <({double y, double left, double right})>[];
           final nObjs = _fpdfPageCountObjects(fpdfPage);
           final fL = arena<ffi.Float>();
@@ -402,11 +402,8 @@ class _PdfiumPageInspector {
               math.max(top, bottom),
             );
             if (objType == 3) {
-              if (rect.width >= 48.0 && rect.height >= 48.0) {
-                final aspect = rect.width / rect.height;
-                if (aspect >= 0.15 && aspect <= 7.5) {
-                  imageRects.add(rect);
-                }
+              if (rect.width >= 12.0 && rect.height >= 12.0) {
+                rawImageTiles.add(rect);
               }
             } else if (objType == 2 && rect.width >= 18.0) {
               if (rect.height <= 4.5) {
@@ -427,6 +424,36 @@ class _PdfiumPageInspector {
                   left: rect.left,
                   right: rect.right,
                 ));
+              }
+            }
+          }
+
+          // Merge touching/overlapping image tiles before filtering by composite figure size
+          final mergedTiles = List<Rect>.from(rawImageTiles);
+          bool mergedAny = true;
+          while (mergedAny && mergedTiles.length > 1) {
+            mergedAny = false;
+            for (var i = 0; i < mergedTiles.length; i++) {
+              for (var j = i + 1; j < mergedTiles.length; j++) {
+                if (mergedTiles[i].inflate(1.0).overlaps(mergedTiles[j])) {
+                  mergedTiles[i] = mergedTiles[i].expandToInclude(mergedTiles[j]);
+                  mergedTiles.removeAt(j);
+                  mergedAny = true;
+                  break;
+                }
+              }
+              if (mergedAny) break;
+            }
+          }
+
+          final imageRects = <Rect>[];
+          for (final rect in mergedTiles) {
+            if (rect.width >= 34.0 &&
+                rect.height >= 34.0 &&
+                rect.width * rect.height >= 1350.0) {
+              final aspect = rect.width / rect.height;
+              if (aspect >= 0.14 && aspect <= 7.5) {
+                imageRects.add(rect);
               }
             }
           }
@@ -1760,9 +1787,10 @@ class PdfReflowService {
       titleSize = largerSizes.last;
     }
 
-    // Extract standalone embedded figures (up to 24 per document and 3.5MB total base64 budget)
-    const maxDocumentFigures = 24;
-    const maxDocumentFigureChars = 3500000;
+    // Extract standalone embedded figures (up to 600 per document, 16 per page, and 60MB total base64 budget)
+    const maxDocumentFigures = 600;
+    const maxFiguresPerPage = 16;
+    const maxDocumentFigureChars = 60000000;
     final pageFiguresList = List<List<({Rect rect, String markdownImage})>>.generate(
       doc.pages.length,
       (_) => [],
@@ -1786,7 +1814,7 @@ class PdfReflowService {
         page,
         rawRects,
         allPageLines,
-        remainingQuota: maxDocumentFigures - extractedFigureCount,
+        remainingQuota: math.min(maxFiguresPerPage, maxDocumentFigures - extractedFigureCount),
       );
       final keptFigures = <({Rect rect, String markdownImage})>[];
       for (final fig in figures) {
@@ -1872,14 +1900,44 @@ class PdfReflowService {
           !lowercaseStartRegex.hasMatch(firstPageLineText) &&
           (pageAnalyses[pno - 1].isMultiColumn || pageAnalyses[pno + 1].isMultiColumn);
 
-      void emitDueBlocks(double upToY) {
+      void emitDueBlocks(double upToY, {int? curRegionIdx}) {
+        bool isBlockDueInRegion(Rect rect) {
+          if (rect.top > upToY) return false;
+          if (curRegionIdx == null || !analysis.isMultiColumn) return true;
+          final curRegion = regions[curRegionIdx];
+          if (curRegion.isBottomSpanning) return true;
+
+          if (rect.left >= curRegion.regionBounds.right - 8.0) {
+            final overlapsRightCol = regions.skip(curRegionIdx + 1).any(
+                  (nr) =>
+                      !nr.isBottomSpanning &&
+                      rect.right > nr.regionBounds.left + 8.0 &&
+                      rect.left < nr.regionBounds.right - 8.0,
+                );
+            if (overlapsRightCol) return false;
+          }
+
+          final hasLaterColAbove = regions.skip(curRegionIdx + 1).any(
+                (nr) =>
+                    !nr.isBottomSpanning &&
+                    rect.right > nr.regionBounds.left + 12.0 &&
+                    rect.left < nr.regionBounds.right - 12.0 &&
+                    nr.regionBounds.top < rect.top - 8.0,
+              );
+          if (hasLaterColAbove) return false;
+
+          return true;
+        }
+
         final targetList = deferFlushedBlocks ? deferredElements : elements;
         while (true) {
-          final hasFig = pendingFigures.isNotEmpty && pendingFigures.first.rect.top <= upToY;
-          final hasTab = pendingTables.isNotEmpty && pendingTables.first.rect.top <= upToY;
+          final figIdx = pendingFigures.indexWhere((f) => isBlockDueInRegion(f.rect));
+          final tabIdx = pendingTables.indexWhere((t) => isBlockDueInRegion(t.rect));
+          final hasFig = figIdx != -1;
+          final hasTab = tabIdx != -1;
           if (!hasFig && !hasTab) break;
-          if (hasTab && (!hasFig || pendingTables.first.rect.top <= pendingFigures.first.rect.top)) {
-            final tab = pendingTables.removeAt(0);
+          if (hasTab && (!hasFig || pendingTables[tabIdx].rect.top <= pendingFigures[figIdx].rect.top)) {
+            final tab = pendingTables.removeAt(tabIdx);
             targetList.add(ReflowElement(
               type: ReflowElementType.table,
               text: tab.markdownTable,
@@ -1887,7 +1945,7 @@ class PdfReflowService {
               pageNumber: pno + 1,
             ));
           } else {
-            final fig = pendingFigures.removeAt(0);
+            final fig = pendingFigures.removeAt(figIdx);
             targetList.add(ReflowElement(
               type: ReflowElementType.image,
               text: fig.markdownImage,
@@ -1913,7 +1971,8 @@ class PdfReflowService {
         continue;
       }
 
-      for (final region in regions) {
+      for (var rIdx = 0; rIdx < regions.length; rIdx++) {
+        final region = regions[rIdx];
         final lines = region.lines;
         if (lines.isEmpty) continue;
 
@@ -1930,7 +1989,10 @@ class PdfReflowService {
           savedParagraph = curParagraph;
           curParagraph = null;
           deferFlushedBlocks = true;
-          emitDueBlocks(region.regionBounds.top + 12.0);
+          emitDueBlocks(region.regionBounds.top + 12.0, curRegionIdx: rIdx);
+        } else if (region.isBottomSpanning || (curParagraph == null && curBullet == null)) {
+          flushBlock();
+          emitDueBlocks(region.regionBounds.top + 12.0, curRegionIdx: rIdx);
         }
 
         // Compute base left margin of body lines in this column/region for first-line-indent detection
@@ -1959,7 +2021,7 @@ class PdfReflowService {
           // If a table starts above this line, flush any open block and emit the table first
           if (pendingTables.isNotEmpty && pendingTables.first.rect.top <= line.bounds.top) {
             flushBlock();
-            emitDueBlocks(line.bounds.top);
+            emitDueBlocks(line.bounds.top, curRegionIdx: rIdx);
           }
 
           // Skip isolated page numbers (in top 8% / bottom 10% margin or multi-line regions)
@@ -1970,7 +2032,7 @@ class PdfReflowService {
               (lines.length > 2 || isNearPageMargin)) {
             if (curParagraph != null && _endsWithParagraphPunctuation(curParagraph!.text)) {
               flushBlock();
-              emitDueBlocks(line.bounds.bottom);
+              emitDueBlocks(line.bounds.bottom, curRegionIdx: rIdx);
             }
             continue;
           }
@@ -2013,6 +2075,10 @@ class PdfReflowService {
                     (i == 0 && nextGap > bodyHeight * 0.85) ||
                     (capEnd == lines.length - 1 && isLargeVerticalGap));
             if (isQuotedCartoonCaption || isSeparatedItalicCaption) {
+              final prevDefer = deferFlushedBlocks;
+              deferFlushedBlocks = true;
+              emitDueBlocks(line.bounds.top + 12.0, curRegionIdx: rIdx);
+              deferFlushedBlocks = prevDefer;
               deferredElements.add(ReflowElement(
                 type: ReflowElementType.paragraph,
                 text: capText.replaceAll('\u00AD', ''),
@@ -2052,7 +2118,7 @@ class PdfReflowService {
               maxSize >= math.min(titleSize * 0.94, bodyHeight * 1.42) &&
               visibleLineText.length < 140) {
             flushBlock();
-            emitDueBlocks(line.bounds.top);
+            emitDueBlocks(line.bounds.top, curRegionIdx: rIdx);
             if (elements.isNotEmpty &&
                 elements.last.type == ReflowElementType.title &&
                 elements.last.pageNumber == 1) {
@@ -2093,7 +2159,7 @@ class PdfReflowService {
                   isAllCapsSection ||
                   (maxSize >= bodyHeight * 1.08 && h1SectionRegex.hasMatch(visibleLineText)))) {
             flushBlock();
-            emitDueBlocks(line.bounds.top);
+            emitDueBlocks(line.bounds.top, curRegionIdx: rIdx);
             final targetList = deferFlushedBlocks ? deferredElements : elements;
             if (targetList.isNotEmpty &&
                 targetList.last.type == ReflowElementType.h1 &&
@@ -2127,7 +2193,7 @@ class PdfReflowService {
               (maxSize >= h2HeightThreshold ||
                   (maxSize >= bodyHeight * 0.96 && h2SectionRegex.hasMatch(visibleLineText)))) {
             flushBlock();
-            emitDueBlocks(line.bounds.top);
+            emitDueBlocks(line.bounds.top, curRegionIdx: rIdx);
             final targetList = deferFlushedBlocks ? deferredElements : elements;
             targetList.add(ReflowElement(
               type: ReflowElementType.h2,
@@ -2145,7 +2211,7 @@ class PdfReflowService {
               ((maxSize >= math.min(h3Size * 0.96, bodyHeight * 1.09) && isLargeVerticalGap) ||
                   (line.isAllBold && circledHeadingRegex.hasMatch(visibleLineText)))) {
             flushBlock();
-            emitDueBlocks(line.bounds.top);
+            emitDueBlocks(line.bounds.top, curRegionIdx: rIdx);
             final targetList = deferFlushedBlocks ? deferredElements : elements;
             targetList.add(ReflowElement(
               type: ReflowElementType.h3,
@@ -2160,7 +2226,7 @@ class PdfReflowService {
           final bulletMatch = bulletRegex.firstMatch(lineText);
           if (bulletMatch != null) {
             flushBlock();
-            emitDueBlocks(line.bounds.top);
+            emitDueBlocks(line.bounds.top, curRegionIdx: rIdx);
             curBullet = ReflowElement(
               type: ReflowElementType.bullet,
               text: bulletMatch.group(1)!.trim(),
@@ -2173,7 +2239,7 @@ class PdfReflowService {
           final orderedMatch = orderedItemRegex.firstMatch(lineText);
           if (orderedMatch != null && maxSize <= bodyHeight * 1.08) {
             flushBlock();
-            emitDueBlocks(line.bounds.top);
+            emitDueBlocks(line.bounds.top, curRegionIdx: rIdx);
             curBullet = ReflowElement(
               type: ReflowElementType.orderedItem,
               text: lineText,
@@ -2197,12 +2263,14 @@ class PdfReflowService {
               line.startsParagraph ||
               isLargeVerticalGap) {
             flushBlock();
-            emitDueBlocks(line.bounds.top);
+            emitDueBlocks(line.bounds.top, curRegionIdx: rIdx);
           } else if (curParagraph != null &&
               (isFirstLineIndented || prevWasShortLine) &&
               _endsWithParagraphPunctuation(curParagraph!.text)) {
             flushBlock();
-            emitDueBlocks(line.bounds.top);
+            emitDueBlocks(line.bounds.top, curRegionIdx: rIdx);
+          } else if (curParagraph == null && curBullet == null) {
+            emitDueBlocks(line.bounds.top, curRegionIdx: rIdx);
           }
 
           if (curBullet != null) {
@@ -2250,13 +2318,13 @@ class PdfReflowService {
         if (holdCrossPageSentence) {
           flushBlock();
           deferFlushedBlocks = false;
-          emitDueBlocks(region.regionBounds.bottom + 20.0);
+          emitDueBlocks(region.regionBounds.bottom + 20.0, curRegionIdx: rIdx);
           curParagraph = savedParagraph;
         } else if (region.isBottomSpanning ||
             curParagraphForceFlushNext ||
             (curParagraph != null && _endsWithParagraphPunctuation(curParagraph!.text))) {
           flushBlock();
-          emitDueBlocks(region.regionBounds.bottom + 20.0);
+          emitDueBlocks(region.regionBounds.bottom + 20.0, curRegionIdx: rIdx);
         }
       }
 
@@ -2370,21 +2438,29 @@ class PdfReflowService {
   }) async {
     if (rawImageRects.isEmpty || remainingQuota <= 0) return const [];
 
-    // Filter out background images/templates that have >2 body text lines overlapping their interior
+    // Filter out background images/templates that have dense body text or tables overlapping their interior,
+    // while keeping large editorial illustrations that only have a few overlaid display/caption lines.
     final candidates = <Rect>[];
     for (final r in rawImageRects) {
       final interior = r.deflate(math.min(12.0, math.min(r.width, r.height) * 0.12));
       int overlappingLines = 0;
+      double overlapTextArea = 0.0;
       for (final lineRect in pageLineRects) {
         if (interior.overlaps(lineRect)) {
           final inter = interior.intersect(lineRect);
           if (inter.width > 12.0 && inter.height > 4.0) {
             overlappingLines++;
-            if (overlappingLines > 2) break;
+            overlapTextArea += inter.width * inter.height;
           }
         }
       }
-      if (overlappingLines <= 2) {
+      final interiorArea = math.max(1.0, interior.width * interior.height);
+      final overlapFraction = overlapTextArea / interiorArea;
+      final isLargeIllustrationWithLightOverlay = r.width >= 180.0 &&
+          r.height >= 180.0 &&
+          overlappingLines <= 6 &&
+          overlapFraction < 0.08;
+      if (overlappingLines <= 2 || isLargeIllustrationWithLightOverlay) {
         candidates.add(r);
       }
     }
@@ -2395,7 +2471,7 @@ class PdfReflowService {
     for (final cand in candidates) {
       bool combined = false;
       for (var i = 0; i < merged.length; i++) {
-        if (merged[i].inflate(4.0).overlaps(cand)) {
+        if (merged[i].inflate(1.0).overlaps(cand)) {
           merged[i] = merged[i].expandToInclude(cand);
           combined = true;
           break;
@@ -2406,15 +2482,21 @@ class PdfReflowService {
       }
     }
 
-    merged.sort((a, b) => a.top.compareTo(b.top));
+    merged.sort((a, b) {
+      if ((a.top - b.top).abs() <= 16.0) {
+        return a.left.compareTo(b.left);
+      }
+      return a.top.compareTo(b.top);
+    });
     final results = <({Rect rect, String markdownImage})>[];
 
     for (final figRect in merged) {
       if (results.length >= remainingQuota) break;
+      // Target Mobile Portrait (390x780pt, 350pt body width) at ~1.5x clarity (up to 520px)
       final maxDim = math.max(figRect.width, figRect.height);
-      final scale = (560.0 / maxDim).clamp(0.75, 1.5);
-      final targetW = (figRect.width * scale).round().clamp(32, 720);
-      final targetH = (figRect.height * scale).round().clamp(32, 720);
+      final scale = (440.0 / maxDim).clamp(0.75, 1.35);
+      final targetW = (figRect.width * scale).round().clamp(32, 520);
+      final targetH = (figRect.height * scale).round().clamp(32, 520);
       final fullW = page.width * (targetW / figRect.width);
       final fullH = page.height * (targetH / figRect.height);
 
@@ -2483,27 +2565,68 @@ class PdfReflowService {
     ]);
   }
 
+  @pragma('vm:prefer-inline')
+  static int _paethPredictor(int a, int b, int c) {
+    final p = a + b - c;
+    final pa = (p - a).abs();
+    final pb = (p - b).abs();
+    final pc = (p - c).abs();
+    if (pa <= pb && pa <= pc) return a;
+    if (pb <= pc) return b;
+    return c;
+  }
+
   static String? _encodePdfImageToPngDataUri(PdfImage img) {
     final w = img.width;
     final h = img.height;
     final bgra = img.pixels;
     if (w <= 0 || h <= 0 || bgra.length < w * h * 4) return null;
 
-    final rowStride = 1 + w * 3;
+    final rowBytes = w * 3;
+    final rowStride = 1 + rowBytes;
     final rawScanlines = Uint8List(h * rowStride);
+    var prevRow = Uint8List(rowBytes);
+    var curRow = Uint8List(rowBytes);
     var srcIdx = 0;
     var dstIdx = 0;
     for (var y = 0; y < h; y++) {
-      rawScanlines[dstIdx++] = 0; // Filter type 0 (None)
+      rawScanlines[dstIdx++] = 4; // Filter type 4 (Paeth)
+      var prevR = 0;
+      var prevG = 0;
+      var prevB = 0;
+      var upLeftR = 0;
+      var upLeftG = 0;
+      var upLeftB = 0;
+      var colIdx = 0;
       for (var x = 0; x < w; x++) {
         final b = bgra[srcIdx];
         final g = bgra[srcIdx + 1];
         final r = bgra[srcIdx + 2];
         srcIdx += 4;
-        rawScanlines[dstIdx++] = r;
-        rawScanlines[dstIdx++] = g;
-        rawScanlines[dstIdx++] = b;
+
+        final upR = prevRow[colIdx];
+        final upG = prevRow[colIdx + 1];
+        final upB = prevRow[colIdx + 2];
+
+        rawScanlines[dstIdx++] = (r - _paethPredictor(prevR, upR, upLeftR)) & 0xFF;
+        rawScanlines[dstIdx++] = (g - _paethPredictor(prevG, upG, upLeftG)) & 0xFF;
+        rawScanlines[dstIdx++] = (b - _paethPredictor(prevB, upB, upLeftB)) & 0xFF;
+
+        curRow[colIdx] = r;
+        curRow[colIdx + 1] = g;
+        curRow[colIdx + 2] = b;
+        colIdx += 3;
+
+        prevR = r;
+        prevG = g;
+        prevB = b;
+        upLeftR = upR;
+        upLeftG = upG;
+        upLeftB = upB;
       }
+      final tmp = prevRow;
+      prevRow = curRow;
+      curRow = tmp;
     }
 
     final compressed = zlib.encode(rawScanlines);

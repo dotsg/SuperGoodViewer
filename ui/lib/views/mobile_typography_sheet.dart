@@ -519,8 +519,8 @@ class _MobileTypographySheetState extends State<MobileTypographySheet> {
                     ),
                     const SizedBox(height: 14),
 
-                    // Page Layout Modes (Markdown, Word, and PowerPoint documents)
-                    if (!controller.isPdfDocument) ...[
+                    // Page Layout Modes (Markdown, Word, and PowerPoint documents; Reflowed PDFs are locked to Mobile Portrait)
+                    if (!controller.isPdfDocument && !controller.isPdfReflowed) ...[
                       Text(
                         strings.tabLayoutTitle,
                         style: TextStyle(

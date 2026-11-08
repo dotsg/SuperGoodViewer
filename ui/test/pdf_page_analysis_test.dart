@@ -365,7 +365,22 @@ void main() {
       expect(controller.isSourcePdfDocument, isTrue);
       expect(controller.isPdfReflowed, isTrue);
       expect(controller.isPdfDocument, isFalse);
-      expect(controller.isFluidLayout, isTrue);
+      expect(controller.isFluidLayout, isFalse);
+      expect(
+        controller.renderOptions.effectivePageFormat,
+        equals(PageFormat.mobilePortrait),
+      );
+      // Attempting to switch page format while PDF reflow is active is ignored
+      controller.setPageFormat(PageFormat.a4Portrait);
+      expect(
+        controller.renderOptions.effectivePageFormat,
+        equals(PageFormat.mobilePortrait),
+      );
+      controller.toggleMode();
+      expect(
+        controller.renderOptions.effectivePageFormat,
+        equals(PageFormat.mobilePortrait),
+      );
       expect(controller.currentMarkdown, isNotEmpty);
       expect(controller.outlineItems, isNotEmpty);
 
@@ -385,7 +400,11 @@ void main() {
       final enabled = await controller.setPdfReflowMode(true);
       expect(enabled, isTrue);
       expect(controller.isPdfReflowed, isTrue);
-      expect(controller.isFluidLayout, isTrue);
+      expect(controller.isFluidLayout, isFalse);
+      expect(
+        controller.renderOptions.effectivePageFormat,
+        equals(PageFormat.mobilePortrait),
+      );
 
       final exportedBytes = await controller.getPdfBytesForExport();
       expect(exportedBytes, isNotNull);
@@ -472,11 +491,17 @@ void main() {
           result.markdown,
           contains('Brown began to gesticulate, his arms rising and falling in exasperation. He argued with Hood, growing more agitated.'),
         );
-        // Standalone figures extracted as inline PNG data URIs
+        // Standalone figures extracted as inline PNG data URIs across the entire magazine
         expect(
           result.markdown,
           contains('![Figure](data:image/png;base64,'),
         );
+        final imageElements =
+            result.elements.where((e) => e.type == ReflowElementType.image).toList();
+        expect(imageElements.length, greaterThanOrEqualTo(85));
+        // Page 45 full-page feature illustration (with light overlaid display text) and late-page figures preserved
+        expect(imageElements.any((e) => e.pageNumber == 45), isTrue);
+        expect(imageElements.where((e) => e.pageNumber >= 60).length, greaterThanOrEqualTo(20));
       } finally {
         await doc.dispose();
       }
@@ -540,6 +565,13 @@ void main() {
         documentTitle: 'SolaRee.AI',
       );
 
+      final doc = await PdfDocument.openData(bytes);
+      addTearDown(doc.dispose);
+      for (var i = 0; i < doc.pages.length; i++) {
+        final pt = await doc.pages[i].loadStructuredText();
+        final pa = PdfPageAnalysisService.computePageAnalysis(doc.pages[i], pt);
+        expect(pa.isMultiColumn, isFalse, reason: 'Page ${i + 1} of SolaRee_AI.pdf is single-column');
+      }
       expect(result.hasContent, isTrue);
       // Title & Chinese section headings
       expect(result.markdown, contains('# SolaRee.AI / 问天星'));
@@ -589,7 +621,27 @@ void main() {
         contains('| 单次功能付费 | 定盘、企业招聘分析 | 按功能单独定价 |'),
       );
 
-      // Ordered list items & Page 2 single-column reading order
+      // Ordered list items & Page 2 single-column reading order (tables stay in their exact sections)
+      final idxSec5 = result.markdown.indexOf('### 五、功能矩阵');
+      final idxTable1 = result.markdown.indexOf('| 功能 | 状态 | 粘性 | 作用 |');
+      final idxSec6 = result.markdown.indexOf('### 六、成本结构');
+      final idxSec7 = result.markdown.indexOf('### 七、商业模式与定价思路');
+      final idxTable2 = result.markdown.indexOf('| 收费模式 | 适用场景 | 参考定价 |');
+      final idxSec8 = result.markdown.indexOf('### 八、下一步计划');
+      expect(idxSec5, greaterThan(0));
+      expect(idxTable1, greaterThan(idxSec5));
+      expect(idxSec6, greaterThan(idxTable1));
+      expect(idxSec7, greaterThan(idxSec6));
+      expect(idxTable2, greaterThan(idxSec7));
+      expect(idxSec8, greaterThan(idxTable2));
+      expect(
+        result.markdown,
+        contains('几位测试用户单日调用超过 100 次，花费约 1 美元。'),
+      );
+      expect(
+        result.markdown,
+        contains('需要确定市场定位和定价后，通过试推广来验证。'),
+      );
       expect(result.markdown, contains('1. 接入支付系统，开始试运营'));
       final idxItem4 = result.markdown.indexOf('4. 观察用户是否自发将问天星作为人际关系管理工具使用，验证产品定位');
       final idxSec9 = result.markdown.indexOf('### 九、待验证的核心假设');

@@ -350,6 +350,8 @@ class PdfPageAnalysisService {
       return items.last.width;
     }
 
+    final pageWideRunCount = mergedRuns.where((r) => r.width > contentWidth * 0.70).length;
+
     // 1. Try 3-column (or 4-column) layout if 2+ valid gutters partition the page into balanced columns
     if (candidateGutters.length >= 2) {
       final minColW = math.max(90.0, contentWidth * 0.18);
@@ -396,7 +398,9 @@ class PdfPageAnalysisService {
           }
         }
         final minColRuns = colOnlyCounts.reduce(math.min);
-        bool isValidThreeCol = minColRuns >= 4 && crossAnyGutterRuns <= minColRuns * 0.65;
+        bool isValidThreeCol = minColRuns >= 4 &&
+            pageWideRunCount <= 2 &&
+            crossAnyGutterRuns <= minColRuns * 0.65;
         if (!isValidThreeCol && minColRuns >= 4) {
           final combinedRuns = mergeRunsRespectingGutters(filtered);
           final colRuns = List<List<Rect>>.generate(colBounds.length, (_) => <Rect>[]);
@@ -493,7 +497,9 @@ class PdfPageAnalysisService {
         }
       }
       final minRawColRuns = math.min(col1OnlyRuns, col2OnlyRuns);
-      bool isValidTwoCol = minRawColRuns >= 4 && crossGutterRuns <= minRawColRuns * 0.45;
+      bool isValidTwoCol = minRawColRuns >= 4 &&
+          pageWideRunCount <= 2 &&
+          crossGutterRuns <= minRawColRuns * 0.45;
       if (!isValidTwoCol) {
         final combinedRuns = mergeRunsRespectingGutters([g]);
         final col1Rects = <Rect>[];

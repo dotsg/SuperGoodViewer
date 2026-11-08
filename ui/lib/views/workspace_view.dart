@@ -1926,8 +1926,9 @@ class _WorkspaceViewState extends State<WorkspaceView> with WidgetsBindingObserv
               ),
               _PillDivider(isDark: isDark),
 
-              // Mode & Layout switcher (Fluid, Mobile, A4, 16:9, Slides/Notes, etc.) - Markdown, Reflowed PDF, Word & PowerPoint
-              if (!controller.isPdfDocument) ...[
+              // Mode & Layout switcher (Fluid, Mobile, A4, 16:9, Slides/Notes, etc.) - Markdown, Word & PowerPoint
+              // (Reflowed PDFs are locked to Mobile Portrait 390x780pt)
+              if (!controller.isPdfDocument && !controller.isPdfReflowed) ...[
                 _FormatSelectorPill(
                   format: controller.renderOptions.effectivePageFormat,
                   isWordDocument: controller.isWordDocument,

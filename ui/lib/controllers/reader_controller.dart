@@ -273,6 +273,12 @@ class ReaderController extends ChangeNotifier {
   RenderOptions get globalRenderOptions => _renderOptions;
 
   RenderOptions _optionsFor(DocumentSession doc) {
+    if (doc.isPdfReflowed) {
+      return _renderOptions.copyWith(
+        pageFormat: PageFormat.mobilePortrait,
+        mode: 'paged',
+      );
+    }
     final format = doc.pageFormat;
     if (_isWord(doc)) {
       final effectiveFormat = (format ?? _renderOptions.effectivePageFormat) == PageFormat.fluid
@@ -341,7 +347,7 @@ class ReaderController extends ChangeNotifier {
   bool get restoreSession => _restoreSession;
   List<String> get recentFiles => List.unmodifiable(_recentFiles);
   Map<String, dynamic> get fontReport => _fontReport;
-  bool get isTwoPage => _isTwoPage && !isPptDocument;
+  bool get isTwoPage => _isTwoPage && !isPptDocument && !isPdfReflowed;
   bool get isSidebarOpen => _isSidebarOpen;
   String get sidebarPosition => _sidebarPosition;
   bool get isSidebarOnRight => _sidebarPosition == 'right';
@@ -363,8 +369,8 @@ class ReaderController extends ChangeNotifier {
   bool get effectivePdfCropMargins =>
       supportsCropMargins && _renderOptions.pdfCropMargins;
   bool get supportsTwoPage =>
-      !isPptDocument && (isPdfDocument || !isFluidLayout);
-  bool get supportsPresentationMode => !isWordDocument;
+      !isPptDocument && !isPdfReflowed && (isPdfDocument || !isFluidLayout);
+  bool get supportsPresentationMode => !isWordDocument && !isPdfReflowed;
 
   static const Set<String> wordExtensions = {
     '.docx',
@@ -674,6 +680,7 @@ class ReaderController extends ChangeNotifier {
       doc.isCompiling = false;
       doc.isReflowingPdf = false;
       doc.isPdfReflowed = false;
+      doc.pageFormat = null;
       doc.pdfBytes = doc.originalPdfBytes;
       doc.outlineItems = doc.originalPdfOutlines;
       doc.errorMessage = null;
@@ -720,9 +727,7 @@ class ReaderController extends ChangeNotifier {
     doc.markdown = doc.reflowMarkdownCache;
     doc.isReflowingPdf = false;
     doc.isPdfReflowed = true;
-    if (!_optionsFor(doc).isFluid) {
-      doc.pageFormat = PageFormat.fluid;
-    }
+    doc.pageFormat = PageFormat.mobilePortrait;
     doc.scrollRatio = 0.0;
     doc.scrollOffset = 0.0;
     doc.pageNumber = 1;
@@ -1985,7 +1990,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void setPageFormat(String format, {bool updateGlobalDefault = false}) {
-    if (isPdfDocument) return;
+    if (isPdfDocument || (isPdfReflowed && !updateGlobalDefault)) return;
     if (isWordDocument && !updateGlobalDefault) {
       final wordFormat = format == PageFormat.fluid
           ? PageFormat.fluid
@@ -2015,7 +2020,7 @@ class ReaderController extends ChangeNotifier {
       mode: nextMode,
       pageFormat: format,
     );
-    if (!isOfficeDocument) {
+    if (!isOfficeDocument && !isPdfReflowed) {
       _doc.pageFormat = format;
     }
     _persistDebounced();
@@ -2055,7 +2060,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void cyclePageFormat() {
-    if (isPdfDocument) return;
+    if (isPdfDocument || isPdfReflowed) return;
     if (isOfficeDocument) {
       toggleMode();
       return;
@@ -2068,7 +2073,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void toggleMode() {
-    if (isPdfDocument) return;
+    if (isPdfDocument || isPdfReflowed) return;
     if (isPptDocument) {
       final nextPptFormat = renderOptions.effectivePageFormat == PageFormat.pptNotes
           ? PageFormat.pptSlides
