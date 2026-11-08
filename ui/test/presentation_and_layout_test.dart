@@ -56,6 +56,7 @@ void main() {
     test('PageFormat constants and helpers are properly defined', () {
       expect(PageFormat.all, [
         PageFormat.fluid,
+        PageFormat.mobilePortrait,
         PageFormat.a4Portrait,
         PageFormat.a4Landscape,
         PageFormat.slide16x9,
@@ -64,6 +65,7 @@ void main() {
 
       final zhStrings = ZhHansStrings();
       expect(PageFormat.getDisplayName(PageFormat.fluid, zhStrings), contains('长卷轴'));
+      expect(PageFormat.getDisplayName(PageFormat.mobilePortrait, zhStrings), contains('手机'));
       expect(PageFormat.getDisplayName(PageFormat.a4Portrait, zhStrings), contains('A4'));
       expect(PageFormat.getDisplayName(PageFormat.a4Landscape, zhStrings), contains('横向'));
       expect(PageFormat.getDisplayName(PageFormat.slide16x9, zhStrings), contains('16:9'));
@@ -71,6 +73,7 @@ void main() {
 
       final enStrings = EnStrings();
       expect(PageFormat.getDisplayName(PageFormat.fluid, enStrings), contains('Fluid'));
+      expect(PageFormat.getDisplayName(PageFormat.mobilePortrait, enStrings), contains('Mobile'));
       expect(PageFormat.getDisplayName(PageFormat.slide16x9, enStrings), contains('16:9'));
     });
 
@@ -209,9 +212,26 @@ void main() {
       expect(json, contains('"show_footer_rule":false'));
       expect(json, contains('"skip_first_page_header_footer":true'));
       expect(json, contains('"marp_enabled":true'));
+
+      // Disabling header and footer preserves configured slots on RenderOptions
+      // while serializing empty slots and enable_header/enable_footer=false for the engine.
+      final disabledOptions = options.copyWith(
+        enableHeader: false,
+        enableFooter: false,
+      );
+      expect(disabledOptions.enableHeader, isFalse);
+      expect(disabledOptions.enableFooter, isFalse);
+      expect(disabledOptions.headerLeft, 'Company Presentation');
+      expect(disabledOptions.footerCenter, 'Page {page} of {total}');
+      final disabledJson = disabledOptions.toJsonString();
+      expect(disabledJson, contains('"enable_header":false'));
+      expect(disabledJson, contains('"enable_footer":false'));
+      expect(disabledJson, contains('"header_right":""'));
+      expect(disabledJson, contains('"footer_center":""'));
+      expect(disabledJson, contains('"show_header_rule":false'));
     });
 
-    test('ReaderController setPageFormat and cyclePageFormat cycle through all 5 formats', () {
+    test('ReaderController setPageFormat and cyclePageFormat cycle through all 6 formats', () {
       final controller = ReaderController(autoRestorePreferences: false);
       addTearDown(controller.dispose);
 
@@ -224,13 +244,16 @@ void main() {
       expect(controller.renderOptions.mode, 'paged');
       expect(controller.renderOptions.isSlide, isTrue);
 
-      // cyclePageFormat from slide16x9 -> slide4x3 -> fluid -> a4Portrait -> a4Landscape -> slide16x9
+      // cyclePageFormat from slide16x9 -> slide4x3 -> fluid -> mobilePortrait -> a4Portrait -> a4Landscape -> slide16x9
       controller.cyclePageFormat();
       expect(controller.renderOptions.effectivePageFormat, PageFormat.slide4x3);
 
       controller.cyclePageFormat();
       expect(controller.renderOptions.effectivePageFormat, PageFormat.fluid);
       expect(controller.renderOptions.isFluid, isTrue);
+
+      controller.cyclePageFormat();
+      expect(controller.renderOptions.effectivePageFormat, PageFormat.mobilePortrait);
 
       controller.cyclePageFormat();
       expect(controller.renderOptions.effectivePageFormat, PageFormat.a4Portrait);
@@ -269,10 +292,14 @@ void main() {
       controller.setHeaderFooterOptions(
         headerLeft: null,
         footerRight: null,
+        enableHeader: false,
+        enableFooter: false,
       );
 
       expect(controller.renderOptions.headerLeft, isNull);
       expect(controller.renderOptions.footerRight, isNull);
+      expect(controller.renderOptions.enableHeader, isFalse);
+      expect(controller.renderOptions.enableFooter, isFalse);
     });
 
     test('ReaderController detects Marp frontmatter on openFile and allows manual format override', () async {

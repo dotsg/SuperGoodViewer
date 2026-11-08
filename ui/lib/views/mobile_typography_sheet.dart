@@ -519,8 +519,8 @@ class _MobileTypographySheetState extends State<MobileTypographySheet> {
                     ),
                     const SizedBox(height: 14),
 
-                    // Page Layout Modes (Markdown, Word, and PowerPoint documents)
-                    if (!controller.isPdfDocument) ...[
+                    // Page Layout Modes (Markdown, Word, and PowerPoint documents; Reflowed PDFs are locked to Mobile Portrait)
+                    if (!controller.isPdfDocument && !controller.isPdfReflowed) ...[
                       Text(
                         strings.tabLayoutTitle,
                         style: TextStyle(
@@ -563,7 +563,19 @@ class _MobileTypographySheetState extends State<MobileTypographySheet> {
                                     onTap: () => controller.setPageFormat(PageFormat.fluid),
                                   ),
                                 ),
-                                const SizedBox(width: 10),
+                                if (!controller.isWordDocument) ...[
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: _LayoutModeButton(
+                                      title: strings.layoutModeMobile,
+                                      icon: Icons.smartphone_rounded,
+                                      isSelected: options.effectivePageFormat == PageFormat.mobilePortrait,
+                                      isDark: isDark,
+                                      onTap: () => controller.setPageFormat(PageFormat.mobilePortrait),
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(width: 8),
                                 Expanded(
                                   child: _LayoutModeButton(
                                     title: strings.layoutModeA4Portrait,

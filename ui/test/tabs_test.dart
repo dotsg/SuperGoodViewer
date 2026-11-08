@@ -9,6 +9,7 @@ import 'package:sogoodviewer/models/render_options.dart';
 import 'package:sogoodviewer/services/preferences_service.dart';
 import 'package:sogoodviewer/services/shortcut_service.dart';
 import 'package:sogoodviewer/views/tab_strip.dart';
+import 'package:sogoodviewer/views/workspace_view.dart';
 
 Uint8List _pdf(String marker) =>
     Uint8List.fromList(utf8.encode('%PDF-1.4\n% $marker\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n'));
@@ -297,6 +298,86 @@ void main() {
         await PreferencesService.pendingSave;
       });
     });
+
+    testWidgets('Ctrl+Tab, Ctrl+Shift+Tab, and Cmd+Shift+[/] switch tabs in WorkspaceView even when focus falls back to rootScope', (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      await tester.runAsync(() async {
+        await controller.openFile(a);
+        await controller.openFile(b);
+        await controller.openFile(c);
+      });
+      expect(controller.currentFilePath, c);
+
+      await tester.pumpWidget(MaterialApp(
+        home: WorkspaceView(
+          controller: controller,
+          enableStartupUpdateCheck: false,
+          enableSystemIntegration: false,
+        ),
+      ));
+      await tester.pump(const Duration(seconds: 4));
+
+      // Simulate focus falling back to rootScope (e.g. after NSOpenPanel or PDF view detach)
+      FocusManager.instance.rootScope.requestFocus();
+      await tester.pump();
+
+      // Press Ctrl+Tab -> wraps from gamma (index 2) to alpha (index 0)
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.tab);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.tab);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      expect(controller.currentFilePath, a);
+
+      // Press Ctrl+Tab again -> advances to beta (index 1)
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.tab);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.tab);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      expect(controller.currentFilePath, b);
+
+      // Press Ctrl+Shift+Tab -> goes back to alpha (index 0)
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.tab);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.tab);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      expect(controller.currentFilePath, a);
+
+      // Press Cmd+Shift+] -> advances to beta (index 1)
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.bracketRight);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.bracketRight);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pump();
+      expect(controller.currentFilePath, b);
+
+      // Press Cmd+Shift+[ -> goes back to alpha (index 0)
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.bracketLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.bracketLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pump();
+      expect(controller.currentFilePath, a);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.runAsync(() async {
+        controller.dispose();
+        await PreferencesService.pendingSave;
+      });
+    });
   });
 
   test('tab labels add parent folders only to tell same-named documents apart', () {
@@ -343,6 +424,20 @@ void main() {
       press(LogicalKeyboardKey.tab, shift: true);
       press(LogicalKeyboardKey.pageUp);
       expect((next, previous), (2, 2));
+
+      // Shifted braceRight / braceLeft are also bound for Cmd+Shift+] / Cmd+Shift+[
+      void pressShiftedMeta(LogicalKeyboardKey key) {
+        bindings.entries
+            .singleWhere((e) {
+              final a = e.key;
+              return a is SingleActivator && a.trigger == key && a.meta && a.shift && !a.control;
+            })
+            .value();
+      }
+
+      pressShiftedMeta(LogicalKeyboardKey.braceRight);
+      pressShiftedMeta(LogicalKeyboardKey.braceLeft);
+      expect((next, previous), (3, 3));
     }
     ShortcutService.debugIsMacLayout = null;
   });

@@ -6,6 +6,7 @@ import 'dart:ui';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import '../controllers/reader_controller.dart';
@@ -66,11 +67,12 @@ class WorkspaceView extends StatefulWidget {
   State<WorkspaceView> createState() => _WorkspaceViewState();
 }
 
-class _WorkspaceViewState extends State<WorkspaceView> {
+class _WorkspaceViewState extends State<WorkspaceView> with WidgetsBindingObserver {
   // Zen Mode: clean reading canvas by default, toolbar visible until scroll
   bool get _isSidebarOpen => widget.controller.isSidebarOpen;
   bool _isToolbarVisible = true;
   bool _isHoveringToolbar = false;
+  bool _isToolbarMenuOpen = false;
   Timer? _toolbarTimer;
   final GlobalKey<PdfCanvasViewState> _pdfCanvasKey = GlobalKey<PdfCanvasViewState>();
   final GlobalKey<PresentationViewState> _presentationKey = GlobalKey<PresentationViewState>();
@@ -100,9 +102,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     // In full screen, macOS handles traffic lights automatically on top hover.
     // Never hide standard window buttons in full screen mode.
     final show = _isFullScreen ? true : _shouldShowTitleBar;
-    try {
-      _windowChannel.invokeMethod('setTrafficLightsVisible', show);
-    } catch (_) {}
+    _windowChannel.invokeMethod('setTrafficLightsVisible', show).catchError((_) {});
   }
 
   int _currentPage = 1;
@@ -142,7 +142,9 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       _syncMenuTitles();
     });
     widget.controller.addListener(_onControllerChanged);
+    WidgetsBinding.instance.addObserver(this);
     FocusManager.instance.addListener(_reclaimLostFocus);
+    FocusManager.instance.addEarlyKeyEventHandler(_handleWorkspaceEarlyKeyEvent);
     final enableIntegration = widget.enableSystemIntegration ?? WorkspaceView.defaultEnableSystemIntegration;
     if (enableIntegration) {
       NativeCliService.channel.setMethodCallHandler(_handleNativeMethodCall);
@@ -192,9 +194,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
     if (_lastSyncedTitle != fullTitle) {
       _lastSyncedTitle = fullTitle;
-      try {
-        _windowChannel.invokeMethod('setWindowTitle', fullTitle);
-      } catch (_) {}
+      _windowChannel.invokeMethod('setWindowTitle', fullTitle).catchError((_) {});
     }
   }
 
@@ -202,6 +202,47 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
   final FocusNode _workspaceFocusNode = FocusNode(debugLabel: 'workspace');
   bool _focusCheckScheduled = false;
+  ModalRoute<dynamic>? _modalRoute;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _modalRoute = ModalRoute.of(context);
+    if (_modalRoute?.isCurrent != false) {
+      _reclaimLostFocus();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _reclaimLostFocus();
+    }
+  }
+
+  KeyEventResult _handleWorkspaceEarlyKeyEvent(KeyEvent event) {
+    if (!mounted || _modalRoute?.isCurrent == false) {
+      return KeyEventResult.ignored;
+    }
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final isTab = event.logicalKey == LogicalKeyboardKey.tab ||
+        event.physicalKey == PhysicalKeyboardKey.tab;
+    final keyboard = HardwareKeyboard.instance;
+    if (isTab &&
+        keyboard.isControlPressed &&
+        !keyboard.isMetaPressed &&
+        !keyboard.isAltPressed) {
+      if (keyboard.isShiftPressed) {
+        widget.controller.activatePreviousSession();
+      } else {
+        widget.controller.activateNextSession();
+      }
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
 
   /// The PDF viewer takes focus on clicks, and its focus node goes away when
   /// a document is swapped in (tab switch, theme or layout change, reload).
@@ -209,17 +250,29 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   /// every keyboard shortcut stops working until the user clicks the page.
   /// Take it back in that case; focus in a dialog is left alone.
   void _reclaimLostFocus() {
-    if (_focusCheckScheduled) return;
-    _focusCheckScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _focusCheckScheduled = false;
-      if (!mounted || _workspaceFocusNode.hasFocus) return;
-      if (_pdfCanvasKey.currentState?.isSearchOpen == true) return;
-      final focus = FocusManager.instance.primaryFocus;
-      if (focus == null || _workspaceFocusNode.ancestors.contains(focus)) {
-        _workspaceFocusNode.requestFocus();
-      }
-    });
+    if (!mounted) return;
+    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks) {
+      if (_focusCheckScheduled) return;
+      _focusCheckScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _focusCheckScheduled = false;
+        _performFocusReclaim();
+      });
+      WidgetsBinding.instance.scheduleFrame();
+      return;
+    }
+    _performFocusReclaim();
+  }
+
+  void _performFocusReclaim() {
+    if (!mounted || _workspaceFocusNode.hasFocus) return;
+    if (!_workspaceFocusNode.canRequestFocus || _workspaceFocusNode.context == null) return;
+    if (_modalRoute?.isCurrent == false) return;
+    if (_pdfCanvasKey.currentState?.isSearchOpen == true) return;
+    final focus = FocusManager.instance.primaryFocus;
+    if (focus == null || _workspaceFocusNode.ancestors.contains(focus)) {
+      _workspaceFocusNode.requestFocus();
+    }
   }
   String? _lastSyncedMenuLanguage;
 
@@ -269,6 +322,10 @@ class _WorkspaceViewState extends State<WorkspaceView> {
       if (path != null && path.isNotEmpty) {
         await widget.controller.openFile(path);
       }
+    } else if (call.method == 'showPreferencesDialog') {
+      if (mounted) {
+        showSettingsDialog(context, widget.controller, initialTab: SettingsTab.general);
+      }
     } else if (call.method == 'showCliDialog') {
       if (mounted) {
         showSettingsDialog(context, widget.controller, initialTab: SettingsTab.cli);
@@ -303,10 +360,13 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     _syncWindowTheme();
     _syncMenuTitles();
     _updateTrafficLights();
+    _reclaimLostFocus();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    FocusManager.instance.removeEarlyKeyEventHandler(_handleWorkspaceEarlyKeyEvent);
     FocusManager.instance.removeListener(_reclaimLostFocus);
     _workspaceFocusNode.dispose();
     if (!Platform.isAndroid && !Platform.isIOS) {
@@ -378,8 +438,9 @@ class _WorkspaceViewState extends State<WorkspaceView> {
 
   void _startToolbarTimer() {
     _toolbarTimer?.cancel();
+    if (_isToolbarMenuOpen) return;
     _toolbarTimer = Timer(const Duration(milliseconds: 3500), () {
-      if (mounted && !_isHoveringToolbar) {
+      if (mounted && !_isHoveringToolbar && !_isToolbarMenuOpen) {
         setState(() {
           _isToolbarVisible = false;
         });
@@ -388,7 +449,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
   }
 
   void _hideToolbar() {
-    if (_isHoveringToolbar) return;
+    if (_isHoveringToolbar || _isToolbarMenuOpen) return;
     _toolbarTimer?.cancel();
     if (_isToolbarVisible) {
       setState(() {
@@ -820,6 +881,29 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     ));
   }
 
+  Future<void> _handleTogglePdfReflow() async {
+    final controller = widget.controller;
+    if (!controller.isSourcePdfDocument || controller.isReflowingPdf) return;
+    final targetEnable = !controller.isPdfReflowed;
+    final ok = await controller.setPdfReflowMode(targetEnable);
+    if (!mounted) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(controller.strings.mobilePdfReflowScannedFallback),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+    _showZoomHud(
+      controller.isPdfReflowed
+          ? controller.strings.mobilePdfReflowActiveTitle
+          : controller.strings.mobilePdfReflowTitle,
+    );
+  }
+
   Future<void> _toggleFullScreen() async {
     try {
       final res = await _windowChannel.invokeMethod('toggleFullScreen');
@@ -943,6 +1027,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               onToggleTheme: controller.toggleTheme,
               onToggleTwoPage: _handleToggleTwoPage,
               onToggleCropMargins: _handleTogglePdfCropMargins,
+              onTogglePdfReflow: _handleTogglePdfReflow,
               onZoomIn: _handleZoomIn,
               onZoomOut: _handleZoomOut,
               onResetZoom: _handleResetZoom,
@@ -1103,36 +1188,39 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 child: Stack(
                   children: [
                     // Pure Edge-to-Edge PDF Canvas (always fills 100% of workspace, zero layout shifting)
-                    PdfCanvasView(
-                      key: _pdfCanvasKey,
-                      topInset: isMobile ? topPadding : (_shouldShowTitleBar ? totalTopBarHeight : 0.0),
-                      pdfBytes: controller.currentPdfBytes,
-                      documentTitle: controller.documentTitle,
-                      documentId: controller.activeSession.id,
-                      renderOptions: controller.renderOptions,
-                      isTwoPage: controller.isTwoPage,
-                      controller: controller,
-                      onUserScrolled: _hideToolbar,
-                      onScrollChanged: _handleScrollChanged,
-                      onCanvasTapped: _toggleToolbar,
-                      onMobileTap: _handleMobileTap,
-                      onOpenFile: _pickAndOpenFile,
-                      onToggleSidebar: _toggleSidebar,
-                      onExportPdf: _handleExportPdf,
-                      onZoomChanged: (zoom) {
-                        if (mounted && (zoom - _currentZoom).abs() > 0.005) {
-                          setState(() => _currentZoom = zoom);
-                        }
-                      },
-                      onPageChanged: (pageNumber, pageCount) {
-                        if (mounted && (_currentPage != pageNumber || _pageCount != pageCount)) {
-                          setState(() {
-                            _currentPage = pageNumber;
-                            _pageCount = pageCount;
-                          });
-                        }
-                      },
-                      onTextCopied: _showCopiedFeedback,
+                    RepaintBoundary(
+                      child: PdfCanvasView(
+                        key: _pdfCanvasKey,
+                        topInset: isMobile ? topPadding : (_shouldShowTitleBar ? totalTopBarHeight : 0.0),
+                        reservedTopInset: isMobile ? topPadding : (_isFullScreen ? 0.0 : totalTopBarHeight),
+                        pdfBytes: controller.currentPdfBytes,
+                        documentTitle: controller.documentTitle,
+                        documentId: controller.activeSession.id,
+                        renderOptions: controller.renderOptions,
+                        isTwoPage: controller.isTwoPage,
+                        controller: controller,
+                        onUserScrolled: _hideToolbar,
+                        onScrollChanged: _handleScrollChanged,
+                        onCanvasTapped: _toggleToolbar,
+                        onMobileTap: _handleMobileTap,
+                        onOpenFile: _pickAndOpenFile,
+                        onToggleSidebar: _toggleSidebar,
+                        onExportPdf: _handleExportPdf,
+                        onZoomChanged: (zoom) {
+                          if (mounted && (zoom - _currentZoom).abs() > 0.005) {
+                            setState(() => _currentZoom = zoom);
+                          }
+                        },
+                        onPageChanged: (pageNumber, pageCount) {
+                          if (mounted && (_currentPage != pageNumber || _pageCount != pageCount)) {
+                            setState(() {
+                              _currentPage = pageNumber;
+                              _pageCount = pageCount;
+                            });
+                          }
+                        },
+                        onTextCopied: _showCopiedFeedback,
+                      ),
                     ),
 
                     // Top Floating Unified Titlebar / Traffic Light Safe Strip
@@ -1236,12 +1324,8 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                                     curve: Curves.easeOutCubic,
                                     offset: _isToolbarVisible
                                         ? Offset.zero
-                                        : const Offset(0, 1.4),
-                                    child: AnimatedOpacity(
-                                      duration: const Duration(milliseconds: 200),
-                                      opacity: _isToolbarVisible ? 1.0 : 0.0,
-                                      child: _buildFloatingPill(context, isDark, controller),
-                                    ),
+                                        : const Offset(0, 2.0),
+                                    child: _buildFloatingPill(context, isDark, controller),
                                   ),
                                 ),
                               ),
@@ -1795,37 +1879,57 @@ class _WorkspaceViewState extends State<WorkspaceView> {
     const double pillHeight = 44.0;
     const double pillRadius = pillHeight / 2; // 22.0: Exact symmetrical semicircle pill ends
 
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(pillRadius),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.40 : 0.08),
-            blurRadius: 18,
-            offset: const Offset(0, 4),
-          ),
-        ],
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(
+        begin: _isToolbarVisible ? 1.0 : 0.0,
+        end: _isToolbarVisible ? 1.0 : 0.0,
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(pillRadius),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-          child: Container(
-            height: pillHeight,
-            padding: const EdgeInsets.symmetric(horizontal: 6),
-            decoration: BoxDecoration(
-              color: isDark ? const Color(0xD0202020) : const Color(0xE8FFFFFF),
-              borderRadius: BorderRadius.circular(pillRadius),
-              border: Border.all(
-                color: isDark ? const Color(0x33FFFFFF) : const Color(0x1F000000),
-                width: 1,
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOutCubic,
+      builder: (context, visibility, child) {
+        final blurSigma = 16.0 * visibility;
+        return Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(pillRadius),
+            boxShadow: visibility > 0.01
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: (isDark ? 0.40 : 0.08) * visibility),
+                      blurRadius: 18,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : const [],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(pillRadius),
+            child: BackdropFilter(
+              enabled: visibility > 0.01,
+              filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
+              child: Opacity(
+                opacity: visibility,
+                child: child,
               ),
             ),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
+          ),
+        );
+      },
+      child: Container(
+        height: pillHeight,
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xD0202020) : const Color(0xE8FFFFFF),
+          borderRadius: BorderRadius.circular(pillRadius),
+          border: Border.all(
+            color: isDark ? const Color(0x33FFFFFF) : const Color(0x1F000000),
+            width: 1,
+          ),
+        ),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
               // Open Local File
               _PillIconButton(
                 icon: Icons.folder_open_rounded,
@@ -1847,8 +1951,9 @@ class _WorkspaceViewState extends State<WorkspaceView> {
               ),
               _PillDivider(isDark: isDark),
 
-              // Mode & Layout switcher (Fluid, A4, 16:9, Slides/Notes, etc.) - Markdown, Word & PowerPoint
-              if (!controller.isPdfDocument) ...[
+              // Mode & Layout switcher (Fluid, Mobile, A4, 16:9, Slides/Notes, etc.) - Markdown, Word & PowerPoint
+              // (Reflowed PDFs are locked to Mobile Portrait 390x780pt)
+              if (!controller.isPdfDocument && !controller.isPdfReflowed) ...[
                 _FormatSelectorPill(
                   format: controller.renderOptions.effectivePageFormat,
                   isWordDocument: controller.isWordDocument,
@@ -1856,8 +1961,32 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                   shortcutLabel: controller.shortcutService.getShortcutLabel('toggleMode'),
                   onSelectFormat: controller.setPageFormat,
                   onToggle: controller.toggleMode,
+                  onMenuOpened: () {
+                    _isToolbarMenuOpen = true;
+                    _toolbarTimer?.cancel();
+                  },
+                  onMenuClosed: () {
+                    _isToolbarMenuOpen = false;
+                    if (!_isHoveringToolbar) _startToolbarTimer();
+                  },
                   isDark: isDark,
                   strings: controller.strings,
+                ),
+                _PillDivider(isDark: isDark),
+              ],
+
+              // PDF Smart Reflow toggle (available for any source PDF document)
+              if (controller.isSourcePdfDocument) ...[
+                _PillIconButton(
+                  key: const ValueKey('desktop_pdf_reflow_btn'),
+                  icon: Icons.auto_awesome_rounded,
+                  tooltip: controller.strings.togglePdfReflowTooltip(
+                    controller.isPdfReflowed,
+                    controller.shortcutService.getShortcutLabel('togglePdfReflow'),
+                  ),
+                  isSelected: controller.isPdfReflowed,
+                  iconSize: 17,
+                  onPressed: _handleTogglePdfReflow,
                 ),
                 _PillDivider(isDark: isDark),
               ],
@@ -1929,6 +2058,14 @@ class _WorkspaceViewState extends State<WorkspaceView> {
                 isDark: isDark,
                 strings: controller.strings,
                 shortcuts: controller.shortcutService,
+                onMenuOpened: () {
+                  _isToolbarMenuOpen = true;
+                  _toolbarTimer?.cancel();
+                },
+                onMenuClosed: () {
+                  _isToolbarMenuOpen = false;
+                  if (!_isHoveringToolbar) _startToolbarTimer();
+                },
                 onZoomSelected: (zoom) {
                   if (zoom == -1.0) {
                     _handleFitWidth();
@@ -1985,9 +2122,7 @@ class _WorkspaceViewState extends State<WorkspaceView> {
           ),
         ),
       ),
-    ),
-  ),
-);
+    );
   }
 }
 
@@ -1999,6 +2134,7 @@ class _PillIconButton extends StatelessWidget {
   final double iconSize;
 
   const _PillIconButton({
+    super.key,
     required this.icon,
     required this.tooltip,
     required this.onPressed,
@@ -2040,6 +2176,8 @@ class _FormatSelectorPill extends StatelessWidget {
   final bool isPptDocument;
   final ValueChanged<String> onSelectFormat;
   final VoidCallback onToggle;
+  final VoidCallback? onMenuOpened;
+  final VoidCallback? onMenuClosed;
   final bool isDark;
   final String? shortcutLabel;
   final AppStrings strings;
@@ -2050,6 +2188,8 @@ class _FormatSelectorPill extends StatelessWidget {
     this.isPptDocument = false,
     required this.onSelectFormat,
     required this.onToggle,
+    this.onMenuOpened,
+    this.onMenuClosed,
     required this.isDark,
     required this.strings,
     this.shortcutLabel,
@@ -2059,6 +2199,8 @@ class _FormatSelectorPill extends StatelessWidget {
     switch (fmt) {
       case PageFormat.fluid:
         return Icons.view_stream_rounded;
+      case PageFormat.mobilePortrait:
+        return Icons.smartphone_rounded;
       case PageFormat.a4Portrait:
         return Icons.description_outlined;
       case PageFormat.a4Landscape:
@@ -2126,7 +2268,12 @@ class _FormatSelectorPill extends StatelessWidget {
             tooltip: strings.layoutSelectTooltip,
             initialValue: format,
             offset: const Offset(0, -230),
-            onSelected: onSelectFormat,
+            onOpened: onMenuOpened,
+            onCanceled: onMenuClosed,
+            onSelected: (val) {
+              onMenuClosed?.call();
+              onSelectFormat(val);
+            },
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
             icon: Icon(
@@ -2167,6 +2314,17 @@ class _FormatSelectorPill extends StatelessWidget {
                     ],
                   ),
                 ),
+                if (!isWordDocument)
+                  PopupMenuItem(
+                    value: PageFormat.mobilePortrait,
+                    child: Row(
+                      children: [
+                        const Icon(Icons.smartphone_rounded, size: 16),
+                        const SizedBox(width: 8),
+                        Text(strings.layoutModeMobile),
+                      ],
+                    ),
+                  ),
                 PopupMenuItem(
                   value: PageFormat.a4Portrait,
                   child: Row(
@@ -2240,6 +2398,8 @@ class _ZoomDropdownBadge extends StatelessWidget {
   final AutoFitMode autoFitMode;
   final bool isDark;
   final ValueChanged<double> onZoomSelected;
+  final VoidCallback? onMenuOpened;
+  final VoidCallback? onMenuClosed;
   final AppStrings strings;
   final ShortcutService shortcuts;
 
@@ -2249,6 +2409,8 @@ class _ZoomDropdownBadge extends StatelessWidget {
     required this.isDark,
     required this.strings,
     required this.shortcuts,
+    this.onMenuOpened,
+    this.onMenuClosed,
     required this.onZoomSelected,
   });
 
@@ -2265,7 +2427,12 @@ class _ZoomDropdownBadge extends StatelessWidget {
       tooltip: strings.zoomPresetsTooltip,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       color: isDark ? const Color(0xFF262626) : Colors.white,
-      onSelected: onZoomSelected,
+      onOpened: onMenuOpened,
+      onCanceled: onMenuClosed,
+      onSelected: (val) {
+        onMenuClosed?.call();
+        onZoomSelected(val);
+      },
       itemBuilder: (context) => [
         PopupMenuItem<double>(
           value: -1.0,

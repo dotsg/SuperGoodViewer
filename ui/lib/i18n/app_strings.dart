@@ -37,6 +37,7 @@ abstract class AppStrings {
   String togglePresentationTooltip(String shortcut);
   String toggleTwoPageTooltip(bool isTwoPage, String shortcut);
   String toggleCropMarginsTooltip(bool isCropping, String shortcut);
+  String togglePdfReflowTooltip(bool isReflowed, String shortcut);
   String zoomInTooltip(String shortcut);
   String zoomOutTooltip(String shortcut);
   String resetZoomTooltip(String shortcut);
@@ -154,6 +155,7 @@ abstract class AppStrings {
 
   // --- Settings Dialog - Layout Tab ---
   String get layoutModeFluid;
+  String get layoutModeMobile;
   String get layoutModeA4Portrait;
   String get layoutModeA4Landscape;
   String get layoutModeSlide169;
@@ -177,6 +179,8 @@ abstract class AppStrings {
   String get footerLeft;
   String get footerCenter;
   String get footerRight;
+  String get enableHeader;
+  String get enableFooter;
   String get showHeaderRule;
   String get showFooterRule;
   String get skipFirstPage;
@@ -281,6 +285,7 @@ abstract class AppStrings {
   String get pageFormatSection;
   String get pageFormatDesc;
   String get pageFormatFluidDesc;
+  String get pageFormatMobileDesc;
   String get pageFormatA4PortraitDesc;
   String get pageFormatA4LandscapeDesc;
   String get pageFormatSlide169Desc;

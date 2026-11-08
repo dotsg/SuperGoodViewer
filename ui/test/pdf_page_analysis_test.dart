@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' show Rect;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:pdfrx/pdfrx.dart';
@@ -218,6 +219,85 @@ void main() {
   });
 
   group('PdfReflowService & ReaderController Client-Side PDF Reflow Tests', () {
+    test('joinTextFlow handles soft hyphens, boundary emphasis markers, and compound words', () {
+      const cases = <({String prev, String next, bool isCjk, String expected})>[
+        (
+          prev: '*as learn*\u00AD',
+          next: '*ing residual functions*',
+          isCjk: false,
+          expected: '*as learning residual functions*',
+        ),
+        (
+          prev: '**deep**\u00AD',
+          next: '**er networks**',
+          isCjk: false,
+          expected: '**deeper networks**',
+        ),
+        (
+          prev: 'on the WMT 2014 English\u00AD',
+          next: 'to-German translation task',
+          isCjk: false,
+          expected: 'on the WMT 2014 English-to-German translation task',
+        ),
+        (
+          prev: 'naturally integrates low/mid/high\u00AD',
+          next: 'level features and classifiers',
+          isCjk: false,
+          expected: 'naturally integrates low/mid/high-level features and classifiers',
+        ),
+        (
+          prev: 'dot-product (multi\u00AD',
+          next: 'plicative) attention',
+          isCjk: false,
+          expected: 'dot-product (multiplicative) attention',
+        ),
+        (
+          prev: 'in a semi-',
+          next: 'supervised setting',
+          isCjk: false,
+          expected: 'in a semi-supervised setting',
+        ),
+        (
+          prev: 'with my co-',
+          next: 'author on the paper',
+          isCjk: false,
+          expected: 'with my co-author on the paper',
+        ),
+        (
+          prev: 'using a pre-',
+          next: 'trained model',
+          isCjk: false,
+          expected: 'using a pre-trained model',
+        ),
+        (
+          prev: 'compared with high\u00AD',
+          next: 'way networks',
+          isCjk: false,
+          expected: 'compared with highway networks',
+        ),
+        (
+          prev: 'suggests that pre\u00AD',
+          next: 'conditioning is useful',
+          isCjk: false,
+          expected: 'suggests that preconditioning is useful',
+        ),
+        (
+          prev: 'attend to position\u00AD',
+          next: 'Figure 1: The Transformer',
+          isCjk: false,
+          expected: 'attend to position Figure 1: The Transformer',
+        ),
+      ];
+
+      for (final c in cases) {
+        expect(
+          PdfReflowService.joinTextFlow(c.prev, c.next, isCjk: c.isCjk),
+          equals(c.expected),
+          reason: 'joinTextFlow(${c.prev}, ${c.next})',
+        );
+      }
+    });
+
     test('Reflows single-column academic PDF (Attention Is All You Need) into semantic Markdown', () async {
       final bytes = File(attentionPdfPath).readAsBytesSync();
       final result = await PdfReflowService.reflowPdfBytes(
@@ -231,6 +311,18 @@ void main() {
       expect(result.markdown, contains('Attention Is All You Need'));
       expect(result.markdown, contains('Introduction'));
       expect(result.markdown, contains('#'));
+      expect(result.markdown, contains('English-to-German'));
+      expect(result.markdown, contains('(multiplicative)'));
+      expect(result.markdown, isNot(contains('\u00AD')));
+      // Verify Page 8 & Page 9 single-column prose is not split into fake 2-column fragments
+      final idxCompetitive = result.markdown.indexOf(
+        'at a fraction of the training cost of any of the competitive models.',
+      );
+      final idxEnsembles = result.markdown.indexOf(
+        'In the former task our best model outperforms even all previously reported ensembles.',
+      );
+      expect(idxCompetitive, greaterThan(0));
+      expect(idxEnsembles, greaterThan(idxCompetitive));
     });
 
     test('Uncurls multi-column academic PDF (ResNet CVPR 2016) and toggles ReaderController reflow mode', () async {
@@ -244,6 +336,22 @@ void main() {
       expect(result.pageCount, equals(12));
       expect(result.elements.length, greaterThan(40));
       expect(result.markdown, contains('Deep Residual Learning'));
+      expect(result.markdown, contains('low/mid/high-level'));
+      expect(result.markdown, contains('highway networks'));
+      expect(result.markdown, contains('preconditioning'));
+      expect(result.markdown, isNot(contains('\u00AD')));
+      // Ensure italic soft-hyphenated words are unwrapped without mid-word `**`
+      expect(RegExp(r'[a-z]\*\*[a-z]').hasMatch(result.markdown), isFalse);
+      // Ensure single-column CVPR tables are preserved
+      final tableCount = result.elements.where((e) => e.text.startsWith('| ')).length;
+      expect(tableCount, greaterThanOrEqualTo(12));
+      // Ensure Figure 1 axis labels (56-layer / 20-layer) do not leak into the Abstract
+      final abstractStart = result.markdown.indexOf('Abstract');
+      final introStart = result.markdown.indexOf('1. Introduction');
+      expect(abstractStart, greaterThanOrEqualTo(0));
+      expect(introStart, greaterThan(abstractStart));
+      final abstractSection = result.markdown.substring(abstractStart, introStart);
+      expect(abstractSection, isNot(contains('56-layer')));
 
       final controller = ReaderController(autoRestorePreferences: false);
       addTearDown(controller.dispose);
@@ -258,7 +366,22 @@ void main() {
       expect(controller.isSourcePdfDocument, isTrue);
       expect(controller.isPdfReflowed, isTrue);
       expect(controller.isPdfDocument, isFalse);
-      expect(controller.isFluidLayout, isTrue);
+      expect(controller.isFluidLayout, isFalse);
+      expect(
+        controller.renderOptions.effectivePageFormat,
+        equals(PageFormat.mobilePortrait),
+      );
+      // Attempting to switch page format while PDF reflow is active is ignored
+      controller.setPageFormat(PageFormat.a4Portrait);
+      expect(
+        controller.renderOptions.effectivePageFormat,
+        equals(PageFormat.mobilePortrait),
+      );
+      controller.toggleMode();
+      expect(
+        controller.renderOptions.effectivePageFormat,
+        equals(PageFormat.mobilePortrait),
+      );
       expect(controller.currentMarkdown, isNotEmpty);
       expect(controller.outlineItems, isNotEmpty);
 
@@ -268,6 +391,565 @@ void main() {
       expect(controller.isPdfReflowed, isFalse);
       expect(controller.isPdfDocument, isTrue);
       expect(controller.currentPdfBytes?.length, equals(bytes.length));
+    });
+
+    test('Exports reflowed PDF in mobile-friendly Mobile Portrait (390x780pt) layout', () async {
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await controller.openFile(resnetPdfPath);
+      final enabled = await controller.setPdfReflowMode(true);
+      expect(enabled, isTrue);
+      expect(controller.isPdfReflowed, isTrue);
+      expect(controller.isFluidLayout, isFalse);
+      expect(
+        controller.renderOptions.effectivePageFormat,
+        equals(PageFormat.mobilePortrait),
+      );
+
+      final exportedBytes = await controller.getPdfBytesForExport();
+      expect(exportedBytes, isNotNull);
+      expect(exportedBytes!.isNotEmpty, isTrue);
+
+      final exportedDoc = await PdfDocument.openData(exportedBytes);
+      try {
+        expect(exportedDoc.pages.length, greaterThan(1));
+        expect(exportedDoc.pages.first.width, closeTo(390.0, 1.0));
+        expect(exportedDoc.pages.first.height, closeTo(780.0, 1.0));
+      } finally {
+        await exportedDoc.dispose();
+      }
+    });
+
+    test('Reflows 3-column magazine PDF (newyork.pdf) with drop caps and partial spanning headers when present', () async {
+      final newyorkFile = File('/Users/wuvist/Desktop/newyork.pdf');
+      if (!newyorkFile.existsSync()) return;
+
+      final doc = await PdfDocument.openFile(newyorkFile.path);
+      try {
+        // Page 4 (index 3) is "CONTRIBUTORS" with 2 narrow-gutter columns
+        final page4 = doc.pages[3];
+        final page4Text = await page4.loadStructuredText();
+        final analysis4 = PdfPageAnalysisService.computePageAnalysis(page4, page4Text);
+        expect(analysis4.isMultiColumn, isTrue);
+        expect(analysis4.columns.length, equals(2));
+
+        // Page 14 (index 13) is "SCHMEAR CAMPAIGN" with 3 columns, 2-of-3 spanning header, and drop cap "E"
+        final page14 = doc.pages[13];
+        final page14Text = await page14.loadStructuredText();
+        final analysis14 = PdfPageAnalysisService.computePageAnalysis(page14, page14Text);
+
+        expect(analysis14.isMultiColumn, isTrue);
+        expect(analysis14.columns.length, equals(3));
+        expect(analysis14.columns[0].bounds.width, closeTo(160.4, 8.0));
+        expect(analysis14.columns[1].bounds.width, closeTo(160.4, 8.0));
+        expect(analysis14.columns[2].bounds.width, closeTo(160.4, 8.0));
+
+        final result = await PdfReflowService.reflowDocument(
+          doc,
+          documentTitle: 'The New Yorker',
+        );
+        expect(result.hasContent, isTrue);
+        expect(result.markdown, contains('SCHMEAR CAMPAIGN'));
+        // Sunken drop-cap "T" on Page 9 merged with Line 1 ("The chaos") instead of Line 2
+        expect(result.markdown, contains('The chaos of Donald Trump’s Presidency'));
+        // Drop cap "E" + "very summer in France" merged cleanly
+        expect(result.markdown, contains('Every summer in France, an exodus takes place.'));
+        // Cross-column continuation from Col 1 bottom to Col 2 top
+        expect(
+          result.markdown,
+          contains('an annual transmigration of people, money, goods, gifts, expectations'),
+        );
+        // Cross-page continuation + PDFium \x02 soft-hyphen unwrapping ("thou\x02sand" -> "thousand")
+        expect(
+          result.markdown,
+          contains(
+            'A shopkeeper in Cholet, a midsize town, reported that he had sold a thousand jars of El Mordjene in five hours.',
+          ),
+        );
+        // Stick-up initial cap "W" on Page 16 normalized to body paragraph
+        expect(
+          result.markdown,
+          contains('Was a Nutella conspiracy behind the strangest quarrel in Franco-Algerian memory?'),
+        );
+        // Standalone pronoun drop cap "I" on Page 17 ("I had hoped to visit")
+        expect(
+          result.markdown,
+          contains('I had hoped to visit'),
+        );
+        // 2-column inset poems on 3-column Pages 36 ("INQUEST") and 49 ("AN OCEAN OF CLOUDS")
+        expect(result.markdown, contains('INQUEST'));
+        expect(result.markdown, contains('*—Ellen Bass*'));
+        expect(result.markdown, contains('AN OCEAN OF CLOUDS'));
+        expect(result.markdown, contains('*—Garrett Hongo*'));
+        // Cross-page sentence continuation across Page 63 BRIEFLY NOTED sidebar and Page 64 ADVERTISEMENT column
+        expect(
+          result.markdown,
+          contains('wrote, “I laid out above eight pounds of my own money for a suit of superfine clothes to dance with at my freedom.”'),
+        );
+        // Cross-column pdfrx hyphenated line-height repair on Page 66 ("fall-" + "ing" -> "falling")
+        expect(
+          result.markdown,
+          contains('Brown began to gesticulate, his arms rising and falling in exasperation. He argued with Hood, growing more agitated.'),
+        );
+        // Standalone figures extracted as inline PNG data URIs across the entire magazine
+        expect(
+          result.markdown,
+          contains('![Figure](data:image/png;base64,'),
+        );
+        final imageElements =
+            result.elements.where((e) => e.type == ReflowElementType.image).toList();
+        expect(imageElements.length, greaterThanOrEqualTo(85));
+        // Page 45 full-page feature illustration (with light overlaid display text) and late-page figures preserved
+        expect(imageElements.any((e) => e.pageNumber == 45), isTrue);
+        expect(imageElements.where((e) => e.pageNumber >= 60).length, greaterThanOrEqualTo(20));
+
+        // Page 3 Table of Contents rubrics and entries each stand on their own block
+        for (final standaloneBlock in [
+          '4 GOINGS ON',
+          '7 THE TALK OF THE TOWN',
+          'LETTER FROM FRANCE',
+          'SHOUTS & MURMURS',
+          'ANNALS OF AVIATION',
+          'PROFILES',
+          'TAKES',
+          'U.S. JOURNAL',
+          'FICTION',
+          'THE CRITICS',
+          'THE ART WORLD',
+          'BOOKS',
+          'A CRITIC AT LARGE',
+          'THE CURRENT CINEMA',
+          'POEMS',
+          'COVER',
+          'SPOTS Daniel Salmieri',
+          'Alyssa Brandt 19 An Update on Our Family',
+          'Ava Kofman 28 Autocracy Now! Curtis Yarvin’s case against democracy.',
+          '61 Briefly Noted',
+          'Ellen Bass 34 “Inquest”',
+          'Garrett Hongo 47 “An Ocean of Clouds”',
+          'AMERICAN CRUELTIES',
+          'SIGNS AND SOUNDS',
+          'DIGITAL HUMANITIES',
+          'ABOUT TOWN',
+          'BAR TAB',
+          'COMMENT',
+          'FIRST THINGS FIRST DEPT.',
+          'ARTIFICIAL INTELLIGENCE',
+          'CONTINUING EDUCATION DEPT.',
+          'TUSKS UP',
+          'SOUND CHECK DEPT.',
+          'THE PICTURES',
+          'PUZZLES & GAMES DEPT.',
+        ]) {
+          expect(
+            result.elements.any((e) => e.text == standaloneBlock),
+            isTrue,
+            reason: 'Expected standalone block: "$standaloneBlock"',
+          );
+        }
+
+        // Ornamental '1' rule glyphs stripped cleanly
+        expect(result.markdown, isNot(contains('1SIGNS')));
+        expect(result.markdown, isNot(contains('1CONTINUING')));
+        expect(result.markdown, isNot(contains('1SOUND')));
+        expect(result.markdown, isNot(contains('1Ore.')));
+
+        // Page 2 left-column address lines remain before right-column text
+        final idxMarketSt = result.markdown.indexOf('425 Market Street, San Francisco');
+        final idxNotecards = result.markdown.indexOf('Notecards available at Amazon.');
+        expect(idxMarketSt, greaterThan(0));
+        expect(idxNotecards, greaterThan(idxMarketSt));
+
+        // Page 40 -> Page 42 cross-page sentence continuation across Page 41 TAKES interruption page
+        expect(
+          result.markdown,
+          contains('It is not difficult to anticipate the totalitarian endgame of a world view'),
+        );
+
+        // Top-of-column lines without descenders and 2-line sunken initial word caps preserved
+        expect(
+          result.markdown,
+          contains('originally from Edmonton. “You didn’t like the dinosaurs, did you?”'),
+        );
+        expect(
+          result.markdown,
+          contains('grew replacement teeth, back to front, throughout its life.'),
+        );
+        expect(
+          result.markdown,
+          contains('until the next trip to the motherland. From Cameroon,'),
+        );
+        expect(
+          result.markdown,
+          contains('But America wasn’t on my mind when'),
+        );
+        expect(
+          result.markdown,
+          contains('Wes Anderson’s new film, “The Phoenician Scheme,”'),
+        );
+        expect(
+          result.markdown,
+          contains('Costume Institute, “Superfine” does something exceedingly rare in the history'),
+        );
+      } finally {
+        await doc.dispose();
+      }
+    });
+
+    test('Reflows structured resume PDF (cv.pdf) preserving bold, italic, links, and split headers when present', () async {
+      final cvFile = File('/Users/wuvist/Desktop/cv.pdf');
+      if (!cvFile.existsSync()) return;
+
+      final bytes = cvFile.readAsBytesSync();
+      final result = await PdfReflowService.reflowPdfBytes(
+        bytes,
+        documentTitle: 'XUE YuanHuang CV',
+      );
+
+      expect(result.hasContent, isTrue);
+      // Title & H1 sections
+      expect(result.markdown, contains('# XUE, YuanHuang'));
+      expect(result.markdown, contains('## EDUCATION'));
+      expect(result.markdown, contains('## EXPERIENCE'));
+      expect(result.markdown, contains('## PROJECTS'));
+      expect(result.markdown, contains('## ACTIVITIES & COMMUNITY'));
+      expect(result.markdown, contains('## SKILLS'));
+
+      // Hyperlinks preserved
+      expect(result.markdown, contains('[LinkedIn](https://www.linkedin.com/in/xue-yuanhuang/)'));
+      expect(result.markdown, contains('[GitHub](https://github.com/xueyuanhuang)'));
+      expect(result.markdown, contains('[**HR Talent Pool**](https://hr-talent-pool.pages.dev/)'));
+      expect(
+        result.markdown,
+        contains('[**API Diagnostics**](https://api-diagnostics.xue-yuanhuang.workers.dev/tests)'),
+      );
+      expect(result.markdown, contains('[**AI Relay**](https://xyhmail.xyz/)'));
+      expect(
+        result.markdown,
+        contains('[**Poker Club Manager**](https://github.com/xueyuanhuang/texasholdem)'),
+      );
+
+      // Left-right split header lines & italic subheaders preserved
+      expect(
+        result.markdown,
+        contains('**Xiamen University - Singapore Management University (Joint Program)** — *Sep 2022 - Aug 2024*'),
+      );
+      expect(result.markdown, contains('*Master of Science in Quantitative Finance*'));
+      expect(result.markdown, contains('**Business Development, Asia - WorldRouter** — *Jun 2026 - Present*'));
+
+      // Inline bold metrics & skill categories preserved
+      expect(result.markdown, contains('**3.92/4.0**'));
+      expect(result.markdown, contains('**First-class Scholarship**'));
+      expect(result.markdown, contains('**AI & Development:**'));
+      expect(result.markdown, contains('**Languages:**'));
+    });
+
+    test('Reflows Chinese document with multi-line tables (SolaRee_AI.pdf) into Markdown tables when present', () async {
+      final solaFile = File('/Users/wuvist/Desktop/SolaRee_AI.pdf');
+      if (!solaFile.existsSync()) return;
+
+      final bytes = solaFile.readAsBytesSync();
+      final result = await PdfReflowService.reflowPdfBytes(
+        bytes,
+        documentTitle: 'SolaRee.AI',
+      );
+
+      final doc = await PdfDocument.openData(bytes);
+      addTearDown(doc.dispose);
+      for (var i = 0; i < doc.pages.length; i++) {
+        final pt = await doc.pages[i].loadStructuredText();
+        final pa = PdfPageAnalysisService.computePageAnalysis(doc.pages[i], pt);
+        expect(pa.isMultiColumn, isFalse, reason: 'Page ${i + 1} of SolaRee_AI.pdf is single-column');
+      }
+      expect(result.hasContent, isTrue);
+      // Title & Chinese section headings
+      expect(result.markdown, contains('# SolaRee.AI / 问天星'));
+      expect(result.markdown, contains('### 一、产品定义'));
+      expect(result.markdown, contains('### 五、功能矩阵'));
+      expect(result.markdown, contains('### 七、商业模式与定价思路'));
+
+      // Circled-number subheadings
+      expect(result.markdown, contains('#### ① 零隐私架构（Zero PII）'));
+      expect(result.markdown, contains('#### ② 换位推演功能'));
+
+      // Table 1 (4 columns, multi-line wrapped cells & vertically centered cells)
+      expect(result.markdown, contains('| 功能 | 状态 | 粘性 | 作用 |'));
+      expect(
+        result.markdown,
+        contains('| 八字排盘 + 批命 + 喜忌 + 大运流年 | 已上线 | 低（一次性） | 引流入口，建立专业信任 |'),
+      );
+      expect(
+        result.markdown,
+        contains('| 换位推演（档案替换） | 已上线 | 高 | 核心差异化卖点，付费意愿最强 |'),
+      );
+      expect(
+        result.markdown,
+        contains('| 生日提醒 + 朋友档案管理 | 已上线/迭代中 | 高 | 将产品转化为人际关系 CRM |'),
+      );
+      expect(
+        result.markdown,
+        contains('| 定盘功能（通过问答确定时辰） | 计划中（\\~1 周开发） | 中 | 单独按次收费卖点，企业招聘场景切入点 |'),
+      );
+
+      // Table 2 (3 columns)
+      expect(result.markdown, contains('| 收费模式 | 适用场景 | 参考定价 |'));
+      expect(
+        result.markdown,
+        contains('| 按次收费 | 轻度用户、单次批命 | 基础模式 |'),
+      );
+      expect(
+        result.markdown,
+        contains('| 按时段收费 | 社交聚会场景（2 小时无限量） | 约 ¥100/次 |'),
+      );
+      expect(
+        result.markdown,
+        contains('| 月订阅 | 重度用户、人际关系管理 | 约 \\\$10-20/月 |'),
+      );
+      expect(
+        result.markdown,
+        contains('| 单次功能付费 | 定盘、企业招聘分析 | 按功能单独定价 |'),
+      );
+
+      // Ordered list items & Page 2 single-column reading order (tables stay in their exact sections)
+      final idxSec5 = result.markdown.indexOf('### 五、功能矩阵');
+      final idxTable1 = result.markdown.indexOf('| 功能 | 状态 | 粘性 | 作用 |');
+      final idxSec6 = result.markdown.indexOf('### 六、成本结构');
+      final idxSec7 = result.markdown.indexOf('### 七、商业模式与定价思路');
+      final idxTable2 = result.markdown.indexOf('| 收费模式 | 适用场景 | 参考定价 |');
+      final idxSec8 = result.markdown.indexOf('### 八、下一步计划');
+      expect(idxSec5, greaterThan(0));
+      expect(idxTable1, greaterThan(idxSec5));
+      expect(idxSec6, greaterThan(idxTable1));
+      expect(idxSec7, greaterThan(idxSec6));
+      expect(idxTable2, greaterThan(idxSec7));
+      expect(idxSec8, greaterThan(idxTable2));
+      expect(
+        result.markdown,
+        contains('几位测试用户单日调用超过 100 次，花费约 1 美元。'),
+      );
+      expect(
+        result.markdown,
+        contains('需要确定市场定位和定价后，通过试推广来验证。'),
+      );
+      expect(result.markdown, contains('1. 接入支付系统，开始试运营'));
+      final idxItem4 = result.markdown.indexOf('4. 观察用户是否自发将问天星作为人际关系管理工具使用，验证产品定位');
+      final idxSec9 = result.markdown.indexOf('### 九、待验证的核心假设');
+      expect(idxItem4, greaterThan(0));
+      expect(idxSec9, greaterThan(idxItem4));
+      expect(result.markdown, isNot(contains('SolaRee_AI_产品定位摘要')));
+      expect(result.markdown.trimRight(), isNot(endsWith('\n2')));
+
+      // Verify end-to-end compilation to mobile PDF via ReaderController
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+      await controller.openFile(solaFile.path);
+      final enabled = await controller.setPdfReflowMode(true);
+      expect(enabled, isTrue);
+      expect(controller.isPdfReflowed, isTrue);
+      final exportedBytes = await controller.getPdfBytesForExport();
+      expect(exportedBytes, isNotNull);
+      expect(exportedBytes!.isNotEmpty, isTrue);
+    });
+
+    test('Detects and reflows 2-column academic first pages with long full-width abstracts (a_abstract.pdf, g_abs20.pdf)', () async {
+      final absFile = File(p.join(projectRoot, 'docs', 'samples', 'a_abstract.pdf'));
+      final gAbs20File = File(p.join(projectRoot, 'docs', 'samples', 'g_abs20.pdf'));
+      expect(absFile.existsSync(), isTrue);
+      expect(gAbs20File.existsSync(), isTrue);
+
+      final absDoc = await PdfDocument.openFile(absFile.path);
+      addTearDown(absDoc.dispose);
+      final absText = await absDoc.pages[0].loadStructuredText();
+      final absAnalysis = PdfPageAnalysisService.computePageAnalysis(absDoc.pages[0], absText);
+      expect(absAnalysis.isMultiColumn, isTrue);
+      expect(absAnalysis.columns.length, equals(2));
+
+      final absResult = await PdfReflowService.reflowDocument(absDoc);
+      final idxLeftEnd = absResult.markdown.indexOf('LEFTEND');
+      final idxRightStart = absResult.markdown.indexOf('RIGHTSTART');
+      expect(idxLeftEnd, greaterThan(0));
+      expect(idxRightStart, greaterThan(idxLeftEnd));
+
+      final gAbsDoc = await PdfDocument.openFile(gAbs20File.path);
+      addTearDown(gAbsDoc.dispose);
+      final gAbsText = await gAbsDoc.pages[0].loadStructuredText();
+      final gAbsAnalysis = PdfPageAnalysisService.computePageAnalysis(gAbsDoc.pages[0], gAbsText);
+      expect(gAbsAnalysis.isMultiColumn, isTrue);
+      expect(gAbsAnalysis.columns.length, equals(2));
+
+      final gAbsResult = await PdfReflowService.reflowDocument(gAbsDoc);
+      final idxL69 = gAbsResult.markdown.indexOf('Leftside sentence L69');
+      final idxR1 = gAbsResult.markdown.indexOf('Rightside sentence R1');
+      expect(idxL69, greaterThan(0));
+      expect(idxR1, greaterThan(idxL69));
+    });
+
+    test('Normalizes PDF font family names consistently across subset prefixes and MT/PS/style suffixes', () {
+      expect(
+        PdfReflowService.normalizeFontFamilyForTest('TimesNewRomanPSMT'),
+        equals('timesnewroman'),
+      );
+      expect(
+        PdfReflowService.normalizeFontFamilyForTest('TimesNewRomanPS-BoldMT'),
+        equals('timesnewroman'),
+      );
+      expect(
+        PdfReflowService.normalizeFontFamilyForTest('TimesNewRomanPS-ItalicMT'),
+        equals('timesnewroman'),
+      );
+      expect(
+        PdfReflowService.normalizeFontFamilyForTest('ArialMT'),
+        equals('arial'),
+      );
+      expect(
+        PdfReflowService.normalizeFontFamilyForTest('Arial-BoldMT'),
+        equals('arial'),
+      );
+      expect(
+        PdfReflowService.normalizeFontFamilyForTest('ABCDEF+Irvin-Heading'),
+        equals('irvin'),
+      );
+      expect(
+        PdfReflowService.normalizeFontFamilyForTest('XYZWVU+AdobeCaslonPro-Regular'),
+        equals('adobecaslon'),
+      );
+      expect(
+        PdfReflowService.normalizeFontFamilyForTest('XYZWVU+AdobeCaslonPro-Italic'),
+        equals('adobecaslon'),
+      );
+    });
+
+    test('Distinguishes wide ornamental rule 1 glyphs from genuine large digits and alphanumeric strings', () {
+      // Wide decorative rule glyph encoded as '1' (148pt wide x 40pt tall)
+      expect(
+        PdfReflowService.isOrnamentalRuleOneChar(0x31, const Rect.fromLTWH(48, 41, 148.5, 40.0)),
+        isTrue,
+      );
+      // Genuine 50pt chapter number '1' (24pt wide x 50pt tall) must NOT be treated as ornament
+      expect(
+        PdfReflowService.isOrnamentalRuleOneChar(0x31, const Rect.fromLTWH(100, 100, 24.0, 50.0)),
+        isFalse,
+      );
+      // Positive stray drop-cap '1' at start of fragment ("1The" -> "The")
+      expect(
+        PdfReflowService.cleanRawPdfFragmentTextForTest('1The quick brown fox'),
+        equals('The quick brown fox'),
+      );
+      // Alphanumeric strings like "Route 1A NYC", "2021", "Top 10" must be preserved intact by fragment cleaner
+      expect(
+        PdfReflowService.cleanRawPdfFragmentTextForTest('Route 1A NYC'),
+        equals('Route 1A NYC'),
+      );
+      expect(
+        PdfReflowService.cleanRawPdfFragmentTextForTest('2021 Annual Report'),
+        equals('2021 Annual Report'),
+      );
+      expect(
+        PdfReflowService.cleanRawPdfFragmentTextForTest('Top 10 Highlights'),
+        equals('Top 10 Highlights'),
+      );
+    });
+
+    test('Filters multi-column academic running headers while keeping top-of-column prose and rubrics', () {
+      // Mixed-case academic running headers (isolated above columns or repeated across pages) are filtered
+      expect(
+        PdfReflowService.shouldFilterSmallTopRunningHeader(
+          isMultiColumn: true,
+          cleanedText: 'Journal of Machine Learning Research 21 (2020) 1-48',
+          isRepeatedAcrossPages: false,
+          hasColumnBodyLineImmediatelyBelow: false,
+        ),
+        isTrue,
+      );
+      expect(
+        PdfReflowService.shouldFilterSmallTopRunningHeader(
+          isMultiColumn: true,
+          cleanedText: 'Smith et al.',
+          isRepeatedAcrossPages: true,
+          hasColumnBodyLineImmediatelyBelow: true,
+        ),
+        isTrue,
+      );
+      expect(
+        PdfReflowService.shouldFilterSmallTopRunningHeader(
+          isMultiColumn: true,
+          cleanedText: 'IEEE TRANSACTIONS ON PATTERN ANALYSIS, VOL. 3',
+          isRepeatedAcrossPages: false,
+          hasColumnBodyLineImmediatelyBelow: false,
+        ),
+        isTrue,
+      );
+      // Short digit-free all-caps department rubrics and top-of-column body prose lines are preserved
+      expect(
+        PdfReflowService.shouldFilterSmallTopRunningHeader(
+          isMultiColumn: true,
+          cleanedText: 'LETTER FROM FRANCE',
+          isRepeatedAcrossPages: false,
+          hasColumnBodyLineImmediatelyBelow: false,
+        ),
+        isFalse,
+      );
+      expect(
+        PdfReflowService.shouldFilterSmallTopRunningHeader(
+          isMultiColumn: true,
+          cleanedText: 'originally from Edmonton. “You didn’t like the',
+          isRepeatedAcrossPages: false,
+          hasColumnBodyLineImmediatelyBelow: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('Splits inline rubric transition when font family and style switch from italic credit to all-caps rubric', () {
+      final splitLines = PdfReflowService.groupInlineRubricFragmentsForTest([
+        (
+          rect: const Rect.fromLTWH(64, 514, 180, 9.5),
+          text: 'Roland High, Ali Solomon, Charlie Hankin',
+          isItalic: true,
+          isBold: false,
+          fontFamily: 'adobecaslon',
+        ),
+        (
+          rect: const Rect.fromLTWH(252, 514, 34, 9.5),
+          text: 'SPOTS',
+          isItalic: false,
+          isBold: false,
+          fontFamily: 'neutraface',
+        ),
+        (
+          rect: const Rect.fromLTWH(290, 514, 72, 9.5),
+          text: 'Daniel Salmieri',
+          isItalic: true,
+          isBold: false,
+          fontFamily: 'adobecaslon',
+        ),
+      ]);
+      expect(splitLines.length, equals(2));
+      expect(splitLines[0].text, equals('Roland High, Ali Solomon, Charlie Hankin'));
+      expect(splitLines[1].text, equals('SPOTS Daniel Salmieri'));
+      expect(splitLines[1].richText, equals('SPOTS *Daniel Salmieri*'));
+      expect(splitLines[1].startsParagraph, isTrue);
+
+      // Preceding italic segment followed by non-italic all-caps word in the SAME font family must NOT split
+      final sameFontItalicToCaps = PdfReflowService.groupInlineRubricFragmentsForTest([
+        (
+          rect: const Rect.fromLTWH(64, 200, 120, 10.0),
+          text: 'See the special issue of',
+          isItalic: true,
+          isBold: false,
+          fontFamily: 'timesnewroman',
+        ),
+        (
+          rect: const Rect.fromLTWH(188, 200, 36, 10.0),
+          text: 'IEEE',
+          isItalic: false,
+          isBold: false,
+          fontFamily: 'timesnewroman',
+        ),
+      ]);
+      expect(sameFontItalicToCaps.length, equals(1));
+      expect(sameFontItalicToCaps[0].text, equals('See the special issue of IEEE'));
     });
   });
 }

@@ -62,7 +62,16 @@ void main() {
       expect(service.getKey('toggleTheme'), LogicalKeyboardKey.keyL);
       expect(service.getShortcutLabel('toggleTheme'), endsWith('Shift+L'));
       expect(service.getKey('toggleTwoPage'), LogicalKeyboardKey.keyD);
-      expect(service.getKey('keyboardShortcuts'), LogicalKeyboardKey.comma);
+      expect(service.getKey('preferences'), LogicalKeyboardKey.comma);
+      expect(service.getKey('keyboardShortcuts'), LogicalKeyboardKey.slash);
+      // No default action should conflict with any other default action
+      for (final action in ShortcutService.allActions) {
+        expect(
+          service.findConflict(action.id, service.getKey(action.id)),
+          isNull,
+          reason: 'Default shortcut for ${action.id} must not conflict with another action',
+        );
+      }
     });
 
     group('zoom defaults follow each platform', () {
@@ -324,6 +333,87 @@ void main() {
       expect(controller.shortcutService.isCustomized('toggleMode'), isFalse);
       expect(find.text('已修改'), findsNothing);
       expect(controller.shortcutService.getKey('toggleMode'), LogicalKeyboardKey.keyM);
+
+      // Drain debounced persist timer
+      await tester.pump(const Duration(milliseconds: 700));
+    });
+
+    testWidgets('records keyboard input after tab switch and handles shifted keys and Escape', (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      // Start on general tab, then click '快捷键' tab so FocusScope already has a focusedChild
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SettingsDialog(controller: controller, initialTab: SettingsTab.general),
+        ),
+      );
+
+      await tester.tap(find.text('快捷键'));
+      await tester.pumpAndSettle();
+
+      // Tap the toggleMode shortcut badge to enter listening mode
+      final listeningText = controller.strings.pressNewShortcut;
+      final initialLabel = controller.shortcutService.getShortcutLabel('toggleMode');
+      await tester.tap(find.text(initialLabel));
+      await tester.pump();
+      expect(find.text(listeningText), findsOneWidget);
+
+      // Pressing Escape cancels listening without closing the dialog
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(find.text(listeningText), findsNothing);
+      expect(find.byType(SettingsDialog), findsOneWidget);
+      expect(controller.shortcutService.getKey('toggleMode'), LogicalKeyboardKey.keyM);
+
+      // Tap badge again, hold modifier, and press K
+      await tester.tap(find.text(initialLabel));
+      await tester.pump();
+      expect(find.text(listeningText), findsOneWidget);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pump();
+      expect(find.text(listeningText), findsOneWidget);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyK);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyK);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pump();
+
+      expect(find.text(listeningText), findsNothing);
+      expect(controller.shortcutService.getKey('toggleMode'), LogicalKeyboardKey.keyK);
+
+      // Verify shifted symbol key normalization (e.g. braceRight '}' when Shift+] is pressed on macOS)
+      expect(
+        ShortcutService.resolveSupportedKey(
+          const KeyDownEvent(
+            logicalKey: LogicalKeyboardKey.braceRight,
+            physicalKey: PhysicalKeyboardKey.bracketRight,
+            timeStamp: Duration.zero,
+          ),
+        ),
+        LogicalKeyboardKey.bracketRight,
+      );
+
+      // Tap badge again and press bracketRight with Shift held down
+      final updatedLabel = controller.shortcutService.getShortcutLabel('toggleMode');
+      await tester.tap(find.text(updatedLabel));
+      await tester.pump();
+      expect(find.text(listeningText), findsOneWidget);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.bracketRight);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.bracketRight);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pump();
+
+      expect(find.text(listeningText), findsNothing);
+      expect(controller.shortcutService.getKey('toggleMode'), LogicalKeyboardKey.bracketRight);
 
       // Drain debounced persist timer
       await tester.pump(const Duration(milliseconds: 700));

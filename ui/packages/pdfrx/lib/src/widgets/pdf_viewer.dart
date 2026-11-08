@@ -429,7 +429,7 @@ class _PdfViewerState extends State<PdfViewer>
       oldWidget?.documentRef.resolveListenable().removeListener(_onDocumentChanged);
       final documentRef = widget.documentRef;
       await pdfrxFlutterInitialize();
-      if (!mounted || !identical(documentRef, widget.documentRef)) {
+      if (!mounted || documentRef.key != widget.documentRef.key) {
         return;
       }
       widget.documentRef.resolveListenable()
@@ -485,7 +485,7 @@ class _PdfViewerState extends State<PdfViewer>
     _gotoTargetPageNumber = null;
     _initialized = false;
     _txController.removeListener(_onMatrixChanged);
-    _controller?._attach(null);
+    _controller?._detach(this);
 
     final listenable = widget.documentRef.resolveListenable();
     final document = listenable.document;
@@ -619,7 +619,7 @@ class _PdfViewerState extends State<PdfViewer>
     _canvasLinkPainter.resetAll();
     _textCache.clear();
     _txController.removeListener(_onMatrixChanged);
-    _controller?._attach(null);
+    _controller?._detach(this);
     _txController.dispose();
     _tileCache.dispose();
     super.dispose();
@@ -1162,6 +1162,10 @@ class _PdfViewerState extends State<PdfViewer>
   }
 
   void _onInteractionStart(ScaleStartDetails details) {
+    if (_contextMenuDocumentPosition != null) {
+      _contextMenuDocumentPosition = null;
+      _invalidate();
+    }
     _interactionDelegate?.stop(); // Stop physics when user touches
     _startInteraction();
     _requestFocus();
@@ -2386,6 +2390,10 @@ class _PdfViewerState extends State<PdfViewer>
       return;
     }
 
+    if (_contextMenuDocumentPosition != null) {
+      _contextMenuDocumentPosition = null;
+      _invalidate();
+    }
     _startInteraction();
     try {
       // Handle Ctrl+wheel for zooming
@@ -4116,7 +4124,9 @@ class _PdfViewerState extends State<PdfViewer>
     _isSelectingAllText = false;
     _selectionPointerDeviceKind = deviceKind;
     _contextMenuDocumentPosition = null;
-    _isSelectingAWord = true;
+    final showAuto = widget.params.textSelectionParams?.showContextMenuAutomatically ??
+        _selectionPointerDeviceKind == PointerDeviceKind.touch;
+    _isSelectingAWord = showAuto && (enableSelectionHandles || _selectionPointerDeviceKind == PointerDeviceKind.touch);
     _notifyTextSelectionChange();
   }
 
@@ -4618,6 +4628,12 @@ class PdfViewerController extends ValueListenable<Matrix4> {
     __state?._txController.addListener(_notifyListeners);
   }
 
+  void _detach(_PdfViewerState state) {
+    if (identical(__state, state)) {
+      _attach(null);
+    }
+  }
+
   void _notifyListeners() {
     for (final listener in _listeners) {
       listener();
@@ -5068,6 +5084,24 @@ class PdfViewerController extends ValueListenable<Matrix4> {
 
   /// The text selection delegate.
   PdfTextSelectionDelegate get textSelectionDelegate => _state;
+
+  /// Whether a context menu with an explicit document position is currently shown.
+  ///
+  /// Note: In `showContextMenuAutomatically` mode, an automatic selection menu
+  /// may be queued before its first build establishes `_contextMenuDocumentPosition`.
+  bool get isContextMenuShown => __state?._contextMenuDocumentPosition != null;
+
+  /// Shows the context menu at [documentPosition].
+  void showContextMenu(Offset documentPosition, {PdfViewerPart? forPart}) =>
+      __state?.showContextMenu(documentPosition, forPart: forPart);
+
+  /// Dismisses the context menu if currently shown.
+  void dismissContextMenu() {
+    if (__state?._contextMenuDocumentPosition != null) {
+      __state!._contextMenuDocumentPosition = null;
+      __state!._invalidate();
+    }
+  }
 
   /// [FocusNode] associated to the [PdfViewer] if available.
   FocusNode? get focusNode => _state._getFocusNode();
@@ -5639,17 +5673,20 @@ class _CanvasLinkPainter {
 
   /// Paints the link highlights.
   void paintLinkHighlights(Canvas canvas, Rect pageRect, PdfPage page) {
-    final links = _ensureLinksLoaded(page);
-    if (links == null) return;
-
     final customPainter = _state.widget.params.linkHandlerParams?.customPainter;
+    final color = _state.widget.params.linkHandlerParams?.linkColor ?? Colors.blue.withAlpha(50);
+    final isTransparent = customPainter == null && color.a == 0;
+    final links = _ensureLinksLoaded(
+      page,
+      onLoaded: (isTransparent && !_state._shouldBuildTextSemantics) ? () {} : null,
+    );
+    if (links == null) return;
 
     if (customPainter != null) {
       customPainter.call(canvas, pageRect, page, links);
       return;
     }
 
-    final color = _state.widget.params.linkHandlerParams?.linkColor ?? Colors.blue.withAlpha(50);
     // Transparent links still load and handle hover/taps, but need no highlight
     // draw commands. Keep custom painters above this fast path.
     if (color.a == 0) return;

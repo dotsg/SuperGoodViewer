@@ -178,7 +178,7 @@ class DocumentCacheService {
     // Quantize viewportWidth to 20pt grid to maximize cache hit rates across minor window resize variations,
     // which aligns with ReaderController's 40pt deadband threshold for fluid re-renders.
     final quantizedWidth = (options.viewportWidth / 20.0).round() * 20;
-    final raw = '$filePath#$mtime#$size#${options.mode}#${options.effectivePageFormat}#${options.theme}#${options.fontSize}#${options.lineSpacing}#${options.paragraphSpacing}#$quantizedWidth#${options.bodyFont ?? ''}#${options.codeFont ?? ''}#${options.headerLeft ?? ''}#${options.headerCenter ?? ''}#${options.headerRight ?? ''}#${options.footerLeft ?? ''}#${options.footerCenter ?? ''}#${options.footerRight ?? ''}#${options.showHeaderRule ?? false}#${options.showFooterRule ?? false}#${options.skipFirstPageHeaderFooter ?? false}#${options.marpEnabled ?? true}#${options.exportQuality}#$attachmentFingerprint';
+    final raw = '$filePath#$mtime#$size#${options.mode}#${options.effectivePageFormat}#${options.theme}#${options.fontSize}#${options.lineSpacing}#${options.paragraphSpacing}#$quantizedWidth#${options.bodyFont ?? ''}#${options.codeFont ?? ''}#${options.headerLeft ?? ''}#${options.headerCenter ?? ''}#${options.headerRight ?? ''}#${options.footerLeft ?? ''}#${options.footerCenter ?? ''}#${options.footerRight ?? ''}#${options.enableHeader ?? true}#${options.enableFooter ?? true}#${options.showHeaderRule ?? false}#${options.showFooterRule ?? false}#${options.skipFirstPageHeaderFooter ?? false}#${options.marpEnabled ?? true}#${options.exportQuality}#$attachmentFingerprint';
     int hash = 0xcbf29ce484222325;
     for (final unit in utf8.encode(raw)) {
       hash ^= unit;

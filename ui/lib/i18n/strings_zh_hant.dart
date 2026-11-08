@@ -79,6 +79,10 @@ class ZhHantStrings extends ZhHansStrings {
       ? '智慧切白邊：已開啟（自動裁切空白頁邊距），點擊還原 ($shortcut)'
       : '智慧切白邊：已關閉，點擊自動裁切空白邊距放大正文 ($shortcut)';
   @override
+  String togglePdfReflowTooltip(bool isReflowed, String shortcut) => isReflowed
+      ? '已開啟 PDF 智慧重排，點擊還原原版 PDF ($shortcut)'
+      : 'PDF 智慧重排：解構多欄與小字版式，支援匯出手機閱讀友善 PDF ($shortcut)';
+  @override
   String zoomInTooltip(String shortcut) => '放大頁面 ($shortcut)';
   @override
   String zoomOutTooltip(String shortcut) => '縮小頁面 ($shortcut)';
@@ -125,6 +129,8 @@ class ZhHantStrings extends ZhHansStrings {
     switch (format) {
       case 'fluid':
         return '流式';
+      case 'mobilePortrait':
+        return '手機';
       case 'slide16x9':
         return '16:9';
       case 'slide4x3':
@@ -314,6 +320,8 @@ class ZhHantStrings extends ZhHansStrings {
   @override
   String get layoutModeFluid => '自適應長捲軸';
   @override
+  String get layoutModeMobile => '手機直向分頁';
+  @override
   String get layoutModeA4Portrait => 'A4 縱向分頁';
   @override
   String get layoutModeA4Landscape => 'A4 橫向分頁';
@@ -359,6 +367,10 @@ class ZhHantStrings extends ZhHansStrings {
   String get footerCenter => '頁尾置中';
   @override
   String get footerRight => '頁尾右側';
+  @override
+  String get enableHeader => '啟用頁首';
+  @override
+  String get enableFooter => '啟用頁尾';
   @override
   String get showHeaderRule => '頁首底端分隔線';
   @override
@@ -452,6 +464,8 @@ class ZhHantStrings extends ZhHansStrings {
         return '切換單頁 / 雙頁對開';
       case 'toggleCropMargins':
         return '智慧切白邊';
+      case 'togglePdfReflow':
+        return 'PDF 智慧重排';
       case 'toggleToolbar':
         return '顯示 / 隱藏底部浮動列';
       case 'findInDocument':
@@ -509,6 +523,8 @@ class ZhHantStrings extends ZhHansStrings {
         return '在 A4 出版模式下切換單頁縱向與雙頁對開書籍排版';
       case 'toggleCropMargins':
         return '自動偵測並裁切文件空白邊距，最大化正文顯示比例';
+      case 'togglePdfReflow':
+        return '將雙欄/三欄與小字 PDF 重排為自適應單欄流式或手機直向版式';
       case 'toggleToolbar':
         return '切換底部浮動工具列顯示狀態，進入極致沉浸 Zen 模式';
       case 'findInDocument':
@@ -687,6 +703,8 @@ class ZhHantStrings extends ZhHansStrings {
   String get pageFormatDesc => '設定文件預設排版形態。簡報請選擇 16:9 / 4:3 投影片，出版閱讀請選擇 A4 或自適應流式。';
   @override
   String get pageFormatFluidDesc => '鎖定黃金閱讀行寬，高度自適應，連續無縫捲軸捲動，適合技術文件與長文';
+  @override
+  String get pageFormatMobileDesc => '9:18 手機直向分頁 (390 × 780 pt)，緊湊窄邊距與大字級，適合匯出行動端閱讀友善的 PDF';
   @override
   String get pageFormatA4PortraitDesc => '標準 A4 出版縱向 (595.28 × 841.89 pt)，含頁首頁尾與孤行控制，適合出版列印';
   @override

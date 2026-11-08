@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:archive/archive.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -651,6 +653,7 @@ void main() {
       tester.view.physicalSize = const Size(1280, 900);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
       final controller = ReaderController(autoRestorePreferences: false);
       addTearDown(controller.dispose);
@@ -695,6 +698,325 @@ void main() {
       // Global default remains a4Portrait and PPT session remains pptSlides
       expect(controller.globalRenderOptions.effectivePageFormat, PageFormat.a4Portrait);
       expect(controller.renderOptions.effectivePageFormat, PageFormat.pptSlides);
+    });
+
+    testWidgets('PdfViewer still calls load() when rebuilt with a new PdfDocumentRef of the same key during pdfrxFlutterInitialize', (WidgetTester tester) async {
+      final initCompleter = Completer<void>();
+      debugResetPdfrxFlutterInitialization(pendingInit: initCompleter.future);
+      addTearDown(debugResetPdfrxFlutterInitialization);
+
+      var loaderCallCount = 0;
+      final loadBlockCompleter = Completer<PdfDocument>();
+      final key = PdfDocumentRefKey('race_test_doc');
+      final ref1 = PdfDocumentRefByLoader((_) {
+        loaderCallCount++;
+        return loadBlockCompleter.future;
+      }, key: key);
+      final ref2 = PdfDocumentRefByLoader((_) {
+        loaderCallCount++;
+        return loadBlockCompleter.future;
+      }, key: key);
+      expect(identical(ref1, ref2), isFalse);
+      expect(ref1.key, equals(ref2.key));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PdfViewer(ref1),
+          ),
+        ),
+      );
+      expect(loaderCallCount, 0);
+
+      // Rebuild with ref2 (different instance, same key) while _widgetUpdated(null)
+      // is still suspended at `await pdfrxFlutterInitialize()`.
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PdfViewer(ref2),
+          ),
+        ),
+      );
+      expect(loaderCallCount, 0);
+
+      // Complete initialization and verify load() is invoked rather than aborted.
+      initCompleter.complete();
+      await tester.pump();
+      expect(loaderCallCount, 1);
+
+      loadBlockCompleter.completeError(StateError('expected test teardown'));
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    });
+
+    testWidgets('PdfCanvasView preserves identical PdfDocumentRef across rebuilds and handles two-frame mode changes and null resets', (WidgetTester tester) async {
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      await tester.runAsync(() async {
+        await controller.openFile(samplePdfFile.path);
+      });
+      expect(controller.isPdfDocument, isTrue);
+      expect(controller.currentPdfBytes, isNotNull);
+
+      final canvasKey = GlobalKey<PdfCanvasViewState>();
+      double topInset = 0.0;
+      String docTitle = controller.documentTitle;
+      Uint8List? currentBytes = controller.currentPdfBytes;
+      RenderOptions currentOptions = controller.renderOptions;
+
+      Widget buildCanvas() {
+        return MaterialApp(
+          home: Scaffold(
+            body: PdfCanvasView(
+              key: canvasKey,
+              pdfBytes: currentBytes,
+              renderOptions: currentOptions,
+              isTwoPage: controller.isTwoPage,
+              documentTitle: docTitle,
+              documentId: controller.activeSession.id,
+              controller: controller,
+              topInset: topInset,
+            ),
+          ),
+        );
+      }
+
+      await tester.pumpWidget(buildCanvas());
+      final viewerBefore = tester.widget<PdfViewer>(find.byType(PdfViewer));
+      final refBefore = viewerBefore.documentRef;
+      expect(refBefore, isA<PdfDocumentRefCustom>());
+      expect(identical(canvasKey.currentState!.debugSlotDocumentRef(0), refBefore), isTrue);
+
+      // Simulate an immediate parent rebuild (e.g., FocusManager reclaim, topInset, or title update).
+      topInset = 36.0;
+      docTitle = 'Renamed Title';
+      await tester.pumpWidget(buildCanvas());
+      final viewerAfter = tester.widget<PdfViewer>(find.byType(PdfViewer));
+      final refAfter = viewerAfter.documentRef;
+
+      // Must be the exact same PdfDocumentRef instance.
+      expect(identical(refBefore, refAfter), isTrue);
+
+      // Verify PdfDocumentRefCustom bulk range read works accurately.
+      final customRef = refAfter as PdfDocumentRefCustom;
+      final srcBytes = controller.currentPdfBytes!;
+      final outBuffer = Uint8List(16);
+      final readCount = await customRef.read(outBuffer, 0, 16);
+      expect(readCount, 16);
+      expect(outBuffer, equals(srcBytes.sublist(0, 16)));
+
+      // Switch to Markdown mode and verify two-frame mode change (Frame A: mode change with old bytes; Frame B: new bytes)
+      // uses direct reload on slot 0 rather than background pending slot.
+      await tester.runAsync(() async {
+        await controller.openFile(sampleMdFile.path);
+      });
+      final bytesA = Uint8List.fromList(samplePdfContent.codeUnits);
+      final bytesB = Uint8List.fromList('$samplePdfContent\n% gen2\n'.codeUnits);
+      currentBytes = bytesA;
+      currentOptions = const RenderOptions(pageFormat: PageFormat.fluid);
+      await tester.pumpWidget(buildCanvas());
+      expect(canvasKey.currentState!.debugActiveSlot, 0);
+      expect(canvasKey.currentState!.debugPendingSlot, isNull);
+
+      // Frame A: Mode/format changes to slide16x9, bytes still bytesA
+      currentOptions = const RenderOptions(pageFormat: PageFormat.slide16x9);
+      await tester.pumpWidget(buildCanvas());
+      // Frame B: New compiled bytes arrive
+      currentBytes = bytesB;
+      await tester.pumpWidget(buildCanvas());
+      expect(canvasKey.currentState!.debugActiveSlot, 0);
+      expect(canvasKey.currentState!.debugPendingSlot, isNull);
+
+      // Same-mode hot-reload update mounts pending slot 1, and clearing bytes to null resets both slots.
+      final bytesC = Uint8List.fromList('$samplePdfContent\n% gen3\n'.codeUnits);
+      currentBytes = bytesC;
+      await tester.pumpWidget(buildCanvas());
+      expect(canvasKey.currentState!.debugPendingSlot, 1);
+      expect(canvasKey.currentState!.debugSlotDocumentRef(1), isNotNull);
+
+      currentBytes = null;
+      await tester.pumpWidget(buildCanvas());
+      expect(canvasKey.currentState!.debugActiveSlot, 0);
+      expect(canvasKey.currentState!.debugPendingSlot, isNull);
+      expect(canvasKey.currentState!.debugSlotDocumentRef(0), isNull);
+      expect(canvasKey.currentState!.debugSlotDocumentRef(1), isNull);
+
+      await tester.pump(const Duration(seconds: 2));
+    });
+
+    testWidgets('Desktop topInset toggles keep boundaryMargin.top stable and dismissing right-click context menu does not toggle toolbar', (tester) async {
+      tester.view.physicalSize = const Size(1280, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      const textPdfContent = '%PDF-1.4\n'
+          '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n'
+          '2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n'
+          '3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n'
+          '4 0 obj<</Length 44>>stream\n'
+          'BT /F1 24 Tf 72 700 Td (Hello World) Tj ET\n'
+          'endstream\n'
+          'endobj\n'
+          '5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\n'
+          'xref\n'
+          '0 6\n'
+          '0000000000 65535 f \n'
+          '0000000009 00000 n \n'
+          '0000000052 00000 n \n'
+          '0000000101 00000 n \n'
+          '0000000206 00000 n \n'
+          '0000000299 00000 n \n'
+          'trailer<</Size 6/Root 1 0 R>>\n'
+          'startxref\n'
+          '367\n'
+          '%%EOF\n';
+      final textPdfBytes = Uint8List.fromList(textPdfContent.codeUnits);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+      await tester.runAsync(() async {
+        await controller.openFile(samplePdfFile.path);
+      });
+
+      final canvasKey = GlobalKey<PdfCanvasViewState>();
+      double topInset = 32.0;
+      double? reservedTopInset = 32.0;
+      int canvasTapCount = 0;
+      final isAtTopEvents = <bool>[];
+
+      Widget buildCanvas() {
+        return MaterialApp(
+          home: Scaffold(
+            body: PdfCanvasView(
+              key: canvasKey,
+              pdfBytes: textPdfBytes,
+              renderOptions: controller.renderOptions,
+              isTwoPage: controller.isTwoPage,
+              documentTitle: controller.documentTitle,
+              documentId: controller.activeSession.id,
+              controller: controller,
+              topInset: topInset,
+              reservedTopInset: reservedTopInset,
+              onCanvasTapped: () => canvasTapCount++,
+              onScrollChanged: ({required deltaY, required isAtTop}) {
+                isAtTopEvents.add(isAtTop);
+              },
+            ),
+          ),
+        );
+      }
+
+      Future<void> advance([int steps = 1]) async {
+        for (int i = 0; i < steps; i++) {
+          await tester.pump(const Duration(milliseconds: 16));
+          await tester.runAsync(() async {
+            await Future<void>.delayed(const Duration(milliseconds: 2));
+          });
+        }
+      }
+
+      await tester.pumpWidget(buildCanvas());
+      await advance(25);
+      expect(canvasKey.currentState!.isReady, isTrue);
+
+      final viewerWithTitleBar = tester.widget<PdfViewer>(find.byType(PdfViewer));
+      expect(viewerWithTitleBar.params.boundaryMargin?.top, 72.0);
+      isAtTopEvents.clear();
+
+      // Toggling topInset from 32.0 to 0.0 when titlebar hides must keep boundaryMargin.top at 72.0
+      // and must keep sizeDelegateProvider equal so the size delegate is not recreated.
+      topInset = 0.0;
+      await tester.pumpWidget(buildCanvas());
+      await tester.pump();
+      final viewerWithoutTitleBar = tester.widget<PdfViewer>(find.byType(PdfViewer));
+      expect(viewerWithoutTitleBar.params.boundaryMargin?.top, 72.0);
+      expect(viewerWithoutTitleBar.params.sizeDelegateProvider, equals(viewerWithTitleBar.params.sizeDelegateProvider));
+      expect(isAtTopEvents, isEmpty);
+
+      // In fullscreen (reservedTopInset: 0.0), boundaryMargin.top uses the unreserved 48.0 margin.
+      reservedTopInset = 0.0;
+      await tester.pumpWidget(buildCanvas());
+      await tester.pump();
+      final viewerFullScreen = tester.widget<PdfViewer>(find.byType(PdfViewer));
+      expect(viewerFullScreen.params.boundaryMargin?.top, 48.0);
+      reservedTopInset = 32.0;
+      await tester.pumpWidget(buildCanvas());
+      await tester.pump();
+
+      final pdfController = canvasKey.currentState!.pdfController;
+      final onGeneralTap = viewerWithoutTitleBar.params.onGeneralTap!;
+      final buildContext = tester.element(find.byType(PdfViewer));
+
+      // Warm up page 1 text cache and locate a real word and a blank background position on page 1.
+      final pageText = await tester.runAsync(() => pdfController.loadPageText(1));
+      expect(pageText, isNotNull);
+      expect(pageText!.fragments, isNotEmpty);
+      await advance(5);
+
+      final page = pdfController.document.pages[0];
+      final pageRect = pdfController.layout.pageLayouts[0];
+      final wordFragment = pageText.fragments.firstWhere((f) => f.text.trim().isNotEmpty);
+      final wordDocPos = wordFragment.bounds.toRectInDocument(page: page, pageRect: pageRect).center;
+      final bgDocPos = Offset(pageRect.right - 24, pageRect.bottom - 24);
+
+      // 1. Secondary tap on nonSelectedText cancelled by an immediate left-click before selectWord finishes
+      // must NOT open a stale context menu.
+      final handledSecondary = onGeneralTap(
+        buildContext,
+        pdfController,
+        PdfViewerGeneralTapHandlerDetails(
+          type: PdfViewerGeneralTapType.secondaryTap,
+          localPosition: pdfController.documentToLocal(wordDocPos),
+          documentPosition: wordDocPos,
+          tapOn: PdfViewerPart.nonSelectedText,
+        ),
+      );
+      expect(handledSecondary, isTrue);
+      // Immediately left-click before the async selectWord future completes:
+      onGeneralTap(
+        buildContext,
+        pdfController,
+        PdfViewerGeneralTapHandlerDetails(
+          type: PdfViewerGeneralTapType.tap,
+          localPosition: pdfController.documentToLocal(bgDocPos),
+          documentPosition: bgDocPos,
+          tapOn: PdfViewerPart.background,
+        ),
+      );
+      await advance(5);
+      expect(pdfController.isContextMenuShown, isFalse, reason: 'Canceled secondaryTap must not pop up menu late');
+      await tester.runAsync(() => pdfController.textSelectionDelegate.clearTextSelection());
+      await advance(2);
+      canvasTapCount = 0;
+
+      // 2. Real pointer right-click on a word (nonSelectedText) followed by real pointer left-click on background:
+      final wordScreenPos = pdfController.documentToGlobal(wordDocPos)!;
+      final bgScreenPos = pdfController.documentToGlobal(bgDocPos)!;
+
+      await tester.tapAt(wordScreenPos, buttons: kSecondaryButton);
+      await advance(10);
+      expect(pdfController.textSelectionDelegate.hasSelectedText, isTrue, reason: 'Right-click on word selects it');
+      expect(pdfController.isContextMenuShown, isTrue, reason: 'Right-click on word opens context menu after selectWord');
+
+      // Real pointer left-click on background while context menu is open:
+      // must dismiss the context menu and clear selection WITHOUT toggling the toolbar.
+      await tester.tapAt(bgScreenPos);
+      await tester.pump(const Duration(milliseconds: 350)); // wait past kDoubleTapTimeout
+      await advance(5);
+      expect(pdfController.isContextMenuShown, isFalse);
+      expect(pdfController.textSelectionDelegate.hasSelectedText, isFalse);
+      expect(canvasTapCount, 0, reason: 'Left-click while context menu is open must only dismiss the menu');
+
+      // 3. Once the context menu is dismissed, a normal real pointer left-click on background toggles the toolbar.
+      await tester.tapAt(bgScreenPos);
+      await tester.pump(const Duration(milliseconds: 350)); // wait past kDoubleTapTimeout
+      await advance(2);
+      expect(canvasTapCount, 1);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 2));
     });
   });
 }

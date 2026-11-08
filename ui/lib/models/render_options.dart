@@ -4,6 +4,7 @@ import '../i18n/app_strings.dart';
 /// Predefined page layout formats for SuperGoodViewer.
 class PageFormat {
   static const String fluid = 'fluid';
+  static const String mobilePortrait = 'mobilePortrait';
   static const String a4Portrait = 'a4Portrait';
   static const String a4Landscape = 'a4Landscape';
   static const String slide16x9 = 'slide16x9';
@@ -13,6 +14,7 @@ class PageFormat {
 
   static const List<String> all = [
     fluid,
+    mobilePortrait,
     a4Portrait,
     a4Landscape,
     slide16x9,
@@ -23,6 +25,8 @@ class PageFormat {
     switch (format) {
       case fluid:
         return strings.layoutModeFluid;
+      case mobilePortrait:
+        return strings.layoutModeMobile;
       case a4Portrait:
         return strings.layoutModeA4Portrait;
       case a4Landscape:
@@ -85,6 +89,8 @@ class RenderOptions {
   final String? footerLeft;
   final String? footerCenter;
   final String? footerRight;
+  final bool? enableHeader;
+  final bool? enableFooter;
   final bool? showHeaderRule;
   final bool? showFooterRule;
   final bool? skipFirstPageHeaderFooter;
@@ -109,6 +115,8 @@ class RenderOptions {
     this.footerLeft,
     this.footerCenter,
     this.footerRight,
+    this.enableHeader,
+    this.enableFooter,
     this.showHeaderRule,
     this.showFooterRule,
     this.skipFirstPageHeaderFooter,
@@ -147,6 +155,8 @@ class RenderOptions {
       case PageFormat.a4Portrait:
       case PageFormat.pptNotes:
         return 595.28 / 841.89;
+      case PageFormat.mobilePortrait:
+        return 390.0 / 780.0;
       default:
         return 1.0;
     }
@@ -171,6 +181,8 @@ class RenderOptions {
     Object? footerLeft = _undefined,
     Object? footerCenter = _undefined,
     Object? footerRight = _undefined,
+    bool? enableHeader,
+    bool? enableFooter,
     bool? showHeaderRule,
     bool? showFooterRule,
     bool? skipFirstPageHeaderFooter,
@@ -195,6 +207,8 @@ class RenderOptions {
       footerLeft: identical(footerLeft, _undefined) ? this.footerLeft : footerLeft as String?,
       footerCenter: identical(footerCenter, _undefined) ? this.footerCenter : footerCenter as String?,
       footerRight: identical(footerRight, _undefined) ? this.footerRight : footerRight as String?,
+      enableHeader: enableHeader ?? this.enableHeader,
+      enableFooter: enableFooter ?? this.enableFooter,
       showHeaderRule: showHeaderRule ?? this.showHeaderRule,
       showFooterRule: showFooterRule ?? this.showFooterRule,
       skipFirstPageHeaderFooter:
@@ -225,14 +239,30 @@ class RenderOptions {
     if (imageCacheDir != null && imageCacheDir!.isNotEmpty) {
       map['image_cache_dir'] = imageCacheDir;
     }
-    if (headerLeft != null) map['header_left'] = headerLeft;
-    if (headerCenter != null) map['header_center'] = headerCenter;
-    if (headerRight != null) map['header_right'] = headerRight;
-    if (footerLeft != null) map['footer_left'] = footerLeft;
-    if (footerCenter != null) map['footer_center'] = footerCenter;
-    if (footerRight != null) map['footer_right'] = footerRight;
-    if (showHeaderRule != null) map['show_header_rule'] = showHeaderRule;
-    if (showFooterRule != null) map['show_footer_rule'] = showFooterRule;
+    if (enableHeader != null) map['enable_header'] = enableHeader;
+    if (enableFooter != null) map['enable_footer'] = enableFooter;
+    if (enableHeader == false) {
+      map['header_left'] = '';
+      map['header_center'] = '';
+      map['header_right'] = '';
+      map['show_header_rule'] = false;
+    } else {
+      if (headerLeft != null) map['header_left'] = headerLeft;
+      if (headerCenter != null) map['header_center'] = headerCenter;
+      if (headerRight != null) map['header_right'] = headerRight;
+      if (showHeaderRule != null) map['show_header_rule'] = showHeaderRule;
+    }
+    if (enableFooter == false) {
+      map['footer_left'] = '';
+      map['footer_center'] = '';
+      map['footer_right'] = '';
+      map['show_footer_rule'] = false;
+    } else {
+      if (footerLeft != null) map['footer_left'] = footerLeft;
+      if (footerCenter != null) map['footer_center'] = footerCenter;
+      if (footerRight != null) map['footer_right'] = footerRight;
+      if (showFooterRule != null) map['show_footer_rule'] = showFooterRule;
+    }
     if (skipFirstPageHeaderFooter != null) {
       map['skip_first_page_header_footer'] = skipFirstPageHeaderFooter;
     }
@@ -263,6 +293,8 @@ class RenderOptions {
           other.footerLeft == footerLeft &&
           other.footerCenter == footerCenter &&
           other.footerRight == footerRight &&
+          other.enableHeader == enableHeader &&
+          other.enableFooter == enableFooter &&
           other.showHeaderRule == showHeaderRule &&
           other.showFooterRule == showFooterRule &&
           other.skipFirstPageHeaderFooter == skipFirstPageHeaderFooter &&
@@ -288,6 +320,8 @@ class RenderOptions {
         footerLeft,
         footerCenter,
         footerRight,
+        enableHeader,
+        enableFooter,
         showHeaderRule,
         showFooterRule,
         skipFirstPageHeaderFooter,

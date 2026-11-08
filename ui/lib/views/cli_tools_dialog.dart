@@ -5,11 +5,17 @@ import '../i18n/app_localizations.dart';
 import '../services/native_cli_service.dart';
 import 'cli_feedback.dart';
 
+bool _isCliToolsDialogOpen = false;
+
 void showCliToolsDialog(BuildContext context) {
+  if (_isCliToolsDialogOpen) return;
+  _isCliToolsDialogOpen = true;
   showDialog(
     context: context,
     builder: (ctx) => const _CliToolsDialog(),
-  );
+  ).whenComplete(() {
+    _isCliToolsDialogOpen = false;
+  });
 }
 
 class _CliToolsDialog extends StatefulWidget {
@@ -28,6 +34,12 @@ class _CliToolsDialogState extends State<_CliToolsDialog> {
   void initState() {
     super.initState();
     _loadStatus();
+  }
+
+  @override
+  void dispose() {
+    _isCliToolsDialogOpen = false;
+    super.dispose();
   }
 
   Future<void> _loadStatus() async {

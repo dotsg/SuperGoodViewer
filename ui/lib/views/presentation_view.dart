@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pdfrx/pdfrx.dart';
 import '../controllers/reader_controller.dart';
+import 'pdf_canvas_view.dart';
 
 /// Full-screen, single-page presentation mode designed for projecting Markdown/Marp slides and PDFs.
 class PresentationView extends StatefulWidget {
@@ -22,6 +23,8 @@ class PresentationView extends StatefulWidget {
 
 class PresentationViewState extends State<PresentationView> {
   PdfDocument? _document;
+  Uint8List? _loadedBytes;
+  int _loadGeneration = 0;
   int _currentPage = 1;
   int _pageCount = 1;
   bool _isLoading = true;
@@ -45,14 +48,16 @@ class PresentationViewState extends State<PresentationView> {
   @override
   void didUpdateWidget(covariant PresentationView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.controller.currentPdfBytes != oldWidget.controller.currentPdfBytes ||
-        widget.controller.isCompiling != oldWidget.controller.isCompiling) {
+    if (!identical(widget.controller.currentPdfBytes, _loadedBytes) ||
+        widget.controller != oldWidget.controller) {
       _loadDocument();
     }
   }
 
   Future<void> _loadDocument() async {
+    final gen = ++_loadGeneration;
     final bytes = widget.controller.currentPdfBytes;
+    _loadedBytes = bytes;
     if (bytes == null || bytes.isEmpty) {
       setState(() {
         _isLoading = false;
@@ -63,13 +68,15 @@ class PresentationViewState extends State<PresentationView> {
 
     try {
       await pdfrxFlutterInitialize();
-      final source = widget.controller.currentFilePath ?? 'presentation_${bytes.length}';
-      final doc = await PdfDocument.openData(
-        bytes,
+      final source = '${widget.controller.currentFilePath ?? 'presentation'}_gen_$gen';
+      final doc = await PdfDocument.openCustom(
+        read: createPdfBytesReader(bytes),
+        fileSize: bytes.length,
         sourceName: source,
         maxSizeToCacheOnMemory: bytes.length,
       );
-      if (mounted) {
+      if (mounted && gen == _loadGeneration) {
+        final oldDoc = _document;
         setState(() {
           _document = doc;
           _pageCount = doc.pages.length;
@@ -77,9 +84,16 @@ class PresentationViewState extends State<PresentationView> {
           _isLoading = false;
           _loadError = null;
         });
+        if (oldDoc != null && !identical(oldDoc, doc)) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            oldDoc.dispose();
+          });
+        }
+      } else {
+        doc.dispose();
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && gen == _loadGeneration) {
         setState(() {
           _isLoading = false;
           _loadError = widget.controller.strings.presentationLoadFailed('$e');
@@ -90,6 +104,7 @@ class PresentationViewState extends State<PresentationView> {
 
   @override
   void dispose() {
+    ++_loadGeneration;
     _idleTimer?.cancel();
     _focusNode.dispose();
     _document?.dispose();

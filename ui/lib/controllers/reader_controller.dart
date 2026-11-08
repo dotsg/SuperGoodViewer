@@ -273,6 +273,12 @@ class ReaderController extends ChangeNotifier {
   RenderOptions get globalRenderOptions => _renderOptions;
 
   RenderOptions _optionsFor(DocumentSession doc) {
+    if (doc.isPdfReflowed) {
+      return _renderOptions.copyWith(
+        pageFormat: PageFormat.mobilePortrait,
+        mode: 'paged',
+      );
+    }
     final format = doc.pageFormat;
     if (_isWord(doc)) {
       final effectiveFormat = (format ?? _renderOptions.effectivePageFormat) == PageFormat.fluid
@@ -341,7 +347,7 @@ class ReaderController extends ChangeNotifier {
   bool get restoreSession => _restoreSession;
   List<String> get recentFiles => List.unmodifiable(_recentFiles);
   Map<String, dynamic> get fontReport => _fontReport;
-  bool get isTwoPage => _isTwoPage && !isPptDocument;
+  bool get isTwoPage => _isTwoPage && !isPptDocument && !isPdfReflowed;
   bool get isSidebarOpen => _isSidebarOpen;
   String get sidebarPosition => _sidebarPosition;
   bool get isSidebarOnRight => _sidebarPosition == 'right';
@@ -363,8 +369,8 @@ class ReaderController extends ChangeNotifier {
   bool get effectivePdfCropMargins =>
       supportsCropMargins && _renderOptions.pdfCropMargins;
   bool get supportsTwoPage =>
-      !isPptDocument && (isPdfDocument || !isFluidLayout);
-  bool get supportsPresentationMode => !isWordDocument;
+      !isPptDocument && !isPdfReflowed && (isPdfDocument || !isFluidLayout);
+  bool get supportsPresentationMode => !isWordDocument && !isPdfReflowed;
 
   static const Set<String> wordExtensions = {
     '.docx',
@@ -674,6 +680,7 @@ class ReaderController extends ChangeNotifier {
       doc.isCompiling = false;
       doc.isReflowingPdf = false;
       doc.isPdfReflowed = false;
+      doc.pageFormat = null;
       doc.pdfBytes = doc.originalPdfBytes;
       doc.outlineItems = doc.originalPdfOutlines;
       doc.errorMessage = null;
@@ -720,9 +727,7 @@ class ReaderController extends ChangeNotifier {
     doc.markdown = doc.reflowMarkdownCache;
     doc.isReflowingPdf = false;
     doc.isPdfReflowed = true;
-    if (!_optionsFor(doc).isFluid) {
-      doc.pageFormat = PageFormat.fluid;
-    }
+    doc.pageFormat = PageFormat.mobilePortrait;
     doc.scrollRatio = 0.0;
     doc.scrollOffset = 0.0;
     doc.pageNumber = 1;
@@ -891,6 +896,8 @@ class ReaderController extends ChangeNotifier {
       final savedFooterLeft = prefs['footerLeft'] as String?;
       final savedFooterCenter = prefs['footerCenter'] as String?;
       final savedFooterRight = prefs['footerRight'] as String?;
+      final savedEnableHeader = prefs['enableHeader'] as bool?;
+      final savedEnableFooter = prefs['enableFooter'] as bool?;
       final savedShowHeaderRule = prefs['showHeaderRule'] as bool?;
       final savedShowFooterRule = prefs['showFooterRule'] as bool?;
       final savedSkipFirstPage = prefs['skipFirstPageHeaderFooter'] as bool?;
@@ -926,6 +933,8 @@ class ReaderController extends ChangeNotifier {
           savedFooterLeft != null ||
           savedFooterCenter != null ||
           savedFooterRight != null ||
+          savedEnableHeader != null ||
+          savedEnableFooter != null ||
           savedShowHeaderRule != null ||
           savedShowFooterRule != null ||
           savedSkipFirstPage != null ||
@@ -946,6 +955,8 @@ class ReaderController extends ChangeNotifier {
           footerLeft: savedFooterLeft ?? _renderOptions.footerLeft,
           footerCenter: savedFooterCenter ?? _renderOptions.footerCenter,
           footerRight: savedFooterRight ?? _renderOptions.footerRight,
+          enableHeader: savedEnableHeader ?? _renderOptions.enableHeader,
+          enableFooter: savedEnableFooter ?? _renderOptions.enableFooter,
           showHeaderRule: savedShowHeaderRule ?? _renderOptions.showHeaderRule,
           showFooterRule: savedShowFooterRule ?? _renderOptions.showFooterRule,
           skipFirstPageHeaderFooter: savedSkipFirstPage ?? _renderOptions.skipFirstPageHeaderFooter,
@@ -1104,6 +1115,8 @@ class ReaderController extends ChangeNotifier {
       'footerLeft': _renderOptions.footerLeft,
       'footerCenter': _renderOptions.footerCenter,
       'footerRight': _renderOptions.footerRight,
+      'enableHeader': _renderOptions.enableHeader,
+      'enableFooter': _renderOptions.enableFooter,
       'showHeaderRule': _renderOptions.showHeaderRule,
       'showFooterRule': _renderOptions.showFooterRule,
       'skipFirstPageHeaderFooter': _renderOptions.skipFirstPageHeaderFooter,
@@ -1299,6 +1312,7 @@ class ReaderController extends ChangeNotifier {
         return;
       }
 
+      final stat = file.statSync();
       final bytes = file.readAsBytesSync();
       final ext = p.extension(filePath).toLowerCase();
       const markdownExtensions = {
@@ -1348,6 +1362,8 @@ class ReaderController extends ChangeNotifier {
           return;
         }
 
+        _doc.officeFileModifiedMicros = stat.modified.microsecondsSinceEpoch;
+        _doc.officeFileSize = stat.size;
         _doc.pdfBytes = bytes;
         _doc.originalPdfBytes = bytes;
         _doc.errorMessage = null;
@@ -1512,16 +1528,15 @@ class ReaderController extends ChangeNotifier {
       if (File(filePath).resolveSymbolicLinksSync() != File(current).resolveSymbolicLinksSync()) {
         return false;
       }
-      if (_isOffice(_doc)) {
+      if (_isOffice(_doc) || _isSourcePdf(_doc)) {
+        if (_isSourcePdf(_doc) && (_doc.originalPdfBytes ?? _doc.pdfBytes) == null) {
+          return false;
+        }
         final stat = File(filePath).statSync();
         return _doc.officeFileModifiedMicros == stat.modified.microsecondsSinceEpoch &&
             _doc.officeFileSize == stat.size;
       }
       final bytes = File(filePath).readAsBytesSync();
-      if (_isSourcePdf(_doc)) {
-        final pdf = _doc.originalPdfBytes ?? _doc.pdfBytes;
-        return pdf != null && listEquals(pdf, bytes);
-      }
       final text = utf8.decode(bytes, allowMalformed: true);
       if (_doc.markdown.isEmpty || text != _doc.markdown) {
         return false;
@@ -1678,11 +1693,14 @@ class ReaderController extends ChangeNotifier {
       if (await file.exists()) {
         try {
           if (_isSourcePdf(doc)) {
+            final stat = await file.stat();
             final bytes = await file.readAsBytes();
             if (!isValidPdfBytes(bytes)) {
               debugPrint('[ReaderController] PDF reload skipped: incomplete file (in-flight write)');
               return;
             }
+            doc.officeFileModifiedMicros = stat.modified.microsecondsSinceEpoch;
+            doc.officeFileSize = stat.size;
             final existingBytes = doc.originalPdfBytes ?? doc.pdfBytes;
             if (existingBytes != null && listEquals(bytes, existingBytes)) {
               return;
@@ -1757,7 +1775,10 @@ class ReaderController extends ChangeNotifier {
         final file = File(doc.filePath!);
         try {
           if (await file.exists()) {
+            final stat = await file.stat();
             final bytes = await file.readAsBytes();
+            doc.officeFileModifiedMicros = stat.modified.microsecondsSinceEpoch;
+            doc.officeFileSize = stat.size;
             doc.originalPdfBytes = bytes;
             doc.reflowMarkdownCache = '';
             if (doc.isPdfReflowed) {
@@ -1969,7 +1990,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void setPageFormat(String format, {bool updateGlobalDefault = false}) {
-    if (isPdfDocument) return;
+    if (isPdfDocument || (isPdfReflowed && !updateGlobalDefault)) return;
     if (isWordDocument && !updateGlobalDefault) {
       final wordFormat = format == PageFormat.fluid
           ? PageFormat.fluid
@@ -1999,7 +2020,7 @@ class ReaderController extends ChangeNotifier {
       mode: nextMode,
       pageFormat: format,
     );
-    if (!isOfficeDocument) {
+    if (!isOfficeDocument && !isPdfReflowed) {
       _doc.pageFormat = format;
     }
     _persistDebounced();
@@ -2039,7 +2060,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void cyclePageFormat() {
-    if (isPdfDocument) return;
+    if (isPdfDocument || isPdfReflowed) return;
     if (isOfficeDocument) {
       toggleMode();
       return;
@@ -2052,7 +2073,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   void toggleMode() {
-    if (isPdfDocument) return;
+    if (isPdfDocument || isPdfReflowed) return;
     if (isPptDocument) {
       final nextPptFormat = renderOptions.effectivePageFormat == PageFormat.pptNotes
           ? PageFormat.pptSlides
@@ -2140,6 +2161,8 @@ class ReaderController extends ChangeNotifier {
     Object? footerLeft = _undefined,
     Object? footerCenter = _undefined,
     Object? footerRight = _undefined,
+    bool? enableHeader,
+    bool? enableFooter,
     bool? showHeaderRule,
     bool? showFooterRule,
     bool? skipFirstPageHeaderFooter,
@@ -2153,6 +2176,8 @@ class ReaderController extends ChangeNotifier {
       footerLeft: footerLeft,
       footerCenter: footerCenter,
       footerRight: footerRight,
+      enableHeader: enableHeader,
+      enableFooter: enableFooter,
       showHeaderRule: showHeaderRule,
       showFooterRule: showFooterRule,
       skipFirstPageHeaderFooter: skipFirstPageHeaderFooter,
@@ -2488,13 +2513,21 @@ class ReaderController extends ChangeNotifier {
         }
         return doc.pdfBytes;
       }
-      if (options.theme == 'light') {
-        // Light mode Markdown: use current in-memory PDF immediately (0ms fast path)
+      if (options.theme == 'light' && !(doc.isPdfReflowed && options.isFluid)) {
+        // Light mode Markdown (or reflowed PDF already in a paged format): use current in-memory PDF immediately (0ms fast path)
         return doc.pdfBytes;
       }
 
-      // When viewing in dark mode, strictly export publication-grade light mode document
-      final exportOptions = options.copyWith(theme: 'light');
+      // When viewing in dark mode, strictly export publication-grade light mode document.
+      // When exporting a reflowed PDF from Fluid mode, default to Mobile Portrait (390x780pt)
+      // so the exported PDF is paginated for mobile screens rather than a giant continuous strip.
+      final exportOptions = (doc.isPdfReflowed && options.isFluid)
+          ? options.copyWith(
+              theme: 'light',
+              mode: 'paged',
+              pageFormat: PageFormat.mobilePortrait,
+            )
+          : options.copyWith(theme: 'light');
 
       if (doc.filePath != null) {
         final cached = DocumentCacheService.getCachedPdf(
@@ -2838,6 +2871,10 @@ graph LR
       switch (pageFormat.toLowerCase()) {
         case 'fluid':
           return PageFormat.fluid;
+        case 'mobile':
+        case 'mobile_portrait':
+        case 'mobileportrait':
+          return PageFormat.mobilePortrait;
         case 'a4':
         case 'a4_portrait':
         case 'a4portrait':

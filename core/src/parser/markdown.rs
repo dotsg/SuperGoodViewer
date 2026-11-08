@@ -60,6 +60,21 @@ pub fn resolve_page_geometry(
                 margin_right_pt: margin_x,
             }
         }
+        "mobile" => {
+            // Mobile Portrait: 390pt x 780pt (9:18 phone screen), compact 20pt horizontal margins
+            let margin_x: f32 = 20.0;
+            let width: f32 = 390.0;
+            let bw: f32 = width - 2.0 * margin_x; // 350.0 pt
+            PageGeometry {
+                page_width_str: format!("{width}pt"),
+                page_height_str: "780pt".to_string(),
+                page_margin_str: format!("(x: {margin_x}pt, top: 32pt, bottom: 32pt)"),
+                body_width_pt: bw,
+                page_width_pt: width,
+                margin_left_pt: margin_x,
+                margin_right_pt: margin_x,
+            }
+        }
         "a4" => {
             // A4: 595.28pt x 841.89pt, margin x: 2cm = 56.692913 pt.
             let margin_x: f32 = 2.0 * 72.0 / 2.54;
@@ -137,6 +152,273 @@ struct ImageParagraph {
     output_start: usize,
     image_count: usize,
     has_other_content: bool,
+}
+
+struct RawTableCell {
+    rendered: String,
+    is_adjacent_pipes: bool,
+    is_rowspan_marker: bool,
+}
+
+struct ActiveTableRow {
+    is_header: bool,
+    cells: Vec<RawTableCell>,
+}
+
+struct ActiveTableCell {
+    output_start: usize,
+    range: std::ops::Range<usize>,
+}
+
+struct ActiveTable {
+    aligns: Vec<Alignment>,
+    rows: Vec<ActiveTableRow>,
+    current_row: Option<ActiveTableRow>,
+    current_cell: Option<ActiveTableCell>,
+}
+
+struct ResolvedTableCell {
+    rendered: String,
+    is_rowspan_marker: bool,
+    col_start: usize,
+    colspan: usize,
+    rowspan: usize,
+    omitted: bool,
+}
+
+struct ResolvedTableRow {
+    is_header: bool,
+    cells: Vec<ResolvedTableCell>,
+}
+
+fn emit_resolved_table_cell(cell: &ResolvedTableCell, is_header: bool, out: &mut String) {
+    let inner = if is_header {
+        format!("#strong[{}]/**/", cell.rendered)
+    } else {
+        cell.rendered.clone()
+    };
+    match (cell.colspan > 1, cell.rowspan > 1) {
+        (false, false) => {
+            out.push_str(&format!("  [{}],\n", inner));
+        }
+        (true, false) => {
+            out.push_str(&format!(
+                "  table.cell(colspan: {})[{}],\n",
+                cell.colspan, inner
+            ));
+        }
+        (false, true) => {
+            out.push_str(&format!(
+                "  table.cell(rowspan: {})[{}],\n",
+                cell.rowspan, inner
+            ));
+        }
+        (true, true) => {
+            out.push_str(&format!(
+                "  table.cell(colspan: {}, rowspan: {})[{}],\n",
+                cell.colspan, cell.rowspan, inner
+            ));
+        }
+    }
+}
+
+fn emit_typst_table(
+    table: &ActiveTable,
+    table_stroke: &str,
+    table_header_bg: &str,
+    out: &mut String,
+) {
+    let cols_count = table.aligns.len();
+    let align_str: Vec<&str> = table
+        .aligns
+        .iter()
+        .map(|a| match a {
+            Alignment::Left => "left",
+            Alignment::Center => "center",
+            Alignment::Right => "right",
+            Alignment::None => "left",
+        })
+        .collect();
+
+    if cols_count == 0 {
+        out.push_str(&format!(
+            "\n#align(center)[#table(\n  columns: 0,\n  align: (),\n)]\n\n"
+        ));
+        return;
+    }
+
+    // 1. Resolve horizontal `colspan` (`||` consecutive adjacent pipes) within each row
+    let mut resolved_rows: Vec<ResolvedTableRow> = Vec::with_capacity(table.rows.len());
+    for row in &table.rows {
+        let mut merged: Vec<ResolvedTableCell> = Vec::with_capacity(row.cells.len());
+        for raw in &row.cells {
+            if raw.is_adjacent_pipes && raw.rendered.is_empty() {
+                if let Some(prev) = merged.last_mut() {
+                    prev.colspan += 1;
+                    continue;
+                }
+            }
+            merged.push(ResolvedTableCell {
+                rendered: raw.rendered.clone(),
+                is_rowspan_marker: raw.is_rowspan_marker,
+                col_start: 0,
+                colspan: 1,
+                rowspan: 1,
+                omitted: false,
+            });
+        }
+
+        let mut col_cursor = 0usize;
+        let mut fitted = Vec::with_capacity(merged.len());
+        for mut cell in merged {
+            if col_cursor >= cols_count {
+                break;
+            }
+            cell.col_start = col_cursor;
+            cell.colspan = cell.colspan.min(cols_count - col_cursor).max(1);
+            col_cursor += cell.colspan;
+            fitted.push(cell);
+        }
+        while col_cursor < cols_count {
+            fitted.push(ResolvedTableCell {
+                rendered: String::new(),
+                is_rowspan_marker: false,
+                col_start: col_cursor,
+                colspan: 1,
+                rowspan: 1,
+                omitted: false,
+            });
+            col_cursor += 1;
+        }
+        resolved_rows.push(ResolvedTableRow {
+            is_header: row.is_header,
+            cells: fitted,
+        });
+    }
+
+    // 2. Resolve vertical `rowspan` (`^^` cells) across rows
+    let mut origin: Vec<Option<(usize, usize)>> = vec![None; cols_count];
+    for r in 0..resolved_rows.len() {
+        if r > 0 {
+            let num_cells = resolved_rows[r].cells.len();
+            let mut i = 0;
+            while i < num_cells {
+                if !resolved_rows[r].cells[i].is_rowspan_marker {
+                    i += 1;
+                    continue;
+                }
+                let start_col = resolved_rows[r].cells[i].col_start;
+                let Some((orig_r, orig_idx)) = origin[start_col] else {
+                    i += 1;
+                    continue;
+                };
+                let orig_col_start = resolved_rows[orig_r].cells[orig_idx].col_start;
+                let orig_col_end = orig_col_start + resolved_rows[orig_r].cells[orig_idx].colspan;
+
+                if start_col != orig_col_start {
+                    i += 1;
+                    continue;
+                }
+
+                let mut j = i;
+                let mut covered_end = start_col;
+                while j < num_cells
+                    && resolved_rows[r].cells[j].is_rowspan_marker
+                    && covered_end < orig_col_end
+                {
+                    covered_end =
+                        resolved_rows[r].cells[j].col_start + resolved_rows[r].cells[j].colspan;
+                    j += 1;
+                }
+
+                let all_origins_match = (orig_col_start..orig_col_end)
+                    .all(|c| origin[c] == Some((orig_r, orig_idx)));
+
+                if covered_end == orig_col_end && all_origins_match {
+                    resolved_rows[orig_r].cells[orig_idx].rowspan += 1;
+                    for k in i..j {
+                        resolved_rows[r].cells[k].omitted = true;
+                    }
+                    i = j;
+                } else {
+                    i += 1;
+                }
+            }
+        }
+
+        for (cell_idx, cell) in resolved_rows[r].cells.iter().enumerate() {
+            if !cell.omitted {
+                for c in cell.col_start..(cell.col_start + cell.colspan) {
+                    origin[c] = Some((r, cell_idx));
+                }
+            }
+        }
+    }
+
+    let has_spans = resolved_rows.iter().any(|row| {
+        row.cells
+            .iter()
+            .any(|c| !c.omitted && (c.colspan > 1 || c.rowspan > 1))
+    });
+
+    // Ensure `table.header(...)` encloses all rows covered by any header cell's `rowspan`
+    let mut header_rows_end = if resolved_rows.first().is_some_and(|r| r.is_header) {
+        1usize
+    } else {
+        0usize
+    };
+    if header_rows_end > 0 {
+        let mut r = 0;
+        while r < header_rows_end && r < resolved_rows.len() {
+            for cell in &resolved_rows[r].cells {
+                if !cell.omitted {
+                    header_rows_end = header_rows_end.max((r + cell.rowspan).min(resolved_rows.len()));
+                }
+            }
+            r += 1;
+        }
+    }
+
+    if has_spans {
+        out.push_str(&format!(
+            "\n#align(center)[#table(\n  columns: {},\n  align: ({}),\n  stroke: 0.5pt + {table_stroke},\n",
+            cols_count,
+            align_str.join(", ")
+        ));
+        if header_rows_end > 1 {
+            out.push_str(&format!(
+                "  fill: (x, y) => if y < {header_rows_end} {{ {table_header_bg} }} else {{ none }},\n"
+            ));
+        }
+    } else {
+        out.push_str(&format!(
+            "\n#align(center)[#table(\n  columns: {},\n  align: ({}),\n",
+            cols_count,
+            align_str.join(", ")
+        ));
+    }
+
+    if header_rows_end > 0 {
+        out.push_str("  table.header(\n");
+        for row in &resolved_rows[..header_rows_end] {
+            for cell in &row.cells {
+                if !cell.omitted {
+                    emit_resolved_table_cell(cell, row.is_header, out);
+                }
+            }
+        }
+        out.push_str("  ),\n");
+    }
+
+    for row in &resolved_rows[header_rows_end..] {
+        for cell in &row.cells {
+            if !cell.omitted {
+                emit_resolved_table_cell(cell, row.is_header, out);
+            }
+        }
+    }
+
+    out.push_str(")]\n\n");
 }
 
 /// Escapes characters that have special syntactic meaning in Typst markup
@@ -1349,6 +1631,7 @@ pub fn convert_markdown_to_typst(
 
     let normalized_format = match raw_format {
         "fluid" => "fluid",
+        "mobile" | "mobile_portrait" | "mobilePortrait" => "mobile",
         "a4" | "a4_portrait" | "a4Portrait" | "portrait" => "a4",
         "a4_landscape" | "a4Landscape" | "landscape" => "a4_landscape",
         "slide_16_9" | "slide16x9" | "16:9" | "16_9" => "slide_16_9",
@@ -1417,6 +1700,8 @@ pub fn convert_markdown_to_typst(
 
     if !is_fluid {
         let skip_first = options.skip_first_page_header_footer.unwrap_or(true);
+        let enable_header = options.enable_header.unwrap_or(true);
+        let enable_footer = options.enable_footer.unwrap_or(true);
         let show_header_rule = options.show_header_rule.unwrap_or(false);
         let show_footer_rule = options.show_footer_rule.unwrap_or(false);
 
@@ -1430,7 +1715,8 @@ pub fn convert_markdown_to_typst(
         let h_center = options.header_center.as_deref().unwrap_or("");
         let h_right = options.header_right.as_deref().unwrap_or(default_header_right);
 
-        let has_header = !h_left.is_empty() || !h_center.is_empty() || !h_right.is_empty() || show_header_rule;
+        let has_header = enable_header
+            && (!h_left.is_empty() || !h_center.is_empty() || !h_right.is_empty() || show_header_rule);
 
         if has_header {
             let slot_left = format_slot_to_typst(h_left, &safe_title, header_color);
@@ -1485,7 +1771,8 @@ pub fn convert_markdown_to_typst(
         let f_center = options.footer_center.as_deref().unwrap_or(default_footer_center);
         let f_right = options.footer_right.as_deref().unwrap_or(default_footer_right);
 
-        let has_footer = !f_left.is_empty() || !f_center.is_empty() || !f_right.is_empty() || show_footer_rule;
+        let has_footer = enable_footer
+            && (!f_left.is_empty() || !f_center.is_empty() || !f_right.is_empty() || show_footer_rule);
 
         if has_footer {
             let slot_left = format_slot_to_typst(f_left, &safe_title, header_color);
@@ -2067,6 +2354,7 @@ pub fn convert_markdown_to_typst(
   fill: (x, y) => if y == 0 {{ {table_header_bg} }} else {{ none }},
   inset: (x: 9pt, y: 7pt),
 )
+#show table.cell: set align(horizon)
 
 "##,
         font_size = if is_slide_mode && options.font_size <= 12.0 {
@@ -2096,7 +2384,7 @@ pub fn convert_markdown_to_typst(
     let mut in_code_block = false;
     let mut code_block_lang = String::new();
     let mut code_block_content = String::new();
-    let mut in_table_head = false;
+    let mut active_table: Option<ActiveTable> = None;
     let mut list_stack: Vec<Option<u64>> = Vec::new();
     let mut link_stack: Vec<bool> = Vec::new();
     let mut current_image: Option<(String, String)> = None;
@@ -2115,7 +2403,7 @@ pub fn convert_markdown_to_typst(
     );
     let mut raw_equations: Vec<String> = Vec::new();
 
-    for event in parser {
+    for (event, range) in parser.into_offset_iter() {
         // Only a paragraph containing one image (optionally linked/formatted)
         // gets the reader's centered figure style. Image alt text is not prose.
         if let Some(paragraph) = image_paragraph.as_mut() {
@@ -2262,32 +2550,36 @@ pub fn convert_markdown_to_typst(
                     current_image = Some((dest_url.to_string(), String::new()));
                 }
                 Tag::Table(aligns) => {
-                    let cols_count = aligns.len();
-                    let align_str: Vec<&str> = aligns
-                        .iter()
-                        .map(|a| match a {
-                            Alignment::Left => "left",
-                            Alignment::Center => "center",
-                            Alignment::Right => "right",
-                            Alignment::None => "left",
-                        })
-                        .collect();
-                    out.push_str(&format!(
-                        "\n#align(center)[#table(\n  columns: {},\n  align: ({}),\n",
-                        cols_count,
-                        align_str.join(", ")
-                    ));
+                    active_table = Some(ActiveTable {
+                        aligns,
+                        rows: Vec::new(),
+                        current_row: None,
+                        current_cell: None,
+                    });
                 }
 
                 Tag::TableHead => {
-                    in_table_head = true;
-                    out.push_str("  table.header(\n");
+                    if let Some(table) = active_table.as_mut() {
+                        table.current_row = Some(ActiveTableRow {
+                            is_header: true,
+                            cells: Vec::new(),
+                        });
+                    }
                 }
-                Tag::TableRow => {}
+                Tag::TableRow => {
+                    if let Some(table) = active_table.as_mut() {
+                        table.current_row = Some(ActiveTableRow {
+                            is_header: false,
+                            cells: Vec::new(),
+                        });
+                    }
+                }
                 Tag::TableCell => {
-                    out.push_str("  [");
-                    if in_table_head {
-                        out.push_str("#strong[");
+                    if let Some(table) = active_table.as_mut() {
+                        table.current_cell = Some(ActiveTableCell {
+                            output_start: out.len(),
+                            range: range.clone(),
+                        });
                     }
                 }
                 Tag::FootnoteDefinition(label) => {
@@ -2418,18 +2710,39 @@ pub fn convert_markdown_to_typst(
                     }
                 }
                 TagEnd::Table => {
-                    out.push_str(")]\n\n");
-                }
-                TagEnd::TableHead => {
-                    in_table_head = false;
-                    out.push_str("  ),\n");
-                }
-                TagEnd::TableRow => {}
-                TagEnd::TableCell => {
-                    if in_table_head {
-                        out.push_str("]/**/");
+                    if let Some(table) = active_table.take() {
+                        emit_typst_table(&table, table_stroke, table_header_bg, &mut out);
                     }
-                    out.push_str("],\n");
+                }
+                TagEnd::TableHead | TagEnd::TableRow => {
+                    if let Some(table) = active_table.as_mut() {
+                        if let Some(row) = table.current_row.take() {
+                            table.rows.push(row);
+                        }
+                    }
+                }
+                TagEnd::TableCell => {
+                    if let Some(table) = active_table.as_mut() {
+                        if let Some(active_cell) = table.current_cell.take() {
+                            let rendered = out[active_cell.output_start..].to_string();
+                            out.truncate(active_cell.output_start);
+                            let bytes = markdown_body.as_bytes();
+                            let r = &active_cell.range;
+                            let is_adjacent_pipes = r.start == r.end
+                                && r.start > 0
+                                && bytes.get(r.start - 1) == Some(&b'|')
+                                && bytes.get(r.end) == Some(&b'|');
+                            let raw_slice = markdown_body.get(r.start..r.end).unwrap_or("");
+                            let is_rowspan_marker = raw_slice.trim() == "^^";
+                            if let Some(row) = table.current_row.as_mut() {
+                                row.cells.push(RawTableCell {
+                                    rendered,
+                                    is_adjacent_pipes,
+                                    is_rowspan_marker,
+                                });
+                            }
+                        }
+                    }
                 }
                 TagEnd::FootnoteDefinition => {
                     out.push_str("]\n");
@@ -3361,6 +3674,33 @@ A table with wide metrics.
     }
 
     #[test]
+    fn test_enable_header_and_footer_switches_can_disable_defaults() {
+        let md = "# Sample A4 Doc\nBody content.\n";
+        let mut options = RenderOptions::default();
+        options.page_format = Some("a4Portrait".to_string());
+        options.enable_header = Some(false);
+        options.enable_footer = Some(false);
+
+        let parsed = convert_markdown_to_typst(md, "Doc Title", &options);
+        assert!(!parsed.typst_source.contains("header: context"));
+        assert!(!parsed.typst_source.contains("footer: context"));
+    }
+
+    #[test]
+    fn test_mobile_portrait_page_format() {
+        let md = "# Reflowed Magazine Article\n\nParagraph text for mobile portrait PDF reading.\n";
+        let mut options = RenderOptions::default();
+        options.mode = "paged".to_string();
+        options.page_format = Some("mobilePortrait".to_string());
+
+        let parsed = convert_markdown_to_typst(md, "The New Yorker", &options);
+        assert!(!parsed.is_fluid);
+        assert!(parsed.typst_source.contains("width: 390pt"));
+        assert!(parsed.typst_source.contains("height: 780pt"));
+        assert!(parsed.typst_source.contains("margin: (x: 20pt, top: 32pt, bottom: 32pt)"));
+    }
+
+    #[test]
     fn test_header_footer_slot_escaping_with_brackets_and_backslashes() {
         // Test frontmatter with unmatched brackets and backslashes
         let md = r#"---
@@ -3969,6 +4309,97 @@ HTML 图片与多行属性：
         )
         .expect("Custom spacing + left-aligned table should compile cleanly");
         assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn test_issue_30_multimarkdown_table_colspan_and_rowspan() {
+        let md = r#"
+|       |  0<br>0Nm || 0.2<br>5.8Nm || 0.4<br>18.0Nm || 0.55<br>32Nm || 0.67<br>41.5Nm ||
+|------ | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: |
+|       | 运行 | 缺相 | 运行 | 缺相 | 运行 | 缺相 | 运行 | 缺相 | 运行 | 缺相 |
+| 启动 | OK | OK | OK | OK | OK | OK |  |  |  |  |
+| 44rpm | ^^ | ^^ | ^^ | ^^ | ^^ | ^^ | |  |  |  |
+| 200rpm |  |  |  |  |  |  |  |  |  |  |
+| 300rpm | OK | 继续运行<br>缺相故障 | OK | 继续运行<br>缺相故障 | OK | 停顿运行<br>缺相故障 | OK | 停止运行<br>缺相故障 |  |  |
+| 400rpm |  |  |  |  |  |  |  |  |  |  |
+| 750rpm | OK | OK |  |  |  |  |  |  |  |  |
+| -750rpm | OK | OK |  |  |  |  |  |  |  |  |
+"#;
+        let opts = RenderOptions::default();
+        let parsed = convert_markdown_to_typst(md, "Issue 30 MultiMarkdown Table", &opts);
+
+        // Header cells with `||` must emit `table.cell(colspan: 2)`
+        assert!(
+            parsed
+                .typst_source
+                .contains("table.cell(colspan: 2)[#strong[0\\ \n0Nm]/**/]"),
+            "Header cell followed by || must emit colspan: 2, got:\n{}",
+            parsed.typst_source
+        );
+        assert!(
+            parsed
+                .typst_source
+                .contains("table.cell(colspan: 2)[#strong[0.67\\ \n41.5Nm]/**/]"),
+            "Last header cell followed by || must emit colspan: 2, got:\n{}",
+            parsed.typst_source
+        );
+
+        // Body cells merged with `^^` below must emit `table.cell(rowspan: 2)[OK]`
+        let rowspan_ok_count = parsed
+            .typst_source
+            .matches("table.cell(rowspan: 2)[OK]")
+            .count();
+        assert_eq!(
+            rowspan_ok_count, 6,
+            "6 OK cells in '启动' row should merge with 6 '^^' cells in '44rpm' row, got:\n{}",
+            parsed.typst_source
+        );
+        assert!(
+            !parsed.typst_source.contains("[^^]"),
+            "Merged ^^ markers must be omitted from Typst table cells, got:\n{}",
+            parsed.typst_source
+        );
+
+        // Combined colspan + rowspan (e.g., 2x2 merged cell via both || and ^^)
+        let md_combined = r#"
+| 维度 | 指标 A || 指标 B |
+| --- | :---: | :---: | :---: |
+| ^^ | 子项 1 | 子项 2 | ^^ |
+| 数据 1 | 100 || 200 |
+| 数据 2 | ^^ || 300 |
+"#;
+        let parsed_combined =
+            convert_markdown_to_typst(md_combined, "Issue 30 Combined Spans", &opts);
+        assert!(
+            parsed_combined
+                .typst_source
+                .contains("table.cell(rowspan: 2)[#strong[维度]/**/]"),
+            "Header cell merged with ^^ in row 1 must have rowspan: 2, got:\n{}",
+            parsed_combined.typst_source
+        );
+        assert!(
+            parsed_combined
+                .typst_source
+                .contains("table.cell(colspan: 2, rowspan: 2)[100]"),
+            "Cell with both || and ^^ below must emit colspan: 2, rowspan: 2, got:\n{}",
+            parsed_combined.typst_source
+        );
+
+        let pdf1 = crate::compiler::engine::compile_typst_to_pdf(
+            &parsed.typst_source,
+            ".",
+            parsed.virtual_files,
+        )
+        .expect("Issue 30 MultiMarkdown table must compile cleanly to PDF");
+        assert!(pdf1.starts_with(b"%PDF-"));
+
+        let pdf2 = crate::compiler::engine::compile_typst_to_pdf(
+            &parsed_combined.typst_source,
+            ".",
+            parsed_combined.virtual_files,
+        )
+        .expect("Combined colspan+rowspan MultiMarkdown table must compile cleanly to PDF");
+        assert!(pdf2.starts_with(b"%PDF-"));
     }
 }
 

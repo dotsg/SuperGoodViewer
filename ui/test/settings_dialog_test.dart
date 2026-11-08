@@ -174,6 +174,62 @@ void main() {
       expect(find.text('正文排版字体'), findsOneWidget);
     });
 
+    testWidgets('showSettingsDialog deduplicates repeated calls and closes with a single click, auto-applying pending changes', (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = ReaderController(autoRestorePreferences: false);
+      addTearDown(controller.dispose);
+
+      late BuildContext hostContext;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (ctx) {
+                hostContext = ctx;
+                return ElevatedButton(
+                  onPressed: () {
+                    // Simulate rapid double trigger (e.g. key repeat or double click)
+                    showSettingsDialog(ctx, controller, initialTab: SettingsTab.general);
+                    showSettingsDialog(ctx, controller, initialTab: SettingsTab.general);
+                  },
+                  child: const Text('Open Settings Twice'),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Open Settings Twice'));
+      await tester.pumpAndSettle();
+      expect(find.byType(SettingsDialog), findsOneWidget);
+
+      // Calling showSettingsDialog while already open switches tab in-place without stacking a second route
+      showSettingsDialog(hostContext, controller, initialTab: SettingsTab.typography);
+      await tester.pumpAndSettle();
+      expect(find.byType(SettingsDialog), findsOneWidget);
+      expect(find.text('字体排版与中英文等宽对齐'), findsOneWidget);
+
+      // Modify font size without clicking the bottom Save button, then close with a single click on '关闭'
+      final initialSize = controller.renderOptions.fontSize;
+      await tester.tap(find.byTooltip('放大字号'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('关闭'));
+      await tester.pumpAndSettle();
+
+      // Single click must close the dialog completely AND auto-apply the pending typography change
+      expect(find.byType(SettingsDialog), findsNothing);
+      expect(controller.renderOptions.fontSize, initialSize + 0.5);
+
+      // Drain ReaderController's 800ms reloading debounce timer
+      await tester.pump(const Duration(seconds: 1));
+    });
+
     testWidgets('toggling auto reload and font size in SettingsDialog updates controller', (tester) async {
       tester.view.physicalSize = const Size(1200, 900);
       tester.view.devicePixelRatio = 1.0;

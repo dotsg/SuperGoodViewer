@@ -26,23 +26,43 @@ enum SettingsTab {
   about,
 }
 
+_SettingsDialogState? _activeSettingsDialogState;
+bool _isPushingSettingsDialog = false;
+SettingsTab? _pendingSettingsTab;
+
 /// Opens the unified SettingsDialog with an optional starting tab.
+/// If a SettingsDialog is already open or being pushed, switches the existing
+/// dialog to [initialTab] instead of stacking a duplicate modal route.
 void showSettingsDialog(
   BuildContext context,
   ReaderController controller, {
   SettingsTab initialTab = SettingsTab.general,
 }) {
+  final active = _activeSettingsDialogState;
+  if (active != null && active.mounted) {
+    active.switchToTab(initialTab);
+    return;
+  }
+  if (_isPushingSettingsDialog) {
+    _pendingSettingsTab = initialTab;
+    return;
+  }
+  _isPushingSettingsDialog = true;
+  _pendingSettingsTab = null;
   showDialog(
     context: context,
     builder: (ctx) => SettingsDialog(
       controller: controller,
       initialTab: initialTab,
     ),
-  );
+  ).whenComplete(() {
+    _isPushingSettingsDialog = false;
+    _pendingSettingsTab = null;
+  });
 }
 
 class SettingsDialog extends StatefulWidget {
-  static const String appVersion = '1.1.2';
+  static const String appVersion = '1.1.3';
   static const String projectHomepage = 'https://github.com/dotsg/SuperGoodViewer';
 
   final ReaderController controller;
@@ -110,10 +130,61 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late TextEditingController _footerLeftController;
   late TextEditingController _footerCenterController;
   late TextEditingController _footerRightController;
+  late bool _enableHeader;
+  late bool _enableFooter;
   late bool _showHeaderRule;
   late bool _showFooterRule;
   late bool _skipFirstPage;
   late bool _marpEnabled;
+  bool _lastHasUnsavedLayoutChanges = false;
+
+  void switchToTab(SettingsTab tab) {
+    if (!mounted) return;
+    final mobileTabs = [
+      SettingsTab.general,
+      SettingsTab.layout,
+      SettingsTab.typography,
+      SettingsTab.about,
+    ];
+    final targetTab = (FormFactor.isMobilePlatform(context) && !mobileTabs.contains(tab))
+        ? SettingsTab.general
+        : tab;
+    if (_currentTab == targetTab && _listeningActionId == null) return;
+    setState(() {
+      _currentTab = targetTab;
+      _listeningActionId = null;
+      _conflictMessage = null;
+    });
+  }
+
+  void _applyPendingChangesOnClose() {
+    if (_hasUnsavedTypographyChanges) {
+      widget.controller.setTypography(
+        bodyFont: _selectedBodyFont,
+        codeFont: _selectedCodeFont,
+        fontSize: _selectedFontSize,
+        lineSpacing: _selectedLineSpacing,
+        paragraphSpacing: _selectedParagraphSpacing,
+      );
+    }
+    if (_hasUnsavedLayoutChanges) {
+      widget.controller.setPageFormat(_selectedPageFormat, updateGlobalDefault: true);
+      widget.controller.setHeaderFooterOptions(
+        headerLeft: _headerLeftController.text.trim().isEmpty ? null : _headerLeftController.text.trim(),
+        headerCenter: _headerCenterController.text.trim().isEmpty ? null : _headerCenterController.text.trim(),
+        headerRight: _headerRightController.text.trim().isEmpty ? null : _headerRightController.text.trim(),
+        footerLeft: _footerLeftController.text.trim().isEmpty ? null : _footerLeftController.text.trim(),
+        footerCenter: _footerCenterController.text.trim().isEmpty ? null : _footerCenterController.text.trim(),
+        footerRight: _footerRightController.text.trim().isEmpty ? null : _footerRightController.text.trim(),
+        enableHeader: _enableHeader,
+        enableFooter: _enableFooter,
+        showHeaderRule: _showHeaderRule,
+        showFooterRule: _showFooterRule,
+        skipFirstPageHeaderFooter: _skipFirstPage,
+        marpEnabled: _marpEnabled,
+      );
+    }
+  }
 
   bool get _hasUnsavedTypographyChanges {
     final opts = widget.controller.renderOptions;
@@ -156,11 +227,14 @@ class _SettingsDialogState extends State<SettingsDialog> {
       footerLeft: _footerLeftController.text.trim().isEmpty ? null : _footerLeftController.text.trim(),
       footerCenter: _footerCenterController.text.trim().isEmpty ? null : _footerCenterController.text.trim(),
       footerRight: _footerRightController.text.trim().isEmpty ? null : _footerRightController.text.trim(),
+      enableHeader: _enableHeader,
+      enableFooter: _enableFooter,
       showHeaderRule: _showHeaderRule,
       showFooterRule: _showFooterRule,
       skipFirstPageHeaderFooter: _skipFirstPage,
       marpEnabled: _marpEnabled,
     );
+    _lastHasUnsavedLayoutChanges = false;
     setState(() {});
     try {
       final messenger = ScaffoldMessenger.maybeOf(context);
@@ -193,6 +267,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
     if (fC != opts.footerCenter) return true;
     final fR = _footerRightController.text.trim().isEmpty ? null : _footerRightController.text.trim();
     if (fR != opts.footerRight) return true;
+    if (_enableHeader != (opts.enableHeader ?? true)) return true;
+    if (_enableFooter != (opts.enableFooter ?? true)) return true;
     if (_showHeaderRule != (opts.showHeaderRule ?? false)) return true;
     if (_showFooterRule != (opts.showFooterRule ?? false)) return true;
     if (_skipFirstPage != (opts.skipFirstPageHeaderFooter ?? true)) return true;
@@ -212,10 +288,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
       _footerLeftController.text = opts.footerLeft ?? '';
       _footerCenterController.text = opts.footerCenter ?? '';
       _footerRightController.text = opts.footerRight ?? '';
+      _enableHeader = opts.enableHeader ?? true;
+      _enableFooter = opts.enableFooter ?? true;
       _showHeaderRule = opts.showHeaderRule ?? false;
       _showFooterRule = opts.showFooterRule ?? false;
       _skipFirstPage = opts.skipFirstPageHeaderFooter ?? true;
       _marpEnabled = opts.marpEnabled ?? true;
+      _lastHasUnsavedLayoutChanges = false;
     });
   }
 
@@ -232,6 +311,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   // Shortcuts state
   String? _listeningActionId;
   String? _conflictMessage;
+  final FocusNode _shortcutCaptureFocusNode = FocusNode(debugLabel: 'shortcutCapture');
 
   // CLI state
   bool _isLoadingCli = true;
@@ -255,16 +335,21 @@ class _SettingsDialogState extends State<SettingsDialog> {
   @override
   void initState() {
     super.initState();
+    _activeSettingsDialogState = this;
+    _isPushingSettingsDialog = false;
+    final requestedTab = _pendingSettingsTab ?? widget.initialTab;
+    _pendingSettingsTab = null;
+
     final mobileTabs = [
       SettingsTab.general,
       SettingsTab.layout,
       SettingsTab.typography,
       SettingsTab.about,
     ];
-    if (FormFactor.isMobilePlatform() && !mobileTabs.contains(widget.initialTab)) {
+    if (FormFactor.isMobilePlatform() && !mobileTabs.contains(requestedTab)) {
       _currentTab = SettingsTab.general;
     } else {
-      _currentTab = widget.initialTab;
+      _currentTab = requestedTab;
     }
     if (LinuxDesktopIntegration.isSupported) {
       _desktopEntryStatus = LinuxDesktopIntegration.instance.status();
@@ -285,6 +370,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _footerLeftController = TextEditingController(text: opts.footerLeft ?? '');
     _footerCenterController = TextEditingController(text: opts.footerCenter ?? '');
     _footerRightController = TextEditingController(text: opts.footerRight ?? '');
+    _enableHeader = opts.enableHeader ?? true;
+    _enableFooter = opts.enableFooter ?? true;
     _showHeaderRule = opts.showHeaderRule ?? false;
     _showFooterRule = opts.showFooterRule ?? false;
     _skipFirstPage = opts.skipFirstPageHeaderFooter ?? true;
@@ -302,14 +389,62 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
     final prefs = PreferencesService.loadSync();
     _autoCheckUpdates = prefs[UpdateService.prefAutoCheck] as bool? ?? true;
+    FocusManager.instance.addEarlyKeyEventHandler(_handleShortcutCaptureKeyEvent);
   }
 
   void _onLayoutFieldChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    final hasChanges = _hasUnsavedLayoutChanges;
+    if (hasChanges != _lastHasUnsavedLayoutChanges) {
+      _lastHasUnsavedLayoutChanges = hasChanges;
+      setState(() {});
+    }
+  }
+
+  KeyEventResult _handleShortcutCaptureKeyEvent(KeyEvent event) {
+    final actionId = _listeningActionId;
+    if (!mounted || actionId == null || _currentTab != SettingsTab.shortcuts) {
+      return KeyEventResult.ignored;
+    }
+    if (event is! KeyDownEvent) {
+      return KeyEventResult.handled;
+    }
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.escape ||
+        event.physicalKey == PhysicalKeyboardKey.escape) {
+      setState(() => _listeningActionId = null);
+      return KeyEventResult.handled;
+    }
+    if (ShortcutService.isModifierKey(key)) {
+      return KeyEventResult.handled;
+    }
+    final resolvedKey = ShortcutService.resolveSupportedKey(event);
+    if (resolvedKey != null) {
+      final shortcutService = widget.controller.shortcutService;
+      final strings = widget.controller.strings;
+      final conflict = shortcutService.findConflict(actionId, resolvedKey);
+      shortcutService.setKey(actionId, resolvedKey);
+      setState(() {
+        _listeningActionId = null;
+        if (conflict != null) {
+          _conflictMessage = strings.shortcutConflict(conflict);
+        } else {
+          _conflictMessage = null;
+        }
+      });
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.handled;
   }
 
   @override
   void dispose() {
+    if (identical(_activeSettingsDialogState, this)) {
+      _activeSettingsDialogState = null;
+    }
+    _isPushingSettingsDialog = false;
+    FocusManager.instance.removeEarlyKeyEventHandler(_handleShortcutCaptureKeyEvent);
+    _shortcutCaptureFocusNode.dispose();
     _headerLeftController.removeListener(_onLayoutFieldChanged);
     _headerCenterController.removeListener(_onLayoutFieldChanged);
     _headerRightController.removeListener(_onLayoutFieldChanged);
@@ -438,166 +573,169 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final isMobile = FormFactor.isMobilePlatform(context);
+    return PopScope(
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) {
+          _applyPendingChangesOnClose();
+        }
+      },
+      child: ListenableBuilder(
+        listenable: Listenable.merge([
+          widget.controller,
+          FontDownloadService.instance,
+        ]),
+        builder: (context, _) {
+          final theme = Theme.of(context);
+          final isDark = theme.brightness == Brightness.dark;
+          final isMobile = FormFactor.isMobilePlatform(context);
 
-    if (isMobile) {
-      final mobileTabs = [
-        SettingsTab.general,
-        SettingsTab.layout,
-        SettingsTab.typography,
-        SettingsTab.about,
-      ];
+          if (isMobile) {
+            final mobileTabs = [
+              SettingsTab.general,
+              SettingsTab.layout,
+              SettingsTab.typography,
+              SettingsTab.about,
+            ];
 
-      return Dialog.fullscreen(
-        backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-        child: SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Mobile Top Navigation Bar
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                child: Row(
+            return Dialog.fullscreen(
+              backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+              child: SafeArea(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back_rounded),
-                      tooltip: widget.controller.strings.close,
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        widget.controller.strings.settingsTitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                        ),
+                    // Mobile Top Navigation Bar
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      child: Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.arrow_back_rounded),
+                            tooltip: widget.controller.strings.close,
+                            onPressed: () => Navigator.of(context).pop(),
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              widget.controller.strings.settingsTitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
+                    ),
+
+                    // Mobile Horizontal Tab Chips
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                      child: Row(
+                        children: mobileTabs.map((tab) {
+                          final isSelected = _currentTab == tab;
+                          final s = widget.controller.strings;
+                          final String chipLabel;
+                          switch (tab) {
+                            case SettingsTab.general:
+                              chipLabel = s.tabGeneral;
+                              break;
+                            case SettingsTab.layout:
+                              chipLabel = s.tabLayout;
+                              break;
+                            case SettingsTab.typography:
+                              chipLabel = s.tabTypography;
+                              break;
+                            case SettingsTab.about:
+                              chipLabel = s.tabAbout;
+                              break;
+                            default:
+                              chipLabel = _getTabTitle(tab);
+                          }
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: FilterChip(
+                              selected: isSelected,
+                              label: Text(chipLabel),
+                              onSelected: (_) => setState(() => _currentTab = tab),
+                              selectedColor: theme.colorScheme.primary.withValues(alpha: 0.18),
+                              checkmarkColor: theme.colorScheme.primary,
+                              labelStyle: TextStyle(
+                                fontSize: 13,
+                                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                color: isSelected
+                                    ? theme.colorScheme.primary
+                                    : (isDark ? Colors.white70 : Colors.black87),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                    Divider(
+                      height: 1,
+                      thickness: 1,
+                      color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+                    ),
+
+                    // Tab Body (Full Width on mobile)
+                    Expanded(
+                      child: _currentTab == SettingsTab.typography
+                          ? Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                              child: _buildTypographyTab(theme, isDark),
+                            )
+                          : _currentTab == SettingsTab.layout
+                              ? Padding(
+                                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                                  child: _buildLayoutTab(theme, isDark),
+                                )
+                              : SingleChildScrollView(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                  child: _buildActiveTabBody(theme, isDark),
+                                ),
                     ),
                   ],
                 ),
               ),
+            );
+          }
 
-              // Mobile Horizontal Tab Chips
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                child: Row(
-                  children: mobileTabs.map((tab) {
-                    final isSelected = _currentTab == tab;
-                    final s = widget.controller.strings;
-                    final String chipLabel;
-                    switch (tab) {
-                      case SettingsTab.general:
-                        chipLabel = s.tabGeneral;
-                        break;
-                      case SettingsTab.layout:
-                        chipLabel = s.tabLayout;
-                        break;
-                      case SettingsTab.typography:
-                        chipLabel = s.tabTypography;
-                        break;
-                      case SettingsTab.about:
-                        chipLabel = s.tabAbout;
-                        break;
-                      default:
-                        chipLabel = _getTabTitle(tab);
-                    }
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: FilterChip(
-                        selected: isSelected,
-                        label: Text(chipLabel),
-                        onSelected: (_) => setState(() => _currentTab = tab),
-                        selectedColor: theme.colorScheme.primary.withValues(alpha: 0.18),
-                        checkmarkColor: theme.colorScheme.primary,
-                        labelStyle: TextStyle(
-                          fontSize: 13,
-                          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                          color: isSelected
-                              ? theme.colorScheme.primary
-                              : (isDark ? Colors.white70 : Colors.black87),
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
+          return Dialog(
+            backgroundColor: isDark ? const Color(0xFF222222) : Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: Container(
+              width: 880,
+              height: 640,
+              constraints: const BoxConstraints(maxWidth: 960, maxHeight: 720),
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
               ),
-              Divider(
-                height: 1,
-                thickness: 1,
-                color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
-              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Left Navigation Sidebar
+                  _buildSidebar(theme, isDark),
 
-              // Tab Body (Full Width on mobile)
-              Expanded(
-                child: ListenableBuilder(
-                  listenable: Listenable.merge([
-                    widget.controller,
-                    FontDownloadService.instance,
-                  ]),
-                  builder: (context, _) => _currentTab == SettingsTab.typography
-                      ? Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                          child: _buildTypographyTab(theme, isDark),
-                        )
-                      : _currentTab == SettingsTab.layout
-                          ? Padding(
-                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                              child: _buildLayoutTab(theme, isDark),
-                            )
-                          : SingleChildScrollView(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                              child: _buildActiveTabBody(theme, isDark),
-                            ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
+                  // Vertical Divider
+                  VerticalDivider(
+                    width: 1,
+                    thickness: 1,
+                    color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
+                  ),
 
-    return Dialog(
-      backgroundColor: isDark ? const Color(0xFF222222) : Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        width: 880,
-        height: 640,
-        constraints: const BoxConstraints(maxWidth: 960, maxHeight: 720),
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Left Navigation Sidebar
-            _buildSidebar(theme, isDark),
-
-            // Vertical Divider
-            VerticalDivider(
-              width: 1,
-              thickness: 1,
-              color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E5E5),
-            ),
-
-            // Right Tab Content
-            Expanded(
-              child: ListenableBuilder(
-                listenable: Listenable.merge([
-                  widget.controller,
-                  FontDownloadService.instance,
-                ]),
-                builder: (context, _) => _buildTabContent(theme, isDark),
+                  // Right Tab Content
+                  Expanded(
+                    child: _buildTabContent(theme, isDark),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -989,6 +1127,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
               desc = widget.controller.strings.pageFormatFluidDesc;
               icon = Icons.view_stream_rounded;
               break;
+            case PageFormat.mobilePortrait:
+              desc = widget.controller.strings.pageFormatMobileDesc;
+              icon = Icons.smartphone_rounded;
+              break;
             case PageFormat.a4Portrait:
               desc = widget.controller.strings.pageFormatA4PortraitDesc;
               icon = Icons.description_outlined;
@@ -1103,15 +1245,29 @@ class _SettingsDialogState extends State<SettingsDialog> {
           contentPadding: EdgeInsets.zero,
         ),
         SwitchListTile(
+          value: _enableHeader,
+          onChanged: (val) => setState(() => _enableHeader = val),
+          title: Text(widget.controller.strings.enableHeader, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+        SwitchListTile(
           value: _showHeaderRule,
-          onChanged: (val) => setState(() => _showHeaderRule = val),
+          onChanged: _enableHeader ? (val) => setState(() => _showHeaderRule = val) : null,
           title: Text(widget.controller.strings.showHeaderRule, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           dense: true,
           contentPadding: EdgeInsets.zero,
         ),
         SwitchListTile(
+          value: _enableFooter,
+          onChanged: (val) => setState(() => _enableFooter = val),
+          title: Text(widget.controller.strings.enableFooter, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+        SwitchListTile(
           value: _showFooterRule,
-          onChanged: (val) => setState(() => _showFooterRule = val),
+          onChanged: _enableFooter ? (val) => setState(() => _showFooterRule = val) : null,
           title: Text(widget.controller.strings.showFooterRule, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           dense: true,
           contentPadding: EdgeInsets.zero,
@@ -1130,11 +1286,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-              onPressed: () {
-                _headerLeftController.clear();
-                _headerCenterController.clear();
-                _headerRightController.clear();
-              },
+              onPressed: _enableHeader
+                  ? () {
+                      _headerLeftController.clear();
+                      _headerCenterController.clear();
+                      _headerRightController.clear();
+                    }
+                  : null,
             ),
           ],
         ),
@@ -1147,18 +1305,21 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 controller: _headerLeftController,
                 label: widget.controller.strings.slotLeft,
                 hintText: widget.controller.strings.slotHintCustom,
+                enabled: _enableHeader,
               ),
               const SizedBox(height: 8),
               _buildSlotField(
                 controller: _headerCenterController,
                 label: widget.controller.strings.slotCenter,
                 hintText: widget.controller.strings.slotHintEmpty,
+                enabled: _enableHeader,
               ),
               const SizedBox(height: 8),
               _buildSlotField(
                 controller: _headerRightController,
                 label: widget.controller.strings.slotRight,
                 hintText: '{title}',
+                enabled: _enableHeader,
               ),
             ],
           )
@@ -1170,6 +1331,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   controller: _headerLeftController,
                   label: widget.controller.strings.slotLeft,
                   hintText: widget.controller.strings.slotHintCustom,
+                  enabled: _enableHeader,
                 ),
               ),
               const SizedBox(width: 8),
@@ -1178,6 +1340,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   controller: _headerCenterController,
                   label: widget.controller.strings.slotCenter,
                   hintText: widget.controller.strings.slotHintEmpty,
+                  enabled: _enableHeader,
                 ),
               ),
               const SizedBox(width: 8),
@@ -1186,6 +1349,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   controller: _headerRightController,
                   label: widget.controller.strings.slotRight,
                   hintText: '{title}',
+                  enabled: _enableHeader,
                 ),
               ),
             ],
@@ -1204,11 +1368,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-              onPressed: () {
-                _footerLeftController.clear();
-                _footerCenterController.clear();
-                _footerRightController.clear();
-              },
+              onPressed: _enableFooter
+                  ? () {
+                      _footerLeftController.clear();
+                      _footerCenterController.clear();
+                      _footerRightController.clear();
+                    }
+                  : null,
             ),
           ],
         ),
@@ -1221,18 +1387,21 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 controller: _footerLeftController,
                 label: widget.controller.strings.slotLeft,
                 hintText: widget.controller.strings.slotHintCopyright,
+                enabled: _enableFooter,
               ),
               const SizedBox(height: 8),
               _buildSlotField(
                 controller: _footerCenterController,
                 label: widget.controller.strings.slotCenter,
                 hintText: '{page}',
+                enabled: _enableFooter,
               ),
               const SizedBox(height: 8),
               _buildSlotField(
                 controller: _footerRightController,
                 label: widget.controller.strings.slotRight,
                 hintText: widget.controller.strings.slotHintPageTotal,
+                enabled: _enableFooter,
               ),
             ],
           )
@@ -1244,6 +1413,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   controller: _footerLeftController,
                   label: widget.controller.strings.slotLeft,
                   hintText: widget.controller.strings.slotHintCopyright,
+                  enabled: _enableFooter,
                 ),
               ),
               const SizedBox(width: 8),
@@ -1252,6 +1422,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   controller: _footerCenterController,
                   label: widget.controller.strings.slotCenter,
                   hintText: '{page}',
+                  enabled: _enableFooter,
                 ),
               ),
               const SizedBox(width: 8),
@@ -1260,6 +1431,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   controller: _footerRightController,
                   label: widget.controller.strings.slotRight,
                   hintText: widget.controller.strings.slotHintPageTotal,
+                  enabled: _enableFooter,
                 ),
               ),
             ],
@@ -1399,19 +1571,21 @@ class _SettingsDialogState extends State<SettingsDialog> {
     required TextEditingController controller,
     required String label,
     required String hintText,
+    bool enabled = true,
   }) {
     return ValueListenableBuilder<TextEditingValue>(
       valueListenable: controller,
       builder: (context, value, _) {
         return TextField(
           controller: controller,
+          enabled: enabled,
           decoration: InputDecoration(
             labelText: label,
             hintText: hintText,
             isDense: true,
             border: const OutlineInputBorder(),
             contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-            suffixIcon: value.text.isNotEmpty
+            suffixIcon: enabled && value.text.isNotEmpty
                 ? IconButton(
                     icon: const Icon(Icons.clear, size: 14),
                     splashRadius: 12,
@@ -3406,40 +3580,24 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
           // Shortcut Key Badge / Key Listener
           Focus(
+            focusNode: isListening ? _shortcutCaptureFocusNode : null,
             autofocus: isListening,
-            onKeyEvent: (node, event) {
-              if (!isListening) return KeyEventResult.ignored;
-              if (event is KeyDownEvent) {
-                final key = event.logicalKey;
-                if (key == LogicalKeyboardKey.escape) {
-                  setState(() => _listeningActionId = null);
-                  return KeyEventResult.handled;
-                }
-                if (ShortcutService.isModifierKey(key)) {
-                  return KeyEventResult.handled;
-                }
-                if (ShortcutService.isSupportedKey(key)) {
-                  final conflict = shortcutService.findConflict(action.id, key);
-                  shortcutService.setKey(action.id, key);
-                  setState(() {
-                    _listeningActionId = null;
-                    if (conflict != null) {
-                      _conflictMessage = strings.shortcutConflict(conflict);
-                    } else {
-                      _conflictMessage = null;
-                    }
-                  });
-                  return KeyEventResult.handled;
-                }
-              }
-              return KeyEventResult.ignored;
-            },
+            onKeyEvent: (node, event) =>
+                isListening ? _handleShortcutCaptureKeyEvent(event) : KeyEventResult.ignored,
             child: GestureDetector(
               onTap: () {
+                final willListen = !isListening;
                 setState(() {
-                  _listeningActionId = isListening ? null : action.id;
+                  _listeningActionId = willListen ? action.id : null;
                   _conflictMessage = null;
                 });
+                if (willListen) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted && _listeningActionId == action.id) {
+                      _shortcutCaptureFocusNode.requestFocus();
+                    }
+                  });
+                }
               },
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),

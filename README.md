@@ -6,7 +6,7 @@
 </div>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Release: v1.1.2](https://img.shields.io/badge/Release-v1.1.2-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
+[![Release: v1.1.3](https://img.shields.io/badge/Release-v1.1.3-blue.svg)](https://github.com/dotsg/supergoodviewer/releases/latest)
 [![CI Status](https://img.shields.io/badge/CI-Passing-brightgreen.svg)]()
 [![Platform: macOS | Windows | Linux](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)]()
 
@@ -238,6 +238,21 @@ cat draft.md | sgv export - -o draft.pdf
 ---
 
 ## 📝 更新日志 (Changelog)
+
+### v1.1.3 (2026-11)
+- **PDF 智能重排引擎 (PDF Smart Reflow)**：
+  - 支持将双栏/三栏学术论文、杂志期刊（如《The New Yorker》）与小字 A4 PDF 一键重排为手机竖屏/单栏易读版式（快捷键 `Cmd/Ctrl+Shift+R`、底栏/右键菜单与移动端工具栏一键切换），并支持导出与分享重排后的 PDF；
+  - 基于 PDFium 原生字体元数据（`FPDFTextObj_GetFontName`）、字重/斜体样式、相对字高比例与二维网格投影，精准还原多栏阅读顺序、首字下沉 (Drop Cap)、栏目导语 (Rubric)、二维表格、超链接与内嵌/拼接插图，自动滤除页眉页脚与伪水印。
+- **MultiMarkdown 表格跨列 (`||`) 与跨行 (`^^`) 合并支持 (#30)**：
+  - Markdown 解析器原生支持 MultiMarkdown 风格的横向跨列合并（单元格末尾连续管道符 `||`）与纵向跨行合并（`^^` 标记），自动编译为 Typst `table.cell(colspan: ..., rowspan: ...)`。
+- **页眉与页脚独立开关控制 (#32)**：
+  - 在设置面板【页面与版式】中新增页眉、页脚独立启用开关，无需清空插槽文本即可一键开启或关闭页眉/页脚。
+- **PDF 秒开与桌面端滚动/右键防闪烁优化**：
+  - 修复 `pdfrx` 初始化期间组件重建导致的 PDF 加载转圈卡死竞态，以 `buffer.setRange` 批量内存拷贝与 `statSync()` 元数据校验消除大体积 PDF 打开时的 UI 卡顿；
+  - 固定桌面端顶部内边距边界并优化右键选词/菜单定位，彻底消除桌面端滚动至页顶及右键弹出菜单时的画面跳动与闪烁。
+- **桌面端菜单体系重构与设置交互优化**：
+  - 重构桌面端画布右键上下文菜单（支持图标、选中态勾标、分组分割线、快捷键提示、PDF 智能重排与偏好设置入口），打通 macOS 原生菜单栏 `Preferences… (⌘,)` 并清理无用模板菜单；
+  - 修复设置弹窗重复路由堆叠问题（已打开时原地切换标签页），关闭弹窗时自动保存并应用未提交的排版/版式修改，修复下拉菜单展开期间浮动工具栏自动隐藏的问题，以及 macOS 下 `Ctrl+Tab` 标签页切换与快捷键录制拦截问题。
 
 ### v1.1.2 (2026-11)
 - **Microsoft Word 与 PowerPoint 原生排版预览及 PDF 导出**：
