@@ -23,7 +23,9 @@ Local changes:
   two-pixel filtering gutters, serial native rendering, replaceable priority
   queue, cancellation, bounded failure retries and memory-accounted LRU; secondary
   `_pageIndex` lookup to eliminate global cache scans during draw, single `RasterTileRegion`
-  allocation per candidate tile, and conditional sort bypass when scales are homogeneous.
+  allocation per candidate tile, conditional sort bypass when scales are homogeneous,
+  only invoking `onChanged` when a tile image is actually committed, and evicting
+  stale non-`_wanted` tiles before active speculative tiles (in reverse priority order) in `_trim`.
 - `lib/src/widgets/pdf_viewer.dart`: opt-in tiled rendering at device resolution,
   directional look-ahead, visible tiles before speculative work, raster-ready
   notification after paint, document/page invalidation and correct preview
@@ -35,7 +37,12 @@ Local changes:
   during intra-page offset and two-page spread navigation, committed only when the target page
   is actually on screen and the navigation has not been superseded (`_goTo` resolves its future
   on cancellation as well as completion, and the destination matrix is clamped to the document
-  bounds); `layoutOrNull` safe getter and `setValueWithoutNormalization` added to `PdfViewerController`;
+  bounds); `layoutOrNull` safe getter, `setValueWithoutNormalization`, `isContextMenuShown`,
+  `showContextMenu`, and `dismissContextMenu` added to `PdfViewerController`;
+  `selectWord` only sets `_isSelectingAWord` when automatic context menus and selection handles
+  are active; `_onWheelDelta` and `_onInteractionStart` dismiss and invalidate any open context
+  menu; `paintLinkHighlights` avoids triggering `_invalidate` when link highlights are transparent
+  (`color.a == 0` with no custom painter and text semantics disabled);
   visible tiles in tiled rendering filtered by exact `coreRect` bounds rather than gutter-expanded
   `rect` to prevent gutter overlaps from delaying `rasterReady`; reuse page layout across pan/raster rebuilds;
   re-evaluate on parent updates, resize, zoom, page status changes, document replacement and explicit

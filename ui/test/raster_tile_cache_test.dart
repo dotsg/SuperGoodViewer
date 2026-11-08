@@ -175,4 +175,77 @@ void main() {
     await drain();
     expect(renders, 4, reason: 'A page update permits rendering again');
   });
+
+  test('failed or canceled tile renders do not fire onChanged and _trim evicts stale tiles before wanted speculative tiles', () async {
+    var changes = 0;
+    var shouldFail = true;
+    Completer<Image?>? pendingRender;
+    final cache = RasterTileCache(
+      render: (_) async {
+        final pending = pendingRender;
+        if (pending != null) {
+          return pending.future;
+        }
+        return shouldFail ? null : image();
+      },
+      onChanged: () => changes++,
+    );
+    addTearDown(cache.dispose);
+
+    final a = region(0);
+    final b = region(1);
+    final c = region(2);
+    final d = region(3);
+    cache.update([a], {a.key}, 8192);
+    await drain();
+    expect(changes, 0, reason: 'Failed tile render must not trigger viewer invalidation');
+
+    // Test canceled in-flight render does not fire onChanged.
+    shouldFail = false;
+    cache.invalidatePage(1);
+    pendingRender = Completer<Image?>();
+    cache.update([a], {a.key}, 16 * 1024 * 1024);
+    await Future<void>.delayed(Duration.zero);
+    cache.invalidatePage(1); // cancels in-flight render of `a`
+    pendingRender.complete(image());
+    pendingRender = null;
+    await drain();
+    expect(changes, 0, reason: 'Canceled tile render must not trigger viewer invalidation');
+
+    // Render `b` FIRST and `a` SECOND under generous budget so `b` is older than `a` in LRU order.
+    cache.update([b, a], {b.key}, 16 * 1024 * 1024);
+    await drain();
+    expect(cache.contains(b.key), isTrue);
+    expect(cache.contains(a.key), isTrue);
+    final changesAfterBA = changes;
+    expect(changesAfterBA, greaterThan(0));
+
+    // Now move viewport to `c` (protected) with `b` still wanted (speculative) and `a` stale (not wanted),
+    // and tighten budget to 2 tiles (2048 bytes). Even though `b` was inserted before `a`,
+    // Pass 1 must evict stale `a` and keep wanted speculative `b`.
+    cache.update([c, b], {c.key}, 2048);
+    await drain();
+    expect(cache.contains(c.key), isTrue);
+    expect(cache.contains(b.key), isTrue, reason: 'Wanted speculative tile b must be kept even when older in LRU');
+    expect(cache.contains(a.key), isFalse, reason: 'Stale non-wanted tile a must be evicted first');
+
+    // Pass 2: When all cached tiles are in `_wanted`, evict lowest-priority (furthest) speculative tile first,
+    // even when that lowest-priority tile is NEWER in LRU order than a higher-priority tile.
+    // Current cache has `b` (older) and `c` (newer). Render `d` so LRU order (oldest -> newest) is: b, c, d.
+    cache.update([c, b, d], {c.key}, 16 * 1024 * 1024);
+    await drain();
+    expect(cache.contains(b.key), isTrue);
+    expect(cache.contains(c.key), isTrue);
+    expect(cache.contains(d.key), isTrue);
+
+    // Now place `d` (the NEWEST tile in LRU) at the tail of `_wanted` (`[a, c, b, d]`, so `d` has lowest priority
+    // while `b` has higher priority despite being OLDEST in LRU), and render `a` (protected) with budget for 3 tiles (3072 bytes).
+    // Pure LRU would evict `b`; Pass 2 reverse-priority order must evict `d` and keep `b`.
+    cache.update([a, c, b, d], {a.key, c.key}, 3072);
+    await drain();
+    expect(cache.contains(a.key), isTrue);
+    expect(cache.contains(c.key), isTrue);
+    expect(cache.contains(b.key), isTrue, reason: 'Higher-priority speculative tile b must be kept even when oldest in LRU');
+    expect(cache.contains(d.key), isFalse, reason: 'Lowest-priority speculative tile d at tail of _wanted must be evicted even when newest in LRU');
+  });
 }

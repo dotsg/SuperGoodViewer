@@ -228,6 +228,7 @@ class RasterTileCache {
     if (next == null) return;
     final job = _running = RasterTileJob(next);
     Image? image;
+    var changed = false;
     try {
       image = await render(job);
       if (!_disposed && !job.canceled && image != null) {
@@ -240,6 +241,7 @@ class RasterTileCache {
         _images[next.key] = image;
         _addKeyToPageIndex(next.key);
         image = null;
+        changed = true;
         _failures.remove(next.key);
         _trim();
       } else if (!_disposed && !job.canceled) {
@@ -253,7 +255,7 @@ class RasterTileCache {
       image?.dispose();
       _running = null;
       if (!_disposed) {
-        onChanged();
+        if (changed) onChanged();
         _schedule();
       }
     }
@@ -261,13 +263,24 @@ class RasterTileCache {
 
   void _trim() {
     if (bytes <= _budget) return;
+    // Pass 1: Evict stale tiles (not in _wanted) in LRU order before touching active speculative tiles.
     for (final key in _images.keys.toList()) {
-      if (_protected.contains(key)) continue;
+      if (_protected.contains(key) || _wanted.containsKey(key)) continue;
       final image = _images.remove(key)!;
       _removeKeyFromPageIndex(key);
       bytes -= image.width * image.height * 4;
       image.dispose();
-      if (bytes <= _budget) break;
+      if (bytes <= _budget) return;
+    }
+    // Pass 2: Evict wanted speculative tiles furthest from the viewport first (reverse _wanted priority order).
+    for (final key in _wanted.keys.toList().reversed) {
+      if (_protected.contains(key)) continue;
+      final image = _images.remove(key);
+      if (image == null) continue;
+      _removeKeyFromPageIndex(key);
+      bytes -= image.width * image.height * 4;
+      image.dispose();
+      if (bytes <= _budget) return;
     }
   }
 

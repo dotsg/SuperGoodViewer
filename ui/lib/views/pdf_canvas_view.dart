@@ -146,11 +146,10 @@ class SuperGoodSizeDelegateProvider extends PdfViewerSizeDelegateProvider {
           other.isTwoPage == isTwoPage &&
           other.pdfCropMargins == pdfCropMargins &&
           other.minScale == minScale &&
-          other.maxScale == maxScale &&
-          other.topInset == topInset;
+          other.maxScale == maxScale;
 
   @override
-  int get hashCode => Object.hash(readerController, isFluid, isTwoPage, pdfCropMargins, minScale, maxScale, topInset);
+  int get hashCode => Object.hash(readerController, isFluid, isTwoPage, pdfCropMargins, minScale, maxScale);
 }
 
 typedef SoGoodSizeDelegateProvider = SuperGoodSizeDelegateProvider;
@@ -884,12 +883,14 @@ class PdfCanvasView extends StatefulWidget {
   final ValueChanged<double>? onZoomChanged;
   final void Function(int pageNumber, int pageCount)? onPageChanged;
   final double topInset;
+  final double? reservedTopInset;
   final VoidCallback? onTextCopied;
   final void Function({required double deltaY, required bool isAtTop})? onScrollChanged;
 
   const PdfCanvasView({
     super.key,
     this.topInset = 0.0,
+    this.reservedTopInset,
     required this.pdfBytes,
     required this.documentTitle,
     this.documentId = 0,
@@ -945,6 +946,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   int _lastReportedCount = 1;
   double _lastVisibleTop = 0.0;
   bool _lastReportedAtTop = true;
+  int _secondaryTapGeneration = 0;
   bool _modeOrDocChanged = false;
   Timer? _pendingWatchdogTimer;
   Timer? _directReloadWatchdogTimer;
@@ -1246,6 +1248,22 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
   void didUpdateWidget(PdfCanvasView oldWidget) {
     super.didUpdateWidget(oldWidget);
 
+    if (oldWidget.topInset != widget.topInset && !_isRestoringScroll) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _isRestoringScroll || _lastReportedAtTop) return;
+        final ctrl = _controllers[_activeSlot];
+        if (!ctrl.isReady) return;
+        final docSize = ctrl.documentSize;
+        if (docSize.height > 0) {
+          final zoom = ctrl.currentZoom;
+          final topDocOffset = zoom > 0 ? widget.topInset / zoom : 0.0;
+          final visibleDocTop = ctrl.visibleRect.top + topDocOffset;
+          final ratio = (visibleDocTop / docSize.height).clamp(0.0, 1.0);
+          widget.controller.updateScrollRatio(ratio, offset: visibleDocTop);
+        }
+      });
+    }
+
     // Options and bytes arrive across distinct frames:
     // Frame A: User changes font/size/theme/mode -> notifyListeners() rebuilds with new options but old bytes.
     // Frame B: Async compilation finishes -> notifyListeners() rebuilds with new bytes.
@@ -1264,6 +1282,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         filePathChanged ||
         isPdfDocChanged;
     if (optionsChanged) {
+      _secondaryTapGeneration++;
       widget.controller.renderOptionsChanged = true;
     }
 
@@ -1275,12 +1294,6 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         filePathChanged ||
         isPdfDocChanged) {
       _modeOrDocChanged = true;
-    }
-
-    if (oldWidget.topInset != widget.topInset) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _onPdfViewerChanged(_activeSlot);
-      });
     }
 
     if (widget.renderOptions.pdfCropMargins != oldWidget.renderOptions.pdfCropMargins &&
@@ -1457,14 +1470,26 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       final topDocOffset = zoom > 0 ? widget.topInset / zoom : 0.0;
       final visibleDocTop = currentTop + topDocOffset;
 
-      final isAtTop = isFluid
-          ? (visibleDocTop <= 20.0 || currentTop <= 0.0)
-          : (pageNum <= (isTwoPage ? 2 : 1) && (visibleDocTop <= 20.0 || currentTop <= 0.0));
+      // On desktop, use document-space currentTop with zoom-scaled directional
+      // hysteresis (enter <= 4px, leave > 16px) rather than coupling to
+      // widget.topInset or transient frame deltaY, preventing topInset / titlebar
+      // oscillation loops near the top.
+      final isMobile = FormFactor.isMobilePlatform();
+      final effectiveZoom = zoom > 0 ? zoom : 1.0;
+      final isFirstPage = isFluid || pageNum <= (isTwoPage ? 2 : 1);
       final deltaY = currentTop - _lastVisibleTop;
-      final effectiveAtTop = isAtTop && deltaY <= 0.5;
+      final bool effectiveAtTop;
+      if (isMobile) {
+        final isAtTop = isFirstPage &&
+            (visibleDocTop <= ReaderController.topScrollThreshold || currentTop <= 0.0);
+        effectiveAtTop = isAtTop && deltaY <= 0.5;
+      } else {
+        final topThreshold = (_lastReportedAtTop ? 16.0 : 4.0) / effectiveZoom;
+        effectiveAtTop = isFirstPage && currentTop <= topThreshold;
+      }
 
       if (docSize.height > 0) {
-        if (isAtTop && visibleDocTop <= 20.0) {
+        if (effectiveAtTop) {
           widget.controller.updateScrollRatio(0.0, offset: 0.0);
         } else {
           final ratio = (visibleDocTop / docSize.height).clamp(0.0, 1.0);
@@ -1473,6 +1498,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
       }
 
       if (deltaY.abs() > 0.5 || effectiveAtTop != _lastReportedAtTop) {
+        if (deltaY.abs() > 0.5) {
+          _secondaryTapGeneration++;
+        }
         _lastVisibleTop = currentTop;
         _lastReportedAtTop = effectiveAtTop;
         widget.onScrollChanged?.call(deltaY: deltaY, isAtTop: effectiveAtTop);
@@ -2573,20 +2601,27 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
               }
             : null,
         margin: effectiveFluid ? 0.0 : 10.0,
-        boundaryMargin: effectiveFluid
-            ? EdgeInsets.only(
-                top: widget.topInset > 0 ? math.max(72.0, widget.topInset + 40.0) : 48.0,
-                bottom: 24,
-                left: 0,
-                right: 0,
-              )
-            : EdgeInsets.only(
-                top: widget.topInset > 0 ? math.max(72.0, widget.topInset + 40.0) : 48.0,
-                bottom: 16,
-                left: 8,
-                right: 8,
-              ),
-        maxImageBytesCachedOnMemory: effectiveFluid ? 256 * 1024 * 1024 : 64 * 1024 * 1024,
+        boundaryMargin: () {
+          final effectiveReservedTopInset = widget.reservedTopInset ?? widget.topInset;
+          final topBoundary =
+              effectiveReservedTopInset > 0 ? math.max(72.0, effectiveReservedTopInset + 40.0) : 48.0;
+          return effectiveFluid
+              ? EdgeInsets.only(
+                  top: topBoundary,
+                  bottom: 24,
+                  left: 0,
+                  right: 0,
+                )
+              : EdgeInsets.only(
+                  top: topBoundary,
+                  bottom: 16,
+                  left: 8,
+                  right: 8,
+                );
+        }(),
+        maxImageBytesCachedOnMemory: effectiveFluid
+            ? 256 * 1024 * 1024
+            : (FormFactor.isMobilePlatform(context) ? 64 * 1024 * 1024 : 192 * 1024 * 1024),
         onePassRenderingSizeThreshold: effectiveFluid ? 4000.0 : 2000.0,
         getPageRenderingScale: (context, page, controller, estimatedScale) {
           if (effectiveFluid && (page.width > 4000 || page.height > 4000)) {
@@ -2768,6 +2803,7 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         },
         onGeneralTap: (context, controller, details) {
           if (details.type == PdfViewerGeneralTapType.doubleTap) {
+            _secondaryTapGeneration++;
             if (FormFactor.isMobilePlatform(context)) {
               PdfPageAnalysisService.handleSmartDoubleTap(
                 controller,
@@ -2782,10 +2818,30 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
             return true;
           }
           if (details.type == PdfViewerGeneralTapType.secondaryTap) {
+            final gen = ++_secondaryTapGeneration;
             if (details.tapOn == PdfViewerPart.nonSelectedText) {
-              controller.textSelectionDelegate.selectWord(details.documentPosition);
+              final docPos = details.documentPosition;
+              Future<void>(() async {
+                if (controller.textSelectionDelegate.hasSelectedText) {
+                  await controller.textSelectionDelegate.clearTextSelection();
+                }
+                if (!mounted || !controller.isReady || gen != _secondaryTapGeneration) return;
+                await controller.textSelectionDelegate.selectWord(docPos);
+                if (!mounted || !controller.isReady || gen != _secondaryTapGeneration) return;
+                controller.showContextMenu(
+                  docPos,
+                  forPart: controller.textSelectionDelegate.hasSelectedText
+                      ? PdfViewerPart.selectedText
+                      : PdfViewerPart.background,
+                );
+              }).catchError((Object e) {
+                debugPrint('[PdfCanvasView] secondaryTap selectWord failed: $e');
+              });
+              return true;
             }
+            return false;
           }
+          _secondaryTapGeneration++;
           if (details.type == PdfViewerGeneralTapType.tap) {
             final isMobile = FormFactor.isMobilePlatform(context);
             if (isMobile) {
@@ -2798,7 +2854,9 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
                   widget.onCanvasTapped?.call();
                 }
               }
-            } else if (details.tapOn == PdfViewerPart.background) {
+            } else if (details.tapOn == PdfViewerPart.background &&
+                !controller.isContextMenuShown &&
+                !controller.textSelectionDelegate.hasSelectedText) {
               widget.onCanvasTapped?.call();
             }
           }
@@ -2987,7 +3045,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
           if (_isRestoringScroll) return;
           if (event is PointerScrollEvent) {
             if (event.scrollDelta.dy > 1.0) {
-              widget.onScrollChanged?.call(deltaY: event.scrollDelta.dy, isAtTop: false);
+              widget.onScrollChanged?.call(
+                deltaY: event.scrollDelta.dy,
+                isAtTop: _lastReportedAtTop,
+              );
             }
           }
           widget.onUserScrolled?.call();
@@ -2995,7 +3056,10 @@ class PdfCanvasViewState extends State<PdfCanvasView> {
         onPointerPanZoomUpdate: (event) {
           if (_isRestoringScroll) return;
           if (event.panDelta.dy < -1.0) {
-            widget.onScrollChanged?.call(deltaY: -event.panDelta.dy, isAtTop: false);
+            widget.onScrollChanged?.call(
+              deltaY: -event.panDelta.dy,
+              isAtTop: _lastReportedAtTop,
+            );
           }
           widget.onUserScrolled?.call();
         },

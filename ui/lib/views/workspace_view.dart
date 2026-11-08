@@ -1182,36 +1182,39 @@ class _WorkspaceViewState extends State<WorkspaceView> with WidgetsBindingObserv
                 child: Stack(
                   children: [
                     // Pure Edge-to-Edge PDF Canvas (always fills 100% of workspace, zero layout shifting)
-                    PdfCanvasView(
-                      key: _pdfCanvasKey,
-                      topInset: isMobile ? topPadding : (_shouldShowTitleBar ? totalTopBarHeight : 0.0),
-                      pdfBytes: controller.currentPdfBytes,
-                      documentTitle: controller.documentTitle,
-                      documentId: controller.activeSession.id,
-                      renderOptions: controller.renderOptions,
-                      isTwoPage: controller.isTwoPage,
-                      controller: controller,
-                      onUserScrolled: _hideToolbar,
-                      onScrollChanged: _handleScrollChanged,
-                      onCanvasTapped: _toggleToolbar,
-                      onMobileTap: _handleMobileTap,
-                      onOpenFile: _pickAndOpenFile,
-                      onToggleSidebar: _toggleSidebar,
-                      onExportPdf: _handleExportPdf,
-                      onZoomChanged: (zoom) {
-                        if (mounted && (zoom - _currentZoom).abs() > 0.005) {
-                          setState(() => _currentZoom = zoom);
-                        }
-                      },
-                      onPageChanged: (pageNumber, pageCount) {
-                        if (mounted && (_currentPage != pageNumber || _pageCount != pageCount)) {
-                          setState(() {
-                            _currentPage = pageNumber;
-                            _pageCount = pageCount;
-                          });
-                        }
-                      },
-                      onTextCopied: _showCopiedFeedback,
+                    RepaintBoundary(
+                      child: PdfCanvasView(
+                        key: _pdfCanvasKey,
+                        topInset: isMobile ? topPadding : (_shouldShowTitleBar ? totalTopBarHeight : 0.0),
+                        reservedTopInset: isMobile ? topPadding : (_isFullScreen ? 0.0 : totalTopBarHeight),
+                        pdfBytes: controller.currentPdfBytes,
+                        documentTitle: controller.documentTitle,
+                        documentId: controller.activeSession.id,
+                        renderOptions: controller.renderOptions,
+                        isTwoPage: controller.isTwoPage,
+                        controller: controller,
+                        onUserScrolled: _hideToolbar,
+                        onScrollChanged: _handleScrollChanged,
+                        onCanvasTapped: _toggleToolbar,
+                        onMobileTap: _handleMobileTap,
+                        onOpenFile: _pickAndOpenFile,
+                        onToggleSidebar: _toggleSidebar,
+                        onExportPdf: _handleExportPdf,
+                        onZoomChanged: (zoom) {
+                          if (mounted && (zoom - _currentZoom).abs() > 0.005) {
+                            setState(() => _currentZoom = zoom);
+                          }
+                        },
+                        onPageChanged: (pageNumber, pageCount) {
+                          if (mounted && (_currentPage != pageNumber || _pageCount != pageCount)) {
+                            setState(() {
+                              _currentPage = pageNumber;
+                              _pageCount = pageCount;
+                            });
+                          }
+                        },
+                        onTextCopied: _showCopiedFeedback,
+                      ),
                     ),
 
                     // Top Floating Unified Titlebar / Traffic Light Safe Strip
@@ -1315,12 +1318,8 @@ class _WorkspaceViewState extends State<WorkspaceView> with WidgetsBindingObserv
                                     curve: Curves.easeOutCubic,
                                     offset: _isToolbarVisible
                                         ? Offset.zero
-                                        : const Offset(0, 1.4),
-                                    child: AnimatedOpacity(
-                                      duration: const Duration(milliseconds: 200),
-                                      opacity: _isToolbarVisible ? 1.0 : 0.0,
-                                      child: _buildFloatingPill(context, isDark, controller),
-                                    ),
+                                        : const Offset(0, 2.0),
+                                    child: _buildFloatingPill(context, isDark, controller),
                                   ),
                                 ),
                               ),
@@ -1874,37 +1873,57 @@ class _WorkspaceViewState extends State<WorkspaceView> with WidgetsBindingObserv
     const double pillHeight = 44.0;
     const double pillRadius = pillHeight / 2; // 22.0: Exact symmetrical semicircle pill ends
 
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(pillRadius),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.40 : 0.08),
-            blurRadius: 18,
-            offset: const Offset(0, 4),
-          ),
-        ],
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(
+        begin: _isToolbarVisible ? 1.0 : 0.0,
+        end: _isToolbarVisible ? 1.0 : 0.0,
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(pillRadius),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-          child: Container(
-            height: pillHeight,
-            padding: const EdgeInsets.symmetric(horizontal: 6),
-            decoration: BoxDecoration(
-              color: isDark ? const Color(0xD0202020) : const Color(0xE8FFFFFF),
-              borderRadius: BorderRadius.circular(pillRadius),
-              border: Border.all(
-                color: isDark ? const Color(0x33FFFFFF) : const Color(0x1F000000),
-                width: 1,
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOutCubic,
+      builder: (context, visibility, child) {
+        final blurSigma = 16.0 * visibility;
+        return Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(pillRadius),
+            boxShadow: visibility > 0.01
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: (isDark ? 0.40 : 0.08) * visibility),
+                      blurRadius: 18,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : const [],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(pillRadius),
+            child: BackdropFilter(
+              enabled: visibility > 0.01,
+              filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
+              child: Opacity(
+                opacity: visibility,
+                child: child,
               ),
             ),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
+          ),
+        );
+      },
+      child: Container(
+        height: pillHeight,
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xD0202020) : const Color(0xE8FFFFFF),
+          borderRadius: BorderRadius.circular(pillRadius),
+          border: Border.all(
+            color: isDark ? const Color(0x33FFFFFF) : const Color(0x1F000000),
+            width: 1,
+          ),
+        ),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
               // Open Local File
               _PillIconButton(
                 icon: Icons.folder_open_rounded,
@@ -2081,9 +2100,7 @@ class _WorkspaceViewState extends State<WorkspaceView> with WidgetsBindingObserv
           ),
         ),
       ),
-    ),
-  ),
-);
+    );
   }
 }
 
