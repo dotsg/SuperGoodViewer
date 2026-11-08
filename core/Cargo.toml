@@ -22,7 +22,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.1.2"
+version = "1.1.3"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
@@ -86,7 +86,7 @@ typst-assets = { version = "0.15.1", features = ["fonts"] }
 
 [package]
 name = "sogood_core"
-version = "1.1.2"
+version = "1.1.3"
 edition = "2024"
 
 [lib]
